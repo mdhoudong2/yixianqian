@@ -60,8 +60,8 @@ if [ "$TARGET" = "h5" ] || [ "$TARGET" = "all" ]; then
         echo "✅ H5前端部署成功"
     fi
 
-    echo "🔁 重启 H5（guard.sh 守护循环 + gunicorn）..."
-    ssh $SERVER "pkill -f '[g]uard.sh' 2>/dev/null; pkill -f '[g]unicorn.*app:app' 2>/dev/null; sleep 2; cd /opt/yixianqian-h5/backend && nohup bash guard.sh >> /tmp/yixianqian_h5_guard.log 2>&1 & sleep 1; echo 'H5 已重启'"
+    echo "🔁 重启 H5（systemctl）..."
+    ssh $SERVER "systemctl restart yixianqian-h5 && sleep 2 && systemctl is-active yixianqian-h5"
 fi
 
 if [ -d "tools" ]; then

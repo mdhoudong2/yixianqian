@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""修正用户「爱心剩余」基数错误（初始应为3，实际被写成2）
+"""爱心数据诊断（只读，不修改任何数据）
 
 用法:
-  python3 fix_hearts.py                 # 只读：统计爱心分布，不修改
-  python3 fix_hearts.py --apply         # 全体 +1（上限30），跳过「已隐藏」
+  python3 fix_hearts.py     # 只统计「爱心剩余」分布与字段状态
+
+注意：经排查，「爱心剩余」字段数据是正确的（30=上限/老用户，3=初始，
+2/1=喜欢扣减后的正常值），不存在需要批量修正的基数错误。
+本脚本仅作只读诊断，不提供任何写操作。
 """
 import sys
 import os
@@ -79,52 +82,30 @@ def hearts_of(fields):
 
 
 def main():
-    apply = "--apply" in sys.argv
     items = list_all()
     print(f"共 {len(items)} 条用户记录\n")
 
     dist = {}
-    updatable = []
+    status_dist = {}
     for it in items:
         fields = it.get("fields", {})
         h = hearts_of(fields)
         status = fields.get(FIELD_STATUS, "")
-        # 状态字段可能是单选对象，统一取文本
         if isinstance(status, dict):
             status = status.get("text", "")
         elif isinstance(status, list) and status:
             s0 = status[0]
             status = s0.get("text", "") if isinstance(s0, dict) else str(s0)
         dist[h] = dist.get(h, 0) + 1
-        if h is not None and str(status) != "已隐藏":
-            new = min(h + 1, MAX_HEARTS)
-            if new != h:
-                updatable.append((it["record_id"], h, new))
+        status_dist[str(status)] = status_dist.get(str(status), 0) + 1
 
     print("爱心分布：")
     for k in sorted(dist, key=lambda x: (x is None, x or 0)):
         print(f"  爱心={k}: {dist[k]} 人")
-    print(f"\n可修正（+1，上限30，跳过已隐藏）: {len(updatable)} 人")
-
-    if not apply:
-        print("\n[只读模式] 未做任何修改。确认无误后运行: python3 fix_hearts.py --apply")
-        for rid, old, new in updatable[:20]:
-            print(f"  预览: {rid}  {old} -> {new}")
-        if len(updatable) > 20:
-            print(f"  ... 其余 {len(updatable) - 20} 条")
-        return
-
-    ok = fail = 0
-    for rid, old, new in updatable:
-        resp = requests.put(
-            f"{BASE_URL}/bitable/v1/apps/{BASE_TOKEN}/tables/{USER_TABLE_ID}/records/{rid}",
-            headers=headers(), json={"fields": {FIELD_HEART: new}}, timeout=15)
-        if resp.json().get("code") == 0:
-            ok += 1
-        else:
-            fail += 1
-            print(f"  失败 {rid}: {resp.json().get('msg')}", file=sys.stderr)
-    print(f"\n完成：成功 {ok}，失败 {fail}")
+    print("\n账号状态分布：")
+    for k, v in sorted(status_dist.items()):
+        print(f"  {k}: {v} 人")
+    print("\n[只读] 未做任何修改。")
 
 
 if __name__ == "__main__":

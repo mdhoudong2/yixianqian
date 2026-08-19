@@ -340,9 +340,29 @@ def load_notified():
         return {"likes": [], "mutual": []}
 
 
+_notified_lock = threading.Lock()
+
+
 def save_notified(data):
-    with open(NOTIFIED_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """合并写回（加锁）：只更新 data 中的 key，保留文件中其他 key。
+    避免多个后台通知线程并发读-改-写时互相覆盖去重记录，导致消息重复发送。"""
+    with _notified_lock:
+        try:
+            with open(NOTIFIED_FILE, 'r', encoding='utf-8') as f:
+                current = json.load(f)
+        except Exception:
+            current = {}
+        for k, v in data.items():
+            if isinstance(v, list) and isinstance(current.get(k), list):
+                merged = list(current[k])
+                for item in v:
+                    if item not in merged:
+                        merged.append(item)
+                current[k] = merged
+            else:
+                current[k] = v
+        with open(NOTIFIED_FILE, 'w', encoding='utf-8') as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
 
 
 def load_welcomed():

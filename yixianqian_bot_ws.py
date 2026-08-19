@@ -806,8 +806,10 @@ def auto_bind_from_creator():
         update_fields_bind = {}
         if current_status != "已隐藏":
             update_fields_bind[FIELD_ACCOUNT_STATUS] = "待审核"
-        # 设置初始爱心（新注册固定3颗，覆盖表单可能预填的错误值如2）
-        update_fields_bind[FIELD_HEART_REMAIN] = INITIAL_HEARTS
+        # 设置初始爱心（仅字段为空时兜底写3；表格默认值已设为3，此处不覆盖）
+        existing_hearts = get_field_number(fields, FIELD_HEART_REMAIN, -1)
+        if existing_hearts < 0:
+            update_fields_bind[FIELD_HEART_REMAIN] = INITIAL_HEARTS
         if update_fields_bind:
             update_record(USER_TABLE_ID, record_id, update_fields_bind)
 

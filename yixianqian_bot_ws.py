@@ -3368,6 +3368,11 @@ _processed_msg_ids = set()
 _MAX_PROCESSED_IDS = 500
 
 
+def do_p2_im_message_message_read_v1(data: lark.im.v1.P2ImMessageMessageReadV1) -> None:
+    """已读回执事件：无业务逻辑，仅注册以消除日志中 "processor not found" 刷屏。"""
+    pass
+
+
 def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
     event = data.event
     message = event.message
@@ -3576,6 +3581,7 @@ def main():
         try:
             event_handler = lark.EventDispatcherHandler.builder("", "") \
                 .register_p2_im_message_receive_v1(do_p2_im_message_receive_v1) \
+                .register_p2_im_message_message_read_v1(do_p2_im_message_message_read_v1) \
                 .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(do_p2_im_chat_access_event_bot_p2p_chat_entered_v1) \
                 .register_p2_card_action_trigger(do_p2_card_action_trigger) \
                 .register_p2_application_bot_menu_v6(do_p2_application_bot_menu_v6) \

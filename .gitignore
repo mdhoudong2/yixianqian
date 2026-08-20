@@ -7,7 +7,6 @@ __pycache__/
 
 # 本地密钥（不入库）
 local_config.py
-codebuddy_config.json
 
 # 含密钥的项目文档（不入库）
 CLAUDE.md

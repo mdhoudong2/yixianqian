@@ -433,18 +433,7 @@ def add_notification(recipient, ntype, text, key=None, extra=None):
         save_notifications(data)
 
 def generate_h5_url(open_id):
-    """调用H5后端生成带token的免登链接"""
-    try:
-        resp = requests.post(
-            f"{H5_BACKEND_URL}/api/bot/generate_token",
-            json={"open_id": open_id, "secret": APP_SECRET},
-            timeout=5
-        )
-        data = resp.json()
-        if data.get("token"):
-            return f"https://app.nantou.love/?token={data['token']}"
-    except Exception as e:
-        log(f"生成H5链接失败: {e}")
+    """生成 H5 入口链接。身份由飞书「网页免登」确定，URL 不再携带登录 token（防止链接被转发冒用身份）"""
     return "https://app.nantou.love/"
 
 
@@ -2845,12 +2834,6 @@ def build_main_menu_card(h5_url=None):
                         "text": {"tag": "plain_text", "content": "邀请好友"},
                         "type": "default",
                         "value": {"action": "menu_invite"}
-                    },
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "帮助"},
-                        "type": "default",
-                        "value": {"action": "menu_help"}
                     }
                 ]
             }
@@ -2859,8 +2842,9 @@ def build_main_menu_card(h5_url=None):
 
 
 def handle_help_command(sender_id):
-    """发送主菜单卡片"""
-    if send_card_message(sender_id, build_main_menu_card()):
+    """发送主菜单卡片（卡片1：一线牵 App + 邀请好友）"""
+    h5_url = generate_h5_url(sender_id)
+    if send_card_message(sender_id, build_main_menu_card(h5_url)):
         log(f"已发送主菜单卡片: {sender_id}")
     else:
         send_text_message(sender_id, WELCOME_TEXT)
@@ -3479,9 +3463,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_register_command(sender_id)
         elif text_lower in ["邀请", "invite", "邀请好友", "分享"]:
             reply = handle_invite_command(sender_id)
-        elif text_lower in ["h5", "一线牵", "app", "进入", "打开", "网页版", "网页", "web"]:
-            reply = handle_h5_command(sender_id)
-        elif text_lower in ["帮助", "help", "?", "？", "使用帮助"]:
+        elif text_lower in ["h5", "一线牵", "app", "进入", "打开", "网页版", "网页", "web", "帮助", "help", "?", "？", "使用帮助"]:
             reply = handle_help_command(sender_id)
         elif text_lower in ["状态", "我的信息", "我的状态", "status"]:
             reply = handle_status_command(sender_id)

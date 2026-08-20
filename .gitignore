@@ -21,3 +21,10 @@ yixianqian_*.json
 *.bak
 *.bak_h5
 *.tar.gz
+
+# 系统/杂项
+.DS_Store
+picture/
+
+# 一次性测试脚本（硬编码了真实密钥，不入库）
+tools/setup_group_test.py

@@ -83,6 +83,7 @@ FIELD_LIKE_TARGET_OPENID = "目标用户open_id"
 FIELD_LIKE_NOTIFIED = "已通知目标"
 FIELD_LIKE_INITIATOR_ID = "发起用户ID"
 FIELD_LIKE_TARGET_ID = "目标用户ID"  # 新增：是否已发送匿名通知
+FIELD_LIKE_TYPE = "喜欢类型"  # 匿名/实名
 
 FIELD_ACTIVITY_NAME = "活动名称"
 FIELD_ACTIVITY_CURRENT_SIGNUP = "当前报名人数"
@@ -1125,6 +1126,8 @@ def auto_send_anonymous_like_notification():
         target_openid = get_field_text(fields, FIELD_LIKE_TARGET_OPENID)
         target_nickname = get_field_text(fields, FIELD_LIKE_TARGET)
         initiator_nickname = get_field_text(fields, FIELD_LIKE_INITIATOR)
+        initiator_id = get_field_text(fields, FIELD_LIKE_INITIATOR_ID)
+        like_type = get_field_text(fields, FIELD_LIKE_TYPE)
 
         if not target_openid or not initiator_nickname:
             continue
@@ -1134,12 +1137,20 @@ def auto_send_anonymous_like_notification():
         # 改为 H5 入口链接（在 App 内交互更友好）
         view_url = generate_h5_url(target_openid)
 
-        message = (
-            f"\U0001f48c 有人喜欢了你！\n"
-            f"（为保护隐私，暂不透露对方身份，相互喜欢后才会揭晓哦！）\n\n"
-            f"截至目前，有 {like_count} 位异性喜欢你！\n\n"
-            f"到下面找找看👇，说不定就是你心动的那个人~\n"
-        )
+        if like_type == "实名":
+            identity = f"{initiator_nickname}（用户ID {initiator_id}）" if initiator_id else initiator_nickname
+            message = (
+                f"\U0001f48c {identity} 实名喜欢了你！\n\n"
+                f"截至目前，有 {like_count} 位异性喜欢你！\n\n"
+                f"到下面找找看👇，说不定就是你心动的那个人~\n"
+            )
+        else:
+            message = (
+                f"\U0001f48c 有人喜欢了你！\n"
+                f"（为保护隐私，暂不透露对方身份，相互喜欢后才会揭晓哦！）\n\n"
+                f"截至目前，有 {like_count} 位异性喜欢你！\n\n"
+                f"到下面找找看👇，说不定就是你心动的那个人~\n"
+            )
         if view_url:
             message += f"{view_url}"
 
@@ -3159,19 +3170,9 @@ def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChat
             user_fields = user_records[0].get("fields", {})
             status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
             if status == "活跃":
-                # 活跃用户：30分钟节流，发送菜单卡片
-                menu_times = load_menu_card_time()
-                last_time = menu_times.get(user_open_id, 0)
-                now = time.time()
-                if now - last_time < 1800:
-                    log(f"用户 {user_open_id} 30分钟内已发过菜单卡片，跳过")
-                    return
-                h5_url = generate_h5_url(user_open_id)
-                card = build_main_menu_card(h5_url)
-                if send_card_message(user_open_id, card):
-                    menu_times[user_open_id] = now
-                    save_menu_card_time(menu_times)
-                    log(f"菜单卡片已发送: {user_open_id}")
+                # 取消「重新登录就发卡片」：历史消息卡片也能触发进入单聊事件，多发刷屏
+                log(f"用户 {user_open_id} 为活跃用户，不再发送菜单卡片")
+                return
             else:
                 # 非活跃用户，发送状态提示（只发一次）
                 welcomed = load_welcomed()

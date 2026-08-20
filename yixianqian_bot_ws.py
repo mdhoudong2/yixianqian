@@ -2543,10 +2543,6 @@ def build_main_menu_card(h5_url=None):
         },
         "elements": [
             {
-                "tag": "div",
-                "text": {"tag": "lark_md", "content": "欢迎使用一线牵 \U0001f495"}
-            },
-            {
                 "tag": "action",
                 "actions": [
                     app_button,

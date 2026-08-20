@@ -1,74 +1,57 @@
 #!/bin/bash
-# 一线牵项目一键部署脚本（适配 ~/code 目录结构）
+# 一线牵项目部署脚本（GitHub 为中心：本地 push → 服务器 pull → 重启）
 # 用法: bash deploy.sh [bot|h5|all]
 #   bot  - 只部署机器人
 #   h5   - 只部署H5
 #   all  - 全部部署（默认）
 #
 # 目录约定：
-#   ~/code/yixianqian/        -> 机器人（本脚本所在目录）
-#   ~/code/yixianqian-h5/     -> H5 前端 + 后端
+#   ~/code/yixianqian/        -> 机器人仓库（本脚本所在目录）
+#   ~/code/yixianqian-h5/     -> H5 仓库
+#
+# 工作流：本地改完 commit → 本脚本 push 到 GitHub → 服务器 git pull --ff-only → 语法检查 → 重启
+# 注意：服务器只 pull 不 reset；venv/ 与 local_config.py 已 gitignore，不会被覆盖。
 
 SERVER="root@172.245.223.118"
 TARGET="${1:-all}"
 
-echo "🚀 开始部署到 $SERVER ..."
+BOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+H5_DIR="$(cd "$(dirname "$0")/../yixianqian-h5" && pwd)"
 
-# 服务器备份（服务器已无 git，改用 cp 快照备份）
-echo "📦 服务器端备份..."
-ssh -o StrictHostKeyChecking=no $SERVER "cp /opt/yixianqian/yixianqian_bot_ws.py /opt/yixianqian/yixianqian_bot_ws.py.bak 2>/dev/null; cp /opt/yixianqian-h5/backend/app.py /opt/yixianqian-h5/backend/app.py.bak 2>/dev/null; cp /opt/yixianqian-h5/backend/config.py /opt/yixianqian-h5/backend/config.py.bak 2>/dev/null; cp /opt/yixianqian-h5/backend/bitable.py /opt/yixianqian-h5/backend/bitable.py.bak 2>/dev/null; echo 'backup done'"
+echo "🚀 部署到 $SERVER（GitHub 为中心：push → pull → restart）"
 
-if [ "$TARGET" = "bot" ] || [ "$TARGET" = "all" ]; then
+deploy_bot() {
     echo "🤖 部署机器人..."
-    if [ -f "yixianqian_bot_ws.py" ]; then
-        scp yixianqian_bot_ws.py $SERVER:/opt/yixianqian/yixianqian_bot_ws.py
-        echo "  语法检查..."
-        ssh $SERVER "/opt/yixianqian/venv/bin/python -m py_compile /opt/yixianqian/yixianqian_bot_ws.py"
-        if [ $? -eq 0 ]; then
-            echo "  重启服务..."
-            ssh $SERVER "systemctl restart yixianqian"
-            echo "✅ 机器人部署成功"
-        else
-            echo "❌ 语法错误，已保留旧版本，未重启"
-        fi
-    else
-        echo "⚠️  yixianqian_bot_ws.py 不存在，跳过"
+    if [ -n "$(cd "$BOT_DIR" && git status --porcelain)" ]; then
+        echo "❌ 机器人仓库有未提交改动，请先 commit 再部署"
+        exit 1
     fi
-fi
+    (cd "$BOT_DIR" && git push origin main) || { echo "❌ push 失败，中止"; exit 1; }
+    ssh $SERVER "cd /opt/yixianqian && git pull --ff-only origin main" || { echo "❌ 服务器 pull 失败，中止"; exit 1; }
+    ssh $SERVER "/opt/yixianqian/venv/bin/python -m py_compile /opt/yixianqian/yixianqian_bot_ws.py" || { echo "❌ 语法错误，未重启"; exit 1; }
+    ssh $SERVER "systemctl restart yixianqian"
+    echo "✅ 机器人部署成功"
+}
 
-if [ "$TARGET" = "h5" ] || [ "$TARGET" = "all" ]; then
-    echo "🌐 部署H5后端..."
-    if [ -f "../yixianqian-h5/backend/app.py" ]; then
-        scp ../yixianqian-h5/backend/app.py ../yixianqian-h5/backend/config.py ../yixianqian-h5/backend/bitable.py $SERVER:/opt/yixianqian-h5/backend/
-        ssh $SERVER "/opt/yixianqian-h5/backend/venv/bin/python -m py_compile /opt/yixianqian-h5/backend/app.py"
-        if [ $? -eq 0 ]; then
-            echo "✅ H5后端部署成功（代码已就位，重启见下方）"
-        else
-            echo "❌ 语法错误，已保留旧版本，未重启"
-        fi
+deploy_h5() {
+    echo "🌐 部署 H5..."
+    if [ -n "$(cd "$H5_DIR" && git status --porcelain)" ]; then
+        echo "❌ H5 仓库有未提交改动，请先 commit 再部署"
+        exit 1
     fi
+    (cd "$H5_DIR" && git push origin main) || { echo "❌ push 失败，中止"; exit 1; }
+    ssh $SERVER "cd /opt/yixianqian-h5 && git pull --ff-only origin main" || { echo "❌ 服务器 pull 失败，中止"; exit 1; }
+    ssh $SERVER "/opt/yixianqian-h5/backend/venv/bin/python -m py_compile /opt/yixianqian-h5/backend/app.py /opt/yixianqian-h5/backend/config.py /opt/yixianqian-h5/backend/bitable.py" || { echo "❌ 语法错误，未重启"; exit 1; }
+    ssh $SERVER "systemctl restart yixianqian-h5"
+    echo "✅ H5 部署成功"
+}
 
-    echo "⚙️  部署 gunicorn 配置..."
-    if [ -f "../yixianqian-h5/backend/gunicorn.conf.py" ]; then
-        scp ../yixianqian-h5/backend/gunicorn.conf.py $SERVER:/opt/yixianqian-h5/backend/gunicorn.conf.py
-        echo "✅ gunicorn.conf.py 部署成功"
-    fi
-
-    echo "🎨 部署H5前端..."
-    if [ -f "../yixianqian-h5/frontend/index.html" ]; then
-        scp ../yixianqian-h5/frontend/index.html $SERVER:/opt/yixianqian-h5/frontend/index.html
-        echo "✅ H5前端部署成功"
-    fi
-
-    echo "🔁 重启 H5（systemctl）..."
-    ssh $SERVER "systemctl restart yixianqian-h5 && sleep 2 && systemctl is-active yixianqian-h5"
-fi
-
-if [ -d "tools" ]; then
-    echo "🔧 部署工具脚本..."
-    scp tools/*.py $SERVER:/opt/yixianqian/tools/ 2>/dev/null
-    echo "✅ 工具脚本部署成功"
-fi
+case "$TARGET" in
+    bot) deploy_bot ;;
+    h5)  deploy_h5 ;;
+    all) deploy_bot && deploy_h5 ;;
+    *)   echo "用法: bash deploy.sh [bot|h5|all]"; exit 1 ;;
+esac
 
 echo ""
 echo "🎉 部署完成！"

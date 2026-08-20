@@ -786,9 +786,9 @@ def auto_bind_from_creator():
             log(f"重复注册已拦截: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
             send_text_message(open_id,
                 f"你已经注册过啦！姓名：{old_nick}\n\n"
-                f"无需重复注册，在「活跃异性」视图中即可浏览资料。\n"
-                f"如需修改资料，请发送「修改资料」。"
+                f"快去「一线牵 App」中浏览异性资料。"
             )
+            send_main_menu_card(open_id)
             continue
 
         # 新注册用户强制设为待审核（防止表单默认值或用户自选导致直接活跃）
@@ -886,22 +886,17 @@ def auto_send_view_after_approval():
         if not open_id or not nickname:
             continue
 
-        h5_url = generate_h5_url(open_id)
-
-        message = (
+        message_head = (
             f"恭喜你，资料审核已通过！\U0001f389\n\n"
-            f"点击下方链接进入一线牵H5，开始牵线吧：\n\n"
-            f"{h5_url}\n\n"
-            f"【功能说明】\n"
-            f"\U0001f498 牵线：左右滑动浏览异性资料，点爱心表达心意\n"
-            f"\U0001f48c 消息：查看谁喜欢了你（单向匿名，相互喜欢才揭晓）\n"
-            f"\U0001f3af 活动：查看线下活动并报名\n"
-            f"\U0001f464 我的：查看和编辑个人资料\n\n"
-            f"初始有 {INITIAL_HEARTS} 颗爱心，邀请好友注册可获得更多爱心（上限{MAX_HEARTS}颗）。\n"
-            f"发送「邀请」获取你的专属邀请链接~\n\n"
-            f"祝你早日脱单！\U0001f495"
+            f"去一线牵App，开始牵线吧："
         )
-        if send_text_message(open_id, message):
+        message_tail = (
+            f"初始有 {INITIAL_HEARTS} 颗爱心，邀请好友注册可获得更多爱心（上限{MAX_HEARTS}颗）。\n\n"
+            f"祝你早日找到天主给你准备的另一半！\U0001f495"
+        )
+        if send_text_message(open_id, message_head):
+            send_main_menu_card(open_id)
+            send_text_message(open_id, message_tail)
             sent_count += 1
             notified.setdefault("approval_sent", []).append(record_id)
             log(f"审核通过通知已发送: {nickname} ({gender})")
@@ -951,9 +946,9 @@ def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id):
             inviter_openid,
             f"\U0001f389 你的好友「{invitee_nickname}」已注册并审核通过！\n\n"
             f"你获得了 1颗爱心奖励，当前共有 {int(new_hearts)} 颗爱心。\n"
-            f"继续邀请好友，最多可获得 {MAX_HEARTS} 颗爱心~\n\n"
-            f"发送「邀请」获取你的专属邀请链接。"
+            f"继续邀请好友，最多可获得 {MAX_HEARTS} 颗爱心~"
         )
+        send_main_menu_card(inviter_openid)
 
 
 def auto_send_view_loop(interval=30):
@@ -1045,9 +1040,7 @@ def auto_fill_like_initiator():
                 log(f"重复喜欢已拦截: {initiator_nickname} -> {target_nickname}")
                 send_text_message(
                     initiator_openid,
-                    f"你已经喜欢过「{target_nickname}」了，无需重复操作~\n\n"
-                    f"如果想撤销喜欢，请发送「取消喜欢 {target_nickname}」\n"
-                    f"发送「我的喜欢」可查看你喜欢的人列表。"
+                    f"你已经喜欢过「{target_nickname}」了，无需重复操作~"
                 )
         elif is_self_like:
             update_fields[FIELD_LIKE_STATUS] = "已取消"
@@ -1144,17 +1137,19 @@ def auto_send_anonymous_like_notification():
                 f"截至目前，有 {like_count} 位异性喜欢你！\n\n"
                 f"到下面找找看👇，说不定就是你心动的那个人~\n"
             )
+            if view_url:
+                message += f"{view_url}"
         else:
             message = (
                 f"\U0001f48c 有人喜欢了你！\n"
                 f"（为保护隐私，暂不透露对方身份，相互喜欢后才会揭晓哦！）\n\n"
                 f"截至目前，有 {like_count} 位异性喜欢你！\n\n"
-                f"到下面找找看👇，说不定就是你心动的那个人~\n"
+                f"到下面找找看👇，说不定就是你心动的那个人~"
             )
-        if view_url:
-            message += f"{view_url}"
 
         if send_text_message(target_openid, message):
+            if like_type != "实名":
+                send_main_menu_card(target_openid)
             sent_count += 1
             notified.setdefault("like_notified", []).append(record_id)
             log(f"匿名喜欢通知已发送: -> {target_nickname} (当前{like_count}人喜欢)")
@@ -1305,8 +1300,9 @@ def auto_deduct_hearts():
             send_text_message(
                 initiator_oid,
                 "你的爱心已用完，本次喜欢未生效。\n\n"
-                "取消已有喜欢可返还爱心，或联系管理员获取更多爱心。"
+                "取消已有喜欢可返还爱心，或邀请好友获得更多爱心。"
             )
+            send_main_menu_card(initiator_oid)
             continue
         new_hearts = current_hearts - 1
         if update_record(USER_TABLE_ID, user_record_id, {FIELD_HEART_REMAIN: new_hearts}):
@@ -1470,10 +1466,10 @@ def auto_notify_signup():
                 continue
             msg = (
                 f"🔔 你喜欢的「{signup_name}」报名了「{activity_name}」活动！\n\n"
-                f"你也去看看吧，说不定能线下偶遇哦~\n\n"
-                f"{generate_h5_url(liker_oid)}"
+                f"你也去看看吧，说不定能线下偶遇哦~"
             )
             send_text_message(liker_oid, msg)
+            send_main_menu_card(liker_oid)
             add_notification(liker_oid, "signup", f"你喜欢的 {signup_name} 报名了 {activity_name} 活动", key,
                              extra={"activity_id": act_record_by_id.get(activity_id, "")})
             notified.setdefault("signup_notified", []).append(key)
@@ -1491,10 +1487,10 @@ def auto_notify_signup():
                 continue
             msg = (
                 f"💌 喜欢你的人报名了「{activity_name}」活动！\n\n"
-                f"你也去看看吧，万一你也喜欢TA呢~\n\n"
-                f"{generate_h5_url(target_oid)}"
+                f"你也去看看吧，万一你也喜欢TA呢~"
             )
             send_text_message(target_oid, msg)
+            send_main_menu_card(target_oid)
             add_notification(target_oid, "signup", f"喜欢你的人报名了 {activity_name} 活动", key,
                              extra={"activity_id": act_record_by_id.get(activity_id, "")})
             notified.setdefault("signup_notified", []).append(key)
@@ -2481,76 +2477,19 @@ def handle_invite_command(sender_id):
 
 
 def handle_h5_command(sender_id):
-    """发送H5入口卡片，点击按钮直接打开H5页面"""
+    """发送卡片1（主菜单卡片）"""
     user_records = find_user_by_openid(sender_id)
     if not user_records:
-        return "你还没有注册哦~\n发送「注册」先填写资料，审核通过后即可使用H5。"
+        return "你还没有注册哦~\n发送「注册」先填写资料，审核通过后即可使用一线牵App。"
     user_fields = user_records[0].get("fields", {})
     status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
     if status != "活跃":
-        return f"你的资料当前状态：{status}\n审核通过后即可使用H5，请耐心等待~"
-    h5_url = generate_h5_url(sender_id)
-    card = {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": "一线牵"},
-            "template": "red"
-        },
-        "elements": [
-            {
-                "tag": "div",
-                "text": {"tag": "lark_md", "content": "\U0001f495 欢迎使用一线牵\n点击下方按钮直接进入："}
-            },
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "进入一线牵App"},
-                        "type": "primary",
-                        "url": h5_url
-                    }
-                ]
-            },
-            {
-                "tag": "note",
-                "elements": [{"tag": "plain_text", "content": "牵线 💕 消息 💌 活动 🎯 我的 👤"}]
-            }
-        ]
-    }
-    if send_card_message(sender_id, card):
-        log(f"已发送H5入口卡片: {sender_id}")
+        return f"你的资料当前状态：{status}\n审核通过后即可使用一线牵App，请耐心等待~"
+    if send_main_menu_card(sender_id):
+        log(f"已发送卡片1(主菜单): {sender_id}")
         return None
-    return f"点击进入一线牵H5：\n{h5_url}"
-
-
-def handle_bind_command(sender_id, nickname):
-    nickname = nickname.strip()
-    if not nickname:
-        return "请输入姓名，格式：绑定：你的姓名\n例如：绑定：小明"
-    log(f"用户 {sender_id} 请求绑定姓名: {nickname}")
-    records = find_user_by_nickname(nickname)
-    if not records:
-        return f"未找到姓名为「{nickname}」的用户。\n\n请先完成注册，或检查昵称是否正确。"
-    if len(records) > 1:
-        return f"找到多个姓名为「{nickname}」的用户，请联系管理员处理。"
-    record = records[0]
-    record_id = record.get("record_id")
-    fields = record.get("fields", {})
-    existing_feishu_id = fields.get(FIELD_FEISHU_ID, "")
-    if existing_feishu_id and existing_feishu_id == sender_id:
-        return f"你已经绑定过了，姓名：{nickname}\n\n无需重复绑定。"
-    if update_user_feishu_id(record_id, sender_id):
-        bindings = load_bindings()
-        bindings[sender_id] = {
-            "open_id": sender_id, "nickname": nickname, "record_id": record_id,
-            "bind_time": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        save_bindings(bindings)
-        log(f"绑定成功: {sender_id} -> {nickname}")
-        return f"绑定成功！姓名：{nickname}\n\n如果你的资料已审核通过，我会很快发送浏览链接给你。"
-    else:
-        return "绑定失败，请稍后重试或联系管理员。"
+    h5_url = generate_h5_url(sender_id)
+    return f"点击进入一线牵App：\n{h5_url}"
 
 
 def handle_status_command(sender_id):
@@ -2584,237 +2523,8 @@ def handle_status_command(sender_id):
     return "\n".join(lines)
 
 
-def handle_activity_command(sender_id):
-    """活动指令：查询当前报名中的活动，返回报名链接"""
-    # 检查用户状态
-    user_records = find_user_by_openid(sender_id)
-    if not user_records:
-        return "你还没有注册哦~\n发送「注册」先填写资料，审核通过后即可报名活动。"
-    user_fields = user_records[0].get("fields", {})
-    status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-    if status == "待审核":
-        return "你的资料正在审核中，请耐心等待~\n审核通过后即可报名活动。"
-    if status in ("已隐藏", "已退出"):
-        return f"你的账号状态为「{status}」，暂无法报名活动。"
-    if status != "活跃":
-        return "你的账号尚未激活，请先完成注册并等待审核。"
-
-    items = search_records(ACTIVITY_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [{"field_name": "活动状态", "operator": "is", "value": ["报名中"]}]
-    })
-    if not items:
-        return "目前暂无进行中的活动，敬请期待~\n有新活动时我会通知你。"
-
-    return (
-        "📋 当前活动：\n\n"
-        f"{generate_h5_url(sender_id)}\n\n"
-        "点击进入一线牵App，在「活动」页查看并报名。\n"
-        "报名后，喜欢你的人会收到通知哦~"
-    )
-
-
-def handle_browse_view_command(sender_id):
-    """浏览指令：返回对应性别的活跃异性画册视图链接"""
-    user_records = find_user_by_openid(sender_id)
-    if not user_records:
-        return "你还没有注册哦~\n发送「注册」先填写资料，审核通过后即可浏览异性资料。"
-    user_fields = user_records[0].get("fields", {})
-    status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-    gender = get_field_text(user_fields, FIELD_GENDER)
-    nickname = get_field_text(user_fields, FIELD_NICKNAME)
-
-    if status == "待审核":
-        return "你的资料正在审核中，请耐心等待~\n审核通过后会自动通知你。"
-    if status in ("已隐藏", "已退出"):
-        return f"你的账号状态为「{status}」，暂无法浏览。"
-    if status != "活跃":
-        return "你的账号尚未激活，请先完成注册并等待审核。"
-
-    if gender == "男性":
-        view_desc = "活跃女生"
-    elif gender == "女性":
-        view_desc = "活跃男生"
-    else:
-        return "你的资料中未设置性别，请联系管理员。"
-
-    return (
-        f"点击进入一线牵App，浏览「{view_desc}」：\n\n"
-        f"{generate_h5_url(sender_id)}\n\n"
-        f"在对方卡片上点击「♥」按钮即可表达心意~"
-    )
-
-
-def handle_cancel_like_command(sender_id, target_keyword):
-    """用户取消喜欢某人，支持姓名或用户ID"""
-    target_keyword = target_keyword.strip()
-    if not target_keyword:
-        return "请输入要取消喜欢的用户，格式：取消喜欢 U-0003 或 取消喜欢 姓名"
-
-    # 通过open_id找到当前用户
-    user_records = find_user_by_openid(sender_id)
-    if not user_records:
-        return "你还未注册，请先发送「注册」完成注册。"
-    user_fields = user_records[0].get("fields", {})
-    user_nickname = get_field_text(user_fields, FIELD_NICKNAME)
-
-    # 查找目标用户（支持用户ID或姓名）
-    target_records = find_user_by_id_or_name(target_keyword)
-    if not target_records:
-        return f"未找到用户「{target_keyword}」"
-    target_fields = target_records[0].get("fields", {})
-    target_openid = get_field_text(target_fields, FIELD_FEISHU_ID)
-    target_nickname = get_field_text(target_fields, FIELD_NICKNAME)
-
-    # 取消前先把目标用户的「喜欢你」记录也软取消（双向完全切断）
-    reverse_likes = search_records(LIKE_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [target_openid]},
-            {"field_name": FIELD_LIKE_TARGET_OPENID, "operator": "is", "value": [sender_id]},
-            {"field_name": FIELD_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
-        ]
-    })
-    for rl in reverse_likes:
-        update_record(LIKE_TABLE_ID, rl.get("record_id"), {FIELD_LIKE_STATUS: "已取消"})
-
-    # 再取消我的喜欢记录（单向或相互都允许）
-    all_likes = search_records(LIKE_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [sender_id]},
-            {"field_name": FIELD_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]},
-            {"field_name": FIELD_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
-        ]
-    })
-    if not all_likes:
-        return f"你当前没有喜欢「{target_nickname}」，无需取消。\n发送「我的喜欢」可查看你喜欢的人。"
-
-    cancelled = 0
-    for like in all_likes:
-        if update_record(LIKE_TABLE_ID, like.get("record_id"), {FIELD_LIKE_STATUS: "已取消"}):
-            cancelled += 1
-
-    if cancelled > 0:
-        log(f"用户取消喜欢: {user_nickname} -> {target_nickname} ({cancelled}条)")
-        return (
-            f"已取消对「{target_nickname}」的喜欢，爱心将自动返还。\n\n"
-            f"如果改变主意，可以在「活跃异性」视图中再次点击「喜欢TA」。"
-        )
-    else:
-        return "操作失败，请稍后重试。"
-
-
-def build_my_likes_card(likes, mutual_likes):
-    """构建「我的喜欢」交互卡片"""
-    elements = []
-
-    if likes:
-        elements.append({
-            "tag": "div",
-            "text": {"tag": "lark_md", "content": f"你当前喜欢了 **{len(likes)}** 人，点击右侧「取消」可撤销："}
-        })
-        elements.append({"tag": "hr"})
-        for i, like in enumerate(likes, 1):
-            fields = like.get("fields", {})
-            target = get_field_text(fields, FIELD_LIKE_TARGET)
-            elements.append({
-                "tag": "column_set",
-                "flex_mode": "none",
-                "columns": [
-                    {
-                        "tag": "column",
-                        "width": "weighted",
-                        "weight": 1,
-                        "vertical_align": "center",
-                        "elements": [
-                            {"tag": "div", "text": {"tag": "lark_md", "content": f"**{i}. {target}**"}}
-                        ]
-                    },
-                    {
-                        "tag": "column",
-                        "width": "auto",
-                        "vertical_align": "center",
-                        "elements": [
-                            {
-                                "tag": "button",
-                                "text": {"tag": "plain_text", "content": "取消喜欢"},
-                                "type": "danger",
-                                "size": "small",
-                                "value": {"action": "cancel_like", "target": target}
-                            }
-                        ]
-                    }
-                ]
-            })
-    else:
-        elements.append({
-            "tag": "div",
-            "text": {"tag": "lark_md", "content": "你目前还没有喜欢的人~\n去「活跃异性」视图逛逛吧！"}
-        })
-
-    if mutual_likes:
-        elements.append({"tag": "hr"})
-        elements.append({
-            "tag": "div",
-            "text": {"tag": "lark_md", "content": f"**\U0001f495 互相喜欢（{len(mutual_likes)}人）：**"}
-        })
-        for i, like in enumerate(mutual_likes, 1):
-            fields = like.get("fields", {})
-            target = get_field_text(fields, FIELD_LIKE_TARGET)
-            elements.append({
-                "tag": "div",
-                "text": {"tag": "lark_md", "content": f"{i}. {target}（已开通聊天）"}
-            })
-
-    elements.append({"tag": "hr"})
-    elements.append({
-        "tag": "note",
-        "elements": [{"tag": "plain_text", "content": "取消后爱心自动返还，可重新喜欢 | 发送「我的喜欢」刷新列表"}]
-    })
-
-    return {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"tag": "plain_text", "content": "\U0001f495 我的喜欢"},
-            "template": "red"
-        },
-        "elements": elements
-    }
-
-
-def handle_my_likes_command(sender_id):
-    """查看我喜欢的人（卡片版，直接发送卡片，返回None表示不再发文字）"""
-    user_records = find_user_by_openid(sender_id)
-    if not user_records:
-        return "你还未注册，请先发送「注册」完成注册。"
-    user_nickname = get_field_text(user_records[0].get("fields", {}), FIELD_NICKNAME)
-
-    likes = search_records(LIKE_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [sender_id]},
-            {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["单向喜欢"]}
-        ]
-    })
-    mutual_likes = search_records(LIKE_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [sender_id]},
-            {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["相互喜欢"]}
-        ]
-    })
-
-    card = build_my_likes_card(likes, mutual_likes)
-    if send_card_message(sender_id, card):
-        log(f"已发送我的喜欢卡片: {user_nickname}")
-    else:
-        send_text_message(sender_id, "获取喜欢列表失败，请稍后重试。")
-    return None  # 卡片已直接发送，不再发文字消息
-
-
 def build_main_menu_card(h5_url=None):
-    """构建主菜单卡片（替代机器人自定义菜单，外部用户也可见）"""
+    """构建主菜单卡片（卡片1：一线牵 App + 邀请好友 + 帮助）"""
     app_button = {
         "tag": "button",
         "text": {"tag": "plain_text", "content": "一线牵 App"},
@@ -2828,13 +2538,13 @@ def build_main_menu_card(h5_url=None):
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "一线牵"},
+            "title": {"tag": "plain_text", "content": "欢迎使用一线牵\U0001f495"},
             "template": "red"
         },
         "elements": [
             {
                 "tag": "div",
-                "text": {"tag": "lark_md", "content": "欢迎使用一线牵 💕\n点击下方按钮快速开始："}
+                "text": {"tag": "lark_md", "content": "欢迎使用一线牵 \U0001f495"}
             },
             {
                 "tag": "action",
@@ -2845,6 +2555,12 @@ def build_main_menu_card(h5_url=None):
                         "text": {"tag": "plain_text", "content": "邀请好友"},
                         "type": "default",
                         "value": {"action": "menu_invite"}
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "帮助"},
+                        "type": "default",
+                        "value": {"action": "menu_help"}
                     }
                 ]
             }
@@ -2852,14 +2568,14 @@ def build_main_menu_card(h5_url=None):
     }
 
 
+def send_main_menu_card(open_id):
+    """发送卡片1（主菜单卡片），「一线牵 App」按钮直接跳转H5"""
+    return send_card_message(open_id, build_main_menu_card(generate_h5_url(open_id)))
+
+
 def handle_help_command(sender_id):
-    """发送主菜单卡片（卡片1：一线牵 App + 邀请好友）"""
-    h5_url = generate_h5_url(sender_id)
-    if send_card_message(sender_id, build_main_menu_card(h5_url)):
-        log(f"已发送主菜单卡片: {sender_id}")
-    else:
-        send_text_message(sender_id, WELCOME_TEXT)
-    return None
+    """发送帮助说明（文本）"""
+    return WELCOME_TEXT
 
 
 
@@ -2868,16 +2584,10 @@ def handle_help_command(sender_id):
 WELCOME_TEXT = (
     "欢迎欢迎\U0001f44f！\n\n"
     "给机器人发送下列指令：\n\n"
-    "【H5】\n"
-    "获取一线牵H5链接（牵线、消息、活动、我的）；\n\n"
+    "【一线牵】\n"
+    "获取一线牵App链接（牵线、消息、活动、我的）；\n\n"
     "【邀请】\n"
     "获取专属邀请链接，邀请好友得爱心；\n\n"
-    "【我的喜欢】\n"
-    "查看喜欢列表，可直接点击按钮取消喜欢；\n\n"
-    "【活动】\n"
-    "获取当前活动报名链接；\n\n"
-    "【分组】\n"
-    "活动分组选择（需先报名活动）；\n\n"
     "【注册】\n"
     "获取注册表单链接；\n\n"
     "【状态】\n"
@@ -2891,12 +2601,7 @@ WELCOME_TEXT = (
 def handle_welcome(sender_id, is_first_time=False):
     if is_first_time:
         return handle_register_command(sender_id)
-    else:
-        # 发送主菜单卡片
-        if send_card_message(sender_id, build_main_menu_card()):
-            log(f"已发送主菜单卡片(欢迎): {sender_id}")
-            return None
-        return WELCOME_TEXT
+    return WELCOME_TEXT
 
 
 def is_admin(open_id):
@@ -3174,17 +2879,11 @@ def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChat
                 log(f"用户 {user_open_id} 为活跃用户，不再发送菜单卡片")
                 return
             else:
-                # 非活跃用户，发送状态提示（只发一次）
+                # 非活跃用户，发送卡片1（只发一次）
                 welcomed = load_welcomed()
                 if user_open_id in welcomed:
                     return
-                nickname = get_field_text(user_fields, FIELD_NICKNAME)
-                message = (
-                    f"欢迎回来，{nickname}！\n\n"
-                    f"你的资料当前状态：{status}\n"
-                    f"发送「状态」查看详情"
-                )
-                if send_text_message(user_open_id, message):
+                if send_main_menu_card(user_open_id):
                     welcomed.append(user_open_id)
                     save_welcomed(welcomed)
         else:
@@ -3215,7 +2914,7 @@ def do_p2_application_bot_menu_v6(data: P2ApplicationBotMenuV6) -> None:
         if event_key == "invite":
             reply = handle_invite_command(open_id)
         elif event_key == "help":
-            reply = handle_help_command(sender_id)
+            reply = handle_help_command(open_id)
         elif event_key == "h5":
             reply = handle_h5_command(open_id)
         else:
@@ -3228,7 +2927,7 @@ def do_p2_application_bot_menu_v6(data: P2ApplicationBotMenuV6) -> None:
 
 
 def do_p2_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
-    """处理卡片按钮点击（取消喜欢）"""
+    """处理卡片按钮点击（菜单按钮/分组提交）"""
     try:
         event = data.event
         operator_open_id = event.operator.open_id if event.operator else None
@@ -3240,7 +2939,6 @@ def do_p2_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerR
             })
 
         action = action_value.get("action", "")
-        target = action_value.get("target", "")
 
         if action == "menu_h5":
             reply = handle_h5_command(operator_open_id)
@@ -3257,85 +2955,9 @@ def do_p2_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerR
                 "toast": {"type": "success", "content": "邀请链接已发送"}
             })
         elif action == "menu_help":
-            help_text = (
-                "【指令列表】\n"
-                "H5/网页版 - 获取一线牵H5链接\n"
-                "邀请 - 获取专属邀请链接\n"
-                "我的喜欢 - 查看喜欢列表\n"
-                "活动 - 获取活动报名链接\n"
-                "分组 - 活动分组选择\n"
-                "注册 - 获取注册表单链接\n"
-                "状态 - 查看注册审核进度\n"
-                "帮助 - 显示本菜单"
-            )
-            send_text_message(operator_open_id, help_text)
+            send_text_message(operator_open_id, WELCOME_TEXT)
             return P2CardActionTriggerResponse({
                 "toast": {"type": "info", "content": "帮助信息已发送"}
-            })
-
-        if action == "cancel_like":
-            # 查找当前用户
-            user_records = find_user_by_openid(operator_open_id)
-            if not user_records:
-                return P2CardActionTriggerResponse({
-                    "toast": {"type": "error", "content": "请先注册后再操作"}
-                })
-            user_nickname = get_field_text(user_records[0].get("fields", {}), FIELD_NICKNAME)
-
-            # 查找目标用户的open_id
-            target_records = find_user_by_id_or_name(target)
-            target_openid = ""
-            if target_records:
-                target_openid = get_field_text(target_records[0].get("fields", {}), FIELD_FEISHU_ID)
-
-            # 用open_id查找单向喜欢记录
-            likes = search_records(LIKE_TABLE_ID, {
-                "conjunction": "and",
-                "conditions": [
-                    {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [operator_open_id]},
-                    {"field_name": FIELD_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]},
-                    {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["单向喜欢"]}
-                ]
-            })
-
-            if not likes:
-                return P2CardActionTriggerResponse({
-                    "toast": {"type": "warning", "content": f"你当前没有喜欢{target}"}
-                })
-
-            # 标记为已取消
-            cancelled = 0
-            for like in likes:
-                if update_record(LIKE_TABLE_ID, like.get("record_id"), {FIELD_LIKE_STATUS: "已取消"}):
-                    cancelled += 1
-
-            if cancelled == 0:
-                return P2CardActionTriggerResponse({
-                    "toast": {"type": "error", "content": "取消失败，请稍后重试"}
-                })
-
-            log(f"卡片取消喜欢: {user_nickname} -> {target} ({cancelled}条)")
-
-            # 重新查询最新数据，返回更新后的卡片
-            new_likes = search_records(LIKE_TABLE_ID, {
-                "conjunction": "and",
-                "conditions": [
-                    {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [operator_open_id]},
-                    {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["单向喜欢"]}
-                ]
-            })
-            new_mutual = search_records(LIKE_TABLE_ID, {
-                "conjunction": "and",
-                "conditions": [
-                    {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [operator_open_id]},
-                    {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["相互喜欢"]}
-                ]
-            })
-            new_card = build_my_likes_card(new_likes, new_mutual)
-
-            return P2CardActionTriggerResponse({
-                "toast": {"type": "success", "content": f"已取消对{target}的喜欢，爱心将返还"},
-                "card": {"type": "raw", "data": new_card}
             })
 
         elif action == "submit_group":
@@ -3469,39 +3091,12 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_register_command(sender_id)
         elif text_lower in ["邀请", "invite", "邀请好友", "分享"]:
             reply = handle_invite_command(sender_id)
-        elif text_lower in ["h5", "一线牵", "app", "进入", "打开", "网页版", "网页", "web", "帮助", "help", "?", "？", "使用帮助"]:
+        elif text_lower in ["h5", "一线牵", "app", "进入", "打开", "网页版", "网页", "web"]:
+            reply = handle_h5_command(sender_id)
+        elif text_lower in ["帮助", "help", "?", "？", "使用帮助"]:
             reply = handle_help_command(sender_id)
         elif text_lower in ["状态", "我的信息", "我的状态", "status"]:
             reply = handle_status_command(sender_id)
-        elif text.startswith("绑定") or text.startswith("bind"):
-            nickname = ""
-            for sep in ["：", ":", " "]:
-                if sep in text:
-                    nickname = text.split(sep, 1)[1].strip()
-                    break
-            if not nickname:
-                if text.startswith("绑定") and len(text) > 2:
-                    nickname = text[2:].strip()
-                elif text.lower().startswith("bind") and len(text) > 4:
-                    nickname = text[4:].strip()
-            reply = handle_bind_command(sender_id, nickname)
-        elif text.startswith("取消喜欢") or text.startswith("取消"):
-            target = ""
-            for sep in ["：", ":", " "]:
-                if sep in text:
-                    target = text.split(sep, 1)[1].strip()
-                    break
-            if not target and text.startswith("取消喜欢") and len(text) > 4:
-                target = text[4:].strip()
-            elif not target and text.startswith("取消") and len(text) > 2:
-                target = text[2:].strip()
-            reply = handle_cancel_like_command(sender_id, target)
-        elif text_lower in ["活动", "线下活动", "报名", "activity"]:
-            reply = handle_activity_command(sender_id)
-        elif text_lower in ["浏览", "看看", "逛一逛", "browse"]:
-            reply = handle_browse_view_command(sender_id)
-        elif text_lower in ["我的喜欢", "喜欢列表", "我喜欢的人", "my likes"]:
-            reply = handle_my_likes_command(sender_id)
         elif text_lower in ["分组", "分组选择", "选组", "group"]:
             reply = handle_group_command(sender_id)
         else:

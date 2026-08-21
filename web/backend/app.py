@@ -275,7 +275,39 @@ def snap_group_results(act_id):
 
 
 # ========== Session 管理 ==========
-file_lock = threading.Lock()
+# 跨进程文件锁（替代 threading.Lock，gunicorn 多 worker 下有效）
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+_file_lock_path = os.path.join(SHARED_DATA_DIR, ".app.lock")
+_thread_locks = {}
+_locks_guard = threading.Lock()
+def _thread_lock(path):
+    with _locks_guard:
+        if path not in _thread_locks:
+            _thread_locks[path] = threading.Lock()
+        return _thread_locks[path]
+class _AppLock:
+    def __enter__(self):
+        tl = _thread_lock(_file_lock_path)
+        tl.acquire()
+        self._tl = tl
+        self._f = open(_file_lock_path + ".lock", "a+")
+        if fcntl:
+            fcntl.flock(self._f.fileno(), fcntl.LOCK_EX)
+        return self
+    def __exit__(self, *exc):
+        try:
+            if fcntl:
+                fcntl.flock(self._f.fileno(), fcntl.LOCK_UN)
+        finally:
+            try:
+                self._f.close()
+            except Exception:
+                pass
+            self._tl.release()
+file_lock = _AppLock()
 
 
 def create_session(open_id):
@@ -1521,7 +1553,9 @@ def group_select(activity_id):
             F_GS_SELECTOR_NAME: my_name,
             F_GS_SELECTOR_GENDER: my_gender,
         }
-        # 填充志愿（存 open_id，分组算法按 open_id 匹配）
+        # 填充志愿（先清空 7 个志愿位，再填新值，避免脏数据残留）
+        for i in range(len(F_GS_CHOICES)):
+            fields[F_GS_CHOICES[i]] = ""
         for i, choice_oid in enumerate(choices):
             if i < len(F_GS_CHOICES):
                 fields[F_GS_CHOICES[i]] = choice_oid
@@ -1865,6 +1899,10 @@ def activity_signups(activity_id):
     oid = require_login()
     if not oid:
         return jsonify({"error": "未登录"}), 401
+    # 仅已报名该活动的用户可查看名单
+    _, _text_act_id_chk = snap_resolve_activity(activity_id)
+    if _text_act_id_chk and not bitable.get_user_signup(_text_act_id_chk, oid):
+        return jsonify({"error": "未报名该活动，无权查看名单"}), 403
     act_record, text_act_id = snap_resolve_activity(activity_id)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404

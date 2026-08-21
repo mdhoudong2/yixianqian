@@ -601,7 +601,6 @@ def auto_deduct_hearts():
         if current_hearts <= 0:
             log(f"扣减爱心失败: {initiator_name} 爱心不足")
             update_record(LIKE_TABLE_ID, record_id, {
-                FIELD_LIKE_HEART_DEDUCTED: True,
                 FIELD_LIKE_STATUS: "已取消"
             })
             send_text_message(
@@ -637,7 +636,7 @@ def auto_deduct_hearts():
         user = user_records[0]
         user_record_id = user.get("record_id")
         current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, 30)
-        new_hearts = current_hearts + 1
+        new_hearts = min(MAX_HEARTS, current_hearts + 1)
         if update_record(USER_TABLE_ID, user_record_id, {FIELD_HEART_REMAIN: new_hearts}):
             update_record(LIKE_TABLE_ID, record_id, {FIELD_LIKE_HEART_DEDUCTED: False})
             log(f"返还爱心成功: {initiator_name} 剩余 {new_hearts}")

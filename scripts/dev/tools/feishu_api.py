@@ -19,8 +19,8 @@ import requests
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import local_config as _cfg
-APP_ID = _cfg.APP_ID
-APP_SECRET = _cfg.APP_SECRET
+APP_ID = getattr(_cfg, "FEISHU_APP_ID", None) or getattr(_cfg, "APP_ID", None)
+APP_SECRET = getattr(_cfg, "FEISHU_APP_SECRET", None) or getattr(_cfg, "APP_SECRET", None)
 BASE_TOKEN = _cfg.BASE_TOKEN
 BASE_URL = "https://open.feishu.cn/open-apis"
 

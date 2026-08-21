@@ -77,6 +77,9 @@ cd web/backend && ./venv/bin/gunicorn -c gunicorn.conf.py app:app
 ```
 bot/         飞书机器人（WS 长连接）
 web/backend  Flask H5 后端      web/frontend  静态 H5 页面
+lib/         bot 与 H5 共享代码（飞书客户端/多维表格 DAO/JSON 存储）
 scripts/ops  守护/运维脚本      scripts/dev   一次性/排查脚本（勿用于生产）
 deploy/      systemd 服务模板   docs/         文档
+data/        运行时 JSON（gitignore，生产实际路径 /opt/yixianqian/data）
+.github/     GitHub Actions 语法检查（每次 push 到 main 自动执行）
 ```

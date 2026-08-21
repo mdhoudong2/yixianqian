@@ -43,8 +43,8 @@ if IS_DEV:
     APP_ID = _cfg.ASSISTANT_APP_ID
     APP_SECRET = _cfg.ASSISTANT_APP_SECRET
 else:
-    APP_ID = _cfg.APP_ID
-    APP_SECRET = _cfg.APP_SECRET
+    APP_ID = _cfg.FEISHU_APP_ID
+    APP_SECRET = _cfg.FEISHU_APP_SECRET
 
 # 管理员open_id列表（可添加多个）
 ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS

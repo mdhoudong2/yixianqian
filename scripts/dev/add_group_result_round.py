@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
+import os, sys
+_D = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _D)
+sys.path.insert(0, os.path.dirname(_D))
+from _prod_guard import guard
+guard(os.path.basename(__file__))
 # -*- coding: utf-8 -*-
 """一次性脚本：给分组结果表(GROUP_RESULT_TABLE)添加「轮次」单选字段(1..10)
 

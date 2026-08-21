@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+#!/usr/bin/env python3
+import os, sys
+_D = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _D)
+sys.path.insert(0, os.path.dirname(_D))
+from _prod_guard import guard
+guard(os.path.basename(__file__))
 """模拟管理员指令触发的后端流程（安全版）。
 
 - 不以真实飞书消息形式触发（避免真正的 WebSocket/消息收发），而是直接导入

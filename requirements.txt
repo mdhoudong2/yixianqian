@@ -1,6 +1,0 @@
-lark-oapi
-flask
-requests
-gunicorn
-Pillow
-itsdangerous

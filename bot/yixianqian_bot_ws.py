@@ -127,12 +127,14 @@ MAX_HEARTS = 30
 H5_BACKEND_URL = "http://127.0.0.1:8091"
 
 # ==================== 本地记录文件 ====================
-BINDING_FILE = "yixianqian_bindings.json"
-NOTIFIED_FILE = "yixianqian_notified.json"  # 记录已发送通知的记录ID，避免重复
-WELCOMED_FILE = "yixianqian_welcomed.json"  # 记录已发送进入欢迎消息的用户open_id，避免重复
-MENU_CARD_FILE = "yixianqian_menu_card.json"  # 记录上次发送菜单卡片的时间，用于节流
-INVITE_REWARDED_FILE = "yixianqian_invites.json"  # 记录已奖励的邀请关系
-NOTIFICATIONS_FILE = "/opt/yixianqian/yixianqian_notifications.json"  # 共享通知（机器人写，H5读）
+# bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认生产路径）
+SHARED_DATA_DIR = getattr(_cfg, "SHARED_DATA_DIR", "/opt/yixianqian")
+BINDING_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_bindings.json")
+NOTIFIED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notified.json")  # 记录已发送通知的记录ID，避免重复
+WELCOMED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_welcomed.json")  # 记录已发送进入欢迎消息的用户open_id，避免重复
+MENU_CARD_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_menu_card.json")  # 记录上次发送菜单卡片的时间，用于节流
+INVITE_REWARDED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_invites.json")  # 记录已奖励的邀请关系
+NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")  # 共享通知（机器人写，H5读）
 
 # WebSocket健康检查
 _last_ws_event_time = time.time()
@@ -1637,7 +1639,7 @@ def calculate_match_score(user_a, user_b):
 
 def auto_generate_match_recommendations():
     today = time.strftime("%Y-%m-%d")
-    match_log_file = "yixianqian_match_log.json"
+    match_log_file = os.path.join(SHARED_DATA_DIR, "yixianqian_match_log.json")
     try:
         with open(match_log_file, 'r', encoding='utf-8') as f:
             match_log = json.load(f)

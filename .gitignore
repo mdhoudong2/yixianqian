@@ -19,7 +19,6 @@ AGENTS.md
 # 运行时数据
 *.pid
 yixianqian_*.json
-data/
 image_cache/
 web/backend/image_cache/
 web/backend/yixianqian_track.json

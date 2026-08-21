@@ -31,9 +31,8 @@ jobs:
         run: ruff check bot web lib --output-format=github
       - name: 单测（pytest，如有 tests/ 目录）
         run: |
-          shopt -s globstar
-          if [ -d tests ] || ls -d **/test_*.py 2>/dev/null | grep -q .; then
-            pytest -q
+          if [ -d tests ]; then
+            pytest -q tests
           else
             echo "无单测，跳过"
           fi

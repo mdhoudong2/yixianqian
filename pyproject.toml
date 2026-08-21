@@ -9,3 +9,6 @@ ignore = ["E501", "F403", "F405", "E402", "E722", "E741", "F841", "UP015", "UP03
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

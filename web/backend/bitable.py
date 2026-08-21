@@ -34,6 +34,7 @@ get_record = _client.get_record
 create_record = _client.create_record
 update_record = _client.update_record
 field_exists = _client.field_exists
+upload_attachment = _client.upload_attachment
 
 
 # ========== 用户相关 ==========

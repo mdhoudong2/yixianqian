@@ -39,3 +39,6 @@ scripts/dev/setup_group_test.py
 # 本地工具
 .codebuddy/
 venv_broken_bak/
+bot/venv
+web/backend/venv
+web/backend/image_cache

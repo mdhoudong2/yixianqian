@@ -1163,8 +1163,6 @@ createApp({
       preloadAround();
     }
 
-    function splitTags(str) { return str ? str.split(/[,，、\s]+/).filter(Boolean) : []; }
-
     // 活动
     async function loadActivities() {
       if (activities.value.length) return; // 缓存
@@ -1230,9 +1228,6 @@ createApp({
       if (uid) parts.push('user_id=' + encodeURIComponent(uid.toUpperCase().startsWith('U-') ? uid.toUpperCase() : 'U-' + uid));
       ['church','native_place','city','industry','house','driving'].forEach(k => { if (f[k]) parts.push(k + '=' + encodeURIComponent(f[k])); });
       return parts.length ? ('?' + parts.join('&')) : '';
-    }
-    function toggleTag(field, val) {
-      filter.value[field] = (filter.value[field] === val) ? '' : val;
     }
     function toggleMultiTag(field, val) {
       const arr = filter.value[field];
@@ -1692,7 +1687,7 @@ createApp({
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup,
       cards, loadingCards, currentCard, cardIndex, photoIndex, currentPhotoUrl, photoLoading,
-      filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleTag, toggleMultiTag, resetFilter, applyFilter,
+      filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
       openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage,
@@ -1707,7 +1702,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
-      splitTags, onPhotoError,
+      onPhotoError,
       showPhotoViewer, viewerPhotos, viewerIndex, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchEnd,
       showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,

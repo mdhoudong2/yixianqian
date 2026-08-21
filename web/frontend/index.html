@@ -534,8 +534,8 @@
     <div class="edit-card">
       <div v-for="f in editableFields" :key="f.field" class="edit-row">
         <div class="edit-label">{{ f.label }}</div>
-        <van-field v-if="f.type==='text' || f.type==='phone'" v-model="f.value" :placeholder="'请输入' + f.label" :border="false" style="flex:1;" />
-        <van-field v-else-if="f.type==='number'" v-model="f.value" type="number" :placeholder="'请输入' + f.label" :border="false" style="flex:1;" />
+        <van-field v-if="f.type==='text' || f.type==='phone'" v-model="f.value" :placeholder="'请输入' + f.label" :border="false" style="flex:1;"></van-field>
+        <van-field v-else-if="f.type==='number'" v-model="f.value" type="number" :placeholder="'请输入' + f.label" :border="false" style="flex:1;"></van-field>
         <div v-else-if="f.type==='select'" class="edit-picker" @click="openPicker(f)">
           <span :class="f.value ? '' : 'placeholder'">{{ f.value || '请选择' }}</span>
           <van-icon name="arrow" />

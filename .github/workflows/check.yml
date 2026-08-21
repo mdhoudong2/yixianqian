@@ -23,3 +23,16 @@ jobs:
           done < <(find bot web scripts lib -name '*.py' -print0 2>/dev/null)
           [ "$fail" -eq 0 ] || exit 1
           echo "所有 Python 文件语法检查通过"
+      - name: 风格检查（ruff）
+        run: |
+          pip install -q ruff
+          ruff check bot web lib --output-format=github || true
+          echo "ruff 检查完成（当前仅提示，不阻断）"
+      - name: 单测（pytest，如有 tests/ 目录）
+        run: |
+          if [ -d tests ] || ls -d **/test_*.py 2>/dev/null | grep -q .; then
+            pip install -q pytest
+            pytest -q || true
+          else
+            echo "无单测，跳过"
+          fi

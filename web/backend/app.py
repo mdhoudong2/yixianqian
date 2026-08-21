@@ -613,6 +613,38 @@ IMAGE_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imag
 os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
 
 
+def cleanup_image_cache(max_age_days=7, max_files=1000):
+    """过期与超量清理：删 7 天前文件，超 1000 个时删最旧的（后台线程每日执行）"""
+    try:
+        files = [(os.path.join(IMAGE_CACHE_DIR, f), os.path.getmtime(os.path.join(IMAGE_CACHE_DIR, f)))
+                 for f in os.listdir(IMAGE_CACHE_DIR)]
+        cutoff = time.time() - max_age_days * 86400
+        for path, mtime in list(files):
+            if mtime < cutoff:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        files = [(p, m) for p, m in files if os.path.exists(p)]
+        if len(files) > max_files:
+            files.sort(key=lambda x: x[1])
+            for path, _ in files[:len(files) - max_files]:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+cleanup_image_cache()
+def _image_cleanup_loop():
+    while True:
+        time.sleep(86400)
+        cleanup_image_cache()
+threading.Thread(target=_image_cleanup_loop, daemon=True).start()
+
+
 def _get_cached_image(file_token):
     """检查磁盘缓存，返回 (path, content_type) 或 None"""
     for fname in os.listdir(IMAGE_CACHE_DIR):

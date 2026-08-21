@@ -15,7 +15,6 @@ from queries import (
 )
 from store import (
     add_notification,
-    load_bindings,
     load_invite_rewarded,
     reserve_notified,
     save_invite_rewarded,
@@ -48,12 +47,6 @@ def auto_bind_from_creator():
         if eoid:
             existing_openids[eoid] = get_field_text(ef, FIELD_NICKNAME)
 
-    # 也检查bindings缓存
-    bindings = load_bindings()
-    for oid, info in bindings.items():
-        if oid not in existing_openids:
-            existing_openids[oid] = info.get("nickname", "")
-
     bound_count = 0
     duplicate_count = 0
     for item in items:
@@ -68,8 +61,11 @@ def auto_bind_from_creator():
         # 防重复：该飞书账号已注册过
         if open_id in existing_openids:
             old_nick = existing_openids[open_id]
-            # 将重复记录标记为已隐藏，不绑定
-            update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "已隐藏"})
+            # 重复记录标记已隐藏，并补写飞书ID：否则飞书ID仍为空，下一轮会被当成"未绑定"重复轮询、反复发"已注册过"
+            update_record(USER_TABLE_ID, record_id, {
+                FIELD_ACCOUNT_STATUS: "已隐藏",
+                FIELD_FEISHU_ID: open_id,
+            })
             duplicate_count += 1
             log(f"重复注册已拦截: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
             send_text_message(open_id,

@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# 阻断集：已清的 61 条对应的规则；BLE/S 等容错类暂不阻断，后续分批收紧
+select = ["E", "F", "W", "I", "UP", "PIE", "SIM", "C90"]
+ignore = ["E501", "F403", "F405"]  # F403/F405：项目大量 from xxx import *，暂不卡
+
+[tool.ruff.lint.pycodestyle]
+max-line-length = 100

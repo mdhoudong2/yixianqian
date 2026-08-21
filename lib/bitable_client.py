@@ -355,7 +355,7 @@ def get_datetime_value(fields, key, default=""):
         if ts is None:
             return default
         ts = int(ts)
-        if ts > 10_000_000_000:  # 毫秒
+        if abs(ts) > 10_000_000_000:  # 毫秒（含 1970 年前的负时间戳，如 -1210752000000）
             ts = ts / 1000
         return time.strftime("%Y-%m-%d", time.localtime(ts))
     except (ValueError, TypeError, OverflowError):

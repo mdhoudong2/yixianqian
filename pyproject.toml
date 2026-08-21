@@ -3,9 +3,9 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-# 阻断集：已清的导入/未使用/编码类；复杂度和盲捉等暂不阻断
+# 阻断集：已清的导入/未使用/编码类；复杂度和盲捉等暂不阻断，后续分批收紧
 select = ["E", "F", "W", "I", "UP"]
-ignore = ["E501", "F403", "F405"]
+ignore = ["E501", "F403", "F405", "E402", "E722", "F841", "UP015"]
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 100

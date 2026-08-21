@@ -231,6 +231,35 @@ class BitableClient:
         self._field_cache[key] = (exists, now + 300)
         return exists
 
+    def upload_attachment(self, file_bytes, file_name, content_type="application/octet-stream"):
+        """上传附件到多维表格，返回 file_token（附件字段写入 [{"file_token": token}]）。"""
+        url = f"{API_BASE}/drive/v1/medias/upload_all"
+        token = self.get_token()
+        if not token:
+            return None
+        # multipart 上传不能带 Content-Type: application/json，交由 requests 自动生成 boundary
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            resp = requests.post(
+                url,
+                headers=headers,
+                data={
+                    "file_name": file_name,
+                    "parent_type": "bitable_file",
+                    "parent_node": self.base_token,
+                    "size": str(len(file_bytes)),
+                },
+                files={"file": (file_name, file_bytes, content_type)},
+                timeout=30,
+            )
+            result = resp.json()
+            if result.get("code") == 0:
+                return result.get("data", {}).get("file_token")
+            self.log(f"上传附件失败: {result}")
+        except Exception as e:
+            self.log(f"上传附件异常: {e}")
+        return None
+
 
 # ========== 字段值解析（纯函数，供双方直接 import） ==========
 

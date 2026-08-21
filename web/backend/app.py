@@ -1730,6 +1730,7 @@ def _editable_schema(fields):
     """可编辑字段 schema + 当前值，前端据此动态渲染「修改资料」表单"""
     return [
         {"field": fname, "label": label, "type": ftype, "options": opts,
+         "long": fname in LONG_TEXT_FIELDS,
          "value": _editable_value(fields, fname, ftype)}
         for fname, label, ftype, opts in EDITABLE_FIELDS
     ]
@@ -1795,6 +1796,41 @@ def update_profile():
     # 同步刷新快照：否则前端保存后立即 GET 会读到旧快照，表现为「保存后页面不刷新」
     refresh_snapshot_table("users")
     return jsonify({"ok": True, "message": "资料已更新"})
+
+
+@app.route("/api/profile/photo", methods=["POST"])
+def update_profile_photo():
+    """替换本人照片：上传图片到多维表格附件字段（个人照片）。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    user = bitable.find_user_by_openid(open_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "未收到图片"}), 400
+    data = f.read()
+    if not data:
+        return jsonify({"error": "图片为空"}), 400
+    if len(data) > 10 * 1024 * 1024:
+        return jsonify({"error": "图片不能超过10MB"}), 400
+    try:
+        Image.open(io.BytesIO(data)).verify()
+    except Exception:
+        return jsonify({"error": "文件不是有效图片"}), 400
+
+    filename = (f.filename or "photo.jpg").rsplit("/", 1)[-1] or "photo.jpg"
+    file_token = bitable.upload_attachment(data, filename, f.mimetype or "image/jpeg")
+    if not file_token:
+        return jsonify({"error": "图片上传失败，请稍后重试"}), 500
+
+    ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_PHOTO: [{"file_token": file_token, "name": filename}]})
+    if not ok:
+        return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+    refresh_snapshot_table("users")
+    return jsonify({"ok": True, "photo": "/api/image/" + file_token})
 
 
 # ========== 我的喜欢 ==========

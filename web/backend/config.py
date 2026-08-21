@@ -162,6 +162,9 @@ EDITABLE_FIELDS = [
     (F_PHONE, "手机号", "phone", None),
 ]
 
+# 「修改资料」里需用多行文本框展示的长文本字段（单行会截断、编辑时看不到后面内容）
+LONG_TEXT_FIELDS = {F_PERSONALITY, F_FAMILY, F_PARTNER_CRITERIA}
+
 # 喜欢关系表字段
 F_LIKE_INITIATOR = "发起用户昵称"
 F_LIKE_TARGET = "目标用户昵称"

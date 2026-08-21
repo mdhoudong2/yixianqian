@@ -116,6 +116,12 @@
   .edit-label { width: 108px; flex-shrink: 0; font-size: 14px; color: #646566; }
   .edit-picker { flex: 1; display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #323233; padding: 10px 0; }
   .edit-picker .placeholder { color: #c8c9cc; }
+  .edit-photo { display: flex; flex-direction: column; align-items: center; padding: 20px 16px 16px; }
+  .edit-photo img { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+  .edit-photo-placeholder { width: 100px; height: 100px; border-radius: 50%; background: #fff0f3; display: inline-flex; align-items: center; justify-content: center; font-size: 44px; }
+  .edit-photo-change { margin-top: 12px; font-size: 14px; color: #1989fa; display: flex; align-items: center; gap: 4px; }
+  .edit-long-row { align-items: flex-start; }
+  .edit-long-row .edit-label { padding-top: 12px; }
   .picker-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #f2f3f5; }
   .picker-options { max-height: 60vh; overflow-y: auto; padding: 8px 0; }
   .picker-option { padding: 12px 16px; font-size: 14px; color: #323233; }
@@ -531,10 +537,21 @@
   </div>
   <div class="profile-detail">
     <div class="edit-tip">除姓名、圣名、生日、家乡外，其它资料均可修改</div>
+    <div class="edit-card" style="margin-bottom:12px;">
+      <div class="edit-photo">
+        <img v-if="profileData.photo" :src="profileData.photo" alt="">
+        <div v-else class="edit-photo-placeholder">{{ profileData.gender==='男性' ? '👨' : '👩' }}</div>
+        <div class="edit-photo-change" @click="pickPhoto">
+          <van-icon name="photograph" /><span>{{ uploadingPhoto ? '上传中…' : '更换照片' }}</span>
+        </div>
+        <input ref="photoInput" type="file" accept="image/*" style="display:none;" @change="onPhotoChange" />
+      </div>
+    </div>
     <div class="edit-card">
-      <div v-for="f in editableFields" :key="f.field" class="edit-row">
+      <div v-for="f in editableFields" :key="f.field" :class="['edit-row', {'edit-long-row': f.long}]">
         <div class="edit-label">{{ f.label }}</div>
-        <van-field v-if="f.type==='text' || f.type==='phone'" v-model="f.value" :placeholder="'请输入' + f.label" :border="false" style="flex:1;"></van-field>
+        <van-field v-if="f.type==='text' && f.long" v-model="f.value" type="textarea" rows="1" autosize :placeholder="'请输入' + f.label" :border="false" style="flex:1; padding:10px 0;"></van-field>
+        <van-field v-else-if="f.type==='text' || f.type==='phone'" v-model="f.value" :placeholder="'请输入' + f.label" :border="false" style="flex:1;"></van-field>
         <van-field v-else-if="f.type==='number'" v-model="f.value" type="number" :placeholder="'请输入' + f.label" :border="false" style="flex:1;"></van-field>
         <div v-else-if="f.type==='select'" class="edit-picker" @click="openPicker(f)">
           <span :class="f.value ? '' : 'placeholder'">{{ f.value || '请选择' }}</span>
@@ -1074,9 +1091,31 @@ createApp({
     const showMultiPopup = ref(false);
     const pickerField = ref(null);
     const savingProfile = ref(false);
+    const photoInput = ref(null);
+    const uploadingPhoto = ref(false);
     function openProfileEdit() {
       editableFields.value = (profileData.value.editable || []).map(f => ({ ...f, value: Array.isArray(f.value) ? [...f.value] : f.value }));
       page.value = 'profile_edit';
+    }
+    function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
+    async function onPhotoChange(e) {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (!file.type || !file.type.startsWith('image/')) { vant.showToast('请选择图片文件'); return; }
+      if (file.size > 10 * 1024 * 1024) { vant.showToast('图片不能超过10MB'); return; }
+      uploadingPhoto.value = true;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const resp = await fetch('/api/profile/photo', { method: 'POST', credentials: 'same-origin', body: fd });
+        const contentType = resp.headers.get('Content-Type') || '';
+        const data = contentType.includes('application/json') ? await resp.json() : {};
+        if (!resp.ok) throw new Error(data.error || '上传失败，请稍后重试');
+        profileData.value.photo = data.photo;
+        vant.showToast('照片已更新');
+      } catch (err) { vant.showToast(err.message || '上传失败'); }
+      uploadingPhoto.value = false;
+      e.target.value = '';
     }
     function openPicker(f) { pickerField.value = f; showSelectPopup.value = true; }
     function openMultiPicker(f) { pickerField.value = f; showMultiPopup.value = true; }
@@ -1804,6 +1843,7 @@ createApp({
       profileData, openProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
+      photoInput, uploadingPhoto, pickPhoto, onPhotoChange,
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,

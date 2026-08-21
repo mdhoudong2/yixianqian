@@ -608,11 +608,24 @@ def pass_card_filters(fields, f):
 
 # ========== 页面路由 ==========
 
-@app.route("/")
-def index():
-    resp = send_from_directory(app.static_folder, "index.html")
+# index.html 里的 __FEISHU_APP_ID__ 占位符在服务时替换为当前环境 app_id（生产/测试各自不同）
+_INDEX_HTML_CACHE = None
+
+
+def _render_index():
+    """读取单文件前端并注入飞书 app_id，返回不缓存的 HTML 响应。"""
+    global _INDEX_HTML_CACHE
+    if _INDEX_HTML_CACHE is None:
+        with open(os.path.join(app.static_folder, "index.html"), "r", encoding="utf-8") as f:
+            _INDEX_HTML_CACHE = f.read()
+    resp = make_response(_INDEX_HTML_CACHE.replace("__FEISHU_APP_ID__", FEISHU_APP_ID))
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
+
+
+@app.route("/")
+def index():
+    return _render_index()
 
 
 @app.route("/<path:path>")
@@ -623,7 +636,7 @@ def static_files(path):
     if os.path.exists(os.path.join(app.static_folder, path)):
         resp = send_from_directory(app.static_folder, path)
     else:
-        resp = send_from_directory(app.static_folder, "index.html")
+        resp = _render_index()
     # HTML 一律不缓存（避免浏览器/飞书缓存旧版单文件应用，过滤项缺失等）
     if resp.mimetype == "text/html":
         resp.headers["Cache-Control"] = "no-store, max-age=0"

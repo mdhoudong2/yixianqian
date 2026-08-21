@@ -1059,8 +1059,8 @@ createApp({
       return data;
     }
 
-    // 登录
-    const FEISHU_APP_ID = 'cli_aaf0623a6d39dbe3';
+    // 登录（app_id 由后端注入：生产/测试服各自不同）
+    const FEISHU_APP_ID = '__FEISHU_APP_ID__';
     function isInFeishu() {
       const ua = navigator.userAgent.toLowerCase();
       return ua.includes('lark') || ua.includes('feishu');

@@ -120,7 +120,7 @@ def main():
     # 3. 抽样验证
     time.sleep(2)
     token = get_token(); h = {"Authorization": f"Bearer {token}"}
-    sample_oids = ["ou_fake_male_001", "ou_fake_female_001", "ou_faf5114d39fff8aeb29f3fede36d2fa8"]
+    sample_oids = ["ou_fake_male_001", "ou_fake_female_001", "ou_xxx_admin"]
     for oid in sample_oids:
         d = requests.post(
             f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BASE_TOKEN}/tables/{USER_TABLE}/records/search",

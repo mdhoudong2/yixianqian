@@ -99,7 +99,7 @@ def main():
     print("整表性别分布:", dict(stats))
 
     # 抽样验证
-    for oid in ["ou_fake_male_001", "ou_fake_female_001", "ou_faf5114d39fff8aeb29f3fede36d2fa8"]:
+    for oid in ["ou_fake_male_001", "ou_fake_female_001", "ou_xxx_admin"]:
         d = requests.post(
             f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BASE_TOKEN}/tables/{USER_TABLE}/records/search",
             headers=h, json={"filter": {"conjunction": "and",

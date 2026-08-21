@@ -556,12 +556,15 @@ def order_cards_likes_first(cards, liked_me_openids):
 
 def pass_card_filters(fields, f):
     """卡片筛选：全部条件满足才返回 True"""
-    # 身高
+    # 身高（范围：最低/最高可独立选填；未填身高的用户不参与身高筛选）
     h = bitable.get_field_number(fields, F_HEIGHT)
-    if f.get("height_min") is not None and h < f["height_min"]:
-        return False
-    if f.get("height_max") is not None and h > f["height_max"]:
-        return False
+    if f.get("height_min") is not None or f.get("height_max") is not None:
+        if h <= 0:
+            return False
+        if f.get("height_min") is not None and h < f["height_min"]:
+            return False
+        if f.get("height_max") is not None and h > f["height_max"]:
+            return False
     # 出生年月区间（兼容旧参数 birth_min/birth_max，格式 YYYY-MM）
     bmin = f.get("birth_min")
     bmax = f.get("birth_max")

@@ -46,14 +46,6 @@ def find_user_by_openid(open_id):
     return items[0] if items else None
 
 
-def find_user_by_id(user_id):
-    """通过用户ID查找用户"""
-    items = search_records(USER_TABLE_ID, [
-        {"field_name": F_USER_ID, "operator": "is", "value": [user_id]}
-    ])
-    return items[0] if items else None
-
-
 def get_all_users():
     """获取所有正常状态用户"""
     items = search_records(USER_TABLE_ID)
@@ -64,21 +56,6 @@ def get_all_users():
         if status == "活跃":
             users.append(item)
     return users
-
-
-def get_next_user_id():
-    """生成下一个用户ID（U-xxxx）"""
-    items = search_records(USER_TABLE_ID, field_names=[F_USER_ID])
-    max_num = 0
-    for item in items:
-        uid = get_field_text(item.get("fields", {}), F_USER_ID)
-        if uid.startswith("U-"):
-            try:
-                num = int(uid[2:])
-                max_num = max(max_num, num)
-            except ValueError:
-                pass
-    return f"U-{max_num + 1:04d}"
 
 
 # ========== 活动相关 ==========
@@ -92,19 +69,6 @@ def get_activities(status=None):
     else:
         items = search_records(ACTIVITY_TABLE_ID)
     return items
-
-
-def get_activity(activity_id):
-    """通过活动ID获取活动"""
-    items = search_records(ACTIVITY_TABLE_ID, [
-        {"field_name": F_ACTIVITY_ID, "operator": "is", "value": [activity_id]}
-    ])
-    return items[0] if items else None
-
-
-def get_activity_by_record(record_id):
-    """通过record_id获取活动"""
-    return get_record(ACTIVITY_TABLE_ID, record_id)
 
 
 # ========== 报名相关 ==========
@@ -139,21 +103,7 @@ def find_like(initiator_openid, target_openid):
     return items[0] if items else None
 
 
-def find_mutual_like(openid_a, openid_b):
-    """查找相互喜欢（A喜欢B 且 B喜欢A）"""
-    like_ab = find_like(openid_a, openid_b)
-    like_ba = find_like(openid_b, openid_a)
-    return like_ab and like_ba
-
-
 # ========== 分组相关 ==========
-
-def get_group_selections(activity_id):
-    """获取活动的所有分组选择"""
-    return search_records(GROUP_SELECT_TABLE, [
-        {"field_name": F_GS_ACTIVITY_ID, "operator": "is", "value": [activity_id]}
-    ])
-
 
 def get_user_group_selection(activity_id, open_id):
     """获取用户的分组选择"""

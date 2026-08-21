@@ -1,4 +1,6 @@
 """用户/活动查询辅助（基于共享 BitableClient）。"""
+import re
+
 from clients import *
 from constants import *
 
@@ -39,7 +41,6 @@ def get_creator_openid(fields):
 def find_user_by_id_or_name(keyword):
     """通过用户ID（如U-0003）或昵称查找用户"""
     # 自动编号字段搜索需要数字，先尝试提取数字
-    import re
     m = re.match(r"[Uu]-?(\d+)", keyword)
     if m:
         items = search_records(USER_TABLE_ID, {
@@ -59,7 +60,6 @@ def find_activity_by_id(activity_id):
     if not activity_id:
         return None
     # A-0002 -> 2
-    import re
     m = re.search(r'(\d+)', str(activity_id))
     if not m:
         return None

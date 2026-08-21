@@ -79,23 +79,37 @@ class BitableClient:
         if field_names:
             body["field_names"] = field_names
         while True:
-            params = {"page_token": page_token} if page_token else {}
-            try:
-                resp = requests.post(url, headers=self._headers(), json=body, params=params,
-                                     timeout=self.timeout)
-                result = resp.json()
+            # page_token 属于 body 参数（放 query param 会拿不到翻页数据）
+            if page_token:
+                body["page_token"] = page_token
+            else:
+                body.pop("page_token", None)
+            result = None
+            for attempt in range(3):
+                try:
+                    resp = requests.post(url, headers=self._headers(), json=body, timeout=self.timeout)
+                    result = resp.json()
+                except Exception as e:
+                    self.log(f"搜索记录异常(table={table_id},第{attempt + 1}次): {e}")
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
+                    return all_items
                 if result.get("code") != 0:
                     self.log(f"搜索记录失败(table={table_id}): {result}")
-                    break
-                d = result.get("data", {})
-                all_items.extend(d.get("items", []))
-                if not d.get("has_more"):
-                    break
-                page_token = d.get("page_token")
-                if not page_token:
-                    break
-            except Exception as e:
-                self.log(f"搜索记录异常(table={table_id}): {e}")
+                    # token 失效：清缓存重取后重试
+                    if attempt < 2 and result.get("code") in (99991661, 99991663, 99991672, 99991668):
+                        self._token_cache = {"token": None, "expire_time": 0}
+                        time.sleep(2 ** attempt)
+                        continue
+                    return all_items
+                break
+            d = result.get("data", {})
+            all_items.extend(d.get("items", []))
+            if not d.get("has_more"):
+                break
+            page_token = d.get("page_token")
+            if not page_token:
                 break
         return all_items
 
@@ -271,7 +285,9 @@ def get_select_value(fields, key, default=""):
     val = _unwrap_formula(fields.get(key))
     if val is None:
         return default
-    if isinstance(val, list) and val:
+    if isinstance(val, list):
+        if not val:
+            return default
         return _text_of(val[0])
     if isinstance(val, dict):
         return _text_of(val)
@@ -324,7 +340,9 @@ def get_datetime_value(fields, key, default=""):
     val = _unwrap_formula(val)
     ts = None
     try:
-        if isinstance(val, list) and val:
+        if isinstance(val, list):
+            if not val:
+                return default
             first = val[0]
             if isinstance(first, dict):
                 ts = first.get("timestamp") or first.get("value") or first.get("time")
@@ -345,12 +363,19 @@ def get_datetime_value(fields, key, default=""):
 
 
 def get_phone_value(fields, key, default=""):
-    """获取电话字段值"""
+    """获取电话字段值（电话字段 type=13 返回 [{"number": ...}]，需提取 number）"""
     val = fields.get(key)
     if val is None:
         return default
     if isinstance(val, str):
         return val
     if isinstance(val, dict):
-        return val.get("text", str(val))
+        return val.get("number") or val.get("text") or str(val)
+    if isinstance(val, list):
+        if not val:
+            return default
+        first = val[0]
+        if isinstance(first, dict):
+            return first.get("number") or first.get("text") or str(first)
+        return str(first)
     return str(val)

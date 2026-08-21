@@ -23,9 +23,6 @@ SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（
 # H5 前端入口（测试服覆盖为测试域名，卡片/通知链接据此生成）
 # H5_BASE_URL = "https://test.app.nantou.love"
 
-# 飞书分享链接（表单/视图）。测试服若用「复制的多维表格」，这些 URL 会变，需重新生成后覆盖。
+# 飞书分享链接（表单）。测试服若用「复制的多维表格」，这些 URL 会变，需重新生成后覆盖。
 # REGISTER_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"
-# GIRL_VIEW_URL = "https://xxx.feishu.cn/share/base/view/xxx"
-# BOY_VIEW_URL = "https://xxx.feishu.cn/share/base/view/xxx"
-# ACTIVITY_VIEW_URL = "https://xxx.feishu.cn/share/base/view/xxx"
 # LIKE_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"

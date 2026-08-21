@@ -298,7 +298,12 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
     event = data.event
     message = event.message
     sender = event.sender
+    # sender / sender_id 可能为空（系统/机器人消息等），先判空再取 open_id，避免 AttributeError 静默丢消息
+    if not sender or not sender.sender_id:
+        return
     sender_id = sender.sender_id.open_id
+    if not sender_id:
+        return
     sender_type = sender.sender_type
     chat_type = message.chat_type
     message_type = message.message_type

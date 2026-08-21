@@ -3,7 +3,7 @@ import os
 import time
 
 import requests
-from cards import send_main_menu_card
+from cards import generate_h5_url, send_main_menu_card
 from clients import *
 from constants import *
 from queries import (
@@ -514,11 +514,8 @@ def auto_detect_mutual_like():
 
         reverse_info = like_map.get((target_oid, initiator_oid))
         if reverse_info:
-            # 更新两条记录状态
-            update_record(LIKE_TABLE_ID, info["record_id"], {FIELD_LIKE_STATUS: "相互喜欢"})
-            update_record(LIKE_TABLE_ID, reverse_info["record_id"], {FIELD_LIKE_STATUS: "相互喜欢"})
+            # 立即标记该配对已处理，避免同轮内 (B,A) 方向重复处理/重复发送
             processed_pairs.add(pair_key)
-            mutual_count += 1
             log(f"检测到相互喜欢: {info['initiator_name']} <-> {info['target_name']}")
 
             # 发送通知（原子预约去重，杜绝重复发送）
@@ -560,8 +557,14 @@ def auto_detect_mutual_like():
                         all_ok = False
 
                 if not all_ok:
+                    # 通知失败：回滚去重位，状态保持「单向喜欢」，下轮重新检测并重试，
+                    # 避免「状态先落为相互喜欢 → 下轮查不到 → 通知永久丢失」。
                     unreserve_notified("mutual_notified", pair_notify_key)
                 else:
+                    # 通知全部成功后才落状态
+                    update_record(LIKE_TABLE_ID, info["record_id"], {FIELD_LIKE_STATUS: "相互喜欢"})
+                    update_record(LIKE_TABLE_ID, reverse_info["record_id"], {FIELD_LIKE_STATUS: "相互喜欢"})
+                    mutual_count += 1
                     log(f"相互喜欢通知已发送: {info['initiator_name']} <-> {info['target_name']}")
 
     if mutual_count > 0:
@@ -606,7 +609,7 @@ def auto_deduct_hearts():
             continue
         user = user_records[0]
         user_record_id = user.get("record_id")
-        current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, 30)
+        current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, INITIAL_HEARTS)
         if current_hearts <= 0:
             log(f"扣减爱心失败: {initiator_name} 爱心不足")
             update_record(LIKE_TABLE_ID, record_id, {
@@ -644,7 +647,7 @@ def auto_deduct_hearts():
             continue
         user = user_records[0]
         user_record_id = user.get("record_id")
-        current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, 30)
+        current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, INITIAL_HEARTS)
         new_hearts = min(MAX_HEARTS, current_hearts + 1)
         if update_record(USER_TABLE_ID, user_record_id, {FIELD_HEART_REMAIN: new_hearts}):
             update_record(LIKE_TABLE_ID, record_id, {FIELD_LIKE_HEART_DEDUCTED: False})

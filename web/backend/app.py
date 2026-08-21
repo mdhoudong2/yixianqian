@@ -923,8 +923,10 @@ def home():
     target_gender = "女性" if my_gender == "男性" else "男性"
 
     # 卡片（不含筛选，默认展示全部异性）
+    # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
-                     for l in snap_likes_by_initiator(open_id)}
+                     for l in snap_likes_by_initiator(open_id)
+                     if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"}
     cards = []
     for u in snap_active_users():
         fields = u.get("fields", {})
@@ -1079,8 +1081,8 @@ def signup(activity_id):
         if existing:
             return jsonify({"error": "你已经报名了这个活动"}), 400
 
-        # 检查人数上限
-        current = int(bitable.get_field_number(act_fields, F_ACTIVITY_CURRENT_SIGNUP, 0))
+        # 检查人数上限（用实时报名记录数，避免快照陈旧导致超卖）
+        current = len(bitable.get_signups(text_act_id))
         max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
         if max_signup > 0 and current >= max_signup:
             return jsonify({"error": "报名人数已满"}), 400
@@ -1190,9 +1192,12 @@ def get_cards():
     all_users = snap_active_users()
 
     # 获取我已经喜欢过的人（从快照，实时性靠写操作后定向刷新）
-    liked_openids = set()
-    for like in snap_likes_by_initiator(open_id):
-        liked_openids.add(bitable.get_field_text(like.get("fields", {}), F_LIKE_TARGET_OPENID))
+    # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
+    liked_openids = {
+        bitable.get_field_text(like.get("fields", {}), F_LIKE_TARGET_OPENID)
+        for like in snap_likes_by_initiator(open_id)
+        if bitable.get_select_value(like.get("fields", {}), F_LIKE_STATUS) != "已取消"
+    }
 
     cards = []
     for u in all_users:
@@ -1351,15 +1356,6 @@ def like_user():
     refresh_snapshot_table_async("likes")
     refresh_snapshot_table_async("users")
     return jsonify({"ok": True, "mutual": is_mutual, "message": "相互喜欢！" if is_mutual else "喜欢成功"})
-
-
-@app.route("/api/skip", methods=["POST"])
-def skip_user():
-    """跳过某人（目前只返回成功，前端不再展示）"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    return jsonify({"ok": True})
 
 
 @app.route("/api/feedback", methods=["POST"])
@@ -1973,15 +1969,8 @@ def get_notifications():
 
 # ========== 引流埋点统计 ==========
 
-_track_lock = threading.Lock()
-
-
 def _load_track():
     return storage.load_json(TRACK_FILE, {"events": []})
-
-
-def _save_track(data):
-    storage.save_json(TRACK_FILE, data)
 
 
 @app.route("/api/track", methods=["POST"])
@@ -1992,8 +1981,8 @@ def track_event():
     source = data.get("from", "") or data.get("source", "") or "public"
     if event not in ("page_view", "join_click"):
         return jsonify({"ok": False, "error": "无效事件"}), 400
-    with _track_lock:
-        track = _load_track()
+
+    def _add(track):
         track.setdefault("events", []).append({
             "event": event,
             "source": source,
@@ -2003,7 +1992,10 @@ def track_event():
         # 磁盘恒定：超 20000 条时截断至最新 15000 条
         if len(track["events"]) > 20000:
             track["events"] = track["events"][-15000:]
-        _save_track(track)
+        return track
+
+    # update_json 跨进程 flock + 原子写，避免 gunicorn 多 worker 并发丢事件
+    storage.update_json(TRACK_FILE, {"events": []}, _add)
     return jsonify({"ok": True})
 
 

@@ -22,9 +22,6 @@ ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS
 
 # ==================== 多维表格链接配置（默认生产，测试服在 local_config.py 覆盖） ====================
 REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcn04AWZCwqilzelLqT5CJsNd")
-GIRL_VIEW_URL = getattr(_cfg, "GIRL_VIEW_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/view/shrcnrFgDNL3nLMkaB68HwU9iCd")
-BOY_VIEW_URL = getattr(_cfg, "BOY_VIEW_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/view/shrcnVmfOJq5Vmx83aBL7jdU13g")
-ACTIVITY_VIEW_URL = getattr(_cfg, "ACTIVITY_VIEW_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/view/shrcnKs9V7lRWTKq51Lpg9tOfff")
 LIKE_FORM_URL = getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b")
 
 # ==================== 多维表格配置 ====================
@@ -53,9 +50,8 @@ FIELD_LIKE_HEART_DEDUCTED = "爱心已扣减"
 FIELD_LIKE_MESSAGE = "附言"
 FIELD_LIKE_INITIATOR_OPENID = "发起用户open_id"
 FIELD_LIKE_TARGET_OPENID = "目标用户open_id"
-FIELD_LIKE_NOTIFIED = "已通知目标"
 FIELD_LIKE_INITIATOR_ID = "发起用户ID"
-FIELD_LIKE_TARGET_ID = "目标用户ID"  # 新增：是否已发送匿名通知
+FIELD_LIKE_TARGET_ID = "目标用户ID"
 FIELD_LIKE_TYPE = "喜欢类型"  # 匿名/实名
 
 FIELD_ACTIVITY_ID = "活动ID"
@@ -64,11 +60,9 @@ FIELD_ACTIVITY_CURRENT_SIGNUP = "当前报名人数"
 FIELD_ACTIVITY_STATUS = "活动状态"
 
 FIELD_SIGNUP_ACTIVITY_ID = "活动ID"
-FIELD_SIGNUP_CREATOR = "创建人"
 FIELD_SIGNUP_OPENID = "报名人open_id"
 FIELD_SIGNUP_NICKNAME = "报名人昵称"
 FIELD_SIGNUP_STATUS = "状态"
-FIELD_SIGNUP_NOTIFIED = "已通知喜欢者"
 
 FIELD_MATCH_FOR_USER = "推荐给用户"
 FIELD_MATCH_TARGET_USER = "被推荐用户"
@@ -100,7 +94,6 @@ INITIAL_HEARTS = 3
 MAX_HEARTS = 30
 # H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://test.app.nantou.love
 H5_BASE_URL = getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love")
-H5_BACKEND_URL = "http://127.0.0.1:8091"
 
 # ==================== 本地记录文件 ====================
 # bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认取仓库下 data/）

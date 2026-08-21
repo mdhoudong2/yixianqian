@@ -37,6 +37,7 @@ picture/
 # 一次性测试脚本（硬编码密钥，不入库）
 bot/tools/setup_group_test.py
 scripts/dev/setup_group_test.py
+tools/setup_group_test.py
 
 # 本地工具
 .codebuddy/

@@ -5,7 +5,7 @@ from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
-from store import load_invite_rewarded, load_notified, save_notified
+from store import load_invite_rewarded, reserve_notified, unreserve_notified
 
 
 def handle_register_command(sender_id):
@@ -83,9 +83,7 @@ def handle_status_command(sender_id):
     user_fields = user_records[0].get("fields", {})
     nickname = get_field_text(user_fields, FIELD_NICKNAME)
     status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-    hearts = user_fields.get(FIELD_HEART_REMAIN, 30)
-    if not isinstance(hearts, (int, float)):
-        hearts = 30
+    hearts = get_field_number(user_fields, FIELD_HEART_REMAIN, INITIAL_HEARTS)
 
     lines = [
         "你的账号状态：\n",
@@ -97,7 +95,7 @@ def handle_status_command(sender_id):
     if status == "待审核":
         lines.append("资料正在审核中，请耐心等待，通过后会通知你。")
     elif status == "活跃":
-        lines.append("账号已激活，发送「浏览」即可查看异性资料。")
+        lines.append("账号已激活，发送「一线牵」即可进入App查看异性资料。")
     elif status == "已退出":
         lines.append("你已暂时退出相亲市场，如需恢复请联系管理员。")
     elif status == "已隐藏":
@@ -186,31 +184,28 @@ def handle_admin_approve(keyword):
     # 更新状态为活跃
     if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "活跃"}):
         log(f"管理员审核通过: {uid} {nickname}")
-        # 立即发送审核通过通知给用户（审核通过通知线程也会发，但这里立即发一次）
-        gender = get_field_text(fields, FIELD_GENDER)
-        if gender == "男性":
-            view_desc = "活跃女生"
-        elif gender == "女性":
-            view_desc = "活跃男生"
-        else:
-            view_desc = "活跃异性"
+        # 立即发送审核通过通知（原子预约去重，避免与 30s 轮询线程重复发送）
+        if reserve_notified("approval_sent", record_id):
+            gender = get_field_text(fields, FIELD_GENDER)
+            if gender == "男性":
+                view_desc = "活跃女生"
+            elif gender == "女性":
+                view_desc = "活跃男生"
+            else:
+                view_desc = "活跃异性"
 
-        h5_url = generate_h5_url(open_id)
-        user_msg = (
-            f"恭喜你，资料审核已通过！🎉\n\n"
-            f"点击下方链接进入一线牵App，浏览「{view_desc}」并点喜欢：\n\n"
-            f"{h5_url}\n\n"
-            f"【点喜欢说明】\n"
-            f"在对方卡片上点击「♥」按钮，填写一句附言，对方会匿名收到「有人喜欢你」的通知；你们相互喜欢后，附言才会发给对方。\n"
-            f"如果对方也喜欢你，系统会通知你们相互喜欢，并开通聊天通道。\n\n"
-            f"祝你早日脱单！💕"
-        )
-        send_text_message(open_id, user_msg)
-
-        # 标记已发送，避免审核通过通知线程重复发送
-        notified = load_notified()
-        notified.setdefault("approval_sent", []).append(record_id)
-        save_notified(notified)
+            h5_url = generate_h5_url(open_id)
+            user_msg = (
+                f"恭喜你，资料审核已通过！🎉\n\n"
+                f"点击下方链接进入一线牵App，浏览「{view_desc}」并点喜欢：\n\n"
+                f"{h5_url}\n\n"
+                f"【点喜欢说明】\n"
+                f"在对方卡片上点击「♥」按钮，填写一句附言，对方会匿名收到「有人喜欢你」的通知；你们相互喜欢后，附言才会发给对方。\n"
+                f"如果对方也喜欢你，系统会通知你们相互喜欢，并开通聊天通道。\n\n"
+                f"祝你早日脱单！💕"
+            )
+            if not send_text_message(open_id, user_msg):
+                unreserve_notified("approval_sent", record_id)
 
         return f"已审核通过：{uid} {nickname}\n已发送审核通过通知和App链接给TA。"
     else:

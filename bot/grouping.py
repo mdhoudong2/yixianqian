@@ -298,7 +298,7 @@ def build_group_select_card(activity_id, activity_name, participants, user_gende
     form_elements = [
         {
             "tag": "markdown",
-            "content": f"**活动：{activity_name}**\n请从{len(opp_participants)}位{opp_gender}性中选择7位想同组的人，按意愿从高到低排序。"
+            "content": f"**活动：{activity_name}**\n请从{len(opp_participants)}位{opp_gender}中选择7位想同组的人，按意愿从高到低排序。"
         },
         {"tag": "hr"}
     ]
@@ -541,6 +541,15 @@ def handle_admin_start_group(keyword):
         FIELD_ACT_FEMALE_PER_GROUP: f_per
     })
 
+    # 重新开放志愿收集：清除该活动历史分组结果，否则「执行分组」的幂等保护会拦截重跑同一轮次
+    old_results = search_records(GROUP_RESULT_TABLE, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
+    })
+    if old_results:
+        batch_delete_records(GROUP_RESULT_TABLE, [r["record_id"] for r in old_results])
+        log(f"重新开放志愿收集，已清除 {len(old_results)} 条历史分组结果: {activity_name}")
+
     # 不再向报名者群发通知（现场活动，用户自查 H5）。管理员收到开始指令回执即可。
     log(f"管理员开始填志愿: {activity_name} {m_per}男{f_per}女")
     return (f"志愿填写已开始：{activity_name}（每组{m_per}男{f_per}女）\n"
@@ -658,17 +667,6 @@ def _do_grouping(activity, round_no):
         update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "收集中"})
         return "分组失败，人数不足以组成完整小组，状态已恢复为「收集中」"
 
-    # 清除旧结果（仅清该活动本轮次，批量删除避免逐条拖慢）
-    old_results = search_records(GROUP_RESULT_TABLE, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-            {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
-        ]
-    })
-    if old_results:
-        batch_delete_records(GROUP_RESULT_TABLE, [old["record_id"] for old in old_results])
-
     # 保存结果（用户自查 H5 查询），不再逐人群发通知（现场活动）。
     # 批量写入分组结果，避免逐条 create_record 在大活动下（数百条）拖到好几分钟。
     oid_to_nickname = {p["open_id"]: p["nickname"] for p in get_activity_signups(activity_id)}
@@ -685,7 +683,21 @@ def _do_grouping(activity, round_no):
                 FIELD_GR_USER_GENDER: gender,
                 FIELD_GR_ROUND: str(round_no)
             })
-    batch_create_records(GROUP_RESULT_TABLE, result_records)
+    created = batch_create_records(GROUP_RESULT_TABLE, result_records)
+    if created < len(result_records):
+        # 写入不完整：回滚已写入的部分结果 + 恢复状态，允许重试（避免「0 条结果却显示已完成」）
+        partial = search_records(GROUP_RESULT_TABLE, {
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+                {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
+            ]
+        })
+        if partial:
+            batch_delete_records(GROUP_RESULT_TABLE, [p["record_id"] for p in partial])
+        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "收集中"})
+        return (f"分组结果写入失败（成功 {created}/{len(result_records)} 条），已回滚，"
+                f"状态恢复为「收集中」，请稍后重试。")
 
     # 构建给管理员的完整分组结果文案
     lines = [f"🎉 活动「{activity_name}」第{round_no}轮 分组结果", f"共{len(groups)}组，参与{len(participants)}人，每组{m_per}男{f_per}女。", ""]

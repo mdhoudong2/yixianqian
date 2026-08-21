@@ -12,9 +12,15 @@ if _REPO_ROOT not in sys.path:
 
 from config import *
 
-from lib.bitable_client import (
+from lib.bitable_client import (  # noqa: F401 — re-export for app.py via bitable.*
     BitableClient,
+    get_attachment_tokens,
+    get_date_value,
+    get_datetime_value,
+    get_field_number,
     get_field_text,
+    get_multi_select_value,
+    get_phone_value,
     get_select_value,
 )
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Yixianqian Bot (test)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/yixianqian-test/bot
+ExecStart=/opt/yixianqian-test/scripts/ops/yixianqian_guard.sh run
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,10 +1,11 @@
 """主菜单卡片（卡片1）构建与发送。"""
 from clients import send_card_message
+from constants import H5_BASE_URL
 
 
 def generate_h5_url(open_id):
     """生成 H5 入口链接。身份由飞书「网页免登」确定，URL 不再携带登录 token（防止链接被转发冒用身份）"""
-    return "https://app.nantou.love/"
+    return H5_BASE_URL + "/"
 
 
 

@@ -16,13 +16,15 @@ SHARED_DATA_DIR = getattr(_lc, "SHARED_DATA_DIR", None) or os.path.join(REPO_ROO
 os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 
 # 多维表格配置
-USER_TABLE_ID = "tblsecbZZv0thaPe"
-LIKE_TABLE_ID = "tblaciMZHRQH7QBA"
-ACTIVITY_TABLE_ID = "tblHLltReY8xHTfu"
-SIGNUP_TABLE_ID = "tblNVJCnohVaWf8t"
-GROUP_SELECT_TABLE = "tblYo86Vd7dmzRQJ"
-GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
-REPORT_TABLE_ID = "tblDj4PMHitAmo4T"
+# 表 ID 默认值 = 生产环境；测试服可在 local_config.py 覆盖同名变量（getattr 回退默认值）。
+# 复制多维表格到新 base 后表 ID 会变，需在 local_config.py 里按新值填。
+USER_TABLE_ID = getattr(_lc, "USER_TABLE_ID", "tblsecbZZv0thaPe")
+LIKE_TABLE_ID = getattr(_lc, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
+ACTIVITY_TABLE_ID = getattr(_lc, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
+SIGNUP_TABLE_ID = getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
+GROUP_SELECT_TABLE = getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
+GROUP_RESULT_TABLE = getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
+REPORT_TABLE_ID = getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T")
 
 # 用户表字段
 F_USER_ID = "用户ID"
@@ -178,11 +180,11 @@ MAX_HEARTS = 30
 
 # 服务配置
 SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 8091
+SERVER_PORT = getattr(_lc, "SERVER_PORT", 8091)
 SESSION_EXPIRE_DAYS = 30
 
-# H5基础URL
-H5_BASE_URL = "https://app.nantou.love"
+# H5基础URL（测试服在 local_config.py 覆盖为 https://test.app.nantou.love）
+H5_BASE_URL = getattr(_lc, "H5_BASE_URL", "https://app.nantou.love")
 
 # 通知存储（机器人与 H5 共享，机器人写入、H5 读取）
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")

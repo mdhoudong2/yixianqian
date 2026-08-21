@@ -9,10 +9,12 @@ post_fork 在每次 worker 进程 fork 之后、开始接收请求之前执行�
 先同步拉一次快照保证首个请求即命中缓存，再启动后台 15s 定时刷新线程。
 """
 import logging
+import os
 
 workers = 2
 threads = 4
-bind = "127.0.0.1:8091"
+# 绑定地址可通过环境变量 BIND 覆盖（测试服 127.0.0.1:8092）
+bind = os.environ.get("BIND", "127.0.0.1:8091")
 timeout = 120
 graceful_timeout = 30
 

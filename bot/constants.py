@@ -29,11 +29,13 @@ LIKE_FORM_URL = "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmV
 
 # ==================== 多维表格配置 ====================
 BASE_TOKEN = _cfg.BASE_TOKEN
-USER_TABLE_ID = "tblsecbZZv0thaPe"
-LIKE_TABLE_ID = "tblaciMZHRQH7QBA"
-ACTIVITY_TABLE_ID = "tblHLltReY8xHTfu"
-SIGNUP_TABLE_ID = "tblNVJCnohVaWf8t"
-MATCH_TABLE_ID = "tbl8eu9Y85tQZCu7"
+# 表 ID 默认值 = 生产环境；测试服在 local_config.py 覆盖同名变量即可（getattr 回退默认值）。
+# 复制多维表格到新 base 后表 ID 会变，需在 local_config.py 里按新值填。
+USER_TABLE_ID = getattr(_cfg, "USER_TABLE_ID", "tblsecbZZv0thaPe")
+LIKE_TABLE_ID = getattr(_cfg, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
+ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
+SIGNUP_TABLE_ID = getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
+MATCH_TABLE_ID = getattr(_cfg, "MATCH_TABLE_ID", "tbl8eu9Y85tQZCu7")
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
@@ -74,8 +76,8 @@ FIELD_MATCH_REASON = "推荐理由"
 FIELD_MATCH_STATUS = "推荐状态"
 
 # 分组功能
-GROUP_SELECT_TABLE = "tblYo86Vd7dmzRQJ"
-GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
+GROUP_SELECT_TABLE = getattr(_cfg, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
+GROUP_RESULT_TABLE = getattr(_cfg, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
 FIELD_GS_ACTIVITY_ID = "活动ID"
 FIELD_GS_SELECTOR_OID = "选择人open_id"
 FIELD_GS_SELECTOR_NAME = "选择人昵称"
@@ -96,6 +98,8 @@ FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同�
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
 INITIAL_HEARTS = 3
 MAX_HEARTS = 30
+# H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://test.app.nantou.love
+H5_BASE_URL = getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love")
 H5_BACKEND_URL = "http://127.0.0.1:8091"
 
 # ==================== 本地记录文件 ====================

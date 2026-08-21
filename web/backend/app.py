@@ -1792,7 +1792,8 @@ def update_profile():
     ok = bitable.update_record(USER_TABLE_ID, user["record_id"], update_fields)
     if not ok:
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    refresh_snapshot_table_async("users")
+    # 同步刷新快照：否则前端保存后立即 GET 会读到旧快照，表现为「保存后页面不刷新」
+    refresh_snapshot_table("users")
     return jsonify({"ok": True, "message": "资料已更新"})
 
 

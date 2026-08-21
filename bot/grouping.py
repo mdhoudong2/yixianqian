@@ -1,9 +1,13 @@
 """活动分组：卫星滚动分组算法、分组卡片、分组指令处理。"""
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
+
+# 分组指令互斥锁：防止管理员并发两次“执行分组”互相删除/覆盖结果
+_grouping_lock = threading.Lock()
 
 
 def _user_selection_score(priority):
@@ -573,6 +577,31 @@ def handle_admin_stop_group(keyword):
 
     if m_per < 1 or f_per < 1:
         return f"每组男女人数必须大于0（当前：{m_per}男{f_per}女），请先设置再截止"
+
+    with _grouping_lock:
+        # 幂等保护：该活动本轮已生成过结果则拒绝重跑（多轮分组可轮次递进），
+        # 防止并发/重复执行互相删除覆盖分组结果。
+        existing_results = search_records(GROUP_RESULT_TABLE, {
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+                {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
+            ]
+        })
+        if existing_results:
+            return (f"活动「{activity_name}」第{round_no}轮已生成过分组结果，请勿重复执行。"
+                    f"如需重新分组，请先发送「开始填志愿 {activity_id} {m_per} {f_per}」重新开放，再执行分组。")
+        return _do_grouping(activity, round_no)
+
+
+def _do_grouping(activity, round_no):
+    """执行分组（调用方需已持有 _grouping_lock）"""
+    af = activity.get("fields", {})
+    activity_id = get_field_text(af, FIELD_ACTIVITY_ID) or ""
+    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
+    record_id = activity.get("record_id")
+    m_per = int(get_field_number(af, FIELD_ACT_MALE_PER_GROUP, 3))
+    f_per = int(get_field_number(af, FIELD_ACT_FEMALE_PER_GROUP, 3))
 
     # 更新状态为已截止
     update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "已截止"})

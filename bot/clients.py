@@ -35,9 +35,13 @@ def send_text_message(receive_id, text):
 
 def send_card_message(receive_id, card_content):
     """发送交互卡片消息"""
+    if is_test_fake_openid(receive_id):
+        return False
     return feishu.send_card_message(receive_id, card_content)
 
 
 def send_user_card(receive_id, share_open_id):
     """发送个人名片消息"""
+    if is_test_fake_openid(receive_id):
+        return False
     return feishu.send_user_card(receive_id, share_open_id)

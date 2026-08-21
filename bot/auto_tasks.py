@@ -17,10 +17,10 @@ from store import (
     add_notification,
     load_bindings,
     load_invite_rewarded,
-    load_notified,
-    save_bindings,
+    reserve_notified,
     save_invite_rewarded,
-    save_notified,
+    unreserve_notified,
+    update_bindings,
 )
 
 from lib import storage
@@ -94,12 +94,16 @@ def auto_bind_from_creator():
         if update_user_feishu_id(record_id, open_id):
             bound_count += 1
             log(f"自动绑定成功: {nickname} -> {open_id} (状态: 待审核)")
-            bindings[open_id] = {
-                "open_id": open_id, "nickname": nickname, "record_id": record_id,
-                "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "auto"
-            }
             existing_openids[open_id] = nickname
-            save_bindings(bindings)
+
+            def _bind(_data):
+                _data[open_id] = {
+                    "open_id": open_id, "nickname": nickname, "record_id": record_id,
+                    "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "auto"
+                }
+                return _data
+
+            update_bindings(_bind)
 
     if bound_count > 0:
         log(f"自动绑定轮询完成，本次绑定 {bound_count} 个用户")
@@ -166,17 +170,17 @@ def auto_send_view_after_approval():
     })
     if not items:
         return
-    notified = load_notified()
     sent_count = 0
     for item in items:
         record_id = item.get("record_id")
-        if record_id in notified.get("approval_sent", []):
+        if not reserve_notified("approval_sent", record_id):
             continue
         fields = item.get("fields", {})
         nickname = get_field_text(fields, FIELD_NICKNAME)
         gender = get_field_text(fields, FIELD_GENDER)
         open_id = get_field_text(fields, FIELD_FEISHU_ID)
         if not open_id or not nickname:
+            unreserve_notified("approval_sent", record_id)
             continue
 
         message_head = (
@@ -191,14 +195,14 @@ def auto_send_view_after_approval():
             send_main_menu_card(open_id)
             send_text_message(open_id, message_tail)
             sent_count += 1
-            notified.setdefault("approval_sent", []).append(record_id)
             log(f"审核通过通知已发送: {nickname} ({gender})")
 
             inviter_id = get_field_text(fields, FIELD_INVITER_ID)
             if inviter_id:
                 reward_inviter(open_id, nickname, inviter_id)
+        else:
+            unreserve_notified("approval_sent", record_id)
 
-    save_notified(notified)
     if sent_count > 0:
         log(f"审核通过通知轮询完成，本次发送 {sent_count} 条")
 
@@ -408,12 +412,11 @@ def auto_send_anonymous_like_notification():
         if oid:
             user_gender_map[oid] = get_field_text(uf, FIELD_GENDER)
 
-    notified = load_notified()
     sent_count = 0
 
     for item in items:
         record_id = item.get("record_id")
-        if record_id in notified.get("like_notified", []):
+        if not reserve_notified("like_notified", record_id):
             continue
 
         fields = item.get("fields", {})
@@ -424,6 +427,7 @@ def auto_send_anonymous_like_notification():
         like_type = get_field_text(fields, FIELD_LIKE_TYPE)
 
         if not target_openid or not initiator_nickname:
+            unreserve_notified("like_notified", record_id)
             continue
 
         like_count = len(target_likers.get(target_openid, set()))
@@ -452,10 +456,10 @@ def auto_send_anonymous_like_notification():
             if like_type != "实名":
                 send_main_menu_card(target_openid)
             sent_count += 1
-            notified.setdefault("like_notified", []).append(record_id)
             log(f"匿名喜欢通知已发送: -> {target_nickname} (当前{like_count}人喜欢)")
+        else:
+            unreserve_notified("like_notified", record_id)
 
-    save_notified(notified)
     if sent_count > 0:
         log(f"匿名喜欢通知轮询完成，本次发送 {sent_count} 条")
 
@@ -500,7 +504,6 @@ def auto_detect_mutual_like():
                 "message": get_field_text(fields, FIELD_LIKE_MESSAGE)
             }
 
-    notified = load_notified()
     mutual_count = 0
     processed_pairs = set()
 
@@ -518,9 +521,10 @@ def auto_detect_mutual_like():
             mutual_count += 1
             log(f"检测到相互喜欢: {info['initiator_name']} <-> {info['target_name']}")
 
-            # 发送通知（避免重复）
+            # 发送通知（原子预约去重，杜绝重复发送）
             pair_notify_key = f"{initiator_oid}_{target_oid}"
-            if pair_notify_key not in notified.get("mutual_notified", []):
+            if reserve_notified("mutual_notified", pair_notify_key):
+                all_ok = True
                 # 通知A：文字+对方名片
                 if info["initiator_openid"]:
                     msg_a = (
@@ -533,8 +537,10 @@ def auto_detect_mutual_like():
                         f"点击下方名片，添加TA为好友开始聊天吧！\n\n"
                         f"⚠️ 温馨提示：交友需谨慎，注意保护个人隐私和财产安全，警惕诈骗。"
                     )
-                    send_text_message(info["initiator_openid"], msg_a)
-                    send_user_card(info["initiator_openid"], reverse_info["initiator_openid"])
+                    if send_text_message(info["initiator_openid"], msg_a):
+                        send_user_card(info["initiator_openid"], reverse_info["initiator_openid"])
+                    else:
+                        all_ok = False
 
                 # 通知B：文字+对方名片
                 if reverse_info["initiator_openid"]:
@@ -548,13 +554,16 @@ def auto_detect_mutual_like():
                         f"点击下方名片，添加TA为好友开始聊天吧！\n\n"
                         f"⚠️ 温馨提示：交友需谨慎，注意保护个人隐私和财产安全，警惕诈骗。"
                     )
-                    send_text_message(reverse_info["initiator_openid"], msg_b)
-                    send_user_card(reverse_info["initiator_openid"], info["initiator_openid"])
+                    if send_text_message(reverse_info["initiator_openid"], msg_b):
+                        send_user_card(reverse_info["initiator_openid"], info["initiator_openid"])
+                    else:
+                        all_ok = False
 
-                notified.setdefault("mutual_notified", []).append(pair_notify_key)
-                log(f"相互喜欢通知已发送: {info['initiator_name']} <-> {info['target_name']}")
+                if not all_ok:
+                    unreserve_notified("mutual_notified", pair_notify_key)
+                else:
+                    log(f"相互喜欢通知已发送: {info['initiator_name']} <-> {info['target_name']}")
 
-    save_notified(notified)
     if mutual_count > 0:
         log(f"相互喜欢检测完成，本次发现 {mutual_count} 对")
 
@@ -750,8 +759,6 @@ def auto_notify_signup():
         likers_by_target.setdefault(tgt_oid, []).append((init_oid, status))
         liked_by_initiator.setdefault(init_oid, []).append((tgt_oid, status))
 
-    notified = load_notified()
-    notified_set = set(notified.get("signup_notified", []))
     for signup in signups:
         signup_fields = signup.get("fields", {})
         signup_id = signup.get("record_id")
@@ -773,19 +780,20 @@ def auto_notify_signup():
             if like_status == "相互喜欢":
                 mutual_oids.add(liker_oid)
             key = f"signup_{signup_id}_{liker_oid}"
-            if key in notified_set or liker_oid in notified_this_round:
+            if liker_oid in notified_this_round or not reserve_notified("signup_notified", key):
                 continue
             msg = (
                 f"🔔 你喜欢的「{signup_name}」报名了「{activity_name}」活动！\n\n"
                 f"你也去看看吧，说不定能线下偶遇哦~"
             )
-            send_text_message(liker_oid, msg)
-            send_main_menu_card(liker_oid)
-            add_notification(liker_oid, "signup", f"你喜欢的 {signup_name} 报名了 {activity_name} 活动", key,
-                             extra={"activity_id": act_record_by_id.get(activity_id, "")})
-            notified.setdefault("signup_notified", []).append(key)
-            notified_this_round.add(liker_oid)
-            log(f"报名通知(实名): {liker_oid} <- {signup_name} 报名了 {activity_name}")
+            if send_text_message(liker_oid, msg):
+                send_main_menu_card(liker_oid)
+                add_notification(liker_oid, "signup", f"你喜欢的 {signup_name} 报名了 {activity_name} 活动", key,
+                                 extra={"activity_id": act_record_by_id.get(activity_id, "")})
+                notified_this_round.add(liker_oid)
+                log(f"报名通知(实名): {liker_oid} <- {signup_name} 报名了 {activity_name}")
+            else:
+                unreserve_notified("signup_notified", key)
 
         # 2. 报名者喜欢了谁 → 匿名通知（排除相互喜欢的，已发过实名）
         for target_oid, _status in liked_by_initiator.get(signup_oid, []):
@@ -794,20 +802,20 @@ def auto_notify_signup():
             if target_oid in mutual_oids:
                 continue  # 相互喜欢已发实名
             key = f"signup_{signup_id}_{target_oid}_anon"
-            if key in notified_set or target_oid in notified_this_round:
+            if target_oid in notified_this_round or not reserve_notified("signup_notified", key):
                 continue
             msg = (
                 f"💌 喜欢你的人报名了「{activity_name}」活动！\n\n"
                 f"你也去看看吧，万一你也喜欢TA呢~"
             )
-            send_text_message(target_oid, msg)
-            send_main_menu_card(target_oid)
-            add_notification(target_oid, "signup", f"喜欢你的人报名了 {activity_name} 活动", key,
-                             extra={"activity_id": act_record_by_id.get(activity_id, "")})
-            notified.setdefault("signup_notified", []).append(key)
-            notified_this_round.add(target_oid)
-            log(f"报名通知(匿名): {target_oid} <- 有人喜欢TA并报名了 {activity_name}")
-    save_notified(notified)
+            if send_text_message(target_oid, msg):
+                send_main_menu_card(target_oid)
+                add_notification(target_oid, "signup", f"喜欢你的人报名了 {activity_name} 活动", key,
+                                 extra={"activity_id": act_record_by_id.get(activity_id, "")})
+                notified_this_round.add(target_oid)
+                log(f"报名通知(匿名): {target_oid} <- 有人喜欢TA并报名了 {activity_name}")
+            else:
+                unreserve_notified("signup_notified", key)
 
 
 

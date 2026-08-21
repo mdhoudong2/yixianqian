@@ -78,7 +78,7 @@ from grouping import (
     handle_group_submit,
 )
 from queries import find_user_by_openid
-from store import load_bindings, load_welcomed, save_welcomed
+from store import load_bindings, load_welcomed
 
 # WebSocket健康检查
 _last_ws_event_time = time.time()
@@ -164,21 +164,29 @@ def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChat
                 return
             else:
                 # 非活跃用户，发送卡片1（只发一次）
-                welcomed = load_welcomed()
-                if user_open_id in welcomed:
-                    return
-                if send_main_menu_card(user_open_id):
-                    welcomed.append(user_open_id)
-                    save_welcomed(welcomed)
+                def _mark(_lst):
+                    if user_open_id in _lst:
+                        return None
+                    _lst.append(user_open_id)
+                    return _lst
+
+                if user_open_id not in load_welcomed():
+                    from store import update_welcomed
+                    update_welcomed(_mark)
+                    send_main_menu_card(user_open_id)
         else:
             # 新用户，发送注册表单（只发一次）
-            welcomed = load_welcomed()
-            if user_open_id in welcomed:
-                return
-            message = handle_register_command(user_open_id)
-            if send_text_message(user_open_id, message):
-                welcomed.append(user_open_id)
-                save_welcomed(welcomed)
+            def _mark_new(_lst):
+                if user_open_id in _lst:
+                    return None
+                _lst.append(user_open_id)
+                return _lst
+
+            if user_open_id not in load_welcomed():
+                from store import update_welcomed
+                update_welcomed(_mark_new)
+                message = handle_register_command(user_open_id)
+                send_text_message(user_open_id, message)
                 log(f"注册引导已发送: {user_open_id}")
     except Exception as e:
         log(f"处理进入单聊事件异常: {e}")

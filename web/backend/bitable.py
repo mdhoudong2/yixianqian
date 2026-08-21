@@ -110,17 +110,19 @@ def get_activity_by_record(record_id):
 # ========== 报名相关 ==========
 
 def get_signups(activity_id):
-    """获取活动的所有报名记录"""
+    """获取活动的所有报名记录（仅已报名，排除已取消）"""
     return search_records(SIGNUP_TABLE_ID, [
-        {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [activity_id]}
+        {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+        {"field_name": F_SIGNUP_STATUS, "operator": "isNot", "value": ["已取消"]}
     ])
 
 
 def get_user_signup(activity_id, open_id):
-    """获取用户在某活动的报名记录"""
+    """获取用户在某活动的报名记录（仅已报名）"""
     items = search_records(SIGNUP_TABLE_ID, [
         {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-        {"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]}
+        {"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]},
+        {"field_name": F_SIGNUP_STATUS, "operator": "isNot", "value": ["已取消"]}
     ])
     return items[0] if items else None
 

@@ -1123,11 +1123,10 @@ def cancel_signup(activity_id):
                 F_ACTIVITY_CURRENT_SIGNUP: max(0, current - 1)
             })
 
-        # 删除报名记录（多维表格API删除记录）
-        token = bitable.get_token()
-        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BASE_TOKEN}/tables/{SIGNUP_TABLE_ID}/records/{existing['record_id']}"
-        headers = {"Authorization": f"Bearer {token}"}
-        requests.delete(url, headers=headers, timeout=15)
+        # 更新为已取消（保留历史，与 Bot 侧一致）
+        bitable.update_record(SIGNUP_TABLE_ID, existing["record_id"], {
+            F_SIGNUP_STATUS: "已取消"
+        })
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")

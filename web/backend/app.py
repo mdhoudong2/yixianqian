@@ -1908,13 +1908,19 @@ def track_event():
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "ip": request.headers.get("X-Forwarded-For", request.remote_addr or ""),
         })
+        # 磁盘恒定：超 20000 条时截断至最新 15000 条
+        if len(track["events"]) > 20000:
+            track["events"] = track["events"][-15000:]
         _save_track(track)
     return jsonify({"ok": True})
 
 
 @app.route("/api/track/stats", methods=["GET"])
 def track_stats():
-    """查看引流统计（按天/按事件聚合）"""
+    """查看引流统计（按天/按事件聚合）——仅管理员可访问"""
+    open_id = require_login()
+    if not open_id or open_id not in ADMIN_OPEN_IDS:
+        return jsonify({"error": "未授权"}), 403
     track = _load_track()
     events = track.get("events", [])
     by_day = {}

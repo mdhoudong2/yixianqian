@@ -41,13 +41,13 @@ F_PER = 4
 
 # ---- 7 个真号（已从用户表确认真实 open_id/性别）----
 REAL_ACCOUNTS = [
-    {"uid": "U-0001", "nickname": "test 侯昵称", "gender": "男性", "open_id": "ou_faf5114d39fff8aeb29f3fede36d2fa8"},
-    {"uid": "U-0002", "nickname": "test3 昵称",  "gender": "男性", "open_id": "ou_2184d32cb3f0553427d1f27576087aa9"},
-    {"uid": "U-0007", "nickname": "test5 昵称",  "gender": "男性", "open_id": "ou_17788cabc58336188e529cdbcfec126e"},
-    {"uid": "U-0003", "nickname": "test1 昵称",  "gender": "女性", "open_id": "ou_a6d4432c1082fc591f7ba05c25eb387d"},
-    {"uid": "U-0005", "nickname": "平安叩昵称",    "gender": "女性", "open_id": "ou_9a77a7cc39aa632b1d6905615d643bc4"},
-    {"uid": "U-0006", "nickname": "侯登山昵称",    "gender": "女性", "open_id": "ou_5c7f4989d5368f405ae9351fbe7dea61"},
-    {"uid": "U-0020", "nickname": "刘局",       "gender": "女性", "open_id": "ou_3389ab8e8e862a84a928fae5c13bb73b"},
+    {"uid": "U-0001", "nickname": "test 侯昵称", "gender": "男性", "open_id": "ou_xxx1"},
+    {"uid": "U-0002", "nickname": "test3 昵称",  "gender": "男性", "open_id": "ou_xxx2"},
+    {"uid": "U-0007", "nickname": "test5 昵称",  "gender": "男性", "open_id": "ou_xxx3"},
+    {"uid": "U-0003", "nickname": "test1 昵称",  "gender": "女性", "open_id": "ou_xxx4"},
+    {"uid": "U-0005", "nickname": "平安叩昵称",    "gender": "女性", "open_id": "ou_xxx5"},
+    {"uid": "U-0006", "nickname": "侯登山昵称",    "gender": "女性", "open_id": "ou_xxx6"},
+    {"uid": "U-0020", "nickname": "刘局",       "gender": "女性", "open_id": "ou_xxx7"},
 ]
 
 # ---- 假号生成参数 ----

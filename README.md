@@ -36,7 +36,7 @@
 - **数据层**：全部业务数据存飞书多维表格，无自建数据库
 - **bot ↔ H5 通信**：通过共享运行时 JSON（`SHARED_DATA_DIR`，机器人写、H5 读）
 - **H5 性能**：后端本地快照缓存 + 15s 定时刷新（gunicorn `post_fork` 预热），避免每次请求直连飞书 API
-- **AI 能力**：匹配推荐评分、图像识别（ModelScope）、联网检索（Tavily）等位于 `bot/tools/`
+- **AI 能力**：匹配推荐评分、图像识别（ModelScope）、联网检索（Tavily）等工具位于 `scripts/dev/tools/`
 
 ## 技术栈
 
@@ -75,7 +75,7 @@ cd web/backend && ./venv/bin/gunicorn -c gunicorn.conf.py app:app
 ## 仓库结构
 
 ```
-bot/         飞书机器人（WS 长连接 + AI 工具）
+bot/         飞书机器人（WS 长连接）
 web/backend  Flask H5 后端      web/frontend  静态 H5 页面
 scripts/ops  守护/运维脚本      scripts/dev   一次性/排查脚本（勿用于生产）
 deploy/      systemd 服务模板   docs/         文档

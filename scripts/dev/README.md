@@ -11,5 +11,5 @@ cd bot && ../venv/bin/python ../scripts/dev/backfill_gender.py
 cd web/backend && venv/bin/python ../../scripts/dev/h5_check_fields.py
 ```
 
-- `yixianqian_backend_legacy.py` — 早期 FastAPI 简化版后端，已被 H5 Flask 版取代，仅供考古。
+- `tools/` — 游离 AI 工具（feishu_api / tavily_search / modelscope_vision / fix_hearts），需从 `bot/` 目录运行以读取 local_config。
 - `setup_test_*.py` / `simulate_admin_cmd.py` — 造测试数据与模拟管理端操作，注意勿在生产误跑。

@@ -30,13 +30,13 @@ F_PER = 4
 
 # 7 个真号（open_id 已确认）
 REAL = {
-    "ou_faf5114d39fff8aeb29f3fede36d2fa8": ("U-0001", "男性"),
-    "ou_2184d32cb3f0553427d1f27576087aa9": ("U-0002", "男性"),
-    "ou_17788cabc58336188e529cdbcfec126e": ("U-0007", "男性"),
-    "ou_a6d4432c1082fc591f7ba05c25eb387d": ("U-0003", "女性"),
-    "ou_9a77a7cc39aa632b1d6905615d643bc4": ("U-0005", "女性"),
-    "ou_5c7f4989d5368f405ae9351fbe7dea61": ("U-0006", "女性"),
-    "ou_3389ab8e8e862a84a928fae5c13bb73b": ("U-0020", "女性"),
+    "ou_xxx1": ("U-0001", "男性"),
+    "ou_xxx2": ("U-0002", "男性"),
+    "ou_xxx3": ("U-0007", "男性"),
+    "ou_xxx4": ("U-0003", "女性"),
+    "ou_xxx5": ("U-0005", "女性"),
+    "ou_xxx6": ("U-0006", "女性"),
+    "ou_xxx7": ("U-0020", "女性"),
 }
 REAL_FEMALES = {k for k, v in REAL.items() if v[1] == "女性"}
 REAL_MALES = {k for k, v in REAL.items() if v[1] == "男性"}

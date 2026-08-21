@@ -116,10 +116,15 @@
   .edit-label { width: 108px; flex-shrink: 0; font-size: 14px; color: #646566; }
   .edit-picker { flex: 1; display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #323233; padding: 10px 0; }
   .edit-picker .placeholder { color: #c8c9cc; }
-  .edit-photo { display: flex; flex-direction: column; align-items: center; padding: 20px 16px 16px; }
-  .edit-photo img { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
-  .edit-photo-placeholder { width: 100px; height: 100px; border-radius: 50%; background: #fff0f3; display: inline-flex; align-items: center; justify-content: center; font-size: 44px; }
-  .edit-photo-change { margin-top: 12px; font-size: 14px; color: #1989fa; display: flex; align-items: center; gap: 4px; }
+  .edit-photo-grid { display: flex; flex-wrap: wrap; gap: 10px; padding: 16px; }
+  .edit-photo-item { position: relative; width: 96px; height: 96px; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+  .edit-photo-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .edit-photo-del { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,0.55); color: #fff; font-size: 14px; line-height: 18px; text-align: center; cursor: pointer; }
+  .edit-photo-cover { position: absolute; left: 4px; top: 4px; padding: 1px 6px; border-radius: 4px; background: #ff6b81; color: #fff; font-size: 11px; }
+  .edit-photo-setcover { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 0; background: rgba(0,0,0,0.55); color: #fff; font-size: 11px; text-align: center; cursor: pointer; }
+  .edit-photo-add { width: 96px; height: 96px; border-radius: 8px; border: 1px dashed #c8c9cc; background: #fafafa; color: #969799; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font-size: 12px; cursor: pointer; }
+  .edit-photo-add .van-icon { font-size: 24px; }
+  .edit-photo-tip { padding: 0 16px 12px; font-size: 12px; color: #969799; }
   .edit-long-row { align-items: flex-start; }
   .edit-long-row .edit-label { padding-top: 12px; }
   .picker-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #f2f3f5; }
@@ -538,14 +543,20 @@
   <div class="profile-detail">
     <div class="edit-tip">除姓名、圣名、生日、家乡外，其它资料均可修改</div>
     <div class="edit-card" style="margin-bottom:12px;">
-      <div class="edit-photo">
-        <img v-if="profileData.photo" :src="profileData.photo" alt="">
-        <div v-else class="edit-photo-placeholder">{{ profileData.gender==='男性' ? '👨' : '👩' }}</div>
-        <div class="edit-photo-change" @click="pickPhoto">
-          <van-icon name="photograph" /><span>{{ uploadingPhoto ? '上传中…' : '更换照片' }}</span>
+      <div class="edit-photo-grid">
+        <div v-for="(p, i) in profilePhotos" :key="p" class="edit-photo-item">
+          <img :src="p" alt="">
+          <div class="edit-photo-del" @click.stop="deletePhoto(i)">×</div>
+          <div v-if="i===0" class="edit-photo-cover">封面</div>
+          <div v-else class="edit-photo-setcover" @click.stop="setCover(i)">设为封面</div>
+        </div>
+        <div v-if="profilePhotos.length < 9" class="edit-photo-add" @click="pickPhoto">
+          <van-icon name="plus" />
+          <span>{{ uploadingPhoto ? '上传中…' : '添加照片' }}</span>
         </div>
         <input ref="photoInput" type="file" accept="image/*" style="display:none;" @change="onPhotoChange" />
       </div>
+      <div class="edit-photo-tip">第一张是头像，也是牵线首页的封面；点击「设为封面」可换第一张，最多 9 张</div>
     </div>
     <div class="edit-card">
       <div v-for="f in editableFields" :key="f.field" :class="['edit-row', {'edit-long-row': f.long}]">
@@ -1093,8 +1104,17 @@ createApp({
     const savingProfile = ref(false);
     const photoInput = ref(null);
     const uploadingPhoto = ref(false);
+    const profilePhotos = ref([]);
+    function syncProfilePhotos() {
+      // 同步头像（第一张照片）与全局 user，保证保存后首页/消息头像一致
+      profileData.value.photo = profilePhotos.value[0] || '';
+      if (user.value) user.value.photo = profileData.value.photo;
+    }
     function openProfileEdit() {
       editableFields.value = (profileData.value.editable || []).map(f => ({ ...f, value: Array.isArray(f.value) ? [...f.value] : f.value }));
+      profilePhotos.value = (profileData.value.photos && profileData.value.photos.length)
+        ? [...profileData.value.photos]
+        : (profileData.value.photo ? [profileData.value.photo] : []);
       page.value = 'profile_edit';
     }
     function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
@@ -1111,11 +1131,33 @@ createApp({
         const contentType = resp.headers.get('Content-Type') || '';
         const data = contentType.includes('application/json') ? await resp.json() : {};
         if (!resp.ok) throw new Error(data.error || '上传失败，请稍后重试');
-        profileData.value.photo = data.photo;
-        vant.showToast('照片已更新');
+        profilePhotos.value = data.photos || [];
+        profileData.value.photos = profilePhotos.value;
+        syncProfilePhotos();
+        vant.showToast('照片已添加');
       } catch (err) { vant.showToast(err.message || '上传失败'); }
       uploadingPhoto.value = false;
       e.target.value = '';
+    }
+    async function deletePhoto(i) {
+      if (i < 0 || i >= profilePhotos.value.length) return;
+      try {
+        const data = await api('/api/profile/photo', { method: 'DELETE', body: JSON.stringify({ index: i }) });
+        profilePhotos.value = data.photos || [];
+        profileData.value.photos = profilePhotos.value;
+        syncProfilePhotos();
+        vant.showToast('已删除');
+      } catch (err) { vant.showToast(err.message || '删除失败'); }
+    }
+    async function setCover(i) {
+      if (i <= 0 || i >= profilePhotos.value.length) return;
+      try {
+        const data = await api('/api/profile/photo/cover', { method: 'POST', body: JSON.stringify({ index: i }) });
+        profilePhotos.value = data.photos || [];
+        profileData.value.photos = profilePhotos.value;
+        syncProfilePhotos();
+        vant.showToast('已设为封面');
+      } catch (err) { vant.showToast(err.message || '操作失败'); }
     }
     function openPicker(f) { pickerField.value = f; showSelectPopup.value = true; }
     function openMultiPicker(f) { pickerField.value = f; showMultiPopup.value = true; }
@@ -1843,7 +1885,7 @@ createApp({
       profileData, openProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
-      photoInput, uploadingPhoto, pickPhoto, onPhotoChange,
+      photoInput, uploadingPhoto, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,

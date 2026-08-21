@@ -1247,8 +1247,10 @@ def like_user():
         my_gender = bitable.get_select_value(me_fields, F_GENDER)
         target_gender = bitable.get_select_value(target_fields, F_GENDER)
 
-        # 同性不能喜欢（仅限异性）
-        if my_gender and target_gender and my_gender == target_gender:
+        # 同性不能喜欢（仅限异性），性别缺失先提示完善
+        if not my_gender or not target_gender:
+            return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
+        if my_gender == target_gender:
             return jsonify({"error": "仅限异性之间喜欢"}), 400
 
         if my_hearts <= 0:

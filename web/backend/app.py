@@ -4,6 +4,7 @@ import os
 import io
 import json
 import re
+import sys
 import time
 import uuid
 import random
@@ -14,6 +15,12 @@ from PIL import Image, ImageOps
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory, make_response, redirect, Response, abort
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
+# 共享库 lib/ 位于仓库根目录（web/backend 的上两级）
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from lib import storage
 
 from config import *
 import bitable
@@ -1810,11 +1817,7 @@ def my_groups_flag():
 
 def load_notifications():
     """读取共享通知文件（机器人写入、H5 读取）"""
-    try:
-        with open(NOTIFICATIONS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f).get("items", [])
-    except Exception:
-        return []
+    return storage.load_json(NOTIFICATIONS_FILE, {"items": []}).get("items", [])
 
 
 @app.route("/api/activities/<activity_id>/signups", methods=["GET"])
@@ -1882,16 +1885,11 @@ _track_lock = threading.Lock()
 
 
 def _load_track():
-    try:
-        with open(TRACK_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {"events": []}
+    return storage.load_json(TRACK_FILE, {"events": []})
 
 
 def _save_track(data):
-    with open(TRACK_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+    storage.save_json(TRACK_FILE, data)
 
 
 @app.route("/api/track", methods=["POST"])

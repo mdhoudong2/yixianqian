@@ -1798,15 +1798,40 @@ def update_profile():
     return jsonify({"ok": True, "message": "资料已更新"})
 
 
+MAX_PHOTOS = 9  # 个人照片最多 9 张（飞书附件字段单格上限）
+
+
+def _photo_tokens(user):
+    """读取用户「个人照片」字段的全部附件 token（按展示顺序）"""
+    return bitable.get_attachment_tokens(user.get("fields", {}), F_PHOTO)
+
+
+def _photo_urls(tokens):
+    return ["/api/image/" + t for t in tokens]
+
+
+def _write_photos(user, tokens):
+    """把一组 file_token 写回「个人照片」字段（多张照片，牵线首页可切换展示）。"""
+    attachments = [{"file_token": t, "name": f"photo{i + 1}.jpg"} for i, t in enumerate(tokens)]
+    ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_PHOTO: attachments})
+    if ok:
+        refresh_snapshot_table("users")
+    return ok
+
+
 @app.route("/api/profile/photo", methods=["POST"])
 def update_profile_photo():
-    """替换本人照片：上传图片到多维表格附件字段（个人照片）。"""
+    """新增一张照片：上传图片并追加到「个人照片」（牵线首页可切换展示的多张照片）。"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
     user = bitable.find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
+
+    tokens = _photo_tokens(user)
+    if len(tokens) >= MAX_PHOTOS:
+        return jsonify({"error": f"最多只能上传 {MAX_PHOTOS} 张照片"}), 400
 
     f = request.files.get("file")
     if not f:
@@ -1826,11 +1851,61 @@ def update_profile_photo():
     if not file_token:
         return jsonify({"error": "图片上传失败，请稍后重试"}), 500
 
-    ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_PHOTO: [{"file_token": file_token, "name": filename}]})
-    if not ok:
+    tokens.append(file_token)
+    if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    refresh_snapshot_table("users")
-    return jsonify({"ok": True, "photo": "/api/image/" + file_token})
+    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+
+
+@app.route("/api/profile/photo", methods=["DELETE"])
+def delete_profile_photo():
+    """删除一张照片（按下标 0 起）。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    user = bitable.find_user_by_openid(open_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
+    body = request.get_json(silent=True) or {}
+    try:
+        idx = int(body.get("index", -1))
+    except (ValueError, TypeError):
+        idx = -1
+
+    tokens = _photo_tokens(user)
+    if idx < 0 or idx >= len(tokens):
+        return jsonify({"error": "照片不存在"}), 400
+    tokens.pop(idx)
+    if not _write_photos(user, tokens):
+        return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+
+
+@app.route("/api/profile/photo/cover", methods=["POST"])
+def set_profile_cover():
+    """把某张照片设为封面（头像）：移到第一张。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    user = bitable.find_user_by_openid(open_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+
+    body = request.get_json(silent=True) or {}
+    try:
+        idx = int(body.get("index", -1))
+    except (ValueError, TypeError):
+        idx = -1
+
+    tokens = _photo_tokens(user)
+    if idx < 0 or idx >= len(tokens):
+        return jsonify({"error": "照片不存在"}), 400
+    if idx != 0:
+        tokens.insert(0, tokens.pop(idx))
+        if not _write_photos(user, tokens):
+            return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
 
 
 # ========== 我的喜欢 ==========

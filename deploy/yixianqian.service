@@ -3,12 +3,13 @@ Description=Yixianqian Bot
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 WorkingDirectory=/opt/yixianqian/bot
-ExecStart=/opt/yixianqian/scripts/ops/yixianqian_guard.sh start
-ExecStop=/opt/yixianqian/scripts/ops/yixianqian_guard.sh stop
+ExecStart=/opt/yixianqian/scripts/ops/yixianqian_guard.sh run
 Restart=always
-RestartSec=10
+RestartSec=5
+TimeoutStopSec=10
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target

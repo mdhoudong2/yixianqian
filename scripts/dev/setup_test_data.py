@@ -83,8 +83,8 @@ def main():
 
     # 已有的用户（U-0012男、U-0013女）
     existing_users = [
-        {'uid': 'U-0012', 'gender': '男', 'oid': 'ou_86df887c4c69ee1d65a11b11e140d21b', 'nickname': '左易灭杀的昵称'},
-        {'uid': 'U-0013', 'gender': '女', 'oid': 'ou_30129e6c4d8195a416bc4c441a86c225', 'nickname': '塑料姐妹花的昵称'},
+        {'uid': 'U-0012', 'gender': '男', 'oid': 'ou_xxx8', 'nickname': '左易灭杀的昵称'},
+        {'uid': 'U-0013', 'gender': '女', 'oid': 'ou_xxx9', 'nickname': '塑料姐妹花的昵称'},
     ]
 
     # 生成198个新用户（99男 + 99女）

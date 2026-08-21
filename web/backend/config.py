@@ -165,8 +165,8 @@ F_REPORT_REPORTER = "举报人昵称"
 F_REPORT_TARGET = "被举报人昵称"
 F_REPORT_REASON = "举报原因"
 
-# 管理员open_id
-ADMIN_OPEN_IDS = ["ou_faf5114d39fff8aeb29f3fede36d2fa8"]
+# 管理员open_id（敏感，配置于 local_config.py；此处留空回退）
+ADMIN_OPEN_IDS = getattr(_lc, "ADMIN_OPEN_IDS", [])
 
 # 爱心配置
 INITIAL_HEARTS = 3

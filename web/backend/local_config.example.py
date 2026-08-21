@@ -4,3 +4,4 @@ FEISHU_APP_ID = "cli_xxxx"
 FEISHU_APP_SECRET = "xxxx"
 BASE_TOKEN = "xxxx"
 SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（生产路径）
+ADMIN_OPEN_IDS = ["ou_xxxx"]  # 管理员飞书 open_id 列表

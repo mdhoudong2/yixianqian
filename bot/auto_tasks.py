@@ -1,22 +1,30 @@
-# -*- coding: utf-8 -*-
 """后台轮询任务：自动绑定 / 审核通知 / 喜欢处理 / 报名处理 / 数字红娘推荐。"""
 import os
 import time
 
 import requests
-from lib import storage
-
 from cards import send_main_menu_card
 from clients import *
 from constants import *
 from queries import (
-    find_user_by_id_or_name, find_user_by_nickname, find_user_by_openid,
-    get_creator_openid, update_user_feishu_id,
+    find_user_by_id_or_name,
+    find_user_by_nickname,
+    find_user_by_openid,
+    get_creator_openid,
+    update_user_feishu_id,
 )
 from store import (
-    add_notification, load_bindings, load_invite_rewarded, load_notified,
-    save_bindings, save_invite_rewarded, save_notified,
+    add_notification,
+    load_bindings,
+    load_invite_rewarded,
+    load_notified,
+    save_bindings,
+    save_invite_rewarded,
+    save_notified,
 )
+
+from lib import storage
+
 
 def auto_bind_from_creator():
     """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册"""
@@ -172,8 +180,8 @@ def auto_send_view_after_approval():
             continue
 
         message_head = (
-            f"恭喜你，资料审核已通过！\U0001f389\n\n"
-            f"去一线牵App，开始牵线吧："
+            "恭喜你，资料审核已通过！\U0001f389\n\n"
+            "去一线牵App，开始牵线吧："
         )
         message_tail = (
             f"初始有 {INITIAL_HEARTS} 颗爱心，邀请好友注册可获得更多爱心（上限{MAX_HEARTS}颗）。\n\n"

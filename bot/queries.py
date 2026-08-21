@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """用户/活动查询辅助（基于共享 BitableClient）。"""
 from clients import *
 from constants import *

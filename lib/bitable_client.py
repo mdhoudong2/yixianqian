@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """飞书多维表格（Bitable）API 封装：DAO + 字段值解析（bot 与 H5 后端共用）。
 
 原 bot 与 web/backend/bitable.py 各有一份 search/update/create/delete 及

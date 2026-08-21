@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
 """活动分组：卫星滚动分组算法、分组卡片、分组指令处理。"""
 from concurrent.futures import ThreadPoolExecutor
 
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
+
 
 def _user_selection_score(priority):
     return PRIORITY_SCORES.get(priority, 0)
@@ -320,7 +320,7 @@ def build_group_select_card(activity_id, activity_name, participants, user_gende
     else:
         form_elements.append({
             "tag": "markdown",
-            "content": f"参与者较多，请输入对方编号（如U-0003）。"
+            "content": "参与者较多，请输入对方编号（如U-0003）。"
         })
         for i in range(7):
             inp = {

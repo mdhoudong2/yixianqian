@@ -1,29 +1,36 @@
-# -*- coding: utf-8 -*-
 """一线牵 H5 后端服务 - Flask"""
-import os
 import io
 import json
+import logging
+import os
+import random
 import re
 import sys
-import time
-import uuid
-import random
-import logging
 import threading
+import time
+from datetime import datetime
+
 import requests
+from flask import (
+    Flask,
+    Response,
+    abort,
+    jsonify,
+    make_response,
+    request,
+    send_from_directory,
+)
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from PIL import Image, ImageOps
-from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, send_from_directory, make_response, redirect, Response, abort
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 # 共享库 lib/ 位于仓库根目录（web/backend 的上两级）
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from lib import storage
-
-from config import *
 import bitable
+from config import *
+
+from lib import storage
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 
@@ -32,6 +39,7 @@ _session_signer = URLSafeTimedSerializer(FEISHU_APP_SECRET, salt="yxq-session")
 
 # ========== 简单内存缓存 ==========
 import time as _time
+
 _cache = {}
 def cache_get(key, ttl=60):
     item = _cache.get(key)

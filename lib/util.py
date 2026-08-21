@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """轻量工具：统一的日志输出（bot 与 H5 后端共用）。"""
 import time
 

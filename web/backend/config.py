@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """一线牵 H5 配置"""
 
 import os
@@ -8,6 +7,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 # 飞书应用配置（生产版，密钥见 local_config.py）
 import local_config as _lc
+
 FEISHU_APP_ID = _lc.FEISHU_APP_ID
 FEISHU_APP_SECRET = _lc.FEISHU_APP_SECRET
 BASE_TOKEN = _lc.BASE_TOKEN

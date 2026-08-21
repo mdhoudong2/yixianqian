@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 """bot 进程内的共享客户端单例与 API 别名（飞书消息 + 多维表格 + 字段解析）。"""
 from constants import APP_ID, APP_SECRET, BASE_TOKEN
+
 from lib.bitable_client import (
-    BitableClient, get_attachment_tokens, get_datetime_value, get_date_value,
-    get_field_number, get_field_text, get_multi_select_value, get_phone_value,
-    get_select_value,
+    BitableClient,
 )
 from lib.feishu import FeishuClient
 from lib.util import log

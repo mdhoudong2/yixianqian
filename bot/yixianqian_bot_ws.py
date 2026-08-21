@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 一线牵机器人 - 长连接事件接收服务（纯多维表格方案V3）
 
@@ -30,31 +29,53 @@ from concurrent.futures import ThreadPoolExecutor
 import lark_oapi as lark
 from lark_oapi.api.application.v6 import P2ApplicationBotMenuV6
 from lark_oapi.api.im.v1 import *
-from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger, P2CardActionTriggerResponse
+from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    P2CardActionTrigger,
+    P2CardActionTriggerResponse,
+)
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from auto_tasks import (
-    auto_anonymous_like_loop, auto_bind_loop, auto_deduct_hearts_loop,
-    auto_detect_mutual_like_loop, auto_fill_like_loop, auto_fill_signup_loop,
-    auto_generate_match_loop, auto_notify_signup_loop, auto_send_view_loop,
+    auto_anonymous_like_loop,
+    auto_bind_loop,
+    auto_deduct_hearts_loop,
+    auto_detect_mutual_like_loop,
+    auto_fill_like_loop,
+    auto_fill_signup_loop,
+    auto_generate_match_loop,
+    auto_notify_signup_loop,
+    auto_send_view_loop,
     auto_update_activity_signup_loop,
 )
 from cards import WELCOME_TEXT, send_main_menu_card
 from clients import *
 from commands import (
-    handle_admin_approve, handle_admin_help, handle_admin_notify,
-    handle_admin_pending, handle_admin_reject, handle_admin_stats,
-    handle_admin_toggle_group_flag, handle_group_help, handle_help_command,
-    handle_h5_command, handle_invite_command, handle_register_command,
-    handle_status_command, handle_welcome,
+    handle_admin_approve,
+    handle_admin_help,
+    handle_admin_notify,
+    handle_admin_pending,
+    handle_admin_reject,
+    handle_admin_stats,
+    handle_admin_toggle_group_flag,
+    handle_group_help,
+    handle_h5_command,
+    handle_help_command,
+    handle_invite_command,
+    handle_register_command,
+    handle_status_command,
+    handle_welcome,
 )
 from constants import *
 from grouping import (
-    handle_admin_group_status, handle_admin_start_group, handle_admin_stop_group,
-    handle_admin_unsubmitted, handle_group_command, handle_group_submit,
+    handle_admin_group_status,
+    handle_admin_start_group,
+    handle_admin_stop_group,
+    handle_admin_unsubmitted,
+    handle_group_command,
+    handle_group_submit,
 )
 from queries import find_user_by_openid
 from store import load_bindings, load_welcomed, save_welcomed
@@ -257,7 +278,6 @@ def do_p2_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerR
 
 def do_p2_im_message_message_read_v1(data: lark.im.v1.P2ImMessageMessageReadV1) -> None:
     """已读回执事件：无业务逻辑，仅注册以消除日志中 "processor not found" 刷屏。"""
-    pass
 
 
 

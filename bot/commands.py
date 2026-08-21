@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """用户指令与管理员指令处理（纯逻辑，发送与查询走 clients/queries/store）。"""
 from urllib.parse import quote
 
@@ -6,7 +5,8 @@ from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
-from store import load_bindings, load_invite_rewarded, load_notified, save_notified
+from store import load_invite_rewarded, load_notified, save_notified
+
 
 def handle_register_command(sender_id):
     """发送注册表单链接"""
@@ -167,7 +167,7 @@ def handle_admin_approve(keyword):
     if not records:
         return f"未找到用户：{keyword}"
     if len(records) > 1:
-        return f"找到多个匹配用户，请使用用户ID操作，如：通过 U-0003"
+        return "找到多个匹配用户，请使用用户ID操作，如：通过 U-0003"
 
     record = records[0]
     record_id = record.get("record_id")
@@ -214,7 +214,7 @@ def handle_admin_approve(keyword):
 
         return f"已审核通过：{uid} {nickname}\n已发送审核通过通知和App链接给TA。"
     else:
-        return f"审核操作失败，请稍后重试。"
+        return "审核操作失败，请稍后重试。"
 
 
 
@@ -225,7 +225,7 @@ def handle_admin_reject(keyword):
     if not records:
         return f"未找到用户：{keyword}"
     if len(records) > 1:
-        return f"找到多个匹配用户，请使用用户ID操作，如：拒绝 U-0003"
+        return "找到多个匹配用户，请使用用户ID操作，如：拒绝 U-0003"
 
     record = records[0]
     record_id = record.get("record_id")
@@ -245,7 +245,7 @@ def handle_admin_reject(keyword):
             send_text_message(open_id, "很抱歉，你的资料暂未通过审核。如有疑问请联系管理员。")
         return f"已隐藏用户：{uid} {nickname}\n该用户将不会出现在浏览列表中。"
     else:
-        return f"操作失败，请稍后重试。"
+        return "操作失败，请稍后重试。"
 
 
 
@@ -276,7 +276,7 @@ def handle_admin_notify(text):
         log(f"管理员通知已发送: {target_uid} {target_nickname} ({target_open_id})")
         return f"已发送给「{target_nickname}」（{target_uid}）：\n{message}"
     else:
-        return f"发送失败，用户可能未与机器人对话过"
+        return "发送失败，用户可能未与机器人对话过"
 
 
 

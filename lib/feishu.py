@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """飞书开放平台客户端：tenant token 缓存与消息发送（bot 与 H5 后端共用）。
 
 原 bot 与 web/backend 各写了一份 send_text_message / send_card_message /

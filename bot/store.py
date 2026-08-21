@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
 """共享运行时 JSON 的读写封装（加锁 + 原子写，见 lib/storage.py）。"""
 import time
 
+from constants import *
+
 from lib import storage
 
-from constants import *
 
 def load_bindings():
     return storage.load_json(BINDING_FILE, {})

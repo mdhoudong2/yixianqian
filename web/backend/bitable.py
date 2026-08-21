@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """飞书多维表格 API 封装 —— 薄封装：实际实现位于共享库 lib/bitable_client.py。
 
 保留本模块以兼容 app.py 的全部 `bitable.xxx` 调用，避免大范围改动。
@@ -12,9 +11,12 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from config import *
-from lib.bitable_client import BitableClient, get_attachment_tokens, get_datetime_value, \
-    get_date_value, get_field_number, get_field_text, get_multi_select_value, \
-    get_phone_value, get_select_value
+
+from lib.bitable_client import (
+    BitableClient,
+    get_field_text,
+    get_select_value,
+)
 
 _logger = logging.getLogger("bitable").warning
 

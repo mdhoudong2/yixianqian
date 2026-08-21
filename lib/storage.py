@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """共享 JSON 文件存储：跨进程原子写 + 文件锁。
 
 被 bot（多线程轮询）与 H5 后端（gunicorn 多 worker）同时读写时保证安全：
@@ -79,11 +78,10 @@ def update_json(path, default, mutator):
 
     返回：写入后的数据（放弃写入时返回原数据）。
     """
-    with _thread_lock(path):
-        with _FileLock(path + ".lock"):
-            data = load_json(path, default)
-            new_data = mutator(data)
-            if new_data is not None:
-                save_json(path, new_data)
-                return new_data
-            return data
+    with _thread_lock(path), _FileLock(path + ".lock"):
+        data = load_json(path, default)
+        new_data = mutator(data)
+        if new_data is not None:
+            save_json(path, new_data)
+            return new_data
+        return data

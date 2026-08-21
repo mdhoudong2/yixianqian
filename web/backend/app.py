@@ -1268,8 +1268,8 @@ def like_user():
                 {"field_name": F_LIKE_TYPE, "operator": "is", "value": ["实名"]},
             ])
             for l in my_real_likes:
-                ct = l.get("fields", {}).get("创建时间")
-                if ct and time.strftime("%Y-%m", time.localtime(int(ct) / 1000)) == cur_month:
+                ct_str = bitable.get_datetime_value(l.get("fields", {}), "创建时间")
+                if ct_str and ct_str[:7] == cur_month:
                     return jsonify({"error": "本月已用过实名喜欢，每月只有一次机会"}), 400
 
         # 检查是否相互喜欢

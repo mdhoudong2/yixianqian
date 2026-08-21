@@ -22,6 +22,9 @@ yixianqian_*.json
 image_cache/
 web/backend/image_cache/
 web/backend/yixianqian_track.json
+# 共享运行时数据目录（SHARED_DATA_DIR 默认值），仅保留占位文件
+data/*
+!data/.gitkeep
 
 # 备份与打包
 *.bak

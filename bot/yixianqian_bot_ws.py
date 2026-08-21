@@ -21,6 +21,8 @@
 """
 
 import json
+import os
+import sys
 import time
 import threading
 import requests
@@ -31,8 +33,13 @@ from lark_oapi.api.im.v1 import *
 from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger, P2CardActionTriggerResponse
 from lark_oapi.api.application.v6 import P2ApplicationBotMenuV6
 
+# 共享库 lib/（飞书客户端 / 多维表格 DAO / JSON 存储）位于仓库根目录
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from lib import storage
+
 # ==================== 应用配置 ====================
-import os
 
 # 通过环境变量区分环境：YIXIANQIAN_ENV=dev 为开发版，默认生产版
 IS_DEV = os.environ.get("YIXIANQIAN_ENV", "prod") == "dev"
@@ -127,8 +134,9 @@ MAX_HEARTS = 30
 H5_BACKEND_URL = "http://127.0.0.1:8091"
 
 # ==================== 本地记录文件 ====================
-# bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认生产路径）
-SHARED_DATA_DIR = getattr(_cfg, "SHARED_DATA_DIR", "/opt/yixianqian")
+# bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认取仓库下 data/）
+SHARED_DATA_DIR = getattr(_cfg, "SHARED_DATA_DIR", None) or os.path.join(_REPO_ROOT, "data")
+os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 BINDING_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_bindings.json")
 NOTIFIED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notified.json")  # 记录已发送通知的记录ID，避免重复
 WELCOMED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_welcomed.json")  # 记录已发送进入欢迎消息的用户open_id，避免重复
@@ -209,7 +217,6 @@ def send_text_message(receive_id, text):
     # 假测试账号不发起真实发送，避免 99992351 报错刷屏并阻塞后续消息处理
     if is_test_fake_openid(receive_id):
         return False
-    token = get_tenant_access_token()
     token = get_tenant_access_token()
     if not token:
         return False
@@ -323,38 +330,23 @@ def create_mutual_chat(openid_a, openid_b, name_a, name_b):
 
 
 def load_bindings():
-    try:
-        with open(BINDING_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {}
+    return storage.load_json(BINDING_FILE, {})
 
 
 def save_bindings(bindings):
-    with open(BINDING_FILE, 'w', encoding='utf-8') as f:
-        json.dump(bindings, f, ensure_ascii=False, indent=2)
+    storage.save_json(BINDING_FILE, bindings)
 
 
 def load_notified():
-    try:
-        with open(NOTIFIED_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {"likes": [], "mutual": []}
-
-
-_notified_lock = threading.Lock()
+    return storage.load_json(NOTIFIED_FILE, {"likes": [], "mutual": []})
 
 
 def save_notified(data):
-    """合并写回（加锁）：只更新 data 中的 key，保留文件中其他 key。
-    避免多个后台通知线程并发读-改-写时互相覆盖去重记录，导致消息重复发送。"""
-    with _notified_lock:
-        try:
-            with open(NOTIFIED_FILE, 'r', encoding='utf-8') as f:
-                current = json.load(f)
-        except Exception:
-            current = {}
+    """合并写回：只更新 data 中的 key，保留文件中其他 key。
+    加锁（线程锁 + 跨进程 flock）+ 原子写，避免多个后台通知线程/进程并发读-改-写
+    互相覆盖去重记录，导致消息重复发送。"""
+
+    def _merge(current):
         for k, v in data.items():
             if isinstance(v, list) and isinstance(current.get(k), list):
                 merged = list(current[k])
@@ -364,67 +356,48 @@ def save_notified(data):
                 current[k] = merged
             else:
                 current[k] = v
-        with open(NOTIFIED_FILE, 'w', encoding='utf-8') as f:
-            json.dump(current, f, ensure_ascii=False, indent=2)
+        return current
+
+    storage.update_json(NOTIFIED_FILE, {"likes": [], "mutual": []}, _merge)
 
 
 def load_welcomed():
     """加载已发送进入欢迎消息的用户列表"""
-    try:
-        with open(WELCOMED_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return []
+    return storage.load_json(WELCOMED_FILE, [])
 
 
 def save_welcomed(data):
-    with open(WELCOMED_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    storage.save_json(WELCOMED_FILE, data)
 
 
 def load_menu_card_time():
-    try:
-        with open(MENU_CARD_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {}
+    return storage.load_json(MENU_CARD_FILE, {})
 
 
 def save_menu_card_time(data):
-    with open(MENU_CARD_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False)
+    storage.save_json(MENU_CARD_FILE, data)
 
 
 def load_invite_rewarded():
     """加载已奖励的邀请记录 {invitee_openid: inviter_openid}"""
-    try:
-        with open(INVITE_REWARDED_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {}
+    return storage.load_json(INVITE_REWARDED_FILE, {})
 
 def save_invite_rewarded(data):
-    with open(INVITE_REWARDED_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    storage.save_json(INVITE_REWARDED_FILE, data)
 
-_notif_lock = threading.Lock()
 def load_notifications():
     """加载共享通知文件"""
-    try:
-        with open(NOTIFICATIONS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return {"items": []}
+    return storage.load_json(NOTIFICATIONS_FILE, {"items": []})
+
 def save_notifications(data):
-    with open(NOTIFICATIONS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    storage.save_json(NOTIFICATIONS_FILE, data)
+
 def add_notification(recipient, ntype, text, key=None, extra=None):
     """写入一条通知（按 key 去重），供 H5 消息页『动态』分区读取"""
-    with _notif_lock:
-        data = load_notifications()
+    def _add(data):
         items = data.get("items", [])
         if key and any(it.get("key") == key for it in items):
-            return
+            return None
         item = {
             "recipient": recipient, "type": ntype, "text": text,
             "key": key, "time": time.strftime("%Y-%m-%d %H:%M:%S")
@@ -433,7 +406,8 @@ def add_notification(recipient, ntype, text, key=None, extra=None):
             item.update(extra)
         items.append(item)
         data["items"] = items
-        save_notifications(data)
+        return data
+    storage.update_json(NOTIFICATIONS_FILE, {"items": []}, _add)
 
 def generate_h5_url(open_id):
     """生成 H5 入口链接。身份由飞书「网页免登」确定，URL 不再携带登录 token（防止链接被转发冒用身份）"""
@@ -1640,11 +1614,7 @@ def calculate_match_score(user_a, user_b):
 def auto_generate_match_recommendations():
     today = time.strftime("%Y-%m-%d")
     match_log_file = os.path.join(SHARED_DATA_DIR, "yixianqian_match_log.json")
-    try:
-        with open(match_log_file, 'r', encoding='utf-8') as f:
-            match_log = json.load(f)
-    except:
-        match_log = {}
+    match_log = storage.load_json(match_log_file, {})
     if match_log.get("last_generate_date") == today:
         return
     active_users = search_records(USER_TABLE_ID, {
@@ -1700,8 +1670,7 @@ def auto_generate_match_recommendations():
     match_log["last_generate_date"] = today
     match_log["last_generate_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
     match_log["generated_count"] = generated_count
-    with open(match_log_file, 'w', encoding='utf-8') as f:
-        json.dump(match_log, f, ensure_ascii=False, indent=2)
+    storage.save_json(match_log_file, match_log)
     if generated_count > 0:
         log(f"数字红娘推荐生成完成，本次生成 {generated_count} 条")
 

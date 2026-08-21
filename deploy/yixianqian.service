@@ -1,0 +1,14 @@
+[Unit]
+Description=Yixianqian Bot
+After=network.target
+
+[Service]
+Type=forking
+WorkingDirectory=/opt/yixianqian/bot
+ExecStart=/opt/yixianqian/scripts/ops/yixianqian_guard.sh start
+ExecStop=/opt/yixianqian/scripts/ops/yixianqian_guard.sh stop
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

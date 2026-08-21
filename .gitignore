@@ -4,8 +4,12 @@ __pycache__/
 *.pyc
 *.log
 .env
+.DS_Store
 
 # 本地密钥（不入库）
+bot/local_config.py
+web/backend/local_config.py
+config/local_config.py
 local_config.py
 
 # 含密钥的项目文档（不入库）
@@ -15,6 +19,10 @@ AGENTS.md
 # 运行时数据
 *.pid
 yixianqian_*.json
+data/
+image_cache/
+web/backend/image_cache/
+web/backend/yixianqian_track.json
 
 # 备份与打包
 *.bak
@@ -22,8 +30,12 @@ yixianqian_*.json
 *.tar.gz
 
 # 系统/杂项
-.DS_Store
 picture/
 
-# 一次性测试脚本（硬编码了真实密钥，不入库）
-tools/setup_group_test.py
+# 一次性测试脚本（硬编码密钥，不入库）
+bot/tools/setup_group_test.py
+scripts/dev/setup_group_test.py
+
+# 本地工具
+.codebuddy/
+venv_broken_bak/

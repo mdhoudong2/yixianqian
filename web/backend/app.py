@@ -1690,6 +1690,57 @@ def group_result(activity_id):
 
 # ========== 个人中心 ==========
 
+def _editable_value(fields, fname, ftype):
+    """按类型读取可编辑字段当前值（返回给前端编辑表单）"""
+    if ftype == "text":
+        return bitable.get_field_text(fields, fname)
+    if ftype == "number":
+        n = bitable.get_field_number(fields, fname, 0)
+        return "" if (n is None or n == 0) else (int(n) if float(n) == int(n) else n)
+    if ftype == "select":
+        return bitable.get_select_value(fields, fname)
+    if ftype == "multi":
+        return bitable.get_multi_select_value(fields, fname)
+    if ftype == "phone":
+        return bitable.get_phone_value(fields, fname)
+    return ""
+
+
+def _editable_schema(fields):
+    """可编辑字段 schema + 当前值，前端据此动态渲染「修改资料」表单"""
+    return [
+        {"field": fname, "label": label, "type": ftype, "options": opts,
+         "value": _editable_value(fields, fname, ftype)}
+        for fname, label, ftype, opts in EDITABLE_FIELDS
+    ]
+
+
+def _normalize_editable_update(data):
+    """将前端提交的值按类型归一化为飞书写入格式；非法项静默忽略。"""
+    by_name = {fname: ftype for fname, _lbl, ftype, _opts in EDITABLE_FIELDS}
+    update_fields = {}
+    for k, v in data.items():
+        ftype = by_name.get(k)
+        if ftype is None:
+            continue
+        if ftype in ("text", "phone"):
+            update_fields[k] = str(v).strip() if v is not None else ""
+        elif ftype == "select":
+            update_fields[k] = str(v).strip() if v is not None else ""
+        elif ftype == "number":
+            if v in ("", None):
+                continue  # 身高留空则不更新
+            try:
+                update_fields[k] = int(float(str(v)))
+            except (ValueError, TypeError):
+                continue
+        elif ftype == "multi":
+            vals = v if isinstance(v, list) else []
+            vals = [str(x).strip() for x in vals if str(x).strip()]
+            update_fields[k] = vals
+    return update_fields
+
+
 @app.route("/api/profile", methods=["GET"])
 def get_profile():
     open_id = require_login()
@@ -1698,7 +1749,9 @@ def get_profile():
     user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
-    return jsonify(format_user_profile(user))
+    data = format_user_profile(user)
+    data["editable"] = _editable_schema(user.get("fields", {}))
+    return jsonify(data)
 
 
 @app.route("/api/profile", methods=["PUT"])
@@ -1712,17 +1765,13 @@ def update_profile():
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
-    # 只允许编辑指定文本字段
-    allowed_fields = {F_PERSONALITY, F_PARTNER_CRITERIA}
-    update_fields = {}
-    for k, v in data.items():
-        if k in allowed_fields:
-            update_fields[k] = v if v else ""
-
+    update_fields = _normalize_editable_update(data)
     if not update_fields:
         return jsonify({"error": "没有可更新的字段"}), 400
 
-    bitable.update_record(USER_TABLE_ID, user["record_id"], update_fields)
+    ok = bitable.update_record(USER_TABLE_ID, user["record_id"], update_fields)
+    if not ok:
+        return jsonify({"error": "资料更新失败，请稍后重试"}), 500
     refresh_snapshot_table_async("users")
     return jsonify({"ok": True, "message": "资料已更新"})
 

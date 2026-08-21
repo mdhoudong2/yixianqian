@@ -113,6 +113,55 @@ CARD_SECTIONS = [
     ]),
 ]
 
+# 「我的资料-修改资料」可编辑字段（姓名/圣名/生日/家乡 及 用户ID/昵称/爱心/账号状态/注册时间 等系统字段不可改）
+# 每项: (字段常量, 展示名, 类型, 选项列表或 None)；类型: text/number/select/multi/phone
+_OPT_TRAITS = [
+    "喜欢安静", "比较主动", "非常自律", "做事严谨", "性格沉稳", "积极乐观",
+    "有始有终", "喜爱冒险", "猎奇", "渴望成功", "理性待事", "正直", "话痨",
+    "善于交际", "容易相处", "有点小幽默", "传统的", "思想前卫", "总是充满热情", "讲究效率",
+]
+_OPT_HOBBIES = [
+    "有氧运动", "听音乐", "看电影", "看书", "手绘", "唱歌", "弹吉他", "弹钢琴",
+    "剧本杀", "狼人杀", "王者荣耀", "吃鸡", "密室逃脱", "爱车一族", "旅游爱好者",
+    "看小说", "拍照片", "养宠物", "做饭", "寻觅美食", "逛博物馆", "游乐场", "蹦迪",
+]
+_OPT_SPORTS = [
+    "篮球", "足球", "乒乓球", "羽毛球", "网球", "台球", "游泳", "跑步", "爬山",
+    "射击", "跳绳", "漂流", "瑜伽", "慢走", "跳舞", "骑行", "攀岩", "蹦床",
+    "滑雪", "冲浪", "滑冰", "跆拳道", "蹦极", "极限运动", "潜水",
+]
+_OPT_MBTI = ["E", "I", "S", "N", "T", "F", "J", "P"]
+_OPT_EDUCATION = ["大专以下", "大专", "本科", "硕士", "博士"]
+_OPT_INCOME = ["10W以下", "10W - 20W", "20W - 30W", "30W - 50W", "50W以上"]
+_OPT_LIVE_WITH_PARENTS = ["独立生活", "与父母住在一起", "根据具体情况而定"]
+
+EDITABLE_FIELDS = [
+    (F_HEIGHT, "身高", "number", None),
+    (F_EDUCATION, "学历", "select", _OPT_EDUCATION),
+    (F_CITY, "现居/工作城市", "text", None),
+    (F_CHURCH, "经常去的教堂", "text", None),
+    (F_GROUP, "参加的团体", "text", None),
+    (F_CHURCH_LOCATION, "教堂所在市-区", "text", None),
+    (F_INDUSTRY, "从事行业", "text", None),
+    (F_POSITION, "职位", "text", None),
+    (F_INCOME, "年收入", "select", _OPT_INCOME),
+    (F_HOUSE, "房产状况", "text", None),
+    (F_DRIVING, "汽车", "text", None),
+    (F_PERSONALITY, "我是怎样的人", "text", None),
+    (F_SELF_TRAITS, "性格", "multi", _OPT_TRAITS),
+    (F_SELF_HOBBIES, "爱好", "multi", _OPT_HOBBIES),
+    (F_SELF_SPORTS, "运动", "multi", _OPT_SPORTS),
+    (F_MBTI, "MBTI", "multi", _OPT_MBTI),
+    (F_LIVE_WITH_PARENTS, "婚后与父母同住", "select", _OPT_LIVE_WITH_PARENTS),
+    (F_FAMILY, "家庭情况", "text", None),
+    (F_PARTNER_CRITERIA, "理想的TA", "text", None),
+    (F_PARTNER_TRAITS, "TA的性格", "multi", _OPT_TRAITS),
+    (F_PARTNER_HOBBIES, "TA的爱好", "multi", _OPT_HOBBIES),
+    (F_PARTNER_SPORTS, "TA的运动", "multi", _OPT_SPORTS),
+    (F_WECHAT, "微信号", "text", None),
+    (F_PHONE, "手机号", "phone", None),
+]
+
 # 喜欢关系表字段
 F_LIKE_INITIATOR = "发起用户昵称"
 F_LIKE_TARGET = "目标用户昵称"

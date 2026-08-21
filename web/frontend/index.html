@@ -108,6 +108,21 @@
   .profile-section-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
   .profile-section-title { font-size: 15px; font-weight: 600; color: #323233; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
   .profile-section-title .ps-icon { font-size: 16px; }
+  /* 修改资料 */
+  .edit-tip { margin: 0 12px 12px; padding: 10px 12px; background: #fff7e6; color: #b8860b; border-radius: 8px; font-size: 13px; }
+  .edit-card { background: #fff; border-radius: 12px; margin: 0 12px; overflow: hidden; }
+  .edit-row { display: flex; align-items: center; padding: 6px 16px; border-bottom: 1px solid #f2f3f5; }
+  .edit-row:last-child { border-bottom: none; }
+  .edit-label { width: 108px; flex-shrink: 0; font-size: 14px; color: #646566; }
+  .edit-picker { flex: 1; display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #323233; padding: 10px 0; }
+  .edit-picker .placeholder { color: #c8c9cc; }
+  .picker-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #f2f3f5; }
+  .picker-options { max-height: 60vh; overflow-y: auto; padding: 8px 0; }
+  .picker-option { padding: 12px 16px; font-size: 14px; color: #323233; }
+  .picker-option.active { color: #1989fa; font-weight: 600; }
+  .multi-options { max-height: 60vh; overflow-y: auto; padding: 16px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .multi-option { padding: 8px 14px; border-radius: 16px; background: #f7f8fa; font-size: 14px; color: #323233; }
+  .multi-option.active { background: #fff0f3; color: #ff6b81; }
   /* 登录页 */
   .login-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 30px; text-align: center; }
   .login-logo { font-size: 50px; margin-bottom: 20px; }
@@ -440,6 +455,9 @@
       <span class="gender-icon">{{ profileData.gender==='男性' ? '♂' : '♀' }}</span>
     </div>
     <div style="height:14px;"></div>
+    <div style="padding: 0 16px;">
+      <van-button type="primary" plain block round size="small" @click="openProfileEdit">修改资料</van-button>
+    </div>
 
     <!-- 基本信息 -->
     <div class="profile-section-card" v-if="hasProfileBasic">
@@ -505,6 +523,57 @@
       </div>
     </div>
   </div>
+</div>
+<!-- ========== 修改资料 ========== -->
+<div v-else-if="page==='profile_edit'">
+  <div class="back-nav" @click="page='profile_detail'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="profile-detail">
+    <div class="edit-tip">除姓名、圣名、生日、家乡外，其它资料均可修改</div>
+    <div class="edit-card">
+      <div v-for="f in editableFields" :key="f.field" class="edit-row">
+        <div class="edit-label">{{ f.label }}</div>
+        <van-field v-if="f.type==='text' || f.type==='phone'" v-model="f.value" :placeholder="'请输入' + f.label" :border="false" style="flex:1;" />
+        <van-field v-else-if="f.type==='number'" v-model="f.value" type="number" :placeholder="'请输入' + f.label" :border="false" style="flex:1;" />
+        <div v-else-if="f.type==='select'" class="edit-picker" @click="openPicker(f)">
+          <span :class="f.value ? '' : 'placeholder'">{{ f.value || '请选择' }}</span>
+          <van-icon name="arrow" />
+        </div>
+        <div v-else-if="f.type==='multi'" class="edit-picker" @click="openMultiPicker(f)">
+          <span :class="(f.value && f.value.length) ? '' : 'placeholder'">{{ (f.value && f.value.length) ? f.value.join('、') : '请选择（可多选）' }}</span>
+          <van-icon name="arrow" />
+        </div>
+      </div>
+    </div>
+    <div style="padding: 20px 16px;">
+      <van-button type="primary" block round :loading="savingProfile" @click="saveProfile">保存</van-button>
+    </div>
+  </div>
+
+  <!-- 单选弹窗 -->
+  <van-popup v-model:show="showSelectPopup" position="bottom" round>
+    <div class="picker-header">
+      <span @click="showSelectPopup=false">取消</span>
+      <span style="font-weight:600;">{{ pickerField ? pickerField.label : '' }}</span>
+      <span style="color:#1989fa;" @click="clearPickerField">清除</span>
+    </div>
+    <div class="picker-options">
+      <div v-for="opt in (pickerField ? (pickerField.options || []) : [])" :key="opt" class="picker-option" :class="{active: pickerField && pickerField.value===opt}" @click="pickSelect(opt)">{{ opt }}</div>
+    </div>
+  </van-popup>
+
+  <!-- 多选弹窗 -->
+  <van-popup v-model:show="showMultiPopup" position="bottom" round>
+    <div class="picker-header">
+      <span @click="showMultiPopup=false">取消</span>
+      <span style="font-weight:600;">{{ pickerField ? pickerField.label : '' }}</span>
+      <span style="color:#1989fa;" @click="showMultiPopup=false">确定</span>
+    </div>
+    <div class="multi-options">
+      <div v-for="opt in (pickerField ? (pickerField.options || []) : [])" :key="opt" class="multi-option" :class="{active: pickerField && pickerField.value && pickerField.value.includes(opt)}" @click="toggleMulti(opt)">{{ opt }}</div>
+    </div>
+  </van-popup>
 </div>
 <!-- ========== 我的喜欢列表 ========== -->
 <div v-else-if="page==='my_likes'">
@@ -998,6 +1067,40 @@ createApp({
     const hasProfileAbout = computed(() => !!(profileData.value.personality || profileData.value.self_traits || profileData.value.hobbies || profileData.value.self_sports || profileData.value.mbti || profileData.value.live_with_parents || profileData.value.family));
     const hasProfilePartner = computed(() => !!(profileData.value.partner_criteria || profileData.value.partner_traits || profileData.value.partner_hobbies || profileData.value.partner_sports));
     const hasProfileContact = computed(() => !!(profileData.value.wechat || profileData.value.phone || profileData.value.register_time));
+
+    // 修改资料
+    const editableFields = ref([]);
+    const showSelectPopup = ref(false);
+    const showMultiPopup = ref(false);
+    const pickerField = ref(null);
+    const savingProfile = ref(false);
+    function openProfileEdit() {
+      editableFields.value = (profileData.value.editable || []).map(f => ({ ...f, value: Array.isArray(f.value) ? [...f.value] : f.value }));
+      page.value = 'profile_edit';
+    }
+    function openPicker(f) { pickerField.value = f; showSelectPopup.value = true; }
+    function openMultiPicker(f) { pickerField.value = f; showMultiPopup.value = true; }
+    function pickSelect(opt) { if (pickerField.value) pickerField.value.value = opt; showSelectPopup.value = false; }
+    function clearPickerField() { if (pickerField.value) pickerField.value.value = ''; showSelectPopup.value = false; }
+    function toggleMulti(opt) {
+      if (!pickerField.value) return;
+      if (!Array.isArray(pickerField.value.value)) pickerField.value.value = [];
+      const arr = pickerField.value.value;
+      const i = arr.indexOf(opt);
+      if (i >= 0) arr.splice(i, 1); else arr.push(opt);
+    }
+    async function saveProfile() {
+      const payload = {};
+      editableFields.value.forEach(f => { payload[f.field] = f.value; });
+      savingProfile.value = true;
+      try {
+        await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
+        vant.showToast('保存成功');
+        profileLoaded.value = false;
+        await openProfileDetail();
+      } catch(e) { vant.showToast(e.message); }
+      savingProfile.value = false;
+    }
 
     // 分组
     const candidates = ref([]);
@@ -1699,6 +1802,8 @@ createApp({
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
       profileData, openProfileDetail,
+      editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
+      openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,

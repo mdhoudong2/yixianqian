@@ -243,3 +243,6 @@ TRACK_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_track.json")
 
 # 引流注册来源标识（public.html 直接注册链接预填到"邀请人ID"）
 PUBLIC_SOURCE_ID = "PUBLIC"
+
+# public.html「如何注册」弹窗展示的二维码文件名（测试服在 local_config.py 覆盖为 qrcode_test.png）
+PUBLIC_QR_CODE = getattr(_lc, "PUBLIC_QR_CODE", "qrcode.png")

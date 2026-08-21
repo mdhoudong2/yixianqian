@@ -628,6 +628,26 @@ def index():
     return _render_index()
 
 
+# public.html 里的 __PUBLIC_QR_CODE__ 占位符在服务时替换为当前环境二维码（生产/测试各自不同）
+_PUBLIC_HTML_CACHE = None
+
+
+def _render_public():
+    """读取 public.html 并注入当前环境二维码文件名，返回不缓存的 HTML 响应。"""
+    global _PUBLIC_HTML_CACHE
+    if _PUBLIC_HTML_CACHE is None:
+        with open(os.path.join(app.static_folder, "public.html"), "r", encoding="utf-8") as f:
+            _PUBLIC_HTML_CACHE = f.read()
+    resp = make_response(_PUBLIC_HTML_CACHE.replace("__PUBLIC_QR_CODE__", PUBLIC_QR_CODE))
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+@app.route("/public.html")
+def public_page():
+    return _render_public()
+
+
 @app.route("/<path:path>")
 def static_files(path):
     # /api/ 开头的请求不应由 catch-all 接管，统一交给 API 路由与错误处理器处理

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""gunicorn 配置 —— 一线牵 H5 后端（/opt/yixianqian-h5/backend/）
+"""gunicorn 配置 —— 一线牵 H5 后端（/opt/yixianqian/web/backend/）
 
 关键点：本地快照缓存（refresh_snapshot / start_snapshot_loop）依赖线程，
 而 gunicorn 的 worker 是 master fork 出来的子进程，线程不会跨 fork 存活。

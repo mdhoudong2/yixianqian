@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 """一线牵 H5 配置"""
 
+import os
+
 # 飞书应用配置（生产版，密钥见 local_config.py）
-from local_config import FEISHU_APP_ID, FEISHU_APP_SECRET, BASE_TOKEN
+import local_config as _lc
+FEISHU_APP_ID = _lc.FEISHU_APP_ID
+FEISHU_APP_SECRET = _lc.FEISHU_APP_SECRET
+BASE_TOKEN = _lc.BASE_TOKEN
+# bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认生产路径）
+SHARED_DATA_DIR = getattr(_lc, "SHARED_DATA_DIR", "/opt/yixianqian")
 
 # 多维表格配置
 USER_TABLE_ID = "tblsecbZZv0thaPe"
@@ -174,10 +181,10 @@ SESSION_EXPIRE_DAYS = 30
 H5_BASE_URL = "https://app.nantou.love"
 
 # 通知存储（机器人与 H5 共享，机器人写入、H5 读取）
-NOTIFICATIONS_FILE = "/opt/yixianqian/yixianqian_notifications.json"
+NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")
 
-# 引流埋点存储（public.html 上报，H5 后端记录）
-TRACK_FILE = "/opt/yixianqian-h5/backend/yixianqian_track.json"
+# 引流埋点存储（public.html 上报，H5 后端记录；随 H5 后端目录存放）
+TRACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yixianqian_track.json")
 
 # 引流注册来源标识（public.html 直接注册链接预填到"邀请人ID"）
 PUBLIC_SOURCE_ID = "PUBLIC"

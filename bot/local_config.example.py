@@ -9,3 +9,4 @@ ADMIN_OPEN_IDS = ["ou_xxxx"]
 TAVILY_API_KEY = "tvly-xxxx"
 MODELSCOPE_API_KEY = "ms-xxxx"
 DEEPSEEK_API_KEY = "sk-xxxx"
+SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（生产路径）

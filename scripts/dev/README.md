@@ -5,7 +5,7 @@
 
 ```bash
 # bot 相关（依赖 bot/local_config.py 与 bot/tools/）
-cd bot && ../venv/bin/python ../scripts/dev/backfill_gender.py
+cd bot && ./venv/bin/python ../scripts/dev/backfill_gender.py
 
 # H5 相关（依赖 web/backend/local_config.py 与 bitable/config）
 cd web/backend && venv/bin/python ../../scripts/dev/h5_check_fields.py

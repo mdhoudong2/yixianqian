@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>一线牵</title>
+<link rel="stylesheet" href="lib/vant.min.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f7f8fa; -webkit-tap-highlight-color: transparent; }
+  #app { min-height: 100vh; padding-bottom: 60px; }
+  .page { padding: 12px; }
+  .theme-color { color: #ff6b81; }
+  .card-shadow { box-shadow: 0 2px 12px rgba(0,0,0,0.08); border-radius: 12px; }
+  /* 活动卡片 */
+  .activity-card { background: #fff; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); overflow: hidden; }
+  .activity-poster { width: 100%; display: block; object-fit: cover; max-height: 220px; background: #f2f3f5; }
+  .activity-body { padding: 14px 16px; }
+  .activity-card h3 { font-size: 17px; margin-bottom: 8px; color: #323233; }
+  .activity-meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .activity-desc { color: #646566; font-size: 14px; line-height: 1.5; margin: 8px 0; }
+  .signup-bar { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f2f3f5; }
+  .signup-count { font-size: 13px; color: #969799; }
+  .signup-count b { color: #ff6b81; font-size: 16px; }
+  /* 牵线卡片 */
+  .cards-page { padding: 0; height: calc(100vh - 60px); display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+  .swipe-card { width: 92%; max-width: 380px; height: 88vh; max-height: 740px; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.12); position: relative; transition: opacity 0.15s ease; display: flex; flex-direction: column; }
+  @keyframes cardFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .swipe-card.slide-in-right { animation: slideInRight 0.28s ease; }
+  .swipe-card.slide-in-left { animation: slideInLeft 0.28s ease; }
+  @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
+  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); overflow: hidden; }
+  .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1; }
+  .photo-loading::after { content: ''; width: 28px; height: 28px; border: 3px solid rgba(255,255,255,0.45); border-top-color: #fff; border-radius: 50%; animation: photoSpin 0.8s linear infinite; }
+  @keyframes photoSpin { to { transform: rotate(360deg); } }
+  .card-photo-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 72px; color: rgba(255,255,255,0.6); }
+  .photo-dots { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 5px; z-index: 5; }
+  .photo-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.5); }
+  .photo-dot.active { background: #fff; }
+  .photo-zoom-btn { position: absolute; right: 10px; bottom: 10px; z-index: 6; width: 46px; height: 46px; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; filter: drop-shadow(0 1px 3px rgba(0,0,0,0.7)); }
+  .photo-zoom-btn:active { transform: scale(0.9); }
+  .card-photo-overlay { position: absolute; left: 12px; right: 12px; bottom: 12px; color: #fff; }
+  .card-overlay-box { background: rgba(0,0,0,0.55); padding: 8px 12px; border-radius: 10px; }
+  .card-name { font-size: 20px; font-weight: bold; }
+  .card-name .gender-icon { font-size: 16px; margin-left: 6px; }
+  .card-subtitle { font-size: 13px; opacity: 0.9; margin-top: 2px; }
+  .card-info { flex: 1; overflow-y: auto; padding: 14px 16px; -webkit-overflow-scrolling: touch; }
+  .info-section { margin-bottom: 12px; }
+  .info-section-title { font-size: 13px; color: #ff6b81; font-weight: 600; margin-bottom: 4px; }
+  .info-section-content { font-size: 14px; color: #323233; line-height: 1.6; }
+  .info-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .info-tag { background: #fff0f3; color: #ff6b81; padding: 3px 10px; border-radius: 12px; font-size: 12px; }
+  .info-grid { display: flex; flex-direction: column; gap: 10px; }
+  .info-grid-item { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 1.5; color: #323233; }
+  .info-grid-item .df-icon { flex-shrink: 0; width: 22px; text-align: center; }
+  .info-grid-item .df-label { color: #969799; flex-shrink: 0; white-space: nowrap; }
+  .info-grid-item .df-value { color: #323233; word-break: break-word; flex: 1; }
+  .info-grid-item.simple .df-value { font-weight: 600; }
+  .info-grid-item.full { flex-wrap: wrap; }
+  .info-grid-item.full .df-value { flex-basis: 100%; margin-left: 30px; line-height: 1.7; }
+  .card-section { margin-bottom: 16px; }
+  .card-section:last-child { margin-bottom: 0; }
+  .info-grid.simple-line { margin-bottom: 20px; }
+  .card-actions { position: absolute; bottom: 18px; right: 18px; left: auto; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 18px; z-index: 12; }
+  .heart-btn { width: 64px; height: 64px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,107,129,0.4); transition: transform 0.15s; }
+  .heart-btn:active { transform: scale(0.88); }
+  .feedback-btn { height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid #dcdee0; background: #fff; color: #969799; font-size: 12px; cursor: pointer; }
+  .back-btn { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #dcdee0; background: #fff; color: #969799; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.15s; }
+  .back-btn:active { transform: scale(0.88); }
+  .back-btn:disabled { opacity: 0.3; }
+  .card-top-left { position: absolute; top: 12px; left: 16px; display: flex; align-items: center; gap: 8px; z-index: 5; }
+  .hearts-badge { background: rgba(0,0,0,0.4); color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 13px; }
+  .card-counter { background: rgba(0,0,0,0.3); color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+  /* 消息 */
+  .msg-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: flex-start; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .msg-avatar { width: 46px; height: 46px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; overflow: hidden; }
+  .msg-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-name { font-size: 16px; font-weight: 500; color: #323233; }
+  .msg-sub { font-size: 13px; color: #969799; margin-top: 3px; line-height: 1.5; }
+  .msg-message { font-size: 13px; color: #646566; margin-top: 6px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
+  .msg-actions { margin-top: 10px; }
+  .msg-right { display: flex; align-items: center; gap: 5px; flex-shrink: 0; align-self: center; }
+  .msg-right .van-icon { font-size: 18px; }
+  .msg-count { color: #ff6b81; font-weight: 700; font-size: 18px; }
+  .section-title { font-size: 15px; color: #969799; margin: 16px 4px 8px; }
+  /* 个人中心 */
+  .profile-header { background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 30px 20px; color: #fff; text-align: center; }
+  .profile-header .avatar { width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.3); margin: 0 auto 10px; display: flex; align-items: center; justify-content: center; font-size: 28px; overflow: hidden; }
+  .profile-header .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .profile-name { font-size: 20px; font-weight: bold; display: inline-block; position: relative; }
+  .profile-hearts { margin-top: 8px; font-size: 14px; opacity: 0.9; }
+  .hearts-num { font-size: 22px; font-weight: bold; }
+  .profile-top { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 10px; }
+  .profile-top .avatar { margin: 0; }
+  .status-toggle { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%); white-space: nowrap; border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; line-height: 1.4; border: 1px solid transparent; }
+  .status-toggle.status-active { background: #fff; color: #ff6b81; border-color: rgba(255,255,255,0.9); box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+  .status-toggle.status-hidden { background: rgba(0,0,0,0.28); color: rgba(255,255,255,0.6); border-color: rgba(255,255,255,0.35); }
+  /* 我的资料 */
+  .profile-detail { padding: 12px; }
+  .profile-detail .van-cell { font-size: 14px; }
+  .profile-photo-section { text-align: center; padding: 20px 0; }
+  .profile-photo-section img { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.1); }
+  .profile-photo-placeholder { width: 120px; height: 120px; border-radius: 50%; background: #fff0f3; display: inline-flex; align-items: center; justify-content: center; font-size: 48px; }
+  /* 我的资料-分组网格 */
+  .profile-section-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
+  .profile-section-title { font-size: 15px; font-weight: 600; color: #323233; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+  .profile-section-title .ps-icon { font-size: 16px; }
+  /* 登录页 */
+  .login-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 30px; text-align: center; }
+  .login-logo { font-size: 50px; margin-bottom: 20px; }
+  .login-title { font-size: 24px; color: #323233; margin-bottom: 10px; }
+  .login-desc { color: #969799; font-size: 15px; line-height: 1.6; margin-bottom: 30px; }
+  /* 返回导航 */
+  .back-nav { background: #fff; padding: 14px 12px; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 500; color: #323233; border-bottom: 1px solid #f2f3f5; cursor: pointer; position: sticky; top: 0; z-index: 10; }
+  .back-nav .van-icon { font-size: 22px; }
+  /* 分组 */
+  .group-candidate { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+  .group-candidate.selected { border: 2px solid #ff6b81; }
+  .group-candidate-info { flex: 1; }
+  .group-candidate-name { font-size: 16px; font-weight: 500; }
+  .group-candidate-meta { font-size: 13px; color: #969799; margin-top: 4px; }
+  .choice-badge { background: #ff6b81; color: #fff; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .selected-list { background: #fff; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .selected-list h4 { margin-bottom: 8px; color: #323233; }
+  .selected-item { display: inline-block; background: #fff0f3; color: #ff6b81; padding: 4px 12px; border-radius: 20px; margin: 4px; font-size: 14px; }
+  .choice-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px; background: #fff0f3; border-radius: 8px; }
+  .choice-handle { cursor: grab; color: #c8c9cc; font-size: 18px; flex-shrink: 0; }
+  .choice-rank { color: #ff6b81; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+  .choice-name { flex: 1; color: #323233; font-size: 14px; }
+  .group-result-header { text-align: center; padding: 20px; }
+  .group-number { font-size: 48px; color: #ff6b81; font-weight: bold; }
+  /* 分组结果-轮次切换 */
+  .round-tabs { display: flex; gap: 8px; justify-content: center; padding: 8px 0 4px; flex-wrap: wrap; }
+  .round-tab { padding: 5px 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
+  .round-tab.active { background: #ff6b81; color: #fff; }
+  .group-member { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+  .group-member-avatar { width: 44px; height: 44px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; }
+  .group-member-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .group-member-name { font-size: 16px; }
+  .group-member-meta { font-size: 13px; color: #969799; }
+  /* 我的喜欢列表 */
+  .like-item { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .like-item-avatar { width: 46px; height: 46px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 22px; overflow: hidden; flex-shrink: 0; }
+  .like-item-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .like-item-info { flex: 1; }
+  .like-item-name { font-size: 16px; font-weight: 500; }
+  .like-item-meta { font-size: 13px; color: #969799; margin-top: 2px; }
+  .like-item-msg { font-size: 13px; color: #646566; margin-top: 4px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
+  /* 全屏图片预览 */
+  .photo-viewer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 999; display: flex; align-items: center; justify-content: center; }
+  .photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .photo-viewer-close { position: absolute; top: 20px; right: 20px; color: #fff; font-size: 30px; cursor: pointer; z-index: 1000; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.4); border-radius: 50%; }
+  .photo-viewer-counter { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 14px; background: rgba(0,0,0,0.4); padding: 4px 14px; border-radius: 20px; }
+  /* 送爱心弹窗 */
+  .like-dialog-body { padding: 16px; }
+  .like-notes { color: #969799; font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
+  .like-note-highlight { color: #ff6b81; font-weight: 600; }
+  .feedback-radio-group .van-radio { margin-bottom: 14px; }
+  .feedback-radio-group .van-radio:last-child { margin-bottom: 0; }
+  .like-textarea { background: #f7f8fa; border-radius: 8px; padding: 8px 10px; }
+  .like-realname-warn { color: #ed6a0c; font-size: 12px; line-height: 1.6; margin: 4px 0 10px; background: #fff7e6; border-radius: 6px; padding: 6px 10px; }
+  /* 邀请好友弹窗 */
+  .invite-dialog-body { padding: 16px; }
+  .invite-dialog-body p { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 12px; }
+  .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; }
+  /* 我的页-邀请入口 */
+  .invite-cta { padding: 0 12px 8px; }
+  .invite-block { padding: 12px 12px 4px; }
+  .invite-note { font-size: 12px; color: #c8c9cc; text-align: center; line-height: 1.6; margin-top: 8px; }
+  .invite-tip { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 8px; }
+  .invite-close { position: absolute; top: 10px; right: 14px; font-size: 20px; color: #c8c9cc; cursor: pointer; z-index: 2; }
+  .invite-code-box { background: #fff; border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .invite-code-label { font-size: 12px; color: #969799; }
+  .invite-code-value { font-size: 18px; font-weight: 600; color: #323233; margin-top: 2px; letter-spacing: 1px; }
+  .invite-code-note { font-size: 12px; color: #969799; margin-top: 4px; }
+  .profile-cells .van-cell { font-size: 16px; }
+  /* 活动海报可点击 */
+  .activity-poster.clickable { cursor: zoom-in; }
+  /* 图片查看器左右切换 */
+  .photo-viewer-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,0.4); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer; z-index: 1000; }
+  .photo-viewer-nav.prev { left: 12px; }
+  .photo-viewer-nav.next { right: 12px; }
+  /* 报名名单 */
+  .signup-sheet-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; cursor: pointer; }
+  .signup-sheet-avatar { width: 44px; height: 44px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; flex-shrink: 0; }
+  .signup-sheet-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .signup-sheet-name { font-size: 16px; color: #323233; }
+  /* 他人资料页 */
+  .user-detail-card { padding: 12px; }
+  .ud-photo { width: 120px; height: 120px; border-radius: 50%; margin: 20px auto; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 48px; overflow: hidden; cursor: pointer; }
+  .ud-photo img { width: 100%; height: 100%; object-fit: cover; }
+  .ud-name { text-align: center; font-size: 20px; font-weight: bold; color: #323233; }
+  .ud-name .gender-icon { font-size: 16px; margin-left: 6px; }
+  /* 消息-动态（已并入 msg-card） */
+  /* 筛选 */
+  .filter-btn { position: absolute; top: 12px; right: 16px; background: rgba(0,0,0,0.4); color: #fff; padding: 5px 12px; border-radius: 20px; font-size: 13px; z-index: 6; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+  .filter-btn.active { background: #ff6b81; }
+  .filter-row { margin-bottom: 22px; }
+  .filter-label { font-size: 14px; color: #323233; font-weight: 500; margin-bottom: 6px; }
+  .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .filter-tag { padding: 5px 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
+  .filter-tag.active { background: #ff6b81; color: #fff; }
+  .filter-input { padding: 6px 10px; background: #f7f8fa; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div id="app">
+<!-- 登录中 -->
+<div v-if="loggingIn" class="login-page">
+  <div class="login-logo">💕</div>
+  <van-loading size="24px">正在登录...</van-loading>
+</div>
+<!-- 未登录 -->
+<div v-else-if="!user" class="login-page">
+  <div class="login-logo">💕</div>
+  <div class="login-title">一线牵</div>
+  <div class="login-desc">真实、纯粹的交友平台<br>请在飞书中搜索"一线牵"机器人<br>从机器人进入使用</div>
+  <div v-if="loginError" style="color:#ee0a24;font-size:13px;margin-bottom:16px;padding:0 20px;">{{ loginErrorMessage || '登录失败，请重试' }}</div>
+  <van-button type="primary" color="#ff6b81" @click="retryLogin" v-if="loginError">重新登录</van-button>
+</div>
+<!-- 主界面 -->
+<template v-else>
+<!-- ========== 牵线页 ========== -->
+<div v-if="page==='cards'" class="cards-page">
+  <div v-if="loadingCards" style="display:flex; align-items:center; justify-content:center; height:100%;">
+    <van-loading size="24px">加载中...</van-loading>
+  </div>
+  <template v-else>
+    <div class="card-top-left">
+      <div class="card-counter">{{ cards.length ? (cardIndex + 1) + ' / ' + cards.length : '0 / 0' }}</div>
+      <div class="hearts-badge">💕 {{ user.hearts }}</div>
+    </div>
+    <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
+    <van-empty v-if="!cards.length" :description="hasActiveFilter ? '没有符合筛选条件的人，试试调整筛选' : '暂时没有可推荐的人了～'"></van-empty>
+    <template v-else>
+    <div v-if="currentCard" class="swipe-card" :key="cardIndex"
+      :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')"
+      @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd">
+      <div class="card-photo-wrap" @click="openPhotoViewer(0)">
+        <div v-if="photoLoading" class="photo-loading"></div>
+        <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" alt="" @load="photoLoading=false" @error="onPhotoError">
+        <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
+        <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
+          <div v-for="(p,i) in currentCard.photos" :key="i" class="photo-dot" :class="{active: i===photoIndex}"></div>
+        </div>
+        <div class="card-photo-overlay">
+          <div class="card-overlay-box">
+            <div class="card-name">{{ currentCard.nickname }}
+              <span class="gender-icon">{{ currentCard.gender==='男性' ? '♂' : '♀' }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="photo-zoom-btn" @click.stop="openPhotoViewerForCurrent">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
+        </div>
+      </div>
+      <div class="card-info">
+        <div class="info-grid simple-line" v-if="currentCard.display_fields && currentCard.display_fields.simple">
+          <div class="info-grid-item simple"><span class="df-value">{{ currentCard.display_fields.simple }}</span></div>
+        </div>
+        <template v-if="currentCard.display_fields && currentCard.display_fields.sections">
+          <div class="card-section" v-for="(sec, si) in currentCard.display_fields.sections" :key="si">
+            <div class="profile-section-title"><span class="ps-icon">{{ sec.icon }}</span>{{ sec.title }}</div>
+            <div class="info-grid">
+              <div class="info-grid-item" v-for="f in sec.fields" :key="f.label"
+                :class="{full: f.label==='我是怎样的人' || f.label==='理想中的TA'}">
+                <span class="df-label">{{ f.label }}：</span>
+                <span class="df-value">{{ f.value }}</span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+      <div class="card-actions">
+        <button class="feedback-btn" @click="openFeedbackDialog">反馈</button>
+        <button class="heart-btn" @click="openLikeDialog" :disabled="actionLoading">♥</button>
+      </div>
+    </template>
+  </template>
+</div>
+<!-- ========== 消息页 ========== -->
+<div v-else-if="page==='likes'" class="page">
+  <div class="msg-card" @click="openMyLikes" style="cursor:pointer;">
+    <div class="msg-avatar">💕</div>
+    <div class="msg-body">
+      <div class="msg-name">我喜欢的</div>
+      <div class="msg-sub">查看我喜欢的人，管理喜欢列表</div>
+    </div>
+    <div class="msg-right"><span class="msg-count">{{ myLikesCount }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+  </div>
+  <div class="msg-card" @click="openMutual" style="cursor:pointer;">
+    <div class="msg-avatar">💞</div>
+    <div class="msg-body">
+      <div class="msg-name">相互喜欢</div>
+      <div class="msg-sub">你们已相互喜欢，可查看联系方式</div>
+    </div>
+    <div class="msg-right"><span class="msg-count">{{ likesData.mutual.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+  </div>
+  <div class="msg-card" @click="openLikedMe" style="cursor:pointer;">
+    <div class="msg-avatar">👤</div>
+    <div class="msg-body">
+      <div class="msg-name">谁喜欢了我</div>
+      <div class="msg-sub">查看喜欢你的匿名用户</div>
+    </div>
+    <div class="msg-right"><span class="msg-count">{{ likesData.liked_me.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+  </div>
+  <div v-if="loadingLikes" style="text-align:center; padding:40px;">
+    <van-loading size="24px">加载中...</van-loading>
+  </div>
+  <template v-else>
+    <div class="section-title" v-if="notifications.length">🔔 动态</div>
+    <div v-for="(n, i) in notifications" :key="i" class="msg-card">
+      <div class="msg-avatar">🔔</div>
+      <div class="msg-body">
+        <div class="msg-sub" style="color:#323233;">{{ n.text }}</div>
+        <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
+      </div>
+      <div class="msg-right" v-if="n.activity_id">
+        <van-button type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
+      </div>
+    </div>
+  </template>
+</div>
+<!-- ========== 相互喜欢列表 ========== -->
+<div v-else-if="page==='mutual'">
+  <div class="back-nav" @click="page='likes'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <van-empty v-if="!likesData.mutual.length" description="还没有相互喜欢的人" image-size="60"></van-empty>
+    <div v-else v-for="m in likesData.mutual" :key="m.initiator_openid" class="msg-card">
+      <div class="msg-avatar">💕</div>
+      <div class="msg-body">
+        <div class="msg-name">{{ m.nickname }}</div>
+        <div class="msg-sub">💕你们相互喜欢！名片已推送，快去加飞书好友吧～</div>
+        <div class="msg-message" v-if="m.message">附言：{{ m.message }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 谁喜欢了我列表 ========== -->
+<div v-else-if="page==='liked_me'">
+  <div class="back-nav" @click="page='likes'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <van-empty v-if="!likesData.liked_me.length" description="还没有人喜欢你" image-size="60"></van-empty>
+    <template v-else>
+      <div v-for="(l, i) in likesData.liked_me" :key="i" class="msg-card">
+        <div class="msg-avatar">{{ l.real ? '💌' : '👤' }}</div>
+        <div class="msg-body">
+          <div class="msg-name">{{ l.nickname }}</div>
+          <div class="msg-sub" v-if="l.real">实名喜欢了你，快去牵线页看看能不能遇到～</div>
+          <div class="msg-sub" v-else>匿名用户喜欢了你，去牵线页看看能不能遇到～</div>
+        </div>
+      </div>
+      <div class="msg-actions" style="margin-top:4px;">
+        <van-button type="primary" color="#ff6b81" size="small" block @click="gotoCards('liked_me')">去牵线看看</van-button>
+      </div>
+    </template>
+  </div>
+</div>
+<!-- ========== 活动页 ========== -->
+<div v-else-if="page==='home'" class="page">
+  <div v-if="loadingActivities" style="text-align:center; padding:40px;">
+    <van-loading size="24px">加载中...</van-loading>
+  </div>
+  <van-empty v-else-if="!activities.length" description="暂无进行中的活动"></van-empty>
+  <div v-else>
+    <div v-for="act in activities" :key="act.record_id" class="activity-card" @click="openActivity(act.record_id)">
+      <img v-if="act.poster" :src="act.poster" class="activity-poster" alt="" loading="lazy" decoding="async">
+      <div class="activity-body">
+        <h3>{{ act.name }}</h3>
+        <div class="activity-meta">
+          <van-tag type="primary" color="#ff6b81">{{ act.status }}</van-tag>
+          <van-tag v-if="act.group_status" plain type="primary">{{ act.group_status }}</van-tag>
+        </div>
+        <div class="activity-desc">{{ act.description || '暂无描述' }}</div>
+        <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
+        <div class="signup-bar">
+          <div class="signup-count">已报名 <b>{{ act.current_signup }}</b>/{{ act.max_signup || '不限' }}</div>
+          <van-icon name="arrow" color="#c8c9cc" />
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 我的页 ========== -->
+<div v-else-if="page==='profile'" style="padding:0;">
+  <div class="profile-header">
+    <div class="profile-top">
+      <div class="avatar">
+        <img v-if="user.photo" :src="user.photo" alt="" @error="user.photo=''">
+        <template v-else>{{ user.gender==='男性' ? '👨' : '👩' }}</template>
+      </div>
+    </div>
+    <div class="profile-name">{{ user.nickname }}
+      <button class="status-toggle" :class="accountStatusLabel === '隐藏' ? 'status-hidden' : 'status-active'" @click="toggleAccountStatus">{{ accountStatusLabel }}</button>
+    </div>
+    <div class="profile-hearts"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
+  </div>
+  <div class="invite-block">
+    <van-button plain type="primary" color="#ff6b81" block @click="showInviteDialog=true">邀请好友得爱心</van-button>
+    <div class="invite-note">初始3颗爱心，每邀请1人注册+1颗，上限30颗，请邀请未婚教友哦！</div>
+  </div>
+  <div style="padding:0 12px 8px;">
+    <div class="invite-code-box">
+      <div>
+        <div class="invite-code-label">我的邀请码</div>
+        <div class="invite-code-value">{{ user.user_id || '未获取' }}</div>
+        <div class="invite-code-note">在注册时，填进“邀请人ID”</div>
+      </div>
+      <van-button size="small" plain type="primary" color="#ff6b81" @click="copyInviteCode">复制邀请码</van-button>
+    </div>
+  </div>
+    <div style="padding:0 12px 20px;">
+      <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
+        <van-cell title="我的资料" is-link @click="openProfileDetail"></van-cell>
+        <van-cell title="我的活动" is-link @click="openMyActivities"></van-cell>
+        <van-cell v-if="hasGroupEntry" title="我的分组" is-link @click="openMyGroups"></van-cell>
+      </van-cell-group>
+    </div>
+</div>
+<!-- ========== 我的资料详情 ========== -->
+<div v-else-if="page==='profile_detail'">
+  <div class="back-nav" @click="page='profile'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="profile-detail">
+    <div class="profile-photo-section">
+      <img v-if="profileData.photo" :src="profileData.photo" alt="">
+      <div v-else class="profile-photo-placeholder">{{ profileData.gender==='男性' ? '👨' : '👩' }}</div>
+    </div>
+    <div class="ud-name" v-if="profileData.nickname">
+      {{ profileData.nickname }}
+      <span class="gender-icon">{{ profileData.gender==='男性' ? '♂' : '♀' }}</span>
+    </div>
+    <div style="height:14px;"></div>
+
+    <!-- 基本信息 -->
+    <div class="profile-section-card" v-if="hasProfileBasic">
+      <div class="profile-section-title"><span class="ps-icon">👤</span> 基本信息</div>
+      <div class="info-grid">
+        <div class="info-grid-item" v-if="profileData.real_name"><span class="df-label">姓名</span><span class="df-value">{{ profileData.real_name }}</span></div>
+        <div class="info-grid-item" v-if="profileData.baptismal_name"><span class="df-label">圣名</span><span class="df-value">{{ profileData.baptismal_name }}</span></div>
+        <div class="info-grid-item" v-if="profileData.birthday"><span class="df-label">生日</span><span class="df-value">{{ profileData.birthday }}</span></div>
+        <div class="info-grid-item" v-if="profileData.height"><span class="df-label">身高</span><span class="df-value">{{ profileData.height }}cm</span></div>
+        <div class="info-grid-item" v-if="profileData.education"><span class="df-label">学历</span><span class="df-value">{{ profileData.education }}</span></div>
+        <div class="info-grid-item" v-if="profileData.city"><span class="df-label">现居/工作城市</span><span class="df-value">{{ profileData.city }}</span></div>
+        <div class="info-grid-item" v-if="profileData.native_place"><span class="df-label">家乡</span><span class="df-value">{{ profileData.native_place }}</span></div>
+        <div class="info-grid-item" v-if="profileData.church"><span class="df-label">经常去的教堂</span><span class="df-value">{{ profileData.church }}</span></div>
+        <div class="info-grid-item" v-if="profileData.group"><span class="df-label">参加的团体</span><span class="df-value">{{ profileData.group }}</span></div>
+        <div class="info-grid-item" v-if="profileData.church_location"><span class="df-label">教堂所在市-区</span><span class="df-value">{{ profileData.church_location }}</span></div>
+      </div>
+    </div>
+
+    <!-- 工作与经济 -->
+    <div class="profile-section-card" v-if="hasProfileWork">
+      <div class="profile-section-title"><span class="ps-icon">💼</span> 工作与经济</div>
+      <div class="info-grid">
+        <div class="info-grid-item" v-if="profileData.industry"><span class="df-label">从事行业</span><span class="df-value">{{ profileData.industry }}</span></div>
+        <div class="info-grid-item" v-if="profileData.position"><span class="df-label">职位</span><span class="df-value">{{ profileData.position }}</span></div>
+        <div class="info-grid-item" v-if="profileData.income"><span class="df-label">年收入</span><span class="df-value">{{ profileData.income }}</span></div>
+        <div class="info-grid-item" v-if="profileData.house"><span class="df-label">房产状况</span><span class="df-value">{{ profileData.house }}</span></div>
+        <div class="info-grid-item" v-if="profileData.driving"><span class="df-label">汽车</span><span class="df-value">{{ profileData.driving }}</span></div>
+      </div>
+    </div>
+
+    <!-- 关于我 -->
+    <div class="profile-section-card" v-if="hasProfileAbout">
+      <div class="profile-section-title"><span class="ps-icon">✨</span> 关于我</div>
+      <div class="info-grid">
+        <div class="info-grid-item full" v-if="profileData.personality"><span class="df-label">我是怎样的人</span><span class="df-value">{{ profileData.personality }}</span></div>
+        <div class="info-grid-item" v-if="profileData.self_traits"><span class="df-label">性格</span><span class="df-value">{{ profileData.self_traits }}</span></div>
+        <div class="info-grid-item" v-if="profileData.hobbies"><span class="df-label">爱好</span><span class="df-value">{{ profileData.hobbies }}</span></div>
+        <div class="info-grid-item" v-if="profileData.self_sports"><span class="df-label">运动</span><span class="df-value">{{ profileData.self_sports }}</span></div>
+        <div class="info-grid-item" v-if="profileData.mbti"><span class="df-label">MBTI</span><span class="df-value">{{ profileData.mbti }}</span></div>
+        <div class="info-grid-item" v-if="profileData.live_with_parents"><span class="df-label">婚后与父母同住</span><span class="df-value">{{ profileData.live_with_parents }}</span></div>
+        <div class="info-grid-item" v-if="profileData.family"><span class="df-label">家庭情况</span><span class="df-value">{{ profileData.family }}</span></div>
+      </div>
+    </div>
+
+    <!-- 理想中的TA -->
+    <div class="profile-section-card" v-if="hasProfilePartner">
+      <div class="profile-section-title"><span class="ps-icon">💖</span> 理想中的TA</div>
+      <div class="info-grid">
+        <div class="info-grid-item full" v-if="profileData.partner_criteria"><span class="df-label">理想的TA</span><span class="df-value">{{ profileData.partner_criteria }}</span></div>
+        <div class="info-grid-item" v-if="profileData.partner_traits"><span class="df-label">性格</span><span class="df-value">{{ profileData.partner_traits }}</span></div>
+        <div class="info-grid-item" v-if="profileData.partner_hobbies"><span class="df-label">爱好</span><span class="df-value">{{ profileData.partner_hobbies }}</span></div>
+        <div class="info-grid-item" v-if="profileData.partner_sports"><span class="df-label">运动</span><span class="df-value">{{ profileData.partner_sports }}</span></div>
+      </div>
+    </div>
+
+    <!-- 联系方式 -->
+    <div class="profile-section-card" v-if="hasProfileContact">
+      <div class="profile-section-title"><span class="ps-icon">📞</span> 联系方式</div>
+      <div class="info-grid">
+        <div class="info-grid-item" v-if="profileData.wechat"><span class="df-label">微信号</span><span class="df-value">{{ profileData.wechat }}</span></div>
+        <div class="info-grid-item" v-if="profileData.phone"><span class="df-label">手机号</span><span class="df-value">{{ profileData.phone }}</span></div>
+        <div class="info-grid-item" v-if="profileData.register_time"><span class="df-label">注册时间</span><span class="df-value">{{ profileData.register_time }}</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 我的喜欢列表 ========== -->
+<div v-else-if="page==='my_likes'">
+  <div class="back-nav" @click="page='likes'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingMyLikes" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!myLikesList.length" description="你还没有喜欢过谁"></van-empty>
+    <div v-else>
+      <div v-for="l in myLikesList" :key="l.openid" class="like-item">
+        <div class="like-item-avatar">
+          <img v-if="l.photo" :src="l.photo" alt="" @error="l.photo=''" loading="lazy" decoding="async">
+          <template v-else>{{ l.gender==='男性' ? '👨' : '👩' }}</template>
+        </div>
+        <div class="like-item-info">
+          <div class="like-item-name">{{ l.nickname }} <span v-if="l.mutual" style="color:#ff6b81;font-size:13px;">💕 相互喜欢</span></div>
+          <div class="like-item-meta">{{ l.age ? l.age+'岁' : '' }} {{ l.church ? '· '+l.church : '' }}</div>
+          <div class="like-item-msg" v-if="l.mutual && l.message">附言：{{ l.message }}</div>
+        </div>
+        <van-button v-if="!l.mutual" size="mini" plain type="danger" @click="cancelLike(l)">取消喜欢</van-button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 我的活动 ========== -->
+<div v-else-if="page==='my_activities'">
+  <div class="back-nav" @click="page='profile'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingMyActivities" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!myActivitiesList.length" description="你还没有报名任何活动"></van-empty>
+    <div v-else>
+      <div v-for="act in myActivitiesList" :key="act.record_id" class="activity-card">
+        <div class="activity-body" @click="openActivity(act.record_id)" style="cursor:pointer;">
+          <h3>{{ act.name }}</h3>
+          <div class="activity-meta">
+            <van-tag type="primary" color="#ff6b81">{{ act.status }}</van-tag>
+            <van-tag v-if="act.group_status" plain type="primary">{{ act.group_status }}</van-tag>
+          </div>
+          <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
+        </div>
+        <div class="activity-body" style="padding-top:0;">
+          <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goGroupResult(act.record_id)">
+            🎉 查看分组结果
+          </van-button>
+          <van-button v-if="act.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openActivity(act.record_id)" style="margin-top:8px;">
+            查看活动详情
+          </van-button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 我的分组 ========== -->
+<div v-else-if="page==='my_groups'">
+  <div class="back-nav" @click="page='profile'">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingMyGroups" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!myGroupsList.length" description="你报名的活动还没有开启分组"></van-empty>
+    <div v-else>
+      <div v-for="act in myGroupsList" :key="act.record_id" class="activity-card">
+        <div class="activity-body">
+          <h3>{{ act.name }}</h3>
+          <div class="activity-meta">
+            <van-tag type="primary" color="#ff6b81">{{ act.group_status }}</van-tag>
+            <van-tag v-if="act.male_per_group" plain type="primary">每组 {{ act.male_per_group }}男{{ act.female_per_group }}女</van-tag>
+          </div>
+          <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
+        </div>
+        <div class="activity-body" style="padding-top:0;">
+          <van-button v-if="act.group_status==='收集中'" type="primary" color="#ff6b81" size="small" block @click="goGroupSelect(act.record_id)">
+            {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '🎯 提交志愿' }}
+          </van-button>
+          <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goGroupResult(act.record_id)">
+            🎉 查看我的分组
+          </van-button>
+          <div v-if="act.group_status==='已截止'" style="font-size:13px; color:#969799; text-align:center; padding:6px 0;">已截止，正在分组…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 活动详情 ========== -->
+<div v-else-if="page==='activity_detail'">
+  <div class="back-nav" @click="page=activityDetailFrom">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="activity-card" v-if="currentActivity" style="overflow:hidden;">
+      <img v-if="currentActivity.poster" :src="currentActivity.poster" class="activity-poster clickable" alt="" @click="viewPoster">
+      <div class="activity-body">
+        <h3>{{ currentActivity.name }}</h3>
+        <div class="activity-meta">
+          <van-tag type="primary" color="#ff6b81">{{ currentActivity.status }}</van-tag>
+          <van-tag v-if="currentActivity.group_status" plain type="primary">{{ currentActivity.group_status }}</van-tag>
+        </div>
+        <div class="activity-desc">{{ currentActivity.description || '暂无描述' }}</div>
+        <div style="font-size:14px; color:#646566; line-height:2;">
+          <div>📍 {{ currentActivity.location || '待定' }}</div>
+          <div>💰 费用：{{ currentActivity.fee > 0 ? currentActivity.fee + '元' : '免费' }}</div>
+          <div>🍚 食宿：{{ currentActivity.food || '无' }}</div>
+          <div v-if="currentActivity.condition">📋 条件：{{ currentActivity.condition }}</div>
+        </div>
+        <div class="signup-bar">
+          <div class="signup-count">已报名 <b>{{ currentActivity.current_signup }}</b>/{{ currentActivity.max_signup || '不限' }}</div>
+          <van-button v-if="currentActivity.status==='报名中'" type="primary" color="#ff6b81" size="small"
+            @click="currentActivity.my_signup ? cancelSignup() : doSignup()" :loading="actionLoading">
+            {{ currentActivity.my_signup ? '取消报名' : '立即报名' }}
+          </van-button>
+          <van-tag v-else type="warning">{{ currentActivity.status }}</van-tag>
+        </div>
+        <van-button v-if="currentActivity.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+      </div>
+    </div>
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中'" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">🎯 分组志愿选择</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">选择你心仪的TA，最多7个志愿</div>
+        </div>
+        <van-icon name="arrow" color="#ff6b81"></van-icon>
+      </div>
+    </div>
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='已完成'" class="activity-card" @click="goGroupResult(currentActivity.record_id)" style="cursor:pointer;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">🎉 查看分组结果</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">看看你和谁一组</div>
+        </div>
+        <van-icon name="arrow" color="#ff6b81"></van-icon>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 分组选择 ========== -->
+<div v-else-if="page==='group_select'">
+  <div class="back-nav" @click="page=groupSelectFrom">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="selected-list" v-if="selectedChoices.length">
+      <h4>已选志愿（点击 ✕ 移除）</h4>
+      <div ref="choiceListRef">
+        <div v-for="(c, i) in selectedChoices" :key="c.openid" class="choice-item">
+          <span class="choice-rank">第{{i+1}}志愿</span>
+          <span class="choice-name">{{ c.nickname }}</span>
+          <van-icon name="cross" color="#c8c9cc" size="18" @click="removeChoice(i)" />
+        </div>
+      </div>
+    </div>
+    <div class="section-title">可选{{ myGender==='男性' ? '女生' : '男生' }}（点击添加到志愿）</div>
+    <div style="padding: 16px 0 8px;">
+      <van-button type="primary" color="#ff6b81" block :disabled="!selectedChoices.length" :loading="actionLoading" @click="submitChoices">
+        提交志愿（{{selectedChoices.length}}个）
+      </van-button>
+    </div>
+    <div v-if="loadingCandidates" style="text-align:center; padding:30px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <div v-else-if="!candidates.length" style="text-align:center; padding:40px 20px;">
+      <van-empty :description="candidatesError || '暂无可选人员'" />
+      <van-button v-if="candidatesError" type="primary" color="#ff6b81" size="small" @click="goGroupSelect(currentActivityId)" style="margin-top:12px;">重试</van-button>
+    </div>
+    <div v-else>
+      <!-- 搜索框（原生 input，替代 van-search，避免组件在飞书 webview 渲染异常） -->
+      <div style="background:#fff;padding:8px 12px;border-radius:8px;margin-bottom:8px;">
+        <input v-model="candidateQuery" placeholder="搜索 昵称/用户ID/圣名" style="width:100%;padding:8px 12px;border:1px solid #ebedf0;border-radius:16px;font-size:14px;color:#323233;box-sizing:border-box;outline:none;background:#fff;" />
+      </div>
+      <div v-for="c in visibleCandidates" :key="c.openid"
+        class="group-candidate"
+        :class="{selected: isSelected(c.openid)}"
+        @click="toggleChoice(c)">
+        <div class="signup-sheet-avatar" style="margin-right:12px;">
+          <img v-if="c.photo" :src="c.photo" alt="" @error="c.photo=''" loading="lazy" decoding="async">
+          <template v-else>{{ c.user_id || '👤' }}</template>
+        </div>
+        <div class="group-candidate-info">
+          <div class="group-candidate-name">{{ c.nickname }}</div>
+          <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
+        </div>
+        <div v-if="isSelected(c.openid)" class="choice-badge">{{selectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
+        <van-icon v-else name="plus" color="#dcdee0" size="22"></van-icon>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 分组结果 ========== -->
+<div v-else-if="page==='group_result'">
+  <div class="back-nav" @click="page=groupResultFrom">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="round-tabs" v-if="groupResult.rounds && groupResult.rounds.length > 1">
+      <span v-for="r in groupResult.rounds" :key="r" class="round-tab" :class="{active: r === groupResult.round}" @click="switchGroupRound(r)">第{{r}}轮</span>
+    </div>
+    <div class="group-result-header" v-if="groupResult.my_group">
+      <div style="color:#969799; font-size:14px;">你的组号<template v-if="groupResult.round"> · 第{{groupResult.round}}轮分组</template></div>
+      <div class="group-number">第{{groupResult.my_group}}组</div>
+    </div>
+    <van-empty v-else description="未找到你的分组信息"></van-empty>
+    <div v-if="groupResult.members && groupResult.members.length">
+      <div class="section-title" style="text-align:center;">同组成员（{{groupResult.members.length}}人）</div>
+      <div v-for="m in groupResult.members" :key="m.openid" class="group-member">
+        <div class="group-member-avatar">{{m.gender==='男性'?'👨':'👩'}}</div>
+        <div>
+          <div class="group-member-name">{{m.nickname}}</div>
+          <div class="group-member-meta">{{ m.user_id || '' }} · {{ m.gender }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 他人资料页 ========== -->
+<div v-else-if="page==='user_detail'">
+  <div class="back-nav" @click="page=userDetailFrom">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="user-detail-card" v-if="userDetail">
+    <div class="ud-photo" @click="openPhotoViewerForUser(userDetail)">
+      <img v-if="userDetail.photos && userDetail.photos.length" :src="userDetail.photos[0]" alt="">
+      <template v-else>{{ userDetail.gender==='男性' ? '👨' : '👩' }}</template>
+    </div>
+    <div class="ud-name">{{ userDetail.nickname }}
+      <span class="gender-icon">{{ userDetail.gender==='男性' ? '♂' : '♀' }}</span>
+    </div>
+    <div style="margin-top:14px;">
+      <div class="info-grid simple-line" v-if="userDetail.display_fields && userDetail.display_fields.simple">
+        <div class="info-grid-item simple"><span class="df-value">{{ userDetail.display_fields.simple }}</span></div>
+      </div>
+      <template v-if="userDetail.display_fields && userDetail.display_fields.sections">
+        <div class="card-section" v-for="(sec, si) in userDetail.display_fields.sections" :key="si">
+          <div class="profile-section-title"><span class="ps-icon">{{ sec.icon }}</span>{{ sec.title }}</div>
+          <div class="info-grid">
+            <div class="info-grid-item" v-for="f in sec.fields" :key="f.label"
+              :class="{full: f.label==='我是怎样的人' || f.label==='理想中的TA'}">
+              <span class="df-label">{{ f.label }}：</span>
+              <span class="df-value">{{ f.value }}</span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div style="padding:20px 12px;" v-if="userDetail.gender !== user.gender">
+      <van-button color="#ff6b81" block @click="openLikeDialogForUser(userDetail)">💕 喜欢TA</van-button>
+    </div>
+  </div>
+  <div v-else style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+</div>
+<!-- ========== 报名名单弹层 ========== -->
+<van-popup v-model:show="signupSheetShow" position="bottom" round style="max-height:70vh; overflow-y:auto;">
+  <div style="padding:16px;">
+    <div style="font-size:16px; font-weight:500; text-align:center; margin-bottom:8px; color:#323233;">报名名单（{{ signupList.length }}）</div>
+    <van-empty v-if="loadingSignups" description="加载中..." image-size="50"></van-empty>
+    <van-empty v-else-if="!signupList.length" description="暂无报名" image-size="50"></van-empty>
+    <div v-else v-for="s in signupList" :key="s.openid" class="signup-sheet-item" @click="openUserDetail(s.openid)">
+      <div class="signup-sheet-avatar">
+        <img v-if="s.photo" :src="s.photo" alt="" @error="s.photo=''" loading="lazy" decoding="async">
+        <template v-else>{{ s.gender==='男性' ? '👨' : '👩' }}</template>
+      </div>
+      <div class="signup-sheet-name">{{ s.nickname }}</div>
+    </div>
+  </div>
+</van-popup>
+<!-- 全屏图片预览 -->
+<div v-if="showPhotoViewer" class="photo-viewer" @click="closePhotoViewer">
+  <div class="photo-viewer-close" @click.stop="closePhotoViewer">✕</div>
+  <div class="photo-viewer-nav prev" v-if="viewerPhotos.length > 1" @click.stop="viewerPrev">‹</div>
+  <img :src="viewerPhotos[viewerIndex]" alt="" @click.stop="" @touchstart="onViewerTouchStart" @touchend="onViewerTouchEnd">
+  <div class="photo-viewer-nav next" v-if="viewerPhotos.length > 1" @click.stop="viewerNext">›</div>
+  <div class="photo-viewer-counter" v-if="viewerPhotos.length > 1">{{ viewerIndex + 1 }} / {{ viewerPhotos.length }}</div>
+</div>
+<!-- 送爱心弹窗 -->
+<van-dialog v-model:show="showLikeDialog" :title="likeDialogTitle" show-cancel-button
+  confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :before-close="onLikeDialogBeforeClose">
+  <div class="like-dialog-body">
+    <div class="like-notes">
+      <div class="like-note-highlight" v-if="likeType==='匿名'">对方会收到一条「匿名喜欢」通知</div>
+      <div class="like-note-highlight" v-else>对方会收到一条实名通知，会知道你喜欢TA。每月只有一次实名喜欢的机会哦！</div>
+      <div>· 如果对方也喜欢你，就会自动获得对方的联系方式</div>
+      <div>· 如果一方报名了某个活动，会相互收到通知</div>
+    </div>
+    <van-radio-group v-model="likeType" direction="horizontal" style="padding: 0 0 8px;">
+      <van-radio name="匿名">匿名喜欢</van-radio>
+      <van-radio name="实名">实名喜欢</van-radio>
+    </van-radio-group>
+    <van-field v-model="likeMessage" type="textarea" rows="3" autosize
+      placeholder="写几句想对TA说的话（必填）" class="like-textarea" />
+  </div>
+</van-dialog>
+<!-- 反馈弹窗 -->
+<van-dialog v-model:show="showFeedbackDialog" title="反馈该用户" show-cancel-button
+  confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :before-close="onFeedbackBeforeClose">
+  <div class="like-dialog-body">
+    <van-radio-group v-model="feedbackReason" class="feedback-radio-group" style="padding-bottom: 8px;">
+      <van-radio name="已有对象">已有对象</van-radio>
+      <van-radio name="不是教友">不是教友</van-radio>
+      <van-radio name="资料不实">资料不实</van-radio>
+      <van-radio name="其他">其他</van-radio>
+    </van-radio-group>
+    <van-field v-model="feedbackText" type="textarea" rows="2" autosize
+      placeholder="补充说明（选填）" class="like-textarea" />
+  </div>
+</van-dialog>
+<!-- 邀请好友得爱心弹窗 -->
+<van-dialog v-model:show="showInviteDialog" title="邀请好友得爱心" :show-confirm-button="false" close-on-click-overlay>
+  <div class="invite-dialog-body">
+    <div class="invite-close" @click="showInviteDialog=false">✕</div>
+    <p>分享下面链接给好友，TA 通过链接注册成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
+    <div class="invite-link-box">{{ inviteFullText }}</div>
+    <van-button type="primary" color="#ff6b81" block @click="copyInviteLink">复制链接</van-button>
+  </div>
+</van-dialog>
+<!-- 筛选弹层 -->
+<van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
+  <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <div style="font-size:17px; font-weight:600; color:#323233;">筛选</div>
+      <div style="color:#ff6b81; font-size:14px; cursor:pointer;" @click="resetFilter">重置</div>
+    </div>
+    <div style="overflow-y:auto; max-height:62vh; padding-top:8px;">
+      <div class="filter-row">
+        <div class="filter-label">用户ID</div>
+        <div style="display:flex; align-items:center;">
+          <span style="color:#969799; font-size:14px; margin-right:2px;">U-</span>
+          <van-field v-model="filter.user_id" placeholder="如：0003" class="filter-input" style="flex:1;" />
+        </div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">身高 (cm)</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <van-field v-model="filter.height_min" type="number" placeholder="最低" class="filter-input" />
+          <span style="color:#969799;">-</span>
+          <van-field v-model="filter.height_max" type="number" placeholder="最高" class="filter-input" />
+        </div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">年龄</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <van-field v-model="filter.age_min" type="number" placeholder="最小" class="filter-input" />
+          <span style="color:#969799;">-</span>
+          <van-field v-model="filter.age_max" type="number" placeholder="最大" class="filter-input" />
+        </div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">学历（可多选）</div>
+        <div class="filter-tags">
+          <span v-for="e in educationOptions" :key="e" class="filter-tag" :class="{active: filter.education.includes(e)}" @click="toggleMultiTag('education', e)">{{ e }}</span>
+        </div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">年收入（可多选）</div>
+        <div class="filter-tags">
+          <span v-for="i in incomeOptions" :key="i" class="filter-tag" :class="{active: filter.income.includes(i)}" @click="toggleMultiTag('income', i)">{{ i }}</span>
+        </div>
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">经常去的教堂</div>
+        <van-field v-model="filter.church" placeholder="如：南头堂" class="filter-input" />
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">家乡</div>
+        <van-field v-model="filter.native_place" placeholder="如：广东" class="filter-input" />
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">现居/工作城市</div>
+        <van-field v-model="filter.city" placeholder="如：广州" class="filter-input" />
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">从事行业</div>
+        <van-field v-model="filter.industry" placeholder="如：金融" class="filter-input" />
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">房产状况</div>
+        <van-field v-model="filter.house" placeholder="如：有房" class="filter-input" />
+      </div>
+      <div class="filter-row">
+        <div class="filter-label">汽车</div>
+        <van-field v-model="filter.driving" placeholder="如：有" class="filter-input" />
+      </div>
+    </div>
+    <div style="display:flex; gap:12px; margin-top:16px;">
+      <van-button block plain type="primary" color="#ff6b81" @click="showFilter=false">取消</van-button>
+      <van-button block type="primary" color="#ff6b81" @click="applyFilter">应用筛选</van-button>
+    </div>
+  </div>
+</van-popup>
+<!-- 底部导航 -->
+<van-tabbar v-model="page" active-color="#ff6b81" inactive-color="#969799"
+  v-if="!subPages.includes(page)">
+  <van-tabbar-item name="cards" icon="like-o">牵线</van-tabbar-item>
+  <van-tabbar-item name="likes" icon="chat-o">消息</van-tabbar-item>
+  <van-tabbar-item name="home" icon="home-o">活动</van-tabbar-item>
+  <van-tabbar-item name="profile" icon="user-o">我的</van-tabbar-item>
+</van-tabbar>
+</template>
+</div>
+<script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.26.js"></script>
+<script src="lib/vue.global.prod.js"></script>
+<script src="lib/vant.min.js"></script>
+<script>
+const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
+createApp({
+  setup() {
+    const page = ref('cards');
+    const user = ref(null);
+    const loggingIn = ref(true);
+    const loginError = ref(false);
+    const loginErrorMessage = ref('');
+    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me'];
+
+    // 活动
+    const activities = ref([]);
+    const loadingActivities = ref(false);
+    const currentActivity = ref(null);
+    const currentActivityId = ref('');
+    const actionLoading = ref(false);
+    const activityDetailFrom = ref('home'); // 进入活动详情前的页面，用于返回
+
+    // 喜欢卡片
+    const cards = ref([]);
+    const loadingCards = ref(false);
+    const cardIndex = ref(0);
+    const photoIndex = ref(0);
+    const currentCard = computed(() => cards.value[cardIndex.value] || null);
+    const currentPhotoUrl = computed(() => {
+      if (!currentCard.value) return '';
+      const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
+      return photos[photoIndex.value] || '';
+    });
+    const photoLoading = ref(false);
+    const likeMessage = ref('');
+    const showLikeDialog = ref(false);
+    const likeDialogTitle = ref('');
+    const likeTarget = ref(null);  // 当前要喜欢的对象 {openid, nickname}
+    const likeType = ref('匿名');  // 喜欢方式：匿名/实名
+    const showFeedbackDialog = ref(false);
+    const feedbackReason = ref('已有对象');
+    const feedbackText = ref('');
+    const feedbackTarget = ref(null);  // 当前要反馈的对象 {openid, nickname}
+    const showInviteDialog = ref(false);
+    const REGISTER_FORM_BASE = 'https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcn04AWZCwqilzelLqT5CJsNd';
+    const inviteLink = computed(() => {
+      if (user.value && user.value.user_id) {
+        return REGISTER_FORM_BASE + '?prefill_' + encodeURIComponent('邀请人 ID') + '=' + encodeURIComponent(user.value.user_id);
+      }
+      return REGISTER_FORM_BASE;
+    });
+    const inviteFullText = computed(() => {
+      return "下载飞书App，并注册，在飞书 App 里申请使用'一线牵'机器人，发送给'一线牵'机器人后打开：" + inviteLink.value;
+    });
+
+    // 喜欢我的
+    const likesData = ref({ liked_me: [], mutual: [] });
+    const loadingLikes = ref(false);
+
+    // 我的喜欢
+    const myLikesList = ref([]);
+    const loadingMyLikes = ref(false);
+    const myLikesCount = ref(0);
+    const myLikesLoaded = ref(false);
+
+    // 我的活动
+    const myActivitiesList = ref([]);
+    const loadingMyActivities = ref(false);
+    const myActivitiesLoaded = ref(false);
+
+    // 我的分组
+    const myGroupsList = ref([]);
+    const loadingMyGroups = ref(false);
+    const myGroupsLoaded = ref(false);
+    const hasGroupEntry = ref(false); // 是否显示「我的分组」入口（报名过且该活动开启分组功能）
+
+    // 我的资料
+    const profileData = ref({});
+    const profileLoaded = ref(false);
+    // 我的资料-分组展示：各组是否有内容（无内容则不显示整卡）
+    const hasProfileBasic = computed(() => !!(profileData.value.real_name || profileData.value.baptismal_name || profileData.value.birthday || profileData.value.height || profileData.value.education || profileData.value.city || profileData.value.native_place || profileData.value.church || profileData.value.group || profileData.value.church_location));
+    const hasProfileWork = computed(() => !!(profileData.value.industry || profileData.value.position || profileData.value.income || profileData.value.house || profileData.value.driving));
+    const hasProfileAbout = computed(() => !!(profileData.value.personality || profileData.value.self_traits || profileData.value.hobbies || profileData.value.self_sports || profileData.value.mbti || profileData.value.live_with_parents || profileData.value.family));
+    const hasProfilePartner = computed(() => !!(profileData.value.partner_criteria || profileData.value.partner_traits || profileData.value.partner_hobbies || profileData.value.partner_sports));
+    const hasProfileContact = computed(() => !!(profileData.value.wechat || profileData.value.phone || profileData.value.register_time));
+
+    // 分组
+    const candidates = ref([]);
+    const selectedChoices = ref([]);
+    const candidateQuery = ref('');
+    const visibleCandidates = computed(() => {
+      const q = (candidateQuery.value||'').trim().toLowerCase();
+      if (!q) return candidates.value;
+      return candidates.value.filter(c => (c.nickname||'').toLowerCase().includes(q)
+        || (c.user_id||'').toLowerCase().includes(q)
+        || (c.baptismal_name||'').toLowerCase().includes(q));
+    });
+    const choiceListRef = ref(null);
+    const loadingCandidates = ref(false);
+    const candidatesError = ref('');
+    const groupResult = ref({});
+    const myGender = computed(() => user.value?.gender || '');
+    const groupSelectFrom = ref('my_groups');   // 进入分组选择前的页面，用于返回
+    const groupResultFrom = ref('my_groups');   // 进入分组结果前的页面，用于返回
+
+    // 全屏图片
+    const showPhotoViewer = ref(false);
+    const viewerPhotos = ref([]);
+    const viewerIndex = ref(0);
+    let viewerTouchX = 0;
+
+    // 进入牵线前的页面（喜欢完最后一人后返回）
+    const prevPage = ref('likes');
+
+    // 消息-动态
+    const notifications = ref([]);
+
+    // 报名名单
+    const signupSheetShow = ref(false);
+    const signupList = ref([]);
+    const loadingSignups = ref(false);
+    const signupCache = ref({});  // activity_id -> [{...}] 报名名单缓存
+
+    // 他人资料页
+    const userDetail = ref(null);
+    const userDetailFrom = ref('home');
+
+    // 触摸滑动
+    let touchStartX = 0, touchStartY = 0, isSwipingCard = false;
+
+    const BASE_PATH = '';
+    async function api(url, options = {}) {
+      const resp = await fetch(BASE_PATH + url, {
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        ...options
+      });
+      const contentType = resp.headers.get('Content-Type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('服务器返回了非预期的响应，请稍后重试');
+      }
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || '请求失败');
+      return data;
+    }
+
+    // 登录
+    const FEISHU_APP_ID = 'cli_aaf0623a6d39dbe3';
+    function isInFeishu() {
+      const ua = navigator.userAgent.toLowerCase();
+      return ua.includes('lark') || ua.includes('feishu');
+    }
+    // 飞书网页免登：静默获取预授权码（无需用户点授权）
+    function getFeishuSilentCode() {
+      return new Promise((resolve) => {
+        // 等待JSSDK加载（最多等3秒）
+        let waited = 0;
+        const tryGetCode = () => {
+          const tt = window.tt || window.h5sdk;
+          if (!tt) {
+            if (waited < 3000) { waited += 200; setTimeout(tryGetCode, 200); return; }
+            resolve({code: null, error: 'JSSDK未加载'}); return;
+          }
+          // 优先用 requestAuthCode（兼容性最好），失败再试 requestAccess
+          if (typeof tt.requestAuthCode === 'function') {
+            tt.requestAuthCode({
+              appId: FEISHU_APP_ID,
+              success: (res) => resolve({code: (res && res.code) ? res.code : null, error: null}),
+              fail: (err) => {
+                if (typeof tt.requestAccess === 'function') {
+                  tt.requestAccess({
+                    appID: FEISHU_APP_ID,
+                    scopeList: [],
+                    success: (res2) => resolve({code: (res2 && res2.code) ? res2.code : null, error: null}),
+                    fail: (err2) => resolve({code: null, error: JSON.stringify(err2)})
+                  });
+                } else {
+                  resolve({code: null, error: JSON.stringify(err)});
+                }
+              }
+            });
+          } else if (typeof tt.requestAccess === 'function') {
+            tt.requestAccess({
+              appID: FEISHU_APP_ID,
+              scopeList: [],
+              success: (res) => resolve({code: (res && res.code) ? res.code : null, error: null}),
+              fail: (err) => resolve({code: null, error: JSON.stringify(err)})
+            });
+          } else {
+            resolve({code: null, error: '无可用免登API'});
+          }
+        };
+        tryGetCode();
+      });
+    }
+    // 用 code 换取登录态，返回 'ok' | 'need_register' | 'error'
+    async function loginWithCode(code) {
+      try {
+        const data = await api('/api/auth/feishu?code=' + code);
+        user.value = data.user;
+        window.history.replaceState({}, '', window.location.pathname);
+        await loadHome();
+        return 'ok';
+      } catch (e) {
+        if (e.message.includes('尚未注册')) {
+          vant.showDialog({ title: '提示', message: '你还未注册，请先在飞书中搜索「一线牵」机器人完成注册。', confirmButtonColor: '#ff6b81' });
+          return 'need_register';
+        }
+        return 'error';
+      }
+    }
+    async function doLogin() {
+      loggingIn.value = true; loginError.value = false;
+
+      // 1. 已有会话（cookie 有效则直接进）
+      try {
+        await loadHome();
+        loggingIn.value = false; return;
+      } catch (e) {}
+
+      // 2. 飞书内：网页免登（静默，不弹授权页）
+      if (isInFeishu()) {
+        const silentResult = await getFeishuSilentCode();
+        if (silentResult && silentResult.code) {
+          const r = await loginWithCode(silentResult.code);
+          if (r === 'ok' || r === 'need_register') { loggingIn.value = false; return; }
+        }
+        // 免登失败，显示错误信息和手动登录按钮
+        loginError.value = true;
+        loginErrorMessage.value = '登录失败，请点击下方「重新登录」，或从飞书机器人菜单重新进入';
+        loggingIn.value = false;
+        return;
+      }
+
+      // 3. 外部浏览器且无会话：提示重新登录
+      loginError.value = true; loggingIn.value = false;
+    }
+    function retryLogin() { doLogin(); }
+
+    // 一次拉取首页全部数据（我的信息 + 卡片 + 喜欢 + 活动）
+    async function loadHome() {
+      const data = await api('/api/home');
+      user.value = data.user;
+      cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
+      likesData.value = data.likes || { liked_me: [], mutual: [] };
+      activities.value = data.activities || [];
+      photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
+      preloadAround();
+    }
+
+    function splitTags(str) { return str ? str.split(/[,，、\s]+/).filter(Boolean) : []; }
+
+    // 活动
+    async function loadActivities() {
+      if (activities.value.length) return; // 缓存
+      loadingActivities.value = true;
+      try { const data = await api('/api/activities'); activities.value = data.activities; }
+      catch(e) { vant.showToast(e.message); }
+      loadingActivities.value = false;
+    }
+    async function openActivity(id) {
+      // 记录来路，用于返回（从活动详情内部刷新时不重置）
+      const noReset = ['activity_detail', 'group_select', 'group_result'];
+      if (!noReset.includes(page.value)) activityDetailFrom.value = page.value;
+      try { const data = await api('/api/activities/' + id); currentActivity.value = data; currentActivityId.value = id; page.value = 'activity_detail'; }
+      catch(e) { vant.showToast(e.message); }
+    }
+    async function doSignup() {
+      actionLoading.value = true;
+      try {
+        await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'POST' });
+        vant.showToast('报名成功');
+        activities.value = []; // 刷新缓存
+        myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
+        await openActivity(currentActivity.value.record_id);
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+    async function cancelSignup() {
+      actionLoading.value = true;
+      try {
+        await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'DELETE' });
+        vant.showToast('已取消报名');
+        activities.value = [];
+        myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
+        await openActivity(currentActivity.value.record_id);
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+
+    // 牵线卡片
+    const filter = ref({
+      user_id: '',
+      height_min: '', height_max: '',
+      age_min: '', age_max: '',
+      education: [], income: [], church: '',
+      native_place: '', city: '', industry: '', house: '', driving: ''
+    });
+    const educationOptions = ['大专以下', '大专', '本科', '硕士', '博士'];
+    const incomeOptions = ['10W以下', '10W - 20W', '20W - 30W', '30W - 50W', '50W以上'];
+    const showFilter = ref(false);
+    const slideDir = ref('');
+    const hasActiveFilter = computed(() => {
+      const f = filter.value;
+      return !!(f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.church || f.native_place || f.city || f.industry || f.house || f.driving);
+    });
+    function buildFilterQuery() {
+      const f = filter.value;
+      const parts = [];
+      ['height_min','height_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
+      ['age_min','age_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
+      f.education.forEach(e => parts.push('education=' + encodeURIComponent(e)));
+      f.income.forEach(i => parts.push('income=' + encodeURIComponent(i)));
+      const uid = (f.user_id || '').trim();
+      if (uid) parts.push('user_id=' + encodeURIComponent(uid.toUpperCase().startsWith('U-') ? uid.toUpperCase() : 'U-' + uid));
+      ['church','native_place','city','industry','house','driving'].forEach(k => { if (f[k]) parts.push(k + '=' + encodeURIComponent(f[k])); });
+      return parts.length ? ('?' + parts.join('&')) : '';
+    }
+    function toggleTag(field, val) {
+      filter.value[field] = (filter.value[field] === val) ? '' : val;
+    }
+    function toggleMultiTag(field, val) {
+      const arr = filter.value[field];
+      const idx = arr.indexOf(val);
+      if (idx >= 0) arr.splice(idx, 1);
+      else arr.push(val);
+    }
+    async function resetFilter() {
+      filter.value = { user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], church: '', native_place: '', city: '', industry: '', house: '', driving: '' };
+      showFilter.value = false;
+      cards.value = [];
+      cardIndex.value = 0;
+      await loadCards(true);
+    }
+
+    async function applyFilter() {
+      showFilter.value = false;
+      cards.value = [];
+      cardIndex.value = 0;
+      await loadCards(true);
+    }
+    function preloadImage(url) {
+      if (!url) return;
+      const img = new Image();
+      img.src = url;
+    }
+    function cardPhotosOf(c) {
+      return (c && (c.photos || (c.photo ? [c.photo] : []))) || [];
+    }
+    function preloadAround() {
+      const idx = cardIndex.value;
+      for (let i = idx; i <= idx + 3 && i < cards.value.length; i++) {
+        const p = cardPhotosOf(cards.value[i]);
+        if (p[0]) preloadImage(p[0]);
+      }
+    }
+    async function loadCards(force) {
+      if (cards.value.length && !force) return; // 缓存
+      loadingCards.value = true;
+      try {
+        const data = await api('/api/cards' + buildFilterQuery());
+        cards.value = data.cards; cardIndex.value = 0; photoIndex.value = 0;
+        photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
+        preloadAround();
+      }
+      catch(e) { vant.showToast(e.message); }
+      loadingCards.value = false;
+    }
+    function onPhotoError() { /* 图片加载失败时显示占位符 */ }
+    function onTouchStart(e) {
+      touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY; isSwipingCard = false;
+    }
+    function onTouchMove(e) {}
+    function switchCard(dir) {
+      // dir < 0 下一张，dir > 0 上一张；配合滑动动画
+      if (dir < 0 && cardIndex.value < cards.value.length - 1) {
+        slideDir.value = 'right';
+        cardIndex.value++;
+        photoIndex.value = 0;
+        photoLoading.value = true;
+      } else if (dir > 0 && cardIndex.value > 0) {
+        slideDir.value = 'left';
+        cardIndex.value--;
+        photoIndex.value = 0;
+        photoLoading.value = true;
+      }
+    }
+    function onTouchEnd(e) {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      const dy = e.changedTouches[0].clientY - touchStartY;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+        isSwipingCard = true;
+        switchCard(dx < 0 ? -1 : 1);
+      }
+    }
+
+    // 点击照片区域切换图片/打开预览
+    function openPhotoViewer(idx) {
+      const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
+      if (photos.length <= 1) {
+        // 单张直接全屏
+        if (photos.length === 1) { viewerPhotos.value = photos; viewerIndex.value = 0; showPhotoViewer.value = true; }
+        return;
+      }
+      // 多张：点击切换到下一张
+      photoIndex.value = (photoIndex.value + 1) % photos.length;
+      photoLoading.value = true;
+    }
+    function closePhotoViewer() { showPhotoViewer.value = false; }
+    function openPhotoViewerForCurrent() {
+      const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
+      if (!photos.length) return;
+      viewerPhotos.value = photos;
+      viewerIndex.value = photoIndex.value;
+      showPhotoViewer.value = true;
+    }
+    function viewPoster() {
+      if (currentActivity.value && currentActivity.value.poster) {
+        viewerPhotos.value = [currentActivity.value.poster];
+        viewerIndex.value = 0;
+        showPhotoViewer.value = true;
+      }
+    }
+    function viewerPrev() {
+      if (viewerPhotos.value.length > 1) viewerIndex.value = (viewerIndex.value - 1 + viewerPhotos.value.length) % viewerPhotos.value.length;
+    }
+    function viewerNext() {
+      if (viewerPhotos.value.length > 1) viewerIndex.value = (viewerIndex.value + 1) % viewerPhotos.value.length;
+    }
+    function onViewerTouchStart(e) { viewerTouchX = e.touches[0].clientX; }
+    function onViewerTouchEnd(e) {
+      const dx = e.changedTouches[0].clientX - viewerTouchX;
+      if (Math.abs(dx) > 40) { dx < 0 ? viewerNext() : viewerPrev(); }
+    }
+    function openPhotoViewerForUser(u) {
+      const photos = u.photos || (u.photo ? [u.photo] : []);
+      if (!photos.length) return;
+      viewerPhotos.value = photos; viewerIndex.value = 0; showPhotoViewer.value = true;
+    }
+    function gotoCards(from) {
+      prevPage.value = from || 'likes';
+      page.value = 'cards';
+    }
+    async function loadNotifications() {
+      try { const data = await api('/api/notifications'); notifications.value = data.notifications || []; }
+      catch(e) {}
+    }
+    async function openSignupSheet() {
+      signupSheetShow.value = true;
+      const aid = currentActivity.value.record_id;
+      // 命中缓存则直接展示，避免每次都加载
+      if (signupCache.value[aid]) { signupList.value = signupCache.value[aid]; return; }
+      if (loadingSignups.value) return;
+      loadingSignups.value = true;
+      try {
+        const data = await api('/api/activities/' + aid + '/signups');
+        signupList.value = data.signups || [];
+        signupCache.value[aid] = signupList.value;
+      } catch(e) { vant.showToast(e.message); }
+      loadingSignups.value = false;
+    }
+    async function openUserDetail(openid) {
+      signupSheetShow.value = false;
+      userDetailFrom.value = 'activity_detail';
+      page.value = 'user_detail';
+      userDetail.value = null;
+      try {
+        const data = await api('/api/users/' + openid + '/public');
+        userDetail.value = data;
+      } catch(e) { vant.showToast(e.message); }
+    }
+    async function copyText(text, okMsg) {
+      try {
+        await navigator.clipboard.writeText(text);
+        vant.showToast(okMsg || '已复制');
+      } catch(e) {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); vant.showToast(okMsg || '已复制'); }
+        catch(_) { vant.showToast('复制失败，请手动复制'); }
+        document.body.removeChild(ta);
+      }
+    }
+    function copyInviteLink() {
+      copyText(inviteFullText.value, '链接已复制');
+    }
+    function copyInviteCode() {
+      const code = (user.value && user.value.user_id) || '';
+      if (!code) { vant.showToast('暂无邀请码'); return; }
+      copyText(code, '邀请码已复制');
+    }
+
+    // 账号状态切换（活跃 <-> 已隐藏）
+    const accountStatusLabel = computed(() => (user.value && user.value.account_status === '已隐藏') ? '隐藏' : '活跃');
+    async function toggleAccountStatus() {
+      actionLoading.value = true;
+      try {
+        const data = await api('/api/account/status', { method: 'POST' });
+        if (user.value) user.value.account_status = data.account_status;
+        vant.showToast(data.account_status === '已隐藏' ? '已隐藏，将不再出现在他人牵线中' : '已恢复活跃');
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+
+    // 喜欢 - 弹出附言对话框
+    function openLikeDialog() {
+      if (!currentCard.value || !currentCard.value.openid) return;
+      if ((user.value.hearts || 0) <= 0) {
+        vant.showToast('爱心已用完，邀请好友可得爱心');
+        showInviteDialog.value = true;
+        return;
+      }
+      likeTarget.value = { openid: currentCard.value.openid, nickname: currentCard.value.nickname };
+      likeMessage.value = '';
+      likeType.value = '匿名';
+      likeDialogTitle.value = '送给「' + currentCard.value.nickname + '」一颗爱心';
+      showLikeDialog.value = true;
+    }
+    function openLikeDialogForUser(u) {
+      if (!u || !u.openid) return;
+      if ((user.value.hearts || 0) <= 0) {
+        vant.showToast('爱心已用完，邀请好友可得爱心');
+        showInviteDialog.value = true;
+        return;
+      }
+      likeTarget.value = { openid: u.openid, nickname: u.nickname };
+      likeMessage.value = '';
+      likeType.value = '匿名';
+      likeDialogTitle.value = '送给「' + u.nickname + '」一颗爱心';
+      showLikeDialog.value = true;
+    }
+    async function onLikeDialogBeforeClose(action) {
+      if (action === 'confirm') {
+        if (!likeMessage.value.trim()) {
+          vant.showToast('请填写附言');
+          return false;
+        }
+        await doLike();
+      }
+      return true;
+    }
+    async function doLike() {
+      if (!likeTarget.value || !likeTarget.value.openid) return;
+      const target = likeTarget.value;
+      actionLoading.value = true;
+      try {
+        const data = await api('/api/like', {
+          method: 'POST',
+          body: JSON.stringify({ target_openid: target.openid, message: likeMessage.value, like_type: likeType.value })
+        });
+        if (data.mutual) {
+          vant.showDialog({ title: '💕 相互喜欢', message: '恭喜！你和' + target.nickname + '相互喜欢了！名片已推送，快去加飞书好友吧～', confirmButtonColor: '#ff6b81' });
+        } else { vant.showToast('喜欢成功'); }
+        try { const me = await api('/api/user/me'); user.value = me; } catch(e) {}
+        myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
+        if (page.value === 'user_detail') {
+          // 从他人资料页喜欢：返回上一页
+          page.value = userDetailFrom.value || 'home';
+        } else {
+          // 重新加载卡片；若已无更多可推荐的人，则返回进入牵线前的页面
+          cards.value = []; cardIndex.value = 0; photoIndex.value = 0;
+          await loadCards();
+          if (!cards.value.length) page.value = prevPage.value || 'likes';
+        }
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+
+    // 反馈 - 弹出反馈弹窗
+    function openFeedbackDialog() {
+      if (!currentCard.value || !currentCard.value.openid) return;
+      feedbackTarget.value = { openid: currentCard.value.openid, nickname: currentCard.value.nickname };
+      feedbackReason.value = '已有对象';
+      feedbackText.value = '';
+      showFeedbackDialog.value = true;
+    }
+    async function onFeedbackBeforeClose(action) {
+      if (action === 'confirm') {
+        if (feedbackReason.value === '其他' && !feedbackText.value.trim()) {
+          vant.showToast('请补充说明');
+          return false;
+        }
+        await doFeedback();
+      }
+      return true;
+    }
+    async function doFeedback() {
+      if (!feedbackTarget.value || !feedbackTarget.value.openid) return;
+      let reason = feedbackReason.value;
+      if (feedbackText.value.trim()) reason = reason + '：' + feedbackText.value.trim();
+      actionLoading.value = true;
+      try {
+        await api('/api/feedback', {
+          method: 'POST',
+          body: JSON.stringify({ target_openid: feedbackTarget.value.openid, reason })
+        });
+        vant.showToast('感谢反馈，已提交管理员');
+        showFeedbackDialog.value = false;
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+
+    // 消息
+    async function loadLikes() {
+      if (likesData.value.mutual.length || likesData.value.liked_me.length) return;
+      loadingLikes.value = true;
+      try { const data = await api('/api/likes/me'); likesData.value = data; }
+      catch(e) { vant.showToast(e.message); }
+      loadingLikes.value = false;
+    }
+    async function loadMyLikesCount() {
+      try {
+        const data = await api('/api/likes/mine');
+        myLikesCount.value = (data.likes || []).length;
+      } catch(e) {}
+    }
+
+    // 我的喜欢
+    async function openMyLikes() {
+      page.value = 'my_likes';
+      if (myLikesLoaded.value) return; // 已加载则直接展示缓存
+      loadingMyLikes.value = true;
+      try {
+        const data = await api('/api/likes/mine');
+        myLikesList.value = data.likes;
+        myLikesCount.value = data.likes.length;
+        myLikesLoaded.value = true;
+      } catch(e) { vant.showToast(e.message); }
+      loadingMyLikes.value = false;
+    }
+    function openMutual() {
+      loadLikes();
+      page.value = 'mutual';
+    }
+    function openLikedMe() {
+      loadLikes();
+      page.value = 'liked_me';
+    }
+    async function cancelLike(l) {
+      try {
+        await vant.showConfirmDialog({ title: '取消喜欢', message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将退还。', confirmButtonColor: '#ee0a24' });
+      } catch(e) { return; }
+      try {
+        await api('/api/like/' + l.openid, { method: 'DELETE' });
+        vant.showToast('已取消喜欢');
+        myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
+        myLikesCount.value = myLikesList.value.length;
+        cards.value = [];
+        try { const me = await api('/api/user/me'); user.value = me; } catch(e) {}
+      } catch(e) { vant.showToast(e.message); }
+    }
+
+    // 我的活动
+    async function openMyActivities() {
+      page.value = 'my_activities';
+      if (myActivitiesLoaded.value) return; // 已加载则直接展示缓存
+      loadingMyActivities.value = true;
+      try { const data = await api('/api/activities/mine'); myActivitiesList.value = data.activities; myActivitiesLoaded.value = true; }
+      catch(e) { vant.showToast(e.message); }
+      loadingMyActivities.value = false;
+    }
+    // 我的分组
+    async function openMyGroups() {
+      page.value = 'my_groups';
+      if (myGroupsLoaded.value) return; // 已加载则直接展示缓存
+      loadingMyGroups.value = true;
+      try { const data = await api('/api/activities/mine/groups'); myGroupsList.value = data.activities; myGroupsLoaded.value = true; }
+      catch(e) { vant.showToast(e.message); }
+      loadingMyGroups.value = false;
+    }
+    // 检查「我的」页是否显示「我的分组」入口（报名过且该活动开启分组功能）
+    async function checkGroupEntry() {
+      try { const data = await api('/api/activities/mine/groups/flag'); hasGroupEntry.value = !!data.has_group_activity; }
+      catch(e) { hasGroupEntry.value = false; }
+    }
+
+    // 我的资料
+    async function openProfileDetail() {
+      if (profileLoaded.value) { page.value = 'profile_detail'; return; } // 已加载则直接展示缓存
+      try { const data = await api('/api/profile'); profileData.value = data; profileLoaded.value = true; page.value = 'profile_detail'; }
+      catch(e) { vant.showToast(e.message); }
+    }
+    // 分组
+    async function goGroupSelect(activityId) {
+      groupSelectFrom.value = page.value; // 记录来路，用于返回
+      currentActivityId.value = activityId;
+      page.value = 'group_select'; loadingCandidates.value = true; selectedChoices.value = []; candidatesError.value = '';
+      try {
+        const candData = await api('/api/activities/' + activityId + '/group/candidates');
+        candidates.value = candData.candidates || [];
+        // 预填已提交的志愿（修改志愿时回显原选择）
+        try {
+          const statusData = await api('/api/activities/' + activityId + '/group/status');
+          const myChoices = statusData.my_choices || [];
+          const byOid = {};
+          candidates.value.forEach(c => { byOid[c.openid] = c; });
+          selectedChoices.value = myChoices.map(oid => byOid[oid]).filter(Boolean);
+        } catch(e) {}
+      } catch(e) {
+        candidatesError.value = '加载失败：' + e.message + '，点击重试';
+        vant.showToast(e.message);
+      }
+      loadingCandidates.value = false;
+    }
+    function isSelected(oid) { return selectedChoices.value.some(c => c.openid === oid); }
+    function toggleChoice(c) {
+      const idx = selectedChoices.value.findIndex(x => x.openid === c.openid);
+      if (idx >= 0) { selectedChoices.value.splice(idx, 1); }
+      else {
+        if (selectedChoices.value.length >= 7) { vant.showToast('最多选择7个志愿'); return; }
+        selectedChoices.value.push(c);
+      }
+    }
+    function removeChoice(i) { selectedChoices.value.splice(i, 1); }
+    async function submitChoices() {
+      const activityId = currentActivityId.value;
+      if (!activityId) { vant.showToast('活动信息丢失'); return; }
+      actionLoading.value = true;
+      try {
+        await api('/api/activities/' + activityId + '/group/select', {
+          method: 'POST', body: JSON.stringify({ choices: selectedChoices.value.map(c => c.openid) })
+        });
+        vant.showToast('志愿提交成功');
+        myGroupsLoaded.value = false;
+        // 按原路返回并刷新
+        if (groupSelectFrom.value === 'activity_detail') await openActivity(activityId);
+        else openMyGroups();
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+    async function loadGroupResult(activityId, round) {
+      let url = '/api/activities/' + activityId + '/group/result';
+      if (round) url += '?round=' + encodeURIComponent(round);
+      try { const data = await api(url); groupResult.value = data; }
+      catch(e) { vant.showToast(e.message); }
+    }
+    async function goGroupResult(activityId) {
+      groupResultFrom.value = page.value; // 记录来路，用于返回
+      currentActivityId.value = activityId;
+      page.value = 'group_result';
+      groupResult.value = {};
+      await loadGroupResult(activityId);
+    }
+    function switchGroupRound(round) {
+      loadGroupResult(currentActivityId.value, round);
+    }
+
+    // 页面切换加载数据
+    watch(page, (p, old) => {
+      if (p === 'home') loadActivities();
+      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
+      if (p === 'likes') { loadLikes(); loadMyLikesCount(); loadNotifications(); }
+      if (p === 'profile') checkGroupEntry();
+    });
+
+    // 切换卡片/照片时显示图片加载占位
+    watch([cardIndex, photoIndex], () => {
+      photoLoading.value = !!currentPhotoUrl.value;
+      preloadAround();
+    });
+
+    onMounted(() => {
+      doLogin().then(() => {
+        if (user.value) {
+          const hash = window.location.hash;
+          if (hash === '#/likes') { page.value = 'likes'; }
+          // cards / likes / activities 已在 doLogin → loadHome 中一次性加载
+        }
+      });
+    });
+
+    return {
+      page, user, loggingIn, loginError,
+      loginErrorMessage, retryLogin, subPages,
+      accountStatusLabel, toggleAccountStatus,
+      activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
+      openActivity, doSignup, cancelSignup,
+      cards, loadingCards, currentCard, cardIndex, photoIndex, currentPhotoUrl, photoLoading,
+      filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleTag, toggleMultiTag, resetFilter, applyFilter,
+      slideDir,
+      onTouchStart, onTouchMove, onTouchEnd,
+      openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage,
+      showLikeDialog, likeDialogTitle, likeTarget, likeType,
+      showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,
+      openFeedbackDialog, onFeedbackBeforeClose, doFeedback,
+      likesData, loadingLikes, loadMyLikesCount, notifications,
+      myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe, cancelLike,
+      myActivitiesList, loadingMyActivities, openMyActivities,
+      myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
+      profileData, openProfileDetail,
+      candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
+      groupSelectFrom, groupResultFrom,
+      goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
+      splitTags, onPhotoError,
+      showPhotoViewer, viewerPhotos, viewerIndex, openPhotoViewer, closePhotoViewer, viewPoster,
+      viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchEnd,
+      showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
+      openPhotoViewerForCurrent, openPhotoViewerForUser,
+      gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,
+      userDetail, userDetailFrom, openUserDetail, loadNotifications,
+      hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact
+    };
+  }
+}).use(vant).mount('#app');
+</script>
+</body>
+</html>

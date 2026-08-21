@@ -57,12 +57,13 @@ ACTIVITY_VIEW_URL = "https://lcnz8zx7fjk4.feishu.cn/share/base/view/shrcnKs9V7lR
 LIKE_FORM_URL = "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b"
 
 # ==================== 多维表格配置 ====================
+# 表 ID 默认值 = 生产环境；测试服可在 local_config.py 里覆盖同名变量（getattr 回退到默认值）。
 BASE_TOKEN = _cfg.BASE_TOKEN
-USER_TABLE_ID = "tblsecbZZv0thaPe"
-LIKE_TABLE_ID = "tblaciMZHRQH7QBA"
-ACTIVITY_TABLE_ID = "tblHLltReY8xHTfu"
-SIGNUP_TABLE_ID = "tblNVJCnohVaWf8t"
-MATCH_TABLE_ID = "tbl8eu9Y85tQZCu7"
+USER_TABLE_ID = getattr(_cfg, "USER_TABLE_ID", "tblsecbZZv0thaPe")
+LIKE_TABLE_ID = getattr(_cfg, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
+ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
+SIGNUP_TABLE_ID = getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
+MATCH_TABLE_ID = getattr(_cfg, "MATCH_TABLE_ID", "tbl8eu9Y85tQZCu7")
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
@@ -102,8 +103,8 @@ FIELD_MATCH_REASON = "推荐理由"
 FIELD_MATCH_STATUS = "推荐状态"
 
 # 分组功能
-GROUP_SELECT_TABLE = "tblYo86Vd7dmzRQJ"
-GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
+GROUP_SELECT_TABLE = getattr(_cfg, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
+GROUP_RESULT_TABLE = getattr(_cfg, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
 FIELD_GS_ACTIVITY_ID = "活动ID"
 FIELD_GS_SELECTOR_OID = "选择人open_id"
 FIELD_GS_SELECTOR_NAME = "选择人昵称"

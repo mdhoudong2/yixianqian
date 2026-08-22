@@ -16,7 +16,7 @@ API_BASE = "https://open.feishu.cn/open-apis"
 
 
 class BitableClient:
-    def __init__(self, app_id, app_secret, base_token, logger=None, timeout=15):
+    def __init__(self, app_id, app_secret, base_token, logger=None, timeout=10):
         self.app_id = app_id
         self.app_secret = app_secret
         self.base_token = base_token
@@ -85,7 +85,7 @@ class BitableClient:
             else:
                 body.pop("page_token", None)
             result = None
-            for attempt in range(3):
+            for attempt in range(2):
                 try:
                     resp = requests.post(url, headers=self._headers(), json=body, timeout=self.timeout)
                     result = resp.json()

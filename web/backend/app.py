@@ -89,7 +89,7 @@ def resolve_activity(act_id):
 
 
 # ========== 本地快照缓存（后台定时把飞书数据刷进内存，读操作走内存，写操作后定向刷新） ==========
-SNAPSHOT_REFRESH_INTERVAL = 15  # 秒
+SNAPSHOT_REFRESH_INTERVAL = 60  # 秒（曾为15s，高频轮询易触发飞书限流/超时，导致登录卡顿）
 
 _snapshot = {
     "users": [], "activities": [], "signups": [],
@@ -830,16 +830,10 @@ def proxy_image(file_token):
     cached = _get_cached_image(file_token)
     if cached:
         fpath, content_type = cached
-        if os.path.getsize(fpath) > 1024 * 1024:
-            try:
-                os.remove(fpath)
-            except Exception:
-                pass
-        else:
-            resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
-                                       mimetype=content_type))
-            resp.headers["Cache-Control"] = "public, max-age=604800"
-            return resp
+        resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
+                                   mimetype=content_type))
+        resp.headers["Cache-Control"] = "public, max-age=604800"
+        return resp
 
     # 2. 从飞书下载并压缩后缓存
     token = bitable.get_token()
@@ -913,7 +907,7 @@ def feishu_auth():
         app.logger.error(f"Feishu auth failed: {last_error}")
         return jsonify({"error": "免登失败，请重试"}), 401
 
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "尚未注册，请先在飞书中搜索「一线牵」机器人完成注册", "need_register": True}), 403
 
@@ -938,8 +932,8 @@ def home():
     if not open_id:
         return jsonify({"error": "未登录"}), 401
 
-    # 自己的信息（含爱心）必须直查飞书，避免快照陈旧导致爱心显示多一颗
-    user = bitable.find_user_by_openid(open_id)
+    # 自己的信息优先读快照，避免每次登录直连飞书超时（写操作后已异步刷新快照）
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)

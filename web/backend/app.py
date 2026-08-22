@@ -1485,6 +1485,14 @@ def list_messages():
     items = bitable.search_records(MESSAGE_TABLE_ID, [
         {"field_name": F_MSG_TARGET_OID, "operator": "is", "value": [target]}
     ])
+    # 头像映射（open_id -> 头像URL），从快照构建，避免逐条直查飞书
+    avatar_map = {}
+    for u in _snap("users"):
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid:
+            toks = bitable.get_attachment_tokens(uf, F_PHOTO)
+            avatar_map[oid] = "/api/image/" + toks[0] if toks else ""
     msgs = []
     for it in items:
         fields = it.get("fields", {})
@@ -1495,6 +1503,7 @@ def list_messages():
             "id": it.get("record_id"),
             "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
             "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
+            "author_avatar": avatar_map.get(author_oid, ""),
             "content": bitable.get_field_text(fields, F_MSG_CONTENT),
             "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),

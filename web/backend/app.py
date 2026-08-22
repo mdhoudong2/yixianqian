@@ -89,7 +89,7 @@ def resolve_activity(act_id):
 
 
 # ========== 本地快照缓存（后台定时把飞书数据刷进内存，读操作走内存，写操作后定向刷新） ==========
-SNAPSHOT_REFRESH_INTERVAL = 15  # 秒
+SNAPSHOT_REFRESH_INTERVAL = 60  # 秒（曾为15s，高频轮询易触发飞书限流/超时，导致登录卡顿）
 
 _snapshot = {
     "users": [], "activities": [], "signups": [],
@@ -556,12 +556,15 @@ def order_cards_likes_first(cards, liked_me_openids):
 
 def pass_card_filters(fields, f):
     """卡片筛选：全部条件满足才返回 True"""
-    # 身高
+    # 身高（范围：最低/最高可独立选填；未填身高的用户不参与身高筛选）
     h = bitable.get_field_number(fields, F_HEIGHT)
-    if f.get("height_min") is not None and h < f["height_min"]:
-        return False
-    if f.get("height_max") is not None and h > f["height_max"]:
-        return False
+    if f.get("height_min") is not None or f.get("height_max") is not None:
+        if h <= 0:
+            return False
+        if f.get("height_min") is not None and h < f["height_min"]:
+            return False
+        if f.get("height_max") is not None and h > f["height_max"]:
+            return False
     # 出生年月区间（兼容旧参数 birth_min/birth_max，格式 YYYY-MM）
     bmin = f.get("birth_min")
     bmax = f.get("birth_max")
@@ -827,16 +830,10 @@ def proxy_image(file_token):
     cached = _get_cached_image(file_token)
     if cached:
         fpath, content_type = cached
-        if os.path.getsize(fpath) > 1024 * 1024:
-            try:
-                os.remove(fpath)
-            except Exception:
-                pass
-        else:
-            resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
-                                       mimetype=content_type))
-            resp.headers["Cache-Control"] = "public, max-age=604800"
-            return resp
+        resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
+                                   mimetype=content_type))
+        resp.headers["Cache-Control"] = "public, max-age=604800"
+        return resp
 
     # 2. 从飞书下载并压缩后缓存
     token = bitable.get_token()
@@ -910,7 +907,7 @@ def feishu_auth():
         app.logger.error(f"Feishu auth failed: {last_error}")
         return jsonify({"error": "免登失败，请重试"}), 401
 
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "尚未注册，请先在飞书中搜索「一线牵」机器人完成注册", "need_register": True}), 403
 
@@ -935,8 +932,8 @@ def home():
     if not open_id:
         return jsonify({"error": "未登录"}), 401
 
-    # 自己的信息（含爱心）必须直查飞书，避免快照陈旧导致爱心显示多一颗
-    user = bitable.find_user_by_openid(open_id)
+    # 自己的信息优先读快照，避免每次登录直连飞书超时（写操作后已异步刷新快照）
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
@@ -951,11 +948,12 @@ def home():
     for u in snap_active_users():
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
-        if uid == open_id or bitable.get_select_value(fields, F_GENDER) != target_gender or uid in liked_openids:
+        if uid == open_id or bitable.get_select_value(fields, F_GENDER) != target_gender:
             continue
         brief = format_user_brief(u, include_openid=True, full=True)
         brief["display_fields"] = build_display_fields(fields)
         brief["subtitle"] = build_subtitle(fields)
+        brief["liked"] = uid in liked_openids
         cards.append(brief)
 
     # 喜欢（谁喜欢了我 / 相互喜欢）
@@ -1224,13 +1222,14 @@ def get_cards():
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
         gender = bitable.get_select_value(fields, F_GENDER)
-        if uid == open_id or gender != target_gender or uid in liked_openids:
+        if uid == open_id or gender != target_gender:
             continue
         if not pass_card_filters(fields, filters):
             continue
         brief = format_user_brief(u, include_openid=True, full=True)
         brief["display_fields"] = build_display_fields(fields)
         brief["subtitle"] = build_subtitle(fields)
+        brief["liked"] = uid in liked_openids
         cards.append(brief)
 
     # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出
@@ -1472,6 +1471,113 @@ def my_likes():
             liked_me_list.append(item)
 
     return jsonify({"liked_me": liked_me_list, "mutual": mutual_list})
+
+
+# ========== 留言接口 ==========
+
+@app.route("/api/messages", methods=["GET"])
+def list_messages():
+    """列出某卡片下的留言（target=目标用户 open_id），排除已删除/已举报"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    target = (request.args.get("target") or "").strip()
+    if not target:
+        return jsonify({"messages": []})
+    items = bitable.search_records(MESSAGE_TABLE_ID, [
+        {"field_name": F_MSG_TARGET_OID, "operator": "is", "value": [target]}
+    ])
+    # 头像映射（open_id -> 头像URL），从快照构建，避免逐条直查飞书
+    avatar_map = {}
+    for u in _snap("users"):
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid:
+            toks = bitable.get_attachment_tokens(uf, F_PHOTO)
+            avatar_map[oid] = "/api/image/" + toks[0] if toks else ""
+    msgs = []
+    for it in items:
+        fields = it.get("fields", {})
+        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+            continue
+        author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+        msgs.append({
+            "id": it.get("record_id"),
+            "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
+            "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
+            "author_avatar": avatar_map.get(author_oid, ""),
+            "content": bitable.get_field_text(fields, F_MSG_CONTENT),
+            "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
+            "is_mine": author_oid == open_id,
+            "can_delete": author_oid == open_id or target == open_id,
+        })
+    msgs.sort(key=lambda m: m["created_at"])
+    return jsonify({"messages": msgs})
+
+
+@app.route("/api/messages", methods=["POST"])
+def create_message():
+    """发留言/回帖（固定显示昵称+用户ID，无匿名）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    data = request.get_json(silent=True) or {}
+    target = (data.get("target_openid") or "").strip()
+    content = (data.get("content") or "").strip()
+    parent_id = (data.get("parent_id") or "").strip()
+    if not target or not content:
+        return jsonify({"error": "内容不能为空"}), 400
+    if len(content) > 500:
+        return jsonify({"error": "留言最多500字"}), 400
+    author = snap_find_user_by_openid(open_id)
+    if not author:
+        return jsonify({"error": "用户不存在"}), 404
+    af = author.get("fields", {})
+    rec = bitable.create_record(MESSAGE_TABLE_ID, {
+        F_MSG_TARGET_OID: target,
+        F_MSG_AUTHOR_OID: open_id,
+        F_MSG_AUTHOR_NICKNAME: bitable.get_field_text(af, F_NICKNAME),
+        F_MSG_AUTHOR_UID: bitable.get_field_text(af, F_USER_ID),
+        F_MSG_PARENT_ID: parent_id,
+        F_MSG_CONTENT: content,
+        F_MSG_CREATED_AT: int(time.time() * 1000),
+        F_MSG_STATUS: "正常",
+    })
+    if not rec:
+        return jsonify({"error": "留言失败"}), 500
+    return jsonify({"ok": True, "id": rec.get("record_id")})
+
+
+@app.route("/api/messages/<record_id>", methods=["DELETE"])
+def delete_message(record_id):
+    """删除留言（本人或卡片主人）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
+    if not rec:
+        return jsonify({"error": "留言不存在"}), 404
+    fields = rec.get("fields", {})
+    author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+    target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+    if open_id != author_oid and open_id != target_oid:
+        return jsonify({"error": "无权删除"}), 403
+    bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/messages/<record_id>/report", methods=["POST"])
+def report_message(record_id):
+    """举报留言（置为已举报，待管理员处理）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
+    if not rec:
+        return jsonify({"error": "留言不存在"}), 404
+    bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"})
+    return jsonify({"ok": True})
 
 
 # ========== 分组接口 ==========

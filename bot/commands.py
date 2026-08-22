@@ -202,7 +202,7 @@ def handle_admin_approve(keyword):
                 f"【点喜欢说明】\n"
                 f"在对方卡片上点击「♥」按钮，填写一句附言，对方会匿名收到「有人喜欢你」的通知；你们相互喜欢后，附言才会发给对方。\n"
                 f"如果对方也喜欢你，系统会通知你们相互喜欢，并开通聊天通道。\n\n"
-                f"祝你早日脱单！💕"
+                f"祝你早日找到另一半！💕"
             )
             if not send_text_message(open_id, user_msg):
                 unreserve_notified("approval_sent", record_id)

@@ -233,7 +233,7 @@
   .filter-tag.active { background: #ff6b81; color: #fff; }
   .filter-input { padding: 6px 10px; background: #f7f8fa; border-radius: 8px; }
   /* 卡片留言 */
-  .card-tabs { display: flex; border-bottom: 1px solid #f2f3f5; margin-bottom: 12px; }
+  .card-tabs { display: flex; flex-shrink: 0; background: #fff; padding: 0 16px; border-bottom: 1px solid #f2f3f5; }
   .card-tab { flex: 1; text-align: center; padding: 10px 0; font-size: 15px; font-weight: 500; color: #969799; cursor: pointer; position: relative; }
   .card-tab.active { color: #ff6b81; font-weight: 600; }
   .card-tab.active::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -1px; width: 32px; height: 3px; border-radius: 2px; background: #ff6b81; }
@@ -307,11 +307,11 @@
           <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
         </div>
       </div>
+      <div class="card-tabs">
+        <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
+        <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言</div>
+      </div>
       <div class="card-info">
-        <div class="card-tabs">
-          <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
-          <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言</div>
-        </div>
         <template v-if="cardTab==='profile'">
           <template v-if="currentCard.display_fields && currentCard.display_fields.sections">
             <div class="card-section" v-for="(sec, si) in currentCard.display_fields.sections" :key="si">

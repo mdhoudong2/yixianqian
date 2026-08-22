@@ -26,7 +26,7 @@
   .signup-count b { color: #ff6b81; font-size: 16px; }
   /* 牵线卡片 */
   .cards-page { padding: 0; height: calc(100vh - 60px); display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; }
-  .swipe-card { width: 92%; max-width: 380px; height: 88vh; max-height: 740px; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.12); position: relative; transition: opacity 0.15s ease; display: flex; flex-direction: column; }
+  .swipe-card { width: 96%; max-width: 420px; height: 90vh; max-height: 780px; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,0.12); position: relative; transition: opacity 0.15s ease; display: flex; flex-direction: column; }
   @keyframes cardFadeIn { from { opacity: 0; } to { opacity: 1; } }
   .swipe-card.slide-in-right { animation: slideInRight 0.28s ease; }
   .swipe-card.slide-in-left { animation: slideInLeft 0.28s ease; }
@@ -300,6 +300,7 @@
             <div class="card-name">{{ currentCard.nickname }}
               <span class="gender-icon">{{ currentCard.gender==='男性' ? '♂' : '♀' }}</span>
             </div>
+            <div class="card-subtitle" v-if="currentCard.display_fields && currentCard.display_fields.simple">{{ currentCard.display_fields.simple }}</div>
           </div>
         </div>
         <div class="photo-zoom-btn" @click.stop="openPhotoViewerForCurrent">
@@ -312,9 +313,6 @@
           <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言</div>
         </div>
         <template v-if="cardTab==='profile'">
-          <div class="info-grid simple-line" v-if="currentCard.display_fields && currentCard.display_fields.simple">
-            <div class="info-grid-item simple"><span class="df-value">{{ currentCard.display_fields.simple }}</span></div>
-          </div>
           <template v-if="currentCard.display_fields && currentCard.display_fields.sections">
             <div class="card-section" v-for="(sec, si) in currentCard.display_fields.sections" :key="si">
               <div class="profile-section-title"><span class="ps-icon">{{ sec.icon }}</span>{{ sec.title }}</div>
@@ -360,7 +358,7 @@
         </div>
       </div>
     </div>
-      <div class="card-actions">
+      <div class="card-actions" v-if="cardTab==='profile'">
         <button class="feedback-btn" @click="openFeedbackDialog">反馈</button>
         <button class="heart-btn" @click="openLikeDialog" :disabled="actionLoading">♥</button>
       </div>

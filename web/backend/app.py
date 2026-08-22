@@ -1471,6 +1471,104 @@ def my_likes():
     return jsonify({"liked_me": liked_me_list, "mutual": mutual_list})
 
 
+# ========== 留言接口 ==========
+
+@app.route("/api/messages", methods=["GET"])
+def list_messages():
+    """列出某卡片下的留言（target=目标用户 open_id），排除已删除/已举报"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    target = (request.args.get("target") or "").strip()
+    if not target:
+        return jsonify({"messages": []})
+    items = bitable.search_records(MESSAGE_TABLE_ID, [
+        {"field_name": F_MSG_TARGET_OID, "operator": "is", "value": [target]}
+    ])
+    msgs = []
+    for it in items:
+        fields = it.get("fields", {})
+        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+            continue
+        author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+        msgs.append({
+            "id": it.get("record_id"),
+            "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
+            "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
+            "content": bitable.get_field_text(fields, F_MSG_CONTENT),
+            "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
+            "is_mine": author_oid == open_id,
+            "can_delete": author_oid == open_id or target == open_id,
+        })
+    msgs.sort(key=lambda m: m["created_at"])
+    return jsonify({"messages": msgs})
+
+
+@app.route("/api/messages", methods=["POST"])
+def create_message():
+    """发留言/回帖（固定显示昵称+用户ID，无匿名）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    data = request.get_json(silent=True) or {}
+    target = (data.get("target_openid") or "").strip()
+    content = (data.get("content") or "").strip()
+    parent_id = (data.get("parent_id") or "").strip()
+    if not target or not content:
+        return jsonify({"error": "内容不能为空"}), 400
+    if len(content) > 500:
+        return jsonify({"error": "留言最多500字"}), 400
+    author = snap_find_user_by_openid(open_id)
+    if not author:
+        return jsonify({"error": "用户不存在"}), 404
+    af = author.get("fields", {})
+    rec = bitable.create_record(MESSAGE_TABLE_ID, {
+        F_MSG_TARGET_OID: target,
+        F_MSG_AUTHOR_OID: open_id,
+        F_MSG_AUTHOR_NICKNAME: bitable.get_field_text(af, F_NICKNAME),
+        F_MSG_AUTHOR_UID: bitable.get_field_text(af, F_USER_ID),
+        F_MSG_PARENT_ID: parent_id,
+        F_MSG_CONTENT: content,
+        F_MSG_CREATED_AT: int(time.time() * 1000),
+        F_MSG_STATUS: "正常",
+    })
+    if not rec:
+        return jsonify({"error": "留言失败"}), 500
+    return jsonify({"ok": True, "id": rec.get("record_id")})
+
+
+@app.route("/api/messages/<record_id>", methods=["DELETE"])
+def delete_message(record_id):
+    """删除留言（本人或卡片主人）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
+    if not rec:
+        return jsonify({"error": "留言不存在"}), 404
+    fields = rec.get("fields", {})
+    author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+    target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+    if open_id != author_oid and open_id != target_oid:
+        return jsonify({"error": "无权删除"}), 403
+    bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/messages/<record_id>/report", methods=["POST"])
+def report_message(record_id):
+    """举报留言（置为已举报，待管理员处理）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
+    if not rec:
+        return jsonify({"error": "留言不存在"}), 404
+    bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"})
+    return jsonify({"ok": True})
+
+
 # ========== 分组接口 ==========
 
 @app.route("/api/activities/<activity_id>/group/candidates", methods=["GET"])

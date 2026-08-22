@@ -25,6 +25,7 @@ SIGNUP_TABLE_ID = getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
 GROUP_SELECT_TABLE = getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
 GROUP_RESULT_TABLE = getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
 REPORT_TABLE_ID = getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T")
+MESSAGE_TABLE_ID = getattr(_lc, "MESSAGE_TABLE_ID", "")  # 留言表（生产表ID待建，测试服在 local_config 覆盖）
 
 # 用户表字段
 F_USER_ID = "用户ID"
@@ -68,6 +69,16 @@ F_REGISTER_TIME = "注册时间"
 F_UPDATE_TIME = "资料更新时间"
 F_REFERRAL_SOURCE = "你是怎么知道这个App的？"
 F_IS_FOR_CHILD = "您替子女注册吗？"
+
+# 留言表字段
+F_MSG_TARGET_OID = "目标用户open_id"
+F_MSG_AUTHOR_OID = "留言人open_id"
+F_MSG_AUTHOR_NICKNAME = "留言人昵称"
+F_MSG_AUTHOR_UID = "留言人用户ID"
+F_MSG_PARENT_ID = "父留言ID"
+F_MSG_CONTENT = "内容"
+F_MSG_CREATED_AT = "创建时间"
+F_MSG_STATUS = "状态"
 
 # 简洁行字段：不标注字段名，用「·」连接显示（如 U-0003 · 玛利亚 · 97-10 · 190 · 本科）
 SIMPLE_FIELDS = [

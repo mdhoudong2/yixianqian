@@ -232,6 +232,27 @@
   .filter-tag { padding: 5px 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
   .filter-tag.active { background: #ff6b81; color: #fff; }
   .filter-input { padding: 6px 10px; background: #f7f8fa; border-radius: 8px; }
+  /* 卡片留言 */
+  .card-tabs { display: flex; border-bottom: 1px solid #f2f3f5; margin-bottom: 12px; }
+  .card-tab { flex: 1; text-align: center; padding: 10px 0; font-size: 15px; font-weight: 500; color: #969799; cursor: pointer; position: relative; }
+  .card-tab.active { color: #ff6b81; font-weight: 600; }
+  .card-tab.active::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -1px; width: 32px; height: 3px; border-radius: 2px; background: #ff6b81; }
+  .message-panel { display: flex; flex-direction: column; height: 100%; }
+  .msg-tip { padding: 30px 0; text-align: center; color: #969799; font-size: 14px; }
+  .msg-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .msg-thread { border-bottom: 1px solid #f7f8fa; padding-bottom: 8px; margin-bottom: 8px; }
+  .msg-item { padding: 6px 0; }
+  .msg-reply { margin-left: 12px; padding-left: 10px; border-left: 2px solid #ffe3e8; }
+  .msg-head { display: flex; align-items: baseline; gap: 8px; }
+  .msg-author { font-size: 13px; font-weight: 600; color: #ff6b81; }
+  .msg-time { font-size: 11px; color: #c8c9cc; flex: 1; }
+  .msg-del { font-size: 12px; color: #969799; cursor: pointer; }
+  .msg-content { font-size: 14px; color: #323233; margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
+  .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; }
+  .msg-input-bar { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #f2f3f5; }
+  .msg-input { flex: 1; border: none; background: #f7f8fa; border-radius: 18px; padding: 8px 14px; font-size: 14px; outline: none; }
+  .msg-send { border: none; background: #ff6b81; color: #fff; border-radius: 18px; padding: 0 18px; font-size: 14px; cursor: pointer; }
+  .msg-send:disabled { background: #ffb3be; }
 </style>
 </head>
 <body>
@@ -286,21 +307,57 @@
         </div>
       </div>
       <div class="card-info">
-        <div class="info-grid simple-line" v-if="currentCard.display_fields && currentCard.display_fields.simple">
-          <div class="info-grid-item simple"><span class="df-value">{{ currentCard.display_fields.simple }}</span></div>
+        <div class="card-tabs">
+          <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
+          <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言</div>
         </div>
-        <template v-if="currentCard.display_fields && currentCard.display_fields.sections">
-          <div class="card-section" v-for="(sec, si) in currentCard.display_fields.sections" :key="si">
-            <div class="profile-section-title"><span class="ps-icon">{{ sec.icon }}</span>{{ sec.title }}</div>
-            <div class="info-grid">
-              <div class="info-grid-item" v-for="f in sec.fields" :key="f.label"
-                :class="{full: f.label==='我是怎样的人' || f.label==='理想中的TA'}">
-                <span class="df-label">{{ f.label }}：</span>
-                <span class="df-value">{{ f.value }}</span>
+        <template v-if="cardTab==='profile'">
+          <div class="info-grid simple-line" v-if="currentCard.display_fields && currentCard.display_fields.simple">
+            <div class="info-grid-item simple"><span class="df-value">{{ currentCard.display_fields.simple }}</span></div>
+          </div>
+          <template v-if="currentCard.display_fields && currentCard.display_fields.sections">
+            <div class="card-section" v-for="(sec, si) in currentCard.display_fields.sections" :key="si">
+              <div class="profile-section-title"><span class="ps-icon">{{ sec.icon }}</span>{{ sec.title }}</div>
+              <div class="info-grid">
+                <div class="info-grid-item" v-for="f in sec.fields" :key="f.label"
+                  :class="{full: f.label==='我是怎样的人' || f.label==='理想中的TA'}">
+                  <span class="df-label">{{ f.label }}：</span>
+                  <span class="df-value">{{ f.value }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </template>
+        <div v-else class="message-panel">
+          <div v-if="msgLoading" class="msg-tip">加载中…</div>
+          <div v-else-if="!threadedMessages.length" class="msg-tip">还没有留言，快来抢沙发～</div>
+          <div v-else class="msg-list">
+            <div v-for="m in threadedMessages" :key="m.id" class="msg-thread">
+              <div class="msg-item">
+                <div class="msg-head">
+                  <span class="msg-author">{{ m.author_nickname }} · {{ m.author_uid }}</span>
+                  <span class="msg-time">{{ fmtTimeAgo(m.created_at) }}</span>
+                  <span v-if="m.can_delete" class="msg-del" @click="deleteMessage(m)">删除</span>
+                </div>
+                <div class="msg-content">{{ m.content }}</div>
+                <div class="msg-reply-btn" @click="replyTo(m)">回复</div>
+              </div>
+              <div v-for="r in m.replies" :key="r.id" class="msg-item msg-reply">
+                <div class="msg-head">
+                  <span class="msg-author">{{ r.author_nickname }} · {{ r.author_uid }}</span>
+                  <span class="msg-time">{{ fmtTimeAgo(r.created_at) }}</span>
+                  <span v-if="r.can_delete" class="msg-del" @click="deleteMessage(r)">删除</span>
+                </div>
+                <div class="msg-content">{{ r.content }}</div>
+                <div class="msg-reply-btn" @click="replyTo(m)">回复</div>
               </div>
             </div>
           </div>
-        </template>
+          <div class="msg-input-bar">
+            <input v-model="msgText" class="msg-input" :placeholder="replyTarget ? '回复 ' + replyTarget.author_nickname + '：' : '写下你的留言…'" />
+            <button class="msg-send" :disabled="!msgText.trim()" @click="sendMessage">发送</button>
+          </div>
+        </div>
       </div>
     </div>
       <div class="card-actions">
@@ -1857,6 +1914,83 @@ createApp({
       preloadAround();
     });
 
+    // ===== 留言 =====
+    const cardTab = ref('profile');
+    const messages = ref([]);
+    const msgLoading = ref(false);
+    const msgText = ref('');
+    const replyTarget = ref(null);
+    const threadedMessages = computed(() => {
+      const tops = messages.value.filter(m => !m.parent_id);
+      const replies = messages.value.filter(m => m.parent_id);
+      return tops.map(t => ({ ...t, replies: replies.filter(r => r.parent_id === t.id) }));
+    });
+    function fmtTimeAgo(ts) {
+      if (!ts) return '';
+      const diff = Date.now() - ts;
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return '刚刚';
+      if (m < 60) return m + '分钟前';
+      const h = Math.floor(m / 60);
+      if (h < 24) return h + '小时前';
+      const d = Math.floor(h / 24);
+      if (d < 30) return d + '天前';
+      const dt = new Date(ts);
+      return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+    }
+    async function loadMessages() {
+      const c = currentCard.value;
+      if (!c || !c.openid) return;
+      msgLoading.value = true;
+      try {
+        const data = await api('/api/messages?target=' + encodeURIComponent(c.openid));
+        messages.value = data.messages || [];
+      } catch (e) {
+        messages.value = [];
+      } finally {
+        msgLoading.value = false;
+      }
+    }
+    async function openMessageTab() {
+      cardTab.value = 'messages';
+      await loadMessages();
+    }
+    async function sendMessage() {
+      const c = currentCard.value;
+      const text = msgText.value.trim();
+      if (!c || !c.openid || !text) return;
+      try {
+        await api('/api/messages', {
+          method: 'POST',
+          body: JSON.stringify({ target_openid: c.openid, content: text, parent_id: replyTarget.value ? replyTarget.value.id : '' })
+        });
+        msgText.value = '';
+        replyTarget.value = null;
+        await loadMessages();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    async function deleteMessage(m) {
+      try {
+        await api('/api/messages/' + m.id, { method: 'DELETE' });
+        await loadMessages();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    function replyTo(m) {
+      replyTarget.value = m;
+      msgText.value = '';
+    }
+    // 换卡片时重置留言面板
+    watch(cardIndex, () => {
+      cardTab.value = 'profile';
+      messages.value = [];
+      replyTarget.value = null;
+      msgText.value = '';
+    });
+
     onMounted(() => {
       doLogin().then(() => {
         if (user.value) {
@@ -1893,6 +2027,8 @@ createApp({
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
       onPhotoError,
+      cardTab, messages, msgLoading, msgText, replyTarget, threadedMessages,
+      openMessageTab, sendMessage, deleteMessage, replyTo, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchEnd,
       showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,

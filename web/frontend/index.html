@@ -68,6 +68,7 @@
   .card-actions { position: absolute; bottom: 18px; right: 18px; left: auto; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 18px; z-index: 12; }
   .heart-btn { width: 64px; height: 64px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,107,129,0.4); transition: transform 0.15s; }
   .heart-btn:active { transform: scale(0.88); }
+  .heart-btn.liked { background: #c8c9cc; box-shadow: none; cursor: not-allowed; }
   .feedback-btn { height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid #dcdee0; background: #fff; color: #969799; font-size: 12px; cursor: pointer; }
   .back-btn { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #dcdee0; background: #fff; color: #969799; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.15s; }
   .back-btn:active { transform: scale(0.88); }
@@ -372,7 +373,7 @@
     </div>
       <div class="card-actions" v-if="cardTab==='profile'">
         <button class="feedback-btn" @click="openFeedbackDialog">反馈</button>
-        <button class="heart-btn" @click="openLikeDialog" :disabled="actionLoading">♥</button>
+        <button class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
       </div>
     </template>
   </template>
@@ -1670,6 +1671,10 @@ createApp({
     // 喜欢 - 弹出附言对话框
     function openLikeDialog() {
       if (!currentCard.value || !currentCard.value.openid) return;
+      if (currentCard.value.liked) {
+        vant.showToast('你已经喜欢过TA了');
+        return;
+      }
       if ((user.value.hearts || 0) <= 0) {
         vant.showToast('爱心已用完，邀请好友可得爱心');
         showInviteDialog.value = true;

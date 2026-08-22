@@ -948,11 +948,12 @@ def home():
     for u in snap_active_users():
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
-        if uid == open_id or bitable.get_select_value(fields, F_GENDER) != target_gender or uid in liked_openids:
+        if uid == open_id or bitable.get_select_value(fields, F_GENDER) != target_gender:
             continue
         brief = format_user_brief(u, include_openid=True, full=True)
         brief["display_fields"] = build_display_fields(fields)
         brief["subtitle"] = build_subtitle(fields)
+        brief["liked"] = uid in liked_openids
         cards.append(brief)
 
     # 喜欢（谁喜欢了我 / 相互喜欢）
@@ -1221,13 +1222,14 @@ def get_cards():
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
         gender = bitable.get_select_value(fields, F_GENDER)
-        if uid == open_id or gender != target_gender or uid in liked_openids:
+        if uid == open_id or gender != target_gender:
             continue
         if not pass_card_filters(fields, filters):
             continue
         brief = format_user_brief(u, include_openid=True, full=True)
         brief["display_fields"] = build_display_fields(fields)
         brief["subtitle"] = build_subtitle(fields)
+        brief["liked"] = uid in liked_openids
         cards.append(brief)
 
     # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出

@@ -999,8 +999,10 @@ def home():
         act["my_signup"] = bool(snap_signup(act["activity_id"], open_id))
         activities.append(act)
 
+    user_brief = format_user_brief(user)
+    user_brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     return jsonify({
-        "user": format_user_brief(user),
+        "user": user_brief,
         "cards": cards,
         "likes": {"liked_me": liked_me_list, "mutual": mutual_list},
         "activities": activities,
@@ -1016,7 +1018,9 @@ def user_me():
     user = bitable.find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
-    return jsonify(format_user_brief(user))
+    brief = format_user_brief(user)
+    brief["is_admin"] = open_id in ADMIN_OPEN_IDS
+    return jsonify(brief)
 
 
 @app.route("/api/account/status", methods=["POST"])

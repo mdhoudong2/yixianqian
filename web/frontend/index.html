@@ -1930,6 +1930,7 @@ createApp({
     const msgLoading = ref(false);
     const msgText = ref('');
     const replyTarget = ref(null);
+    let msgLoadedFor = null;  // 已加载留言的卡片 openid（切卡片前不重复请求）
     const threadedMessages = computed(() => {
       const tops = messages.value.filter(m => !m.parent_id);
       const replies = messages.value.filter(m => m.parent_id);
@@ -1948,13 +1949,15 @@ createApp({
       const dt = new Date(ts);
       return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
     }
-    async function loadMessages() {
+    async function loadMessages(force) {
       const c = currentCard.value;
       if (!c || !c.openid) return;
+      if (!force && msgLoadedFor === c.openid) return;
       msgLoading.value = true;
       try {
         const data = await api('/api/messages?target=' + encodeURIComponent(c.openid));
         messages.value = data.messages || [];
+        msgLoadedFor = c.openid;
       } catch (e) {
         messages.value = [];
       } finally {
@@ -1976,7 +1979,7 @@ createApp({
         });
         msgText.value = '';
         replyTarget.value = null;
-        await loadMessages();
+        await loadMessages(true);
       } catch (e) {
         console.error(e);
       }
@@ -1984,7 +1987,7 @@ createApp({
     async function deleteMessage(m) {
       try {
         await api('/api/messages/' + m.id, { method: 'DELETE' });
-        await loadMessages();
+        await loadMessages(true);
       } catch (e) {
         console.error(e);
       }
@@ -2001,6 +2004,7 @@ createApp({
     watch(cardIndex, () => {
       cardTab.value = 'profile';
       messages.value = [];
+      msgLoadedFor = null;
       replyTarget.value = null;
       msgText.value = '';
     });

@@ -531,16 +531,6 @@
       </van-cell-group>
     </div>
 </div>
-<!-- 管理员指令弹窗 -->
-<van-popup v-model:show="showAdminHelp" position="bottom" round style="max-height:75vh;">
-  <div class="admin-help-panel">
-    <div class="admin-help-title">管理员指令</div>
-    <div class="admin-help-list">
-      <div v-for="(c, i) in adminCommands" :key="i" class="admin-help-item">{{ c }}</div>
-    </div>
-    <div class="admin-help-close" @click="showAdminHelp = false">关闭</div>
-  </div>
-</van-popup>
 <!-- ========== 我的资料详情 ========== -->
 <div v-else-if="page==='profile_detail'">
   <div class="back-nav" @click="page='profile'">
@@ -951,6 +941,16 @@
   </div>
   <div v-else style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
 </div>
+<!-- 管理员指令弹窗 -->
+<van-popup v-model:show="showAdminHelp" position="bottom" round style="max-height:75vh;">
+  <div class="admin-help-panel">
+    <div class="admin-help-title">管理员指令</div>
+    <div class="admin-help-list">
+      <div v-for="(c, i) in adminCommands" :key="i" class="admin-help-item">{{ c }}</div>
+    </div>
+    <div class="admin-help-close" @click="showAdminHelp = false">关闭</div>
+  </div>
+</van-popup>
 <!-- ========== 报名名单弹层 ========== -->
 <van-popup v-model:show="signupSheetShow" position="bottom" round style="max-height:70vh; overflow-y:auto;">
   <div style="padding:16px;">

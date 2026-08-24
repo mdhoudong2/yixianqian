@@ -1594,7 +1594,8 @@ createApp({
       loadingCards.value = true;
       try {
         const data = await api('/api/cards' + buildFilterQuery());
-        cards.value = (data.cards || []).filter(c => !justLiked.has(c.openid));
+        // 已喜欢的人保留在牌堆（liked=true 置灰），justLiked 覆盖快照刷新窗口
+        cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardIndex.value = 0; photoIndex.value = 0;
         photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
         preloadAround();
@@ -1803,19 +1804,13 @@ createApp({
           vant.showDialog({ title: '💕 相互喜欢', message: '恭喜！你和' + target.nickname + '相互喜欢了！名片已推送，快去加飞书好友吧～', confirmButtonColor: '#ff6b81' });
         } else { vant.showToast('喜欢成功'); }
         justLiked.add(target.openid);
+        // 原地置灰：卡片保留在牌堆，♥ 变灰不可点击（产品语义：喜欢≠消失）
+        const deckCard = cards.value.find(c => c.openid === target.openid);
+        if (deckCard) deckCard.liked = true;
         if (currentCard.value && currentCard.value.openid === target.openid) currentCard.value.liked = true;
         // 乐观扣减：后端扣心由机器人延迟执行，立即本地减1避免显示滞后
         if (user.value) user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
         myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
-        if (page.value === 'user_detail') {
-          // 从他人资料页喜欢：返回上一页
-          page.value = userDetailFrom.value || 'home';
-        } else {
-          // 重新加载卡片；若已无更多可推荐的人，则返回进入牵线前的页面
-          cards.value = []; cardIndex.value = 0; photoIndex.value = 0;
-          await loadCards();
-          if (!cards.value.length) page.value = prevPage.value || 'likes';
-        }
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
     }
@@ -1906,7 +1901,9 @@ createApp({
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;
         justLiked.delete(l.openid);
-        cards.value = [];
+        // 原地恢复：该目标若在牌堆缓存中，立即恢复♥可点
+        const deckCard = cards.value.find(c => c.openid === l.openid);
+        if (deckCard) deckCard.liked = false;
       } catch(e) { vant.showToast(e.message); }
     }
 

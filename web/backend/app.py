@@ -1094,7 +1094,8 @@ def toggle_account_status():
     ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_ACCOUNT_STATUS: new_status})
     if not ok:
         return jsonify({"error": "状态更新失败，请稍后重试"}), 500
-    refresh_snapshot_table_async("users")
+    # 同步刷新：保证紧随其后的点爱心/报名等门禁读到新状态（异步会有竞态漏拦）
+    refresh_snapshot_table("users")
     return jsonify({"ok": True, "account_status": new_status})
 
 

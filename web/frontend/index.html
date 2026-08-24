@@ -1383,18 +1383,6 @@ createApp({
       return ua.includes('lark') || ua.includes('feishu');
     }
     // 飞书网页免登：静默获取预授权码（无需用户点授权）
-    function _sdkErr(e) {
-      if (e == null) return 'null';
-      try {
-        const parts = [];
-        for (const k of ['errCode','err_code','code','errMsg','err_msg','msg','message']) {
-          const v = e[k];
-          if (v !== undefined && v !== null && v !== '') parts.push(k + '=' + v);
-        }
-        const s = JSON.stringify(e);
-        return parts.length ? parts.join('|') + ' @' + s : s;
-      } catch (err) { return String(e); }
-    }
     function getFeishuSilentCode() {
       return new Promise((resolve) => {
         // 等待JSSDK加载（最多等3秒）
@@ -1403,23 +1391,23 @@ createApp({
           const tt = window.tt || window.h5sdk;
           if (!tt) {
             if (waited < 3000) { waited += 200; setTimeout(tryGetCode, 200); return; }
-            resolve({code: null, error: 'JSSDK未加载(window.tt/h5sdk均不存在)'}); return;
+            resolve({code: null, error: 'JSSDK未加载'}); return;
           }
           // 优先用 requestAuthCode（兼容性最好），失败再试 requestAccess
           if (typeof tt.requestAuthCode === 'function') {
             tt.requestAuthCode({
               appId: FEISHU_APP_ID,
-              success: (res) => resolve({code: (res && res.code) ? res.code : null, error: (res && res.code) ? null : ('success但无code:' + _sdkErr(res))}),
+              success: (res) => resolve({code: (res && res.code) ? res.code : null, error: null}),
               fail: (err) => {
                 if (typeof tt.requestAccess === 'function') {
                   tt.requestAccess({
                     appID: FEISHU_APP_ID,
                     scopeList: [],
-                    success: (res2) => resolve({code: (res2 && res2.code) ? res2.code : null, error: (res2 && res2.code) ? null : ('requestAccess无code:' + _sdkErr(res2))}),
-                    fail: (err2) => resolve({code: null, error: 'authCode失败=' + _sdkErr(err) + '; access失败=' + _sdkErr(err2)})
+                    success: (res2) => resolve({code: (res2 && res2.code) ? res2.code : null, error: null}),
+                    fail: (err2) => resolve({code: null, error: JSON.stringify(err2)})
                   });
                 } else {
-                  resolve({code: null, error: 'authCode失败=' + _sdkErr(err)});
+                  resolve({code: null, error: JSON.stringify(err)});
                 }
               }
             });
@@ -1427,8 +1415,8 @@ createApp({
             tt.requestAccess({
               appID: FEISHU_APP_ID,
               scopeList: [],
-              success: (res) => resolve({code: (res && res.code) ? res.code : null, error: (res && res.code) ? null : ('requestAccess无code:' + _sdkErr(res))}),
-              fail: (err) => resolve({code: null, error: 'access失败=' + _sdkErr(err)})
+              success: (res) => resolve({code: (res && res.code) ? res.code : null, error: null}),
+              fail: (err) => resolve({code: null, error: JSON.stringify(err)})
             });
           } else {
             resolve({code: null, error: '无可用免登API'});
@@ -1471,7 +1459,7 @@ createApp({
         }
         // 免登失败，显示错误信息和手动登录按钮
         loginError.value = true;
-        loginErrorMessage.value = '登录失败(' + (silentResult && silentResult.error ? silentResult.error : '未知') + ')，appId=' + FEISHU_APP_ID;
+        loginErrorMessage.value = '登录失败，请点击下方「重新登录」，或从飞书机器人菜单重新进入';
         loggingIn.value = false;
         return;
       }

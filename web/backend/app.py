@@ -15,6 +15,7 @@ from flask import (
     Flask,
     Response,
     abort,
+    g,
     jsonify,
     make_response,
     request,
@@ -424,25 +425,79 @@ class _AppLock:
 file_lock = _AppLock()
 
 
-def create_session(open_id):
-    """创建会话：open_id 签名后直接写入 cookie（无服务端状态，重启不丢失）"""
-    return _session_signer.dumps(open_id)
+def create_session(open_id, role="user"):
+    """创建会话：{open_id, role} 签名后写入 cookie（无服务端状态，重启不丢失）"""
+    return _session_signer.dumps({"open_id": open_id, "role": role})
 
 
 def get_session():
-    """从cookie读取并校验当前会话 open_id"""
+    """从cookie读取并校验当前会话。返回 {"open_id","role"} 或 None。
+    兼容旧 cookie（旧值为纯 open_id 字符串，补成 user 角色）。"""
     token = request.cookies.get("yxq_session")
     if not token:
         return None
     try:
-        return _session_signer.loads(token, max_age=SESSION_EXPIRE_DAYS * 86400)
+        data = _session_signer.loads(token, max_age=SESSION_EXPIRE_DAYS * 86400)
     except (BadSignature, SignatureExpired):
         return None
+    if isinstance(data, str):
+        return {"open_id": data, "role": "user"}
+    if isinstance(data, dict):
+        return {"open_id": data.get("open_id"), "role": data.get("role", "user")}
+    return None
+
+
+@app.before_request
+def _load_session_into_g():
+    """每个请求先把会话解到 g，供 require_login/snap_self_user 统一取用"""
+    sess = get_session()
+    g.yxq_open_id = sess["open_id"] if sess else None
+    g.yxq_role = sess["role"] if sess else "user"
 
 
 def require_login():
     """要求登录，返回open_id或None"""
-    return get_session()
+    return g.yxq_open_id
+
+
+def roles_of(open_id):
+    """返回该 open_id 拥有的角色集合 {"user","observer"}（快照优先、实时兜底）"""
+    users = _snap("users")
+    matches = [u for u in users
+               if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
+    if not matches:
+        matches = bitable.search_records(USER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+    roles = set()
+    for u in matches:
+        if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER:
+            roles.add("observer")
+        else:
+            roles.add("user")
+    return roles
+
+
+def snap_self_user():
+    """按当前会话 role 解析「本人」档案：
+    observer → 状态为观察员的记录；user → 非观察员主档（活跃优先）。"""
+    open_id = g.yxq_open_id
+    if not open_id:
+        return None
+    users = _snap("users")
+    matches = [u for u in users
+               if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
+    if not matches:
+        matches = bitable.search_records(USER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+    if not matches:
+        return None
+    if g.yxq_role == "observer":
+        obs = [u for u in matches
+               if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER]
+        return (obs or matches)[0]
+    non_obs = [u for u in matches
+               if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) != STATUS_OBSERVER]
+    return _pick_primary_user(non_obs or matches)
 
 
 # ========== 账号状态门禁 ==========
@@ -460,7 +515,7 @@ OBSERVER_BLOCKED_MESSAGE = {"error": "你是观察员账号，无此操作权限
 
 
 def _account_status(open_id):
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return None, None
     return bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS), user
@@ -1074,12 +1129,18 @@ def feishu_auth():
         app.logger.error(f"Feishu auth failed: {last_error}")
         return jsonify({"error": "免登失败，请重试"}), 401
 
-    user = snap_find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)  # 登录态未建立(g无值)，按 open_id 直解主档
     if not user:
         return jsonify({"error": "尚未注册，请先在飞书中搜索「一线牵」机器人完成注册", "need_register": True}), 403
 
-    session_id = create_session(open_id)
-    resp = make_response(jsonify({"ok": True, "user": format_user_brief(user)}))
+    # 双身份：默认进入「普通用户」，仅当无普通用户档案时才落到观察员
+    roles = roles_of(open_id)
+    default_role = "user" if "user" in roles else "observer"
+
+    session_id = create_session(open_id, default_role)
+    brief = format_user_brief(user)
+    brief["available_roles"] = sorted(roles)
+    resp = make_response(jsonify({"ok": True, "user": brief}))
     resp.set_cookie("yxq_session", session_id, httponly=True,
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
@@ -1103,7 +1164,7 @@ def home():
         return jsonify(gate[0]), gate[1]
 
     # 自己的信息优先读快照，避免每次登录直连飞书超时（写操作后已异步刷新快照）
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
@@ -1174,6 +1235,7 @@ def home():
 
     user_brief = format_user_brief(user)
     user_brief["is_admin"] = open_id in ADMIN_OPEN_IDS
+    user_brief["available_roles"] = sorted(roles_of(open_id))
     live_h = live_primary_hearts(open_id)
     if live_h is not None:
         user_brief["hearts"] = live_h
@@ -1191,11 +1253,12 @@ def user_me():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     brief = format_user_brief(user)
     brief["is_admin"] = open_id in ADMIN_OPEN_IDS
+    brief["available_roles"] = sorted(roles_of(open_id))
     live_h = live_primary_hearts(open_id)
     if live_h is not None:
         brief["hearts"] = live_h
@@ -1208,7 +1271,7 @@ def toggle_account_status():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
@@ -1232,6 +1295,26 @@ def toggle_account_status():
         if u.get("record_id") == user["record_id"]:
             u.setdefault("fields", {})[F_ACCOUNT_STATUS] = new_status
     return jsonify({"ok": True, "account_status": new_status})
+
+
+@app.route("/api/account/switch", methods=["POST"])
+def switch_account_role():
+    """切换当前身份：user(普通用户) <-> observer(观察员)。需该账号已分别注册对应身份。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    data = request.get_json(silent=True) or {}
+    role = data.get("role")
+    if role not in ("user", "observer"):
+        return jsonify({"error": "无效的身份类型"}), 400
+    roles = roles_of(open_id)
+    if role not in roles:
+        return jsonify({"error": "你尚未注册该身份，请先完成对应注册"}), 403
+    session_id = create_session(open_id, role)
+    resp = make_response(jsonify({"ok": True, "role": role}))
+    resp.set_cookie("yxq_session", session_id, httponly=True,
+                    max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
+    return resp
 
 
 # ========== 活动接口 ==========
@@ -1300,7 +1383,7 @@ def signup(activity_id):
     if max_signup > 0 and len(signups_snap) >= max_signup:
         return jsonify({"error": "报名人数已满"}), 400
 
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户信息不存在"}), 404
     nickname = bitable.get_field_text(user.get("fields", {}), F_NICKNAME)
@@ -1367,7 +1450,7 @@ def get_cards():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
@@ -1588,7 +1671,7 @@ def like_user():
     if target_openid == open_id:
         return jsonify({"error": "不能喜欢自己"}), 400
 
-    me = snap_find_user_by_openid(open_id)
+    me = snap_self_user()
     target = snap_find_user_by_openid(target_openid)
     if not me or not target:
         return jsonify({"error": "用户不存在"}), 404
@@ -1674,7 +1757,7 @@ def feedback():
     if not reason:
         return jsonify({"error": "请填写反馈原因"}), 400
 
-    me = snap_find_user_by_openid(open_id)
+    me = snap_self_user()
     target = snap_find_user_by_openid(target_openid)
     if not me or not target:
         return jsonify({"error": "用户不存在"}), 404
@@ -1823,7 +1906,7 @@ def create_message():
         return jsonify({"error": "内容不能为空"}), 400
     if len(content) > 500:
         return jsonify({"error": "留言最多500字"}), 400
-    author = snap_find_user_by_openid(open_id)
+    author = snap_self_user()
     if not author:
         return jsonify({"error": "用户不存在"}), 404
     af = author.get("fields", {})
@@ -1898,7 +1981,7 @@ def group_candidates(activity_id):
     # 获取报名的异性（直读飞书，避免报名快照 stale 导致「0 可选人」——快照为跨 worker 内存态，
     # 刷新前新增的报名会被漏掉，历史 bug：提交志愿页一个候选都没有）
     signups = bitable.get_signups(text_act_id)
-    me = snap_find_user_by_openid(open_id)
+    me = snap_self_user()
     if not me:
         return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
     my_gender = bitable.get_select_value(me.get("fields", {}), F_GENDER)
@@ -1970,7 +2053,7 @@ def group_select(activity_id):
         return jsonify({"error": "你未报名此活动"}), 403
 
     # 获取用户信息（快照）
-    me = snap_find_user_by_openid(open_id)
+    me = snap_self_user()
     me_fields = me.get("fields", {})
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
@@ -2171,7 +2254,7 @@ def get_profile():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     data = format_user_profile(user)
@@ -2186,7 +2269,7 @@ def update_profile():
         return jsonify({"error": "未登录"}), 401
 
     data = request.get_json() or {}
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):
@@ -2231,7 +2314,7 @@ def update_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):
@@ -2271,7 +2354,7 @@ def delete_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):
@@ -2298,7 +2381,7 @@ def set_profile_cover():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id)
+    user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):

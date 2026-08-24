@@ -199,6 +199,9 @@
   /* 我的页-邀请入口 */
   .invite-cta { padding: 0 12px 8px; }
   .invite-block { padding: 12px 12px 4px; }
+  .role-switch { display: flex; margin: 0 12px 4px; background: rgba(255,255,255,0.16); border-radius: 12px; padding: 4px; }
+  .role-switch-item { flex: 1; border: none; background: transparent; color: rgba(255,255,255,0.75); font-size: 14px; padding: 8px 0; border-radius: 9px; cursor: pointer; }
+  .role-switch-item.active { background: #fff; color: #ff6b81; font-weight: 600; }
   .invite-note { font-size: 12px; color: #c8c9cc; text-align: center; line-height: 1.6; margin-top: 8px; }
   .invite-tip { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 8px; }
   .invite-close { position: absolute; top: 10px; right: 14px; font-size: 20px; color: #c8c9cc; cursor: pointer; z-index: 2; }
@@ -515,6 +518,10 @@
       <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">观察员</span>
     </div>
     <div class="profile-hearts" v-if="!isObserver"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
+  </div>
+  <div class="role-switch" v-if="availableRoles.length > 1">
+    <button class="role-switch-item" :class="{active: !isObserver}" @click="switchRole('user')">普通用户</button>
+    <button class="role-switch-item" :class="{active: isObserver}" @click="switchRole('observer')">观察员</button>
   </div>
   <div class="invite-block" v-if="!isObserver">
     <van-button plain type="primary" color="#ff6b81" block @click="showInviteDialog=true">邀请好友得爱心</van-button>
@@ -1125,6 +1132,7 @@ createApp({
     const page = ref('cards');
     const user = ref(null);
     const isObserver = computed(() => !!(user.value && user.value.is_observer));
+    const availableRoles = computed(() => (user.value && user.value.available_roles) || []);
     const loggingIn = ref(true);
     const loginError = ref(false);
     const loginErrorMessage = ref('');
@@ -1765,6 +1773,16 @@ createApp({
       actionLoading.value = false;
     }
 
+    // 切换身份（普通用户 <-> 观察员）
+    async function switchRole(role) {
+      if (!role || (user.value && user.value.is_observer ? 'observer' : 'user') === role) return;
+      actionLoading.value = true;
+      try {
+        await api('/api/account/switch', { method: 'POST', body: JSON.stringify({ role }) });
+        location.reload();  // 让 /api/home 以新身份重新拉取数据
+      } catch(e) { vant.showToast(e.message); actionLoading.value = false; }
+    }
+
     // 喜欢 - 弹出附言对话框
     function openLikeDialog() {
       if (!currentCard.value || !currentCard.value.openid) return;
@@ -2136,7 +2154,7 @@ createApp({
 
     return {
       page, user, loggingIn, loginError,
-      loginErrorMessage, retryLogin, subPages, isObserver,
+      loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,

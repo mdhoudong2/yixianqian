@@ -21,7 +21,7 @@ else:
 ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS
 
 # ==================== 多维表格链接配置（默认生产，测试服在 local_config.py 覆盖） ====================
-REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcn04AWZCwqilzelLqT5CJsNd")
+REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")
 LIKE_FORM_URL = getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b")
 
 # ==================== 多维表格配置 ====================

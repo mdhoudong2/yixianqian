@@ -262,4 +262,4 @@ PUBLIC_SOURCE_ID = "PUBLIC"
 PUBLIC_QR_CODE = getattr(_lc, "PUBLIC_QR_CODE", "qrcode.png")
 
 # 注册表单链接（H5「邀请好友得爱心」邀请链接，测试服在 local_config.py 覆盖为测试表单）
-REGISTER_FORM_URL = getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcn04AWZCwqilzelLqT5CJsNd")
+REGISTER_FORM_URL = getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")

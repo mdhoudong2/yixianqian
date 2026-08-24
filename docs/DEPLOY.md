@@ -17,9 +17,9 @@
 | 共享运行时数据 | `/opt/yixianqian/data/`（`SHARED_DATA_DIR`，bot 与 H5 共用） | — |
 | 共享代码 | `lib/`（飞书客户端 / 多维表格 DAO / JSON 存储） | — |
 | systemd 模板 | `deploy/` | 修改后需 `cp` 到 `/etc/systemd/system/` 并 `daemon-reload` |
-| Nginx 配置 | `deploy/nginx/`（生产 `nantou.love.conf`；测试 `test.app.nantou.love.conf`、`test.nantou.love.conf`） | 服务器 `/etc/nginx/sites-enabled/*` 软链至对应环境仓库文件，改后 `nginx -t && systemctl reload nginx` |
+| Nginx 配置 | `deploy/nginx/`（生产 `nantou.love.conf`；测试 `testapp.nantou.love.conf`、`test.nantou.love.conf`） | 服务器 `/etc/nginx/sites-enabled/*` 软链至对应环境仓库文件，改后 `nginx -t && systemctl reload nginx` |
 
-> 域名角色：`app.nantou.love` / `test.app.nantou.love` = H5 应用（登录使用）；
+> 域名角色：`app.nantou.love` / `testapp.nantou.love` = H5 应用（登录使用）；
 > `nantou.love` / `test.nantou.love` = 公开页（根路径，后端注入环境二维码）。
 
 

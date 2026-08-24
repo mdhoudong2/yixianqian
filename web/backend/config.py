@@ -246,7 +246,7 @@ SERVER_HOST = "0.0.0.0"
 SERVER_PORT = getattr(_lc, "SERVER_PORT", 8091)
 SESSION_EXPIRE_DAYS = 30
 
-# H5基础URL（测试服在 local_config.py 覆盖为 https://test.app.nantou.love）
+# H5基础URL（测试服在 local_config.py 覆盖为 https://testapp.nantou.love）
 H5_BASE_URL = getattr(_lc, "H5_BASE_URL", "https://app.nantou.love")
 
 # 通知存储（机器人与 H5 共享，机器人写入、H5 读取）

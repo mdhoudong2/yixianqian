@@ -16,5 +16,5 @@ ADMIN_OPEN_IDS = ["ou_xxxx"]  # 管理员飞书 open_id 列表
 # REPORT_TABLE_ID = "tblDj4PMHitAmo4T"
 
 # H5 前端入口（测试服覆盖为测试域名）
-# H5_BASE_URL = "https://test.app.nantou.love"
+# H5_BASE_URL = "https://testapp.nantou.love"
 # SERVER_PORT = 8092  # 仅直接 python app.py 调试用；gunicorn 端口由 systemd 的 BIND 环境变量决定

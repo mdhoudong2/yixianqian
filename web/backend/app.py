@@ -1333,6 +1333,95 @@ def _credit_count(oid):
     _refund_credits[oid] = arr
     return len(arr)
 
+# ===== 异步写出发送箱（outbox）：秒提交的核心 =====
+# 跨海单次飞书写入 ~1.4s；请求仅校验+磁盘持久化操作意图后立即回包（~0.1s），
+# 常驻后台线程执行真正的 create/update；失败重试3次（指数退避）后记入死信文件。
+_outbox_lock = threading.Lock()
+_outbox = []
+_OUTBOX_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_outbox.jsonl")
+_OUTBOX_DEAD = os.path.join(SHARED_DATA_DIR, "yixianqian_outbox_failed.log")
+
+
+def _outbox_enqueue(op):
+    with _outbox_lock:
+        _outbox.append(op)
+        try:
+            with open(_OUTBOX_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(op, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+
+def _outbox_persist_remaining():
+    """把内存队列整体落盘（启动回放与兜底用）"""
+    with _outbox_lock:
+        ops = list(_outbox)
+    try:
+        with open(_OUTBOX_FILE, "w", encoding="utf-8") as f:
+            for op in ops:
+                f.write(json.dumps(op, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _outbox_process(op):
+    otype = op.get("type")
+    for attempt in range(3):
+        try:
+            if otype == "like":
+                if bitable.create_record(LIKE_TABLE_ID, op["fields"]):
+                    return True
+            elif otype == "cancel":
+                if bitable.update_record(LIKE_TABLE_ID, op["record_id"],
+                                         {FIELD_LIKE_STATUS: "已取消"}) is not None:
+                    return True
+        except Exception:
+            pass
+        time.sleep(2 ** attempt)
+    try:
+        with open(_OUTBOX_DEAD, "a", encoding="utf-8") as f:
+            f.write(json.dumps(op, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    return False
+
+
+def _outbox_worker():
+    while True:
+        op = None
+        with _outbox_lock:
+            if _outbox:
+                op = _outbox.pop(0)
+        if op is None:
+            time.sleep(0.15)
+            continue
+        ok = _outbox_process(op)
+        if ok:
+            _outbox_persist_remaining()
+
+
+def _outbox_boot():
+    """启动时回放上次未完成的发送箱"""
+    try:
+        if os.path.exists(_OUTBOX_FILE):
+            with open(_OUTBOX_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            _outbox.append(json.loads(line))
+                        except Exception:
+                            pass
+            _outbox_persist_remaining()
+    except Exception:
+        pass
+    threading.Thread(target=_outbox_worker, daemon=True, name="outbox").start()
+
+
+_outbox_boot()
+
+
+
 
 @app.route("/api/like", methods=["POST"])
 def like_user():
@@ -1433,14 +1522,12 @@ def like_user():
     if message:
         like_fields[F_LIKE_MESSAGE] = message
 
-    with file_lock:
-        created = bitable.create_record(LIKE_TABLE_ID, like_fields)
-    if not created:
-        return jsonify({"error": "喜欢失败，请稍后重试"}), 500
+    _outbox_enqueue({"type": "like", "fields": like_fields})
     _reserve_add(open_id)
 
+    hearts_now = max(0, my_hearts - max(pending_unpaid, _reserve_count(open_id)))
     refresh_snapshot_table_async("likes")
-    return jsonify({"ok": True, "mutual": False, "message": "喜欢成功"})
+    return jsonify({"ok": True, "mutual": False, "message": "喜欢成功", "hearts": hearts_now})
 
 
 
@@ -2170,13 +2257,8 @@ def cancel_like(target_openid):
     # 实时核验扣减标记（快照可能滞后，误判会漏发退款信用）
     live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
     was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
-    with file_lock:
-        # 软取消：只改状态。爱心已扣减保持原值：
-        #   扣减过(true)  → 机器人返还循环退1颗；
-        #   未扣减(false) → 返还循环不会碰它（避免双退/误退）。
-        ok = bitable.update_record(LIKE_TABLE_ID, existing["record_id"], {
-            F_LIKE_STATUS: "已取消"})
-    if ok and was_deducted:
+    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"]})
+    if was_deducted:
         # 已扣过减的取消：立即发放「退款信用」，用户马上可再点；
         # 真实余额由对账循环在 ≤25s 内写回，信用TTL短于其稳定周期
         _credit_add(open_id)
@@ -2209,7 +2291,11 @@ def cancel_like(target_openid):
             app.logger.warning(f"反向取消喜欢失败: {e}")
 
     threading.Thread(target=_cancel_reverse, daemon=True).start()
-    return jsonify({"ok": True, "message": "已取消喜欢"})
+
+    me_snap = snap_find_user_by_openid(open_id)
+    stored = bitable.get_field_number(me_snap.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS) if me_snap else INITIAL_HEARTS
+    hearts_now = min(MAX_HEARTS, stored + (_credit_count(open_id) if was_deducted else 0))
+    return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
 
 
 # ========== 我的活动 ==========

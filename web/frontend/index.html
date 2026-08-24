@@ -1811,8 +1811,11 @@ createApp({
         const deckCard = cards.value.find(c => c.openid === target.openid);
         if (deckCard) deckCard.liked = true;
         if (currentCard.value && currentCard.value.openid === target.openid) currentCard.value.liked = true;
-        // 乐观扣减：后端扣心由机器人延迟执行，立即本地减1避免显示滞后
-        if (user.value) user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
+        // 优先用后端返回的权威爱心数（含预留/信用口径），无则本地乐观-1
+        if (user.value) {
+          if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
+          else user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
+        }
         myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
@@ -1899,8 +1902,11 @@ createApp({
       try {
         await api('/api/like/' + l.openid, { method: 'DELETE' });
         vant.showToast('已取消喜欢，爱心已退回');
-        // 乐观+1：该条若已扣减过，后端会记账退还；未扣减过则下次 syncMe 校正
-        if (user.value) user.value.hearts = Math.min(30, (user.value.hearts || 0) + 1);
+        // 优先用后端返回的权威爱心数，无则本地乐观+1
+        if (user.value) {
+          if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
+          else user.value.hearts = Math.min(30, (user.value.hearts || 0) + 1);
+        }
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;
         justLiked.delete(l.openid);

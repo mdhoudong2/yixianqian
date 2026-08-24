@@ -1366,7 +1366,7 @@ def _credit_add(oid):
 def _credit_count(oid):
     """退款信用：余额字段尚未写回的已承诺退还数。TTL 45s > 对账周期，过期由真实余额接管"""
     now = time.time()
-    arr = [t for t in _refund_credits.get(oid, []) if now - t < 45]
+    arr = [t for t in _refund_credits.get(oid, []) if now - t < 50]
     _refund_credits[oid] = arr
     return len(arr)
 
@@ -2317,10 +2317,11 @@ def cancel_like(target_openid):
     live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
     was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
     _recent_cancels[existing["record_id"]] = time.time()
-    # 退款动作交给 outbox 工作线程即时执行（翻标记 + 余额+1，~2s 内完成），
-    # 不再等机器人 25s 对账周期
-    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"],
-                     "initiator_oid": open_id, "refund": was_deducted})
+    if was_deducted:
+        # 已扣减过的取消：立即发放「退款信用」，首页/我的/可点额度即时体现；
+        # 表内真实余额由机器人 ≤25s 写回，信用TTL 50s 覆盖收敛期后过期
+        _credit_add(open_id)
+    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"]})
 
     # 直接改写本地快照中该记录状态（规避飞书写后读延迟），
     # 再同步刷新：保证紧随其后的 /api/cards 立即把对方放回卡片池

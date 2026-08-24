@@ -1459,7 +1459,7 @@ createApp({
         }
         // 免登失败，显示错误信息和手动登录按钮
         loginError.value = true;
-        loginErrorMessage.value = '登录失败，请点击下方「重新登录」，或从飞书机器人菜单重新进入';
+        loginErrorMessage.value = '登录失败(' + (silentResult && silentResult.error ? silentResult.error : '未知') + ')，appId=' + FEISHU_APP_ID;
         loggingIn.value = false;
         return;
       }

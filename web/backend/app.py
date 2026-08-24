@@ -341,7 +341,7 @@ GATE_MESSAGES = {
     "已拒绝": {"error": "很抱歉，你的资料未通过审核，如有疑问请联系管理员", "gate": "已拒绝"},
     "已退出": {"error": "你已暂时退出相亲市场，如需恢复请联系管理员", "gate": "已退出"},
 }
-LIKE_BLOCKED_MESSAGE = {"error": "账号已隐藏，恢复活跃后才能点爱心", "gate": "已隐藏"}
+LIKE_BLOCKED_MESSAGE = {"error": "你当前处于隐藏状态（他人看不到你），请先在「我的」页恢复活跃后再操作", "gate": "已隐藏"}
 
 
 def _account_status(open_id):
@@ -1072,17 +1072,17 @@ def user_me():
 
 @app.route("/api/account/status", methods=["POST"])
 def toggle_account_status():
-    """切换账号状态：活跃 <-> 已隐藏（隐藏后不再出现在他人牵线卡片中）"""
+    """切换账号状态：活跃 <-> 已隐藏（秒提交版：状态读快照，同步仅 1 次写入）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
     if cur == "活跃":
         new_status = "已隐藏"
-        # 已报名活动者不可自行隐藏（先取消报名）
+        # 已报名活动者不可自行隐藏（先取消报名）；读快照（≤15s 窗口，见文档说明）
         active_signups = [s for s in snap_signups_by_openid(open_id)
                           if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_STATUS) == "已报名"]
         if active_signups:
@@ -1135,6 +1135,8 @@ def activity_detail(activity_id):
 
 @app.route("/api/activities/<activity_id>/signup", methods=["POST"])
 def signup(activity_id):
+    """报名（秒提交版）：查重/上限走快照，同步仅 1 次写入；
+    人数与满员状态由机器人 auto_update_activity_signup_count 每30秒对账修正"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -1142,49 +1144,40 @@ def signup(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+
+    act_fields = act_record.get("fields", {})
+    status = bitable.get_select_value(act_fields, F_ACTIVITY_STATUS)
+    if status != "报名中":
+        return jsonify({"error": f"活动当前状态为「{status}」，无法报名"}), 400
+
+    # 查重：快照优先，未命中回退实时（防「刚报名完立刻重复提交」误判）
+    existing = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
+    if existing:
+        return jsonify({"error": "你已经报名了这个活动"}), 400
+
+    # 人数上限：快照口径，机器人会对账修正
+    signups_snap = snap_signups_by_activity(text_act_id) or bitable.get_signups(text_act_id)
+    max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
+    if max_signup > 0 and len(signups_snap) >= max_signup:
+        return jsonify({"error": "报名人数已满"}), 400
+
+    user = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
+    if not user:
+        return jsonify({"error": "用户信息不存在"}), 404
+    nickname = bitable.get_field_text(user.get("fields", {}), F_NICKNAME)
+
     with file_lock:
-        # 读取走快照，省实时API（人数/状态有 ≤15s 延迟，飞书侧自会修正）
-        act_record, text_act_id = snap_resolve_activity(activity_id)
-        if not act_record:
-            return jsonify({"error": "活动不存在"}), 404
-
-        act_fields = act_record.get("fields", {})
-        status = bitable.get_select_value(act_fields, F_ACTIVITY_STATUS)
-        if status != "报名中":
-            return jsonify({"error": f"活动当前状态为「{status}」，无法报名"}), 400
-
-        # 检查是否已报名
-        existing = bitable.get_user_signup(text_act_id, open_id)
-        if existing:
-            return jsonify({"error": "你已经报名了这个活动"}), 400
-
-        # 检查人数上限（用实时报名记录数，避免快照陈旧导致超卖）
-        current = len(bitable.get_signups(text_act_id))
-        max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
-        if max_signup > 0 and current >= max_signup:
-            return jsonify({"error": "报名人数已满"}), 400
-
-        # 获取用户信息
-        user = bitable.find_user_by_openid(open_id)
-        if not user:
-            return jsonify({"error": "用户信息不存在"}), 404
-        user_fields = user.get("fields", {})
-        nickname = bitable.get_field_text(user_fields, F_NICKNAME)
-
-        # 创建报名记录
         signup_record = bitable.create_record(SIGNUP_TABLE_ID, {
             F_SIGNUP_ACTIVITY_ID: text_act_id,
             F_SIGNUP_OPENID: open_id,
             F_SIGNUP_NICKNAME: nickname,
             F_SIGNUP_STATUS: "已报名"
         })
-        if not signup_record:
-            return jsonify({"error": "报名失败，请重试"}), 500
-
-        # 更新报名人数
-        bitable.update_record(ACTIVITY_TABLE_ID, act_record["record_id"], {
-            F_ACTIVITY_CURRENT_SIGNUP: current + 1
-        })
+    if not signup_record:
+        return jsonify({"error": "报名失败，请重试"}), 500
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")
@@ -1193,6 +1186,8 @@ def signup(activity_id):
 
 @app.route("/api/activities/<activity_id>/signup", methods=["DELETE"])
 def cancel_signup(activity_id):
+    """取消报名（秒提交版）：快照定位 + 1 次写入；
+    人数由机器人 auto_update_activity_signup_count 对账修正（含已满员→报名中回退）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -1200,28 +1195,24 @@ def cancel_signup(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    with file_lock:
-        # 读取走快照，省实时API（状态有 ≤15s 延迟）
-        act_record, text_act_id = snap_resolve_activity(activity_id)
-        if not act_record:
-            return jsonify({"error": "活动不存在"}), 404
-        existing = bitable.get_user_signup(text_act_id, open_id)
-        if not existing:
-            return jsonify({"error": "你没有报名这个活动"}), 400
-        if act_record:
-            act_fields = act_record.get("fields", {})
-            status = bitable.get_select_value(act_fields, F_ACTIVITY_STATUS)
-            if status != "报名中":
-                return jsonify({"error": f"活动当前状态为「{status}」，无法取消报名"}), 400
-            current = int(bitable.get_field_number(act_fields, F_ACTIVITY_CURRENT_SIGNUP, 0))
-            bitable.update_record(ACTIVITY_TABLE_ID, act_record["record_id"], {
-                F_ACTIVITY_CURRENT_SIGNUP: max(0, current - 1)
-            })
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+    existing = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
+    if not existing:
+        return jsonify({"error": "你没有报名这个活动"}), 400
+    act_fields = act_record.get("fields", {})
+    status = bitable.get_select_value(act_fields, F_ACTIVITY_STATUS)
+    if status != "报名中":
+        return jsonify({"error": f"活动当前状态为「{status}」，无法取消报名"}), 400
 
+    with file_lock:
         # 更新为已取消（保留历史，与 Bot 侧一致）
-        bitable.update_record(SIGNUP_TABLE_ID, existing["record_id"], {
+        ok = bitable.update_record(SIGNUP_TABLE_ID, existing["record_id"], {
             F_SIGNUP_STATUS: "已取消"
         })
+    if not ok:
+        return jsonify({"error": "取消失败，请稍后重试"}), 500
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")
@@ -1442,10 +1433,14 @@ def feedback():
     if not created:
         return jsonify({"error": "反馈提交失败，请稍后重试"}), 500
 
-    # 通知管理员
+    # 通知管理员（后台线程发送，不阻塞回包）
     admin_msg = f"📮 收到用户反馈\n举报人：{reporter_label}\n被举报人：{target_label}\n原因：{reason}"
-    for admin_oid in ADMIN_OPEN_IDS:
-        send_text_message(admin_oid, admin_msg)
+
+    def _notify_admins():
+        for admin_oid in ADMIN_OPEN_IDS:
+            send_text_message(admin_oid, admin_msg)
+
+    threading.Thread(target=_notify_admins, daemon=True).start()
 
     return jsonify({"ok": True})
 
@@ -1672,7 +1667,7 @@ def group_candidates(activity_id):
 
 @app.route("/api/activities/<activity_id>/group/select", methods=["POST"])
 def group_select(activity_id):
-    """提交分组志愿选择"""
+    """提交分组志愿选择（秒提交版：查活动/报名/本人全走快照，同步仅 1 次写入）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -1688,46 +1683,48 @@ def group_select(activity_id):
     if len(choices) > 7:
         return jsonify({"error": "最多选择7个志愿"}), 400
 
+    # 检查活动状态（快照）
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+    group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
+    if group_status != "收集中":
+        return jsonify({"error": f"分组状态为「{group_status}」，无法选择"}), 400
+
+    # 检查报名（快照优先，未命中回退实时，防刚报名即提交被误判）
+    signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
+    if not signup:
+        return jsonify({"error": "你未报名此活动"}), 403
+
+    # 获取用户信息（快照）
+    me = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
+    me_fields = me.get("fields", {})
+    my_name = bitable.get_field_text(me_fields, F_NICKNAME)
+    my_gender = bitable.get_select_value(me_fields, F_GENDER)
+
+    # 检查是否已提交过（允许覆盖；统一用 text_act_id 查询，修复旧代码混用 record_id 的不一致）
+    existing = snap_group_selection(text_act_id, open_id) or bitable.get_user_group_selection(text_act_id, open_id)
+
+    fields = {
+        F_GS_ACTIVITY_ID: text_act_id,
+        F_GS_SELECTOR_OID: open_id,
+        F_GS_SELECTOR_NAME: my_name,
+        F_GS_SELECTOR_GENDER: my_gender,
+    }
+    # 填充志愿（先清空 7 个志愿位，再填新值，避免脏数据残留）
+    for i in range(len(F_GS_CHOICES)):
+        fields[F_GS_CHOICES[i]] = ""
+    for i, choice_oid in enumerate(choices):
+        if i < len(F_GS_CHOICES):
+            fields[F_GS_CHOICES[i]] = choice_oid
+
     with file_lock:
-        # 检查活动状态
-        act_record, text_act_id = resolve_activity(activity_id)
-        if not act_record:
-            return jsonify({"error": "活动不存在"}), 404
-        group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
-        if group_status != "收集中":
-            return jsonify({"error": f"分组状态为「{group_status}」，无法选择"}), 400
-
-        # 检查报名
-        signup = bitable.get_user_signup(text_act_id, open_id)
-        if not signup:
-            return jsonify({"error": "你未报名此活动"}), 403
-
-        # 获取用户信息
-        me = bitable.find_user_by_openid(open_id)
-        me_fields = me.get("fields", {})
-        my_name = bitable.get_field_text(me_fields, F_NICKNAME)
-        my_gender = bitable.get_select_value(me_fields, F_GENDER)
-
-        # 检查是否已提交过（允许覆盖）
-        existing = bitable.get_user_group_selection(activity_id, open_id)
-
-        fields = {
-            F_GS_ACTIVITY_ID: text_act_id,
-            F_GS_SELECTOR_OID: open_id,
-            F_GS_SELECTOR_NAME: my_name,
-            F_GS_SELECTOR_GENDER: my_gender,
-        }
-        # 填充志愿（先清空 7 个志愿位，再填新值，避免脏数据残留）
-        for i in range(len(F_GS_CHOICES)):
-            fields[F_GS_CHOICES[i]] = ""
-        for i, choice_oid in enumerate(choices):
-            if i < len(F_GS_CHOICES):
-                fields[F_GS_CHOICES[i]] = choice_oid
-
         if existing:
-            bitable.update_record(GROUP_SELECT_TABLE, existing["record_id"], fields)
+            ok = bitable.update_record(GROUP_SELECT_TABLE, existing["record_id"], fields)
         else:
-            bitable.create_record(GROUP_SELECT_TABLE, fields)
+            ok = bitable.create_record(GROUP_SELECT_TABLE, fields)
+    if not ok:
+        return jsonify({"error": "提交失败，请稍后重试"}), 500
 
     refresh_snapshot_table_async("group_selections")
     return jsonify({"ok": True, "message": "志愿提交成功"})
@@ -1916,7 +1913,7 @@ def update_profile():
         return jsonify({"error": "未登录"}), 401
 
     data = request.get_json() or {}
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
@@ -2092,7 +2089,11 @@ def my_liked_list():
 
 @app.route("/api/like/<target_openid>", methods=["DELETE"])
 def cancel_like(target_openid):
-    """取消喜欢（软取消双向，允许取消相互喜欢）"""
+    """取消喜欢（秒提交版，软取消双向）：
+    同步路径 = 快照定位 + 1 次写入（我->TA 置已取消）+ 同步刷新 likes 快照；
+    反向切断与爱心退还在后台完成——机器人 auto_deduct_hearts 循环对
+    「已取消 且 爱心已扣减=true」的记录统一退还（未扣减过则不退，天然幂等）。
+    """
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -2101,36 +2102,49 @@ def cancel_like(target_openid):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    with file_lock:
+    # 快照定位「我->TA」的活跃记录；快照为空或找不到时回退实时查询兜底
+    existing = None
+    for l in _snap("likes"):
+        f = l.get("fields", {})
+        if (bitable.get_field_text(f, F_LIKE_INITIATOR_OPENID) == open_id
+                and bitable.get_field_text(f, F_LIKE_TARGET_OPENID) == target_openid
+                and bitable.get_select_value(f, F_LIKE_STATUS) != "已取消"):
+            existing = l
+            break
+    if not existing:
         existing = bitable.find_like(open_id, target_openid)
-        if not existing:
-            return jsonify({"error": "未找到喜欢记录"}), 404
+    if not existing:
+        return jsonify({"error": "未找到喜欢记录"}), 404
 
-        # 软取消：把「我->TA」的记录置为已取消；同时把「爱心已扣减」置 False，
-        # 避免机器人后台 auto_deduct_hearts 的返还循环二次返还爱心（否则会双倍返还）。
-        # 注意：飞书多维表格更新记录接口只支持 PUT，PATCH 会 404（历史 bug：取消后刷新又出现）。
-        bitable.update_record(LIKE_TABLE_ID, existing["record_id"], {
-            F_LIKE_STATUS: "已取消", F_LIKE_HEART_DEDUCTED: False})
+    with file_lock:
+        # 软取消：只改状态。爱心已扣减保持原值：
+        #   扣减过(true)  → 机器人返还循环退1颗；
+        #   未扣减(false) → 返还循环不会碰它（避免双退/误退）。
+        ok = bitable.update_record(LIKE_TABLE_ID, existing["record_id"], {
+            F_LIKE_STATUS: "已取消"})
+    if not ok:
+        return jsonify({"error": "取消失败，请稍后重试"}), 500
 
-        # 同时切断反向：把「TA->我」的活跃记录也软取消，避免残留导致误报双向喜欢/报名通知
-        reverse_likes = bitable.search_records(LIKE_TABLE_ID, [
-            {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [target_openid]},
-            {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]},
-            {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
-        ])
-        for rl in reverse_likes:
-            bitable.update_record(LIKE_TABLE_ID, rl["record_id"], {
-                F_LIKE_STATUS: "已取消", F_LIKE_HEART_DEDUCTED: False})
+    # 同步刷新 likes 快照：保证紧随其后的 /api/cards 立即把对方放回卡片池
+    refresh_snapshot_table("likes")
 
-        # 退还爱心（仅发起取消方；对方爱心不退还——产品决策）
-        me = bitable.find_user_by_openid(open_id)
-        if me:
-            my_hearts = bitable.get_field_number(me.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS)
-            new_hearts = min(30, my_hearts + 1)
-            bitable.update_record(USER_TABLE_ID, me["record_id"], {F_HEART_REMAIN: new_hearts})
+    # 反向切断移到后台：「TA->我」的活跃记录也置已取消，避免残留误报双向喜欢/报名通知
+    def _cancel_reverse():
+        try:
+            reverse_likes = bitable.search_records(LIKE_TABLE_ID, [
+                {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [target_openid]},
+                {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]},
+                {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
+            ])
+            for rl in reverse_likes:
+                # 反向记录显式置 deducted=False：按产品决策「对方爱心不退还」，
+                # 压掉机器人返还循环（该循环只退 已取消且deducted=true 的记录）
+                bitable.update_record(LIKE_TABLE_ID, rl["record_id"], {
+                    F_LIKE_STATUS: "已取消", F_LIKE_HEART_DEDUCTED: False})
+        except Exception as e:
+            app.logger.warning(f"反向取消喜欢失败: {e}")
 
-    refresh_snapshot_table_async("likes")
-    refresh_snapshot_table_async("users")
+    threading.Thread(target=_cancel_reverse, daemon=True).start()
     return jsonify({"ok": True, "message": "已取消喜欢"})
 
 

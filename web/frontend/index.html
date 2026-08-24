@@ -1727,6 +1727,16 @@ createApp({
     // 账号状态切换（活跃 <-> 已隐藏）
     const accountStatusLabel = computed(() => (user.value && user.value.account_status === '已隐藏') ? '隐藏' : '活跃');
     async function toggleAccountStatus() {
+      const toHidden = user.value && user.value.account_status === '活跃';
+      try {
+        await vant.showConfirmDialog({
+          title: toHidden ? '隐藏账号' : '恢复活跃',
+          message: toHidden
+            ? '隐藏后你将不出现在他人的牵线卡片中（自己仍可浏览），确定吗？'
+            : '恢复后你的资料将重新出现在他人的牵线卡片中，确定吗？',
+          confirmButtonColor: '#ff6b81',
+        });
+      } catch(e) { return; }
       actionLoading.value = true;
       try {
         const data = await api('/api/account/status', { method: 'POST' });
@@ -1840,7 +1850,7 @@ createApp({
 
     // 消息
     async function loadLikes() {
-      if (likesData.value.mutual.length || likesData.value.liked_me.length) return;
+      // 每次进入消息页都强制刷新（旧逻辑「有数据就跳过」导致喜欢数不实时）
       loadingLikes.value = true;
       try { const data = await api('/api/likes/me'); likesData.value = data; }
       catch(e) { vant.showToast(e.message); }
@@ -1876,11 +1886,11 @@ createApp({
     }
     async function cancelLike(l) {
       try {
-        await vant.showConfirmDialog({ title: '取消喜欢', message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将退还。', confirmButtonColor: '#ee0a24' });
+        await vant.showConfirmDialog({ title: '取消喜欢', message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将在稍后退回。', confirmButtonColor: '#ee0a24' });
       } catch(e) { return; }
       try {
         await api('/api/like/' + l.openid, { method: 'DELETE' });
-        vant.showToast('已取消喜欢');
+        vant.showToast('已取消喜欢，爱心将在稍后退回');
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;
         cards.value = [];

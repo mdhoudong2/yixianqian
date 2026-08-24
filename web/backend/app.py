@@ -1786,6 +1786,10 @@ def create_message():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    # 留言属于互动行为：仅「活跃」可发（隐藏/待审核/已拒绝/已退出均拦截）
+    gate = active_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
     data = request.get_json(silent=True) or {}
     target = (data.get("target_openid") or "").strip()
     content = (data.get("content") or "").strip()

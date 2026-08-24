@@ -23,6 +23,9 @@ ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS
 # ==================== 多维表格链接配置（默认生产，测试服在 local_config.py 覆盖） ====================
 REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")
 LIKE_FORM_URL = getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b")
+# 观察员注册（非单身看热闹，限权）：固定通用邀请码 + 独立表单
+OBSERVER_INVITE_CODE = getattr(_cfg, "OBSERVER_INVITE_CODE", "")  # 固定邀请码（空 = 关闭观察员注册）
+OBSERVER_FORM_URL = getattr(_cfg, "OBSERVER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnz9wvQvcyFlwIGpFQYWSCQA")
 
 # ==================== 多维表格配置 ====================
 BASE_TOKEN = _cfg.BASE_TOKEN
@@ -90,6 +93,8 @@ FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同�
 
 # 邀请功能
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
+FIELD_INVITE_CODE = "邀请码"  # 观察员注册表单的邀请码字段
+STATUS_OBSERVER = "观察员"  # 账号状态值：观察员（非单身看热闹，限权）
 INITIAL_HEARTS = 3
 MAX_HEARTS = 30
 # H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://testapp.nantou.love

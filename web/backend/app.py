@@ -456,6 +456,7 @@ GATE_MESSAGES = {
     "已退出": {"error": "你已暂时退出相亲市场，如需恢复请联系管理员", "gate": "已退出"},
 }
 LIKE_BLOCKED_MESSAGE = {"error": "你当前处于隐藏状态（他人看不到你），请先在「我的」页恢复活跃后再操作", "gate": "已隐藏"}
+OBSERVER_BLOCKED_MESSAGE = {"error": "你是观察员账号，无此操作权限", "gate": "观察员"}
 
 
 def _account_status(open_id):
@@ -483,10 +484,17 @@ def active_gate(open_id):
         return {"error": "用户不存在"}, 404
     if status == "已隐藏":
         return LIKE_BLOCKED_MESSAGE, 403
+    if status == STATUS_OBSERVER:
+        return OBSERVER_BLOCKED_MESSAGE, 403
     body = GATE_MESSAGES.get(status)
     if body:
         return body, 403
     return None
+
+
+def _is_observer(user):
+    """判断用户是否为观察员（非单身看热闹，限权）"""
+    return bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
 
 
 # ========== 飞书消息 ==========
@@ -572,6 +580,7 @@ def format_user_brief(record, include_openid=False, full=False):
         "hobbies": "、".join(bitable.get_multi_select_value(fields, F_SELF_HOBBIES)),
         "hearts": bitable.get_field_number(fields, F_HEART_REMAIN, INITIAL_HEARTS),
         "account_status": bitable.get_select_value(fields, F_ACCOUNT_STATUS),
+        "is_observer": bitable.get_select_value(fields, F_ACCOUNT_STATUS) == STATUS_OBSERVER,
         "photo": photo_url,
         "record_id": record.get("record_id")
     }
@@ -1099,8 +1108,9 @@ def home():
         return jsonify({"error": "用户不存在"}), 404
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
+    is_observer = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
 
-    # 卡片（不含筛选，默认展示全部异性）
+    # 卡片（不含筛选，默认展示全部异性；观察员展示全部活跃用户，男女均可浏览）
     # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
                      for l in snap_likes_by_initiator(open_id)
@@ -1109,7 +1119,9 @@ def home():
     for u in snap_active_users():
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
-        if uid == open_id or bitable.get_select_value(fields, F_GENDER) != target_gender:
+        if uid == open_id:
+            continue
+        if not is_observer and bitable.get_select_value(fields, F_GENDER) != target_gender:
             continue
         brief = format_user_brief(u, include_openid=True, full=True)
         brief["display_fields"] = build_display_fields(fields)
@@ -1200,6 +1212,8 @@ def toggle_account_status():
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
+    if cur == STATUS_OBSERVER:
+        return jsonify({"error": "观察员账号不可切换账号状态"}), 403
     if cur == "活跃":
         new_status = "已隐藏"
         # 已报名活动者不可自行隐藏（先取消报名）；读快照（≤15s 窗口，见文档说明）
@@ -1360,6 +1374,8 @@ def get_cards():
     user_fields = user.get("fields", {})
     my_gender = bitable.get_select_value(user_fields, F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
+    is_observer = bitable.get_select_value(user_fields, F_ACCOUNT_STATUS) == STATUS_OBSERVER
+    gender_filter = (request.args.get("gender") or "").strip()  # 仅观察员可用：男性/女性
 
     # 解析筛选参数（全部可选）
     def _num(key):
@@ -1400,7 +1416,13 @@ def get_cards():
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
         gender = bitable.get_select_value(fields, F_GENDER)
-        if uid == open_id or gender != target_gender:
+        if uid == open_id:
+            continue
+        if is_observer:
+            # 观察员可浏览男性+女性，可选 gender 参数进一步筛选
+            if gender_filter and gender != gender_filter:
+                continue
+        elif gender != target_gender:
             continue
         if not pass_card_filters(fields, filters):
             continue
@@ -2167,6 +2189,8 @@ def update_profile():
     user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
+    if _is_observer(user):
+        return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
 
     update_fields = _normalize_editable_update(data)
     if not update_fields:
@@ -2210,6 +2234,8 @@ def update_profile_photo():
     user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
+    if _is_observer(user):
+        return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
 
     tokens = _photo_tokens(user)
     if len(tokens) >= MAX_PHOTOS:
@@ -2248,6 +2274,8 @@ def delete_profile_photo():
     user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
+    if _is_observer(user):
+        return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
 
     body = request.get_json(silent=True) or {}
     try:
@@ -2273,6 +2301,8 @@ def set_profile_cover():
     user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
+    if _is_observer(user):
+        return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
 
     body = request.get_json(silent=True) or {}
     try:

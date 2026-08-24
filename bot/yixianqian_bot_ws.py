@@ -64,6 +64,7 @@ from commands import (
     handle_h5_command,
     handle_help_command,
     handle_invite_command,
+    handle_observer_command,
     handle_register_command,
     handle_status_command,
     handle_welcome,
@@ -394,6 +395,8 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_register_command(sender_id)
         elif text_lower in ["邀请", "invite", "邀请好友", "分享"]:
             reply = handle_invite_command(sender_id)
+        elif text_lower in ["观察员", "观察员注册", "observer"]:
+            reply = handle_observer_command(sender_id)
         elif text_lower in ["h5", "一线牵", "app", "进入", "打开", "网页版", "网页", "web"]:
             reply = handle_h5_command(sender_id)
         elif text_lower in ["帮助", "help", "?", "？", "使用帮助"]:

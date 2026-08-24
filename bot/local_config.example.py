@@ -26,3 +26,7 @@ SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（
 # 飞书分享链接（表单）。测试服若用「复制的多维表格」，这些 URL 会变，需重新生成后覆盖。
 # REGISTER_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"
 # LIKE_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"
+
+# 观察员注册（固定通用邀请码 + 独立表单）
+# OBSERVER_INVITE_CODE = "YOUR_FIXED_CODE"  # 填了才开启观察员注册；留空则关闭
+# OBSERVER_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"

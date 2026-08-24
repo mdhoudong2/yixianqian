@@ -77,6 +77,49 @@ def auto_bind_from_creator():
             send_main_menu_card(open_id)
             continue
 
+        # 观察员注册：填了「邀请码」字段走限权分支（固定通用码→观察员，错误→已拒绝，空→普通待审核）
+        invite_code = get_field_text(fields, FIELD_INVITE_CODE)
+        if OBSERVER_INVITE_CODE and invite_code:
+            if invite_code.strip() == OBSERVER_INVITE_CODE.strip():
+                # 正确邀请码：观察员（跳过人工审核），爱心置 0（观察员无喜欢/报名权限，不参与爱心账）
+                update_record(USER_TABLE_ID, record_id, {
+                    FIELD_ACCOUNT_STATUS: STATUS_OBSERVER,
+                    FIELD_HEART_REMAIN: 0,
+                })
+                if update_user_feishu_id(record_id, open_id):
+                    bound_count += 1
+                    log(f"观察员注册成功: {nickname} -> {open_id}")
+                    existing_openids[open_id] = nickname
+
+                    def _bind_observer(_data):
+                        _data[open_id] = {
+                            "open_id": open_id, "nickname": nickname, "record_id": record_id,
+                            "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "observer"
+                        }
+                        return _data
+
+                    update_bindings(_bind_observer)
+                    send_text_message(
+                        open_id,
+                        "欢迎你成为一线牵「观察员」！\U0001f389\n\n"
+                        "作为观察员，你可以：\n"
+                        "• 浏览男生/女生资料\n"
+                        "• 留言、反馈\n"
+                        "• 查看活动\n\n"
+                        "（不含点喜欢、报名活动等交友功能）\n\n"
+                        "点下方按钮进入一线牵App看看吧："
+                    )
+                    send_main_menu_card(open_id)
+            else:
+                # 邀请码错误：已拒绝（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
+                update_record(USER_TABLE_ID, record_id, {
+                    FIELD_ACCOUNT_STATUS: "已拒绝",
+                    FIELD_FEISHU_ID: open_id,
+                })
+                log(f"观察员注册邀请码错误: {nickname} (open_id={open_id})")
+                send_text_message(open_id, "邀请码错误，注册未通过。如有疑问请联系管理员。")
+            continue
+
         # 新注册用户强制设为待审核（防止表单默认值或用户自选导致直接活跃）
         current_status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
         update_fields_bind = {}
@@ -624,6 +667,8 @@ def reconcile_hearts():
     groups = {}
     for u in search_records(USER_TABLE_ID):
         uf = u.get("fields", {})
+        if get_field_text(uf, FIELD_ACCOUNT_STATUS) == STATUS_OBSERVER:
+            continue  # 观察员不参与爱心账，跳过（否则对账会把观察员爱心写回初始值）
         oid = get_field_text(uf, FIELD_FEISHU_ID)
         if not oid:
             continue

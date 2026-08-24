@@ -299,7 +299,7 @@
   <template v-else>
     <div class="card-top-left">
       <div class="card-counter">{{ cards.length ? (cardIndex + 1) + ' / ' + cards.length : '0 / 0' }}</div>
-      <div class="hearts-badge">💕 {{ user.hearts }}</div>
+      <div class="hearts-badge" v-if="!isObserver">💕 {{ user.hearts }}</div>
     </div>
     <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
     <van-empty v-if="!cards.length" :description="hasActiveFilter ? '没有符合筛选条件的人，试试调整筛选' : '暂时没有可推荐的人了～'"></van-empty>
@@ -389,14 +389,14 @@
     </div>
       <div class="card-actions" v-if="cardTab==='profile'">
         <button class="feedback-btn" @click="openFeedbackDialog">反馈</button>
-        <button class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
+        <button v-if="!isObserver" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
       </div>
     </template>
   </template>
 </div>
 <!-- ========== 消息页 ========== -->
 <div v-else-if="page==='likes'" class="page">
-  <div class="msg-card" @click="openMyLikes" style="cursor:pointer;">
+  <div class="msg-card" @click="openMyLikes" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💕</div>
     <div class="msg-body">
       <div class="msg-name">我喜欢的</div>
@@ -404,7 +404,7 @@
     </div>
     <div class="msg-right"><span class="msg-count">{{ myLikesCount }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
-  <div class="msg-card" @click="openMutual" style="cursor:pointer;">
+  <div class="msg-card" @click="openMutual" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💞</div>
     <div class="msg-body">
       <div class="msg-name">相互喜欢</div>
@@ -412,7 +412,7 @@
     </div>
     <div class="msg-right"><span class="msg-count">{{ likesData.mutual.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
-  <div class="msg-card" @click="openLikedMe" style="cursor:pointer;">
+  <div class="msg-card" @click="openLikedMe" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">👤</div>
     <div class="msg-body">
       <div class="msg-name">谁喜欢了我</div>
@@ -511,15 +511,16 @@
       </div>
     </div>
     <div class="profile-name">{{ user.nickname }}
-      <button class="status-toggle" :class="accountStatusLabel === '隐藏' ? 'status-hidden' : 'status-active'" @click="toggleAccountStatus">{{ accountStatusLabel }}</button>
+      <button v-if="!isObserver" class="status-toggle" :class="accountStatusLabel === '隐藏' ? 'status-hidden' : 'status-active'" @click="toggleAccountStatus">{{ accountStatusLabel }}</button>
+      <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">观察员</span>
     </div>
-    <div class="profile-hearts"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
+    <div class="profile-hearts" v-if="!isObserver"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
   </div>
-  <div class="invite-block">
+  <div class="invite-block" v-if="!isObserver">
     <van-button plain type="primary" color="#ff6b81" block @click="showInviteDialog=true">邀请好友得爱心</van-button>
     <div class="invite-note">初始3颗爱心，每邀请1人注册+1颗，上限30颗，请邀请未婚教友哦！</div>
   </div>
-  <div style="padding:0 12px 8px;">
+  <div style="padding:0 12px 8px;" v-if="!isObserver">
     <div class="invite-code-box">
       <div>
         <div class="invite-code-label">我的邀请码</div>
@@ -531,10 +532,10 @@
   </div>
     <div style="padding:0 12px 20px;">
       <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
-        <van-cell title="我的资料" is-link @click="openProfileDetail"></van-cell>
-        <van-cell title="我的活动" is-link @click="openMyActivities"></van-cell>
+        <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
+        <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
         <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
-        <van-cell v-if="hasGroupEntry" title="我的分组" is-link @click="openMyGroups"></van-cell>
+        <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       </van-cell-group>
     </div>
 </div>
@@ -554,7 +555,7 @@
     </div>
     <div style="height:14px;"></div>
     <div style="padding: 0 16px;">
-      <van-button type="primary" plain block round size="small" @click="openProfileEdit">修改资料</van-button>
+      <van-button v-if="!isObserver" type="primary" plain block round size="small" @click="openProfileEdit">修改资料</van-button>
     </div>
 
     <!-- 基本信息 -->
@@ -805,13 +806,13 @@
         </div>
         <div class="signup-bar">
           <div class="signup-count">已报名 <b>{{ currentActivity.current_signup }}</b>/{{ currentActivity.max_signup || '不限' }}</div>
-          <van-button v-if="currentActivity.status==='报名中'" type="primary" color="#ff6b81" size="small"
+          <van-button v-if="!isObserver && currentActivity.status==='报名中'" type="primary" color="#ff6b81" size="small"
             @click="currentActivity.my_signup ? cancelSignup() : doSignup()" :loading="actionLoading">
             {{ currentActivity.my_signup ? '取消报名' : '立即报名' }}
           </van-button>
           <van-tag v-else type="warning">{{ currentActivity.status }}</van-tag>
         </div>
-        <van-button v-if="currentActivity.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+        <van-button v-if="!isObserver && currentActivity.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
       </div>
     </div>
     <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中'" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
@@ -1032,6 +1033,12 @@
       <div style="color:#ff6b81; font-size:14px; cursor:pointer;" @click="resetFilter">重置</div>
     </div>
     <div style="overflow-y:auto; max-height:62vh; padding-top:8px;">
+      <div class="filter-row" v-if="isObserver">
+        <div class="filter-label">性别</div>
+        <div class="filter-tags">
+          <span v-for="g in ['男性','女性']" :key="g" class="filter-tag" :class="{active: filter.gender===g}" @click="filter.gender = (filter.gender===g ? '' : g)">{{ g }}</span>
+        </div>
+      </div>
       <div class="filter-row">
         <div class="filter-label">用户ID</div>
         <div style="display:flex; align-items:center;">
@@ -1117,6 +1124,7 @@ createApp({
   setup() {
     const page = ref('cards');
     const user = ref(null);
+    const isObserver = computed(() => !!(user.value && user.value.is_observer));
     const loggingIn = ref(true);
     const loginError = ref(false);
     const loginErrorMessage = ref('');
@@ -1533,6 +1541,7 @@ createApp({
 
     // 牵线卡片
     const filter = ref({
+      gender: '',
       user_id: '',
       height_min: '', height_max: '',
       age_min: '', age_max: '',
@@ -1545,11 +1554,12 @@ createApp({
     const slideDir = ref('');
     const hasActiveFilter = computed(() => {
       const f = filter.value;
-      return !!(f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.church || f.native_place || f.city || f.industry || f.house || f.driving);
+      return !!(f.gender || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.church || f.native_place || f.city || f.industry || f.house || f.driving);
     });
     function buildFilterQuery() {
       const f = filter.value;
       const parts = [];
+      if (f.gender) parts.push('gender=' + encodeURIComponent(f.gender));
       ['height_min','height_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
       ['age_min','age_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
       f.education.forEach(e => parts.push('education=' + encodeURIComponent(e)));
@@ -1566,7 +1576,7 @@ createApp({
       else arr.push(val);
     }
     async function resetFilter() {
-      filter.value = { user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], church: '', native_place: '', city: '', industry: '', house: '', driving: '' };
+      filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], church: '', native_place: '', city: '', industry: '', house: '', driving: '' };
       showFilter.value = false;
       cards.value = [];
       cardIndex.value = 0;
@@ -2126,7 +2136,7 @@ createApp({
 
     return {
       page, user, loggingIn, loginError,
-      loginErrorMessage, retryLogin, subPages,
+      loginErrorMessage, retryLogin, subPages, isObserver,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,

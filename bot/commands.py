@@ -66,7 +66,7 @@ def handle_h5_command(sender_id):
         return "你还没有注册哦~\n发送「注册」先填写资料，审核通过后即可使用一线牵App。"
     user_fields = user_records[0].get("fields", {})
     status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-    if status != "活跃":
+    if status not in ("活跃", STATUS_OBSERVER):
         return f"你的资料当前状态：{status}\n审核通过后即可使用一线牵App，请耐心等待~"
     if send_main_menu_card(sender_id):
         log(f"已发送卡片1(主菜单): {sender_id}")
@@ -103,6 +103,8 @@ def handle_status_command(sender_id):
         lines.append("很抱歉，你的资料未通过审核，如有疑问请联系管理员。")
     elif status == "已隐藏":
         lines.append("账号已被隐藏（不出现在他人牵线中），可随时在App「我的」页恢复活跃。")
+    elif status == STATUS_OBSERVER:
+        lines.append("你是观察员账号：可浏览男生/女生资料、留言、反馈、查看活动。")
     else:
         lines.append("如有疑问请联系管理员。")
     return "\n".join(lines)
@@ -113,6 +115,18 @@ def handle_status_command(sender_id):
 def handle_help_command(sender_id):
     """发送帮助说明（文本）"""
     return WELCOME_TEXT
+
+
+def handle_observer_command(sender_id):
+    """观察员注册：返回独立表单链接 + 提示填固定邀请码（仅非单身看热闹用）"""
+    if not OBSERVER_INVITE_CODE or not OBSERVER_FORM_URL:
+        return "观察员注册尚未开放，如有需要请联系管理员。"
+    return (
+        "观察员（非单身看热闹）注册说明：\n\n"
+        f"请在飞书APP内打开下方链接填写观察员注册表单：\n\n"
+        f"{OBSERVER_FORM_URL}\n\n"
+        f"提交后可浏览男生/女生资料、留言、反馈、查看活动（不含点喜欢、报名等交友功能）。"
+    )
 
 
 
@@ -363,7 +377,7 @@ def handle_admin_stats():
     """用户统计"""
     all_users = search_records(USER_TABLE_ID)
     total = len(all_users)
-    pending = active = hidden = rejected = exited = unbound = 0
+    pending = active = hidden = rejected = exited = observer = unbound = 0
     for item in all_users:
         fields = item.get("fields", {})
         status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
@@ -377,6 +391,8 @@ def handle_admin_stats():
             rejected += 1
         elif status == "已退出":
             exited += 1
+        elif status == STATUS_OBSERVER:
+            observer += 1
         if not get_field_text(fields, FIELD_FEISHU_ID):
             unbound += 1
 
@@ -388,6 +404,7 @@ def handle_admin_stats():
         f"已隐藏：{hidden}人\n"
         f"已拒绝：{rejected}人\n"
         f"已退出：{exited}人\n"
+        f"观察员：{observer}人\n"
         f"未绑定open_id：{unbound}人"
     )
 

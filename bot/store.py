@@ -1,4 +1,5 @@
 """共享运行时 JSON 的读写封装（加锁 + 原子写，见 lib/storage.py）。"""
+import random
 import time
 
 from constants import *
@@ -81,3 +82,46 @@ def add_notification(recipient, ntype, text, key=None, extra=None):
         data["items"] = items
         return data
     storage.update_json(NOTIFICATIONS_FILE, {"items": []}, _add)
+
+
+# ========== 观察员邀请码（管理员批量生成，一次性使用，限制注册人数） ==========
+
+def load_observer_codes():
+    """加载观察员邀请码 {code: {"used": bool, "used_by": str, "used_at": str}}"""
+    return storage.load_json(OBSERVER_CODES_FILE, {})
+
+
+def generate_observer_codes(n):
+    """批量生成 n 个唯一邀请码（8位大写字母+数字，去除易混淆字符），返回新码列表"""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    generated = []
+
+    def _m(data):
+        for _ in range(n):
+            while True:
+                code = "".join(random.choices(alphabet, k=8))
+                if code not in data:
+                    break
+            data[code] = {"used": False, "used_by": "", "used_at": ""}
+            generated.append(code)
+        return data
+
+    storage.update_json(OBSERVER_CODES_FILE, {}, _m)
+    return generated
+
+
+def consume_observer_code(code, nickname):
+    """原子消耗邀请码：未使用→已使用，返回 True；不存在或已使用返回 False"""
+    consumed = [False]
+
+    def _m(data):
+        entry = data.get(code)
+        if not entry or entry.get("used"):
+            return None  # 不存在或已被使用，放弃写入
+        data[code] = {"used": True, "used_by": nickname,
+                      "used_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        consumed[0] = True
+        return data
+
+    storage.update_json(OBSERVER_CODES_FILE, {}, _m)
+    return consumed[0]

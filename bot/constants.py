@@ -23,8 +23,7 @@ ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS
 # ==================== 多维表格链接配置（默认生产，测试服在 local_config.py 覆盖） ====================
 REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")
 LIKE_FORM_URL = getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b")
-# 观察员注册（非单身看热闹，限权）：固定通用邀请码 + 独立表单
-OBSERVER_INVITE_CODE = getattr(_cfg, "OBSERVER_INVITE_CODE", "")  # 固定邀请码（空 = 关闭观察员注册）
+# 观察员注册（非单身看热闹，限权）：管理员批量生成的唯一邀请码 + 独立表单
 OBSERVER_FORM_URL = getattr(_cfg, "OBSERVER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnz9wvQvcyFlwIGpFQYWSCQA")
 
 # ==================== 多维表格配置 ====================
@@ -110,6 +109,7 @@ WELCOMED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_welcomed.json")  # 记
 MENU_CARD_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_menu_card.json")  # 记录上次发送菜单卡片的时间，用于节流
 INVITE_REWARDED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_invites.json")  # 记录已奖励的邀请关系
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")  # 共享通知（机器人写，H5读）
+OBSERVER_CODES_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_observer_codes.json")  # 观察员邀请码（管理员批量生成，一次性使用）
 
 WS_HEALTH_CHECK_INTERVAL = 60      # 每60秒检查一次
 WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连

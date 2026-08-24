@@ -54,7 +54,9 @@ from cards import WELCOME_TEXT, send_main_menu_card
 from clients import *
 from commands import (
     handle_admin_approve,
+    handle_admin_generate_observer_codes,
     handle_admin_help,
+    handle_admin_list_observer_codes,
     handle_admin_notify,
     handle_admin_pending,
     handle_admin_reject,
@@ -386,6 +388,11 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         elif text.startswith("开启分组功能"):
             keyword = text[len("开启分组功能"):].strip()
             reply = handle_admin_toggle_group_flag(keyword)
+        elif text.startswith("生成观察员邀请码"):
+            keyword = text[len("生成观察员邀请码"):].strip()
+            reply = handle_admin_generate_observer_codes(keyword)
+        elif text_lower in ["查看观察员邀请码", "观察员邀请码"]:
+            reply = handle_admin_list_observer_codes()
         elif text_lower in ["分组帮助", "group help"]:
             reply = handle_group_help()
 

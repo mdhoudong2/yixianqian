@@ -1898,13 +1898,12 @@ def create_message():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    # 留言属于互动行为：仅「活跃」可发（隐藏/待审核/已拒绝/已退出均拦截）
+    # 留言属于互动行为：「活跃」与「观察员」可发（隐藏/待审核/已拒绝/已退出均拦截）
     _status, _u = _account_status(open_id)
     if _status == "已隐藏":
         return jsonify({"error": "你当前处于隐藏状态，不能留言；请先在「我的」页恢复活跃"}), 403
-    gate = active_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
+    if _status in ("待审核", "已拒绝", "已退出"):
+        return jsonify(GATE_MESSAGES[_status]), 403
     data = request.get_json(silent=True) or {}
     target = (data.get("target_openid") or "").strip()
     content = (data.get("content") or "").strip()

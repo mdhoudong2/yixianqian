@@ -27,6 +27,5 @@ SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（
 # REGISTER_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"
 # LIKE_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"
 
-# 观察员注册（固定通用邀请码 + 独立表单）
-# OBSERVER_INVITE_CODE = "YOUR_FIXED_CODE"  # 填了才开启观察员注册；留空则关闭
+# 观察员注册（管理员批量生成的唯一邀请码 + 独立表单）
 # OBSERVER_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"

@@ -2262,8 +2262,6 @@ def cancel_like(target_openid):
         # 已扣过减的取消：立即发放「退款信用」，用户马上可再点；
         # 真实余额由对账循环在 ≤25s 内写回，信用TTL短于其稳定周期
         _credit_add(open_id)
-    if not ok:
-        return jsonify({"error": "取消失败，请稍后重试"}), 500
 
     # 直接改写本地快照中该记录状态（规避飞书写后读延迟），
     # 再同步刷新：保证紧随其后的 /api/cards 立即把对方放回卡片池

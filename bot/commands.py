@@ -19,7 +19,8 @@ def handle_register_command(sender_id):
         f"填写说明：\n"
         f"1. 请填写真实资料，照片清晰可见\n"
         f"2. 提交后等待人工审核（通常1-24小时）\n"
-        f"3. 审核通过后，我会自动发送H5使用链接给你\n\n"
+        f"3. 审核通过后，我会自动发送H5使用链接给你\n"
+        f"4. 已注册过的用户请勿重复填写，直接发送「一线牵」进入\n\n"
         f"有任何问题随时问我~"
     )
     return message
@@ -182,6 +183,20 @@ def handle_admin_approve(keyword):
 
     if not open_id:
         return f"{uid} {nickname} 尚未绑定飞书账号（open_id为空），无法发送通知。请等待自动绑定后再审核。"
+
+    # 同号重复档案守卫：该飞书账号名下已有其他活跃档案时拒绝激活，
+    # 防止同一人多个档案并存导致头像/资料/爱心归属错乱
+    others = [r for r in search_records(USER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "is", "value": [open_id]}]
+    }) if r.get("record_id") != record_id
+        and get_field_text(r.get("fields", {}), FIELD_ACCOUNT_STATUS) == "活跃"]
+    if others:
+        other = others[0]
+        other_uid = get_field_text(other.get("fields", {}), FIELD_NICKNAME)
+        other_id = get_field_text(other.get("fields", {}), "用户ID") or "无ID"
+        return (f"⚠️ 激活被拦截：该飞书账号已绑定活跃档案 {other_id} {other_uid}，"
+                f"疑似重复资料。\n如确需替换，请先将旧档案「拒绝」后再操作本条。")
 
     # 更新状态为活跃
     if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "活跃"}):

@@ -11,6 +11,7 @@ from queries import (
     find_user_by_nickname,
     find_user_by_openid,
     get_creator_openid,
+    pick_primary_record,
     update_user_feishu_id,
 )
 from store import (
@@ -61,9 +62,10 @@ def auto_bind_from_creator():
         # 防重复：该飞书账号已注册过
         if open_id in existing_openids:
             old_nick = existing_openids[open_id]
-            # 重复记录标记已隐藏，并补写飞书ID：否则飞书ID仍为空，下一轮会被当成"未绑定"重复轮询、反复发"已注册过"
+            # 重复记录标记「已拒绝」（门禁全拦、不可被普通激活），并补写飞书ID：
+            # 否则飞书ID仍为空，下一轮会被当成"未绑定"重复轮询、反复发"已注册过"
             update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "已隐藏",
+                FIELD_ACCOUNT_STATUS: "已拒绝",
                 FIELD_FEISHU_ID: open_id,
             })
             duplicate_count += 1
@@ -644,13 +646,14 @@ def auto_deduct_hearts():
 
 
 def reconcile_hearts():
-    """爱心对账（余额唯一写入者）：
-    期望余额 = 初始爱心 + 已发放邀请奖励 − 未退还的已扣记录数(含待退还)。
-    与「爱心剩余」字段不符时以期望值写回，账实永远收敛；每轮随扣减循环执行。
+    """爱心对账（余额唯一写入者，按人合并）：
+    同一 open_id 多条记录视为同一人——只对主档案记账（活跃优先/用户ID最小），
+    副本记录余额强制 0。期望值 = 初始 + 邀请奖励 − 未退还的已扣记录数。
+    与「爱心剩余」不符即写回，账实永远收敛；每轮随扣减循环执行。
     """
-    likes = search_records(LIKE_TABLE_ID)
+    # 该 open_id 名下未退还的已扣记录数
     owed_map = {}
-    for l in likes:
+    for l in search_records(LIKE_TABLE_ID):
         f = l.get("fields", {})
         if f.get(FIELD_LIKE_HEART_DEDUCTED) is not True:
             continue
@@ -662,22 +665,34 @@ def reconcile_hearts():
     for inviter_oid in load_invite_rewarded().values():
         invited_map[inviter_oid] = invited_map.get(inviter_oid, 0) + 1
 
-    fixed = 0
+    groups = {}
     for u in search_records(USER_TABLE_ID):
         uf = u.get("fields", {})
         oid = get_field_text(uf, FIELD_FEISHU_ID)
         if not oid:
             continue
-        expected = INITIAL_HEARTS + invited_map.get(oid, 0) - owed_map.get(oid, 0)
-        expected = max(0, min(expected, MAX_HEARTS))
-        current = get_field_number(uf, FIELD_HEART_REMAIN, None)
-        if current != expected:
-            nickname = get_field_text(uf, FIELD_NICKNAME)
-            update_record(USER_TABLE_ID, u["record_id"], {FIELD_HEART_REMAIN: expected})
+        groups.setdefault(oid, []).append(u)
+
+    fixed = 0
+
+    def _write(rec, expected, tag):
+        nonlocal fixed
+        cur = get_field_number(rec.get("fields", {}), FIELD_HEART_REMAIN, None)
+        if cur != expected:
+            update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_REMAIN: expected})
             fixed += 1
-            log(f"爱心对账: {nickname} {current} → {expected}")
+            log(f"爱心对账[{tag}]: {get_field_text(rec.get('fields', {}), FIELD_NICKNAME)} {cur} → {expected}")
+
+    for oid, recs in groups.items():
+        primary = pick_primary_record(recs)[0]
+        expected = max(0, min(INITIAL_HEARTS + invited_map.get(oid, 0) - owed_map.get(oid, 0), MAX_HEARTS))
+        _write(primary, expected, "主档")
+        for r in recs:
+            if r.get("record_id") != primary.get("record_id"):
+                _write(r, 0, "副本")
+
     if fixed:
-        log(f"爱心对账完成，本次校正 {fixed} 人")
+        log(f"爱心对账完成，本次校正 {fixed} 条")
 
 
 def auto_deduct_hearts_loop(interval=25):

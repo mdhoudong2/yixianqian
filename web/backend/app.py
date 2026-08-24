@@ -155,15 +155,32 @@ def _snap(key):
 
 # ---- 快照读取辅助（镜像 bitable 常用查询；快照为空时回退到飞书，保证启动初期可用） ----
 
+def _pick_primary_user(records):
+    """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小（与 bot/queries 同规则）"""
+    if not records:
+        return None
+
+    def rank(u):
+        uf = u.get("fields", {})
+        st = bitable.get_select_value(uf, F_ACCOUNT_STATUS)
+        m = re.match(r"[Uu]-?(\d+)", bitable.get_field_text(uf, F_USER_ID))
+        uid_num = int(m.group(1)) if m else 10 ** 9
+        return (0 if st == "活跃" else 1, uid_num)
+
+    return sorted(records, key=rank)[0]
+
+
 def snap_find_user_by_openid(open_id):
+    """快照优先、实时兜底；同号多档统一解析到主档案"""
     users = _snap("users")
-    if not users:
-        return bitable.find_user_by_openid(open_id)
-    for u in users:
-        if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id:
-            return u
-    # 快照非空但查不到（如快照在用户写入前加载、尚未刷新）：回退到飞书直查，避免误判「用户不存在」
-    return bitable.find_user_by_openid(open_id)
+    matches = [u for u in users
+               if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
+    if matches:
+        return _pick_primary_user(matches)
+    # 快照为空或未命中（如快照在用户写入前加载、尚未刷新）：回退到飞书直查，避免误判「用户不存在」
+    recs = bitable.search_records(USER_TABLE_ID, [
+        {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+    return _pick_primary_user(recs)
 
 
 def snap_active_users():
@@ -1063,7 +1080,7 @@ def user_me():
     if not open_id:
         return jsonify({"error": "未登录"}), 401
     # 直查飞书，保证爱心等实时数据不滞后
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     brief = format_user_brief(user)
@@ -1077,7 +1094,7 @@ def toggle_account_status():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
@@ -1170,7 +1187,7 @@ def signup(activity_id):
     if max_signup > 0 and len(signups_snap) >= max_signup:
         return jsonify({"error": "报名人数已满"}), 400
 
-    user = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户信息不存在"}), 404
     nickname = bitable.get_field_text(user.get("fields", {}), F_NICKNAME)
@@ -1658,7 +1675,8 @@ def list_messages():
     for u in _snap("users"):
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
-        if oid:
+        # keep-first：同号多档时取最早建档（=主档案规则的最小用户ID），与「我的」页一致
+        if oid and oid not in avatar_map:
             toks = bitable.get_attachment_tokens(uf, F_PHOTO)
             avatar_map[oid] = "/api/image/" + toks[0] if toks else ""
     msgs = []
@@ -1843,7 +1861,7 @@ def group_select(activity_id):
         return jsonify({"error": "你未报名此活动"}), 403
 
     # 获取用户信息（快照）
-    me = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
+    me = snap_find_user_by_openid(open_id)
     me_fields = me.get("fields", {})
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
@@ -2059,7 +2077,7 @@ def update_profile():
         return jsonify({"error": "未登录"}), 401
 
     data = request.get_json() or {}
-    user = snap_find_user_by_openid(open_id) or bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
@@ -2102,7 +2120,7 @@ def update_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
@@ -2140,7 +2158,7 @@ def delete_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 
@@ -2165,7 +2183,7 @@ def set_profile_cover():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    user = bitable.find_user_by_openid(open_id)
+    user = snap_find_user_by_openid(open_id)
     if not user:
         return jsonify({"error": "用户不存在"}), 404
 

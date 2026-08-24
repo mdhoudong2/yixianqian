@@ -5,6 +5,25 @@ from clients import *
 from constants import *
 
 
+def _uid_sort_key(rec):
+    """用户ID数值排序键（U-0012 -> 12；无ID排最后）"""
+    m = re.match(r"[Uu]-?(\d+)", str(get_field_text(rec.get("fields", {}), "用户ID")))
+    return int(m.group(1)) if m else 10 ** 9
+
+
+def pick_primary_record(records):
+    """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小。
+    全系统身份解析唯一入口——头像/资料/记账/归属一致性都依赖它。"""
+    if not records:
+        return records
+
+    def rank(r):
+        st = get_field_text(r.get("fields", {}), FIELD_ACCOUNT_STATUS)
+        return (0 if st == "活跃" else 1, _uid_sort_key(r))
+
+    return [sorted(records, key=rank)[0]]
+
+
 def find_user_by_nickname(nickname):
     """通过昵称查找用户，返回记录列表"""
     return search_records(USER_TABLE_ID, {
@@ -14,11 +33,13 @@ def find_user_by_nickname(nickname):
 
 
 def find_user_by_openid(open_id):
-    """通过 open_id 查找用户，返回记录列表"""
-    return search_records(USER_TABLE_ID, {
+    """通过 open_id 查找用户。同号多档时返回主档案（单元素列表），
+    调用方无需感知重复注册的存在。"""
+    items = search_records(USER_TABLE_ID, {
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "is", "value": [open_id]}]
     })
+    return pick_primary_record(items)
 
 
 def update_user_feishu_id(record_id, open_id):

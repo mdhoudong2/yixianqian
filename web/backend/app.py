@@ -1404,8 +1404,22 @@ def _outbox_process(op):
     for attempt in range(3):
         try:
             if otype == "like":
-                if bitable.create_record(LIKE_TABLE_ID, op["fields"]):
-                    return True
+                r = bitable.create_record(LIKE_TABLE_ID, op["fields"])
+                if not r:
+                    return False
+                # 即时扣减：主档余额-1 + 标记true（单一执行者；若失败由机器人扣减循环兜底）
+                recs = bitable.search_records(USER_TABLE_ID, [
+                    {"field_name": F_FEISHU_ID, "operator": "is",
+                     "value": [op.get("initiator_oid")]}])
+                u = _pick_primary_user(recs)
+                if u:
+                    cur = bitable.get_field_number(u.get("fields", {}),
+                                                   F_HEART_REMAIN, INITIAL_HEARTS)
+                    bitable.update_record(USER_TABLE_ID, u["record_id"],
+                                          {F_HEART_REMAIN: max(0, cur - 1)})
+                    bitable.update_record(LIKE_TABLE_ID, r["record_id"],
+                                          {F_LIKE_HEART_DEDUCTED: True})
+                return True
             elif otype == "cancel":
                 if bitable.update_record(LIKE_TABLE_ID, op["record_id"],
                                          {"状态": "已取消", "爱心已扣减": False}) is None:
@@ -1574,7 +1588,8 @@ def like_user():
     if message:
         like_fields[F_LIKE_MESSAGE] = message
 
-    _outbox_enqueue({"type": "like", "fields": like_fields})
+    _outbox_enqueue({"type": "like", "fields": like_fields,
+                     "initiator_oid": open_id})
     _reserve_add(open_id)
 
     hearts_now = max(0, my_hearts - max(pending_unpaid, _reserve_count(open_id)))

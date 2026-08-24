@@ -674,14 +674,24 @@ def reconcile_hearts():
         groups.setdefault(oid, []).append(u)
 
     fixed = 0
+    strikes = getattr(reconcile_hearts, "_strikes", {})
 
     def _write(rec, expected, tag):
         nonlocal fixed
+        rid = rec.get("record_id")
         cur = get_field_number(rec.get("fields", {}), FIELD_HEART_REMAIN, None)
-        if cur != expected:
-            update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_REMAIN: expected})
+        if cur == expected:
+            strikes.pop(rid, None)
+            return
+        prev = strikes.get(rid)
+        if prev and prev[1] == expected:
+            # 连续两轮同向偏差才写：吸收与worker即时写之间的瞬时竞争
+            update_record(USER_TABLE_ID, rid, {FIELD_HEART_REMAIN: expected})
             fixed += 1
+            strikes.pop(rid, None)
             log(f"爱心对账[{tag}]: {get_field_text(rec.get('fields', {}), FIELD_NICKNAME)} {cur} → {expected}")
+        else:
+            strikes[rid] = (cur, expected)
 
     for oid, recs in groups.items():
         primary = pick_primary_record(recs)[0]
@@ -691,6 +701,7 @@ def reconcile_hearts():
             if r.get("record_id") != primary.get("record_id"):
                 _write(r, 0, "副本")
 
+    reconcile_hearts._strikes = strikes
     if fixed:
         log(f"爱心对账完成，本次校正 {fixed} 条")
 

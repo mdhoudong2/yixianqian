@@ -2348,9 +2348,10 @@ def cancel_like(target_openid):
 
     threading.Thread(target=_cancel_reverse, daemon=True).start()
 
-    me_snap = snap_find_user_by_openid(open_id)
-    stored = bitable.get_field_number(me_snap.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS) if me_snap else INITIAL_HEARTS
-    hearts_now = min(MAX_HEARTS, stored + (1 if was_deducted else 0))
+    # 与 /api/user/me 同一权威口径：实时表值 + 退款信用（快照余额可能滞后导致偏差）
+    hearts_now = live_primary_hearts(open_id)
+    if hearts_now is None:
+        hearts_now = INITIAL_HEARTS
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
 
 

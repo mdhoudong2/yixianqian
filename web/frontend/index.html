@@ -1895,7 +1895,9 @@ createApp({
       } catch(e) { return; }
       try {
         await api('/api/like/' + l.openid, { method: 'DELETE' });
-        vant.showToast('已取消喜欢，爱心将在稍后退回');
+        vant.showToast('已取消喜欢，爱心已退回');
+        // 乐观+1：该条若已扣减过，后端会记账退还；未扣减过则下次 syncMe 校正
+        if (user.value) user.value.hearts = Math.min(30, (user.value.hearts || 0) + 1);
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;
         cards.value = [];

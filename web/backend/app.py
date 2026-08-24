@@ -1307,6 +1307,7 @@ def get_cards():
 # 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零
 _like_reserves = {}
+_refund_credits = {}  # 取消喜欢后、对账写回余额前的「可用额度」信用记录
 
 
 def _reserve_add(oid):
@@ -1317,6 +1318,18 @@ def _reserve_count(oid):
     now = time.time()
     arr = [t for t in _like_reserves.get(oid, []) if now - t < 25]
     _like_reserves[oid] = arr
+    return len(arr)
+
+
+def _credit_add(oid):
+    _refund_credits.setdefault(oid, []).append(time.time())
+
+
+def _credit_count(oid):
+    """退款信用：余额字段尚未写回的已承诺退还数。TTL 45s > 对账周期，过期由真实余额接管"""
+    now = time.time()
+    arr = [t for t in _refund_credits.get(oid, []) if now - t < 45]
+    _refund_credits[oid] = arr
     return len(arr)
 
 
@@ -1390,9 +1403,9 @@ def like_user():
     already, is_mutual, pending_unpaid = False, False, 0
     if likes_snap:
         already, is_mutual, pending_unpaid = _scan()
-    # 双花防护：余额 − 待扣减占用（快照口径 与 本进程预留数 取大者）≤0 则拦截
+    # 双花防护 + 退款信用：可用 = 余额 + 待到账退款信用 − 待扣减占用（取大者防双算）
     effective_pending = max(pending_unpaid, _reserve_count(open_id))
-    if my_hearts - effective_pending <= 0:
+    if my_hearts + _credit_count(open_id) - effective_pending <= 0:
         return jsonify({"error": "爱心不足，无法喜欢"}), 400
     if already:
         return jsonify({"error": "你已经喜欢过TA了"}), 400
@@ -2153,12 +2166,17 @@ def cancel_like(target_openid):
     if not existing:
         return jsonify({"error": "未找到喜欢记录"}), 404
 
+    was_deducted = existing.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
     with file_lock:
         # 软取消：只改状态。爱心已扣减保持原值：
         #   扣减过(true)  → 机器人返还循环退1颗；
         #   未扣减(false) → 返还循环不会碰它（避免双退/误退）。
         ok = bitable.update_record(LIKE_TABLE_ID, existing["record_id"], {
             F_LIKE_STATUS: "已取消"})
+    if ok and was_deducted:
+        # 已扣过减的取消：立即发放「退款信用」，用户马上可再点；
+        # 真实余额由对账循环在 ≤25s 内写回，信用TTL短于其稳定周期
+        _credit_add(open_id)
     if not ok:
         return jsonify({"error": "取消失败，请稍后重试"}), 500
 

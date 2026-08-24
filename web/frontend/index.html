@@ -2086,6 +2086,7 @@ createApp({
         await loadMessages(true);
       } catch (e) {
         console.error(e);
+        vant.showToast(e.message || '发送失败');
       }
     }
     async function deleteMessage(m) {

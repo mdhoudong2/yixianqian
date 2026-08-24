@@ -1188,7 +1188,7 @@ createApp({
     const inviteLink = computed(() => {
       const base = registerFormUrl.value || REGISTER_FORM_BASE;
       if (user.value && user.value.user_id) {
-        return base + '?prefill_' + encodeURIComponent('邀请人 ID') + '=' + encodeURIComponent(user.value.user_id);
+        return base + '?prefill_' + encodeURIComponent('邀请人ID') + '=' + encodeURIComponent(user.value.user_id);
       }
       return base;
     });

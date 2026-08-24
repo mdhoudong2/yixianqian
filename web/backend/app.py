@@ -1082,7 +1082,6 @@ def home():
     live_h = live_primary_hearts(open_id)
     if live_h is not None:
         user_brief["hearts"] = live_h
-    app.logger.warning(f"[探针-me] credit={_credit_count(open_id)} reserve={_reserve_count(open_id)} resp={live_h}")
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -1105,7 +1104,6 @@ def user_me():
     live_h = live_primary_hearts(open_id)
     if live_h is not None:
         brief["hearts"] = live_h
-    app.logger.warning(f"[探针-home] credit={_credit_count(open_id)} reserve={_reserve_count(open_id)} resp={live_h}")
     return jsonify(brief)
 
 
@@ -1346,7 +1344,6 @@ def get_cards():
 # 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零
 _like_reserves = {}
-_refund_credits = {}  # 取消喜欢后、对账写回余额前的「可用额度」信用记录
 _recent_cancels = {}  # record_id -> ts：取消意图已发出、表/快照尚未更新的宽限豁免
 
 
@@ -1369,15 +1366,6 @@ def _reserve_release(oid):
         _like_reserves[oid] = arr
 
 
-def _credit_add(oid):
-    _refund_credits.setdefault(oid, []).append(time.time())
-
-
-def _credit_count(oid):
-    """退款信用：余额字段尚未写回的已承诺退还数。TTL 45s > 对账周期，过期由真实余额接管"""
-    now = time.time()
-    arr = [t for t in _refund_credits.get(oid, []) if now - t < 50]
-    _refund_credits[oid] = arr
     return len(arr)
 
 # ===== 异步写出发送箱（outbox）：秒提交的核心 =====
@@ -1420,22 +1408,18 @@ def _outbox_process(op):
                     return True
             elif otype == "cancel":
                 if bitable.update_record(LIKE_TABLE_ID, op["record_id"],
-                                         {F_LIKE_STATUS: "已取消"}) is None:
+                                         {"状态": "已取消", "爱心已扣减": False}) is None:
                     return False
                 if op.get("refund"):
-                    # 即时退款：主档案余额 +1，并翻转标记（机器人退还循环将跳过）
+                    # 即时退款：读主档最新余额+1写回（先翻标记后写余额，与对账方向一致无冲突）
                     recs = bitable.search_records(USER_TABLE_ID, [
                         {"field_name": F_FEISHU_ID, "operator": "is",
                          "value": [op.get("initiator_oid")]}])
                     u = _pick_primary_user(recs)
                     if u:
-                        cur = bitable.get_field_number(u.get("fields", {}),
-                                                       F_HEART_REMAIN, INITIAL_HEARTS)
+                        cur = bitable.get_field_number(u.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS)
                         bitable.update_record(USER_TABLE_ID, u["record_id"],
                                               {F_HEART_REMAIN: min(MAX_HEARTS, cur + 1)})
-                        bitable.update_record(LIKE_TABLE_ID, op["record_id"],
-                                              {F_LIKE_HEART_DEDUCTED: False})
-                return True
         except Exception:
             pass
         time.sleep(2 ** attempt)
@@ -1563,7 +1547,7 @@ def like_user():
         already, is_mutual, pending_unpaid = _scan()
     # 双花防护 + 退款信用：可用 = 余额 + 待到账退款信用 − 待扣减占用（取大者防双算）
     effective_pending = max(pending_unpaid, _reserve_count(open_id))
-    if my_hearts + _credit_count(open_id) - effective_pending <= 0:
+    if my_hearts - effective_pending <= 0:
         return jsonify({"error": "爱心不足，无法喜欢"}), 400
     if already:
         return jsonify({"error": "你已经喜欢过TA了"}), 400
@@ -2327,14 +2311,11 @@ def cancel_like(target_openid):
     live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
     was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
     _recent_cancels[existing["record_id"]] = time.time()
-    if was_deducted:
-        # 已扣减过的取消：立即发放「退款信用」，首页/我的/可点额度即时体现；
-        # 表内真实余额由机器人 ≤25s 写回，信用TTL 50s 覆盖收敛期后过期
-        _credit_add(open_id)
-    else:
+    if not was_deducted:
         # 未扣减过的取消：作废当初的预留计数（否则会持续少显示一颗直到TTL过期）
         _reserve_release(open_id)
-    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"]})
+    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"],
+                     "initiator_oid": open_id, "refund": was_deducted})
 
     # 直接改写本地快照中该记录状态（规避飞书写后读延迟），
     # 再同步刷新：保证紧随其后的 /api/cards 立即把对方放回卡片池
@@ -2365,7 +2346,6 @@ def cancel_like(target_openid):
     hearts_now = live_primary_hearts(open_id)
     if hearts_now is None:
         hearts_now = INITIAL_HEARTS
-    app.logger.warning(f"[探针-cancel] ded={was_deducted} credit={_credit_count(open_id)} reserve={_reserve_count(open_id)} resp={hearts_now}")
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
 
 

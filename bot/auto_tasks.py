@@ -41,12 +41,20 @@ def auto_bind_from_creator():
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "isNotEmpty", "value": []}]
     })
-    existing_openids = {}
+    # 按「类型」拆两组：只拦同类型重复，跨类型（普通↔观察员）放行
+    existing_observer_oids = set()  # 已注册过观察员的 open_id
+    existing_user_oids = set()      # 已注册过普通用户的 open_id
+    existing_nick = {}              # open_id -> 昵称（提示语用）
     for e in existing:
         ef = e.get("fields", {})
         eoid = get_field_text(ef, FIELD_FEISHU_ID)
-        if eoid:
-            existing_openids[eoid] = get_field_text(ef, FIELD_NICKNAME)
+        if not eoid:
+            continue
+        existing_nick.setdefault(eoid, get_field_text(ef, FIELD_NICKNAME))
+        if get_field_text(ef, FIELD_ACCOUNT_STATUS) == STATUS_OBSERVER:
+            existing_observer_oids.add(eoid)
+        else:
+            existing_user_oids.add(eoid)
 
     bound_count = 0
     duplicate_count = 0
@@ -59,9 +67,31 @@ def auto_bind_from_creator():
         if not open_id:
             continue
 
-        # 防重复：该飞书账号已注册过
-        if open_id in existing_openids:
-            old_nick = existing_openids[open_id]
+        # 先判目标类型（邀请码）：正确码→观察员，错误码→已拒绝，空→普通注册
+        invite_code = get_field_text(fields, FIELD_INVITE_CODE)
+        is_observer = bool(OBSERVER_INVITE_CODE and invite_code
+                           and invite_code.strip() == OBSERVER_INVITE_CODE.strip())
+        is_wrong_code = bool(OBSERVER_INVITE_CODE and invite_code
+                             and invite_code.strip() != OBSERVER_INVITE_CODE.strip())
+
+        # 防重复：只拦「同类型」重复，跨类型（普通↔观察员）放行
+        if is_observer and open_id in existing_observer_oids:
+            old_nick = existing_nick.get(open_id, "")
+            update_record(USER_TABLE_ID, record_id, {
+                FIELD_ACCOUNT_STATUS: "已拒绝",
+                FIELD_FEISHU_ID: open_id,
+            })
+            duplicate_count += 1
+            log(f"重复注册观察员已拦截: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
+            send_text_message(open_id,
+                f"你已经注册过观察员啦！姓名：{old_nick}\n\n"
+                f"快去「一线牵 App」中浏览资料。"
+            )
+            send_main_menu_card(open_id)
+            continue
+
+        if not is_observer and not is_wrong_code and open_id in existing_user_oids:
+            old_nick = existing_nick.get(open_id, "")
             # 重复记录标记「已拒绝」（门禁全拦、不可被普通激活），并补写飞书ID：
             # 否则飞书ID仍为空，下一轮会被当成"未绑定"重复轮询、反复发"已注册过"
             update_record(USER_TABLE_ID, record_id, {
@@ -77,47 +107,47 @@ def auto_bind_from_creator():
             send_main_menu_card(open_id)
             continue
 
-        # 观察员注册：填了「邀请码」字段走限权分支（固定通用码→观察员，错误→已拒绝，空→普通待审核）
-        invite_code = get_field_text(fields, FIELD_INVITE_CODE)
-        if OBSERVER_INVITE_CODE and invite_code:
-            if invite_code.strip() == OBSERVER_INVITE_CODE.strip():
-                # 正确邀请码：观察员（跳过人工审核），爱心置 0（观察员无喜欢/报名权限，不参与爱心账）
-                update_record(USER_TABLE_ID, record_id, {
-                    FIELD_ACCOUNT_STATUS: STATUS_OBSERVER,
-                    FIELD_HEART_REMAIN: 0,
-                })
-                if update_user_feishu_id(record_id, open_id):
-                    bound_count += 1
-                    log(f"观察员注册成功: {nickname} -> {open_id}")
-                    existing_openids[open_id] = nickname
+        # 观察员注册：正确码走限权分支（跳过人工审核），爱心置 0（观察员无喜欢/报名权限，不参与爱心账）
+        if is_observer:
+            update_record(USER_TABLE_ID, record_id, {
+                FIELD_ACCOUNT_STATUS: STATUS_OBSERVER,
+                FIELD_HEART_REMAIN: 0,
+            })
+            if update_user_feishu_id(record_id, open_id):
+                bound_count += 1
+                log(f"观察员注册成功: {nickname} -> {open_id}")
+                existing_observer_oids.add(open_id)
+                existing_nick[open_id] = nickname
 
-                    def _bind_observer(_data):
-                        _data[open_id] = {
-                            "open_id": open_id, "nickname": nickname, "record_id": record_id,
-                            "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "observer"
-                        }
-                        return _data
+                def _bind_observer(_data):
+                    _data[open_id] = {
+                        "open_id": open_id, "nickname": nickname, "record_id": record_id,
+                        "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "observer"
+                    }
+                    return _data
 
-                    update_bindings(_bind_observer)
-                    send_text_message(
-                        open_id,
-                        "欢迎你成为一线牵「观察员」！\U0001f389\n\n"
-                        "作为观察员，你可以：\n"
-                        "• 浏览男生/女生资料\n"
-                        "• 留言、反馈\n"
-                        "• 查看活动\n\n"
-                        "（不含点喜欢、报名活动等交友功能）\n\n"
-                        "点下方按钮进入一线牵App看看吧："
-                    )
-                    send_main_menu_card(open_id)
-            else:
-                # 邀请码错误：已拒绝（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
-                update_record(USER_TABLE_ID, record_id, {
-                    FIELD_ACCOUNT_STATUS: "已拒绝",
-                    FIELD_FEISHU_ID: open_id,
-                })
-                log(f"观察员注册邀请码错误: {nickname} (open_id={open_id})")
-                send_text_message(open_id, "邀请码错误，注册未通过。如有疑问请联系管理员。")
+                update_bindings(_bind_observer)
+                send_text_message(
+                    open_id,
+                    "欢迎你成为一线牵「观察员」！\U0001f389\n\n"
+                    "作为观察员，你可以：\n"
+                    "• 浏览男生/女生资料\n"
+                    "• 留言、反馈\n"
+                    "• 查看活动\n\n"
+                    "（不含点喜欢、报名活动等交友功能）\n\n"
+                    "点下方按钮进入一线牵App看看吧："
+                )
+                send_main_menu_card(open_id)
+            continue
+
+        if is_wrong_code:
+            # 邀请码错误：已拒绝（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
+            update_record(USER_TABLE_ID, record_id, {
+                FIELD_ACCOUNT_STATUS: "已拒绝",
+                FIELD_FEISHU_ID: open_id,
+            })
+            log(f"观察员注册邀请码错误: {nickname} (open_id={open_id})")
+            send_text_message(open_id, "邀请码错误，注册未通过。如有疑问请联系管理员。")
             continue
 
         # 新注册用户强制设为待审核（防止表单默认值或用户自选导致直接活跃）
@@ -135,7 +165,8 @@ def auto_bind_from_creator():
         if update_user_feishu_id(record_id, open_id):
             bound_count += 1
             log(f"自动绑定成功: {nickname} -> {open_id} (状态: 待审核)")
-            existing_openids[open_id] = nickname
+            existing_user_oids.add(open_id)
+            existing_nick[open_id] = nickname
 
             def _bind(_data):
                 _data[open_id] = {

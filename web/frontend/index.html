@@ -535,6 +535,7 @@
         <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
         <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
         <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+        <van-cell :title="isObserver ? '切换为普通用户' : '切换为观察员'" is-link @click="switchRole"></van-cell>
         <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       </van-cell-group>
     </div>
@@ -1125,6 +1126,7 @@ createApp({
     const page = ref('cards');
     const user = ref(null);
     const isObserver = computed(() => !!(user.value && user.value.is_observer));
+    const availableRoles = computed(() => (user.value && user.value.available_roles) || []);
     const loggingIn = ref(true);
     const loginError = ref(false);
     const loginErrorMessage = ref('');
@@ -1765,6 +1767,22 @@ createApp({
       actionLoading.value = false;
     }
 
+    // 切换身份（普通用户 <-> 观察员）
+    async function switchRole() {
+      const target = isObserver.value ? 'user' : 'observer';
+      const roles = availableRoles.value || [];
+      if (roles.length <= 1 || !roles.includes(target)) {
+        const name = target === 'observer' ? '观察员' : '普通用户';
+        vant.showToast(`你尚未注册${name}身份，请先完成对应注册`);
+        return;
+      }
+      actionLoading.value = true;
+      try {
+        await api('/api/account/switch', { method: 'POST', body: JSON.stringify({ role: target }) });
+        location.reload();  // 让 /api/home 以新身份重新拉取数据
+      } catch(e) { vant.showToast(e.message); actionLoading.value = false; }
+    }
+
     // 喜欢 - 弹出附言对话框
     function openLikeDialog() {
       if (!currentCard.value || !currentCard.value.openid) return;
@@ -2136,7 +2154,7 @@ createApp({
 
     return {
       page, user, loggingIn, loginError,
-      loginErrorMessage, retryLogin, subPages, isObserver,
+      loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,

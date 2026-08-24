@@ -181,7 +181,7 @@ def live_primary_hearts(open_id):
     if not rec:
         return None
     stored = bitable.get_field_number(rec.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS)
-    return max(0, min(MAX_HEARTS, stored + _credit_count(open_id) - _reserve_count(open_id)))
+    return max(0, min(MAX_HEARTS, stored - _reserve_count(open_id)))
 
 
 def snap_find_user_by_openid(open_id):
@@ -1410,8 +1410,22 @@ def _outbox_process(op):
                     return True
             elif otype == "cancel":
                 if bitable.update_record(LIKE_TABLE_ID, op["record_id"],
-                                         {F_LIKE_STATUS: "已取消"}) is not None:
-                    return True
+                                         {F_LIKE_STATUS: "已取消"}) is None:
+                    return False
+                if op.get("refund"):
+                    # 即时退款：主档案余额 +1，并翻转标记（机器人退还循环将跳过）
+                    recs = bitable.search_records(USER_TABLE_ID, [
+                        {"field_name": F_FEISHU_ID, "operator": "is",
+                         "value": [op.get("initiator_oid")]}])
+                    u = _pick_primary_user(recs)
+                    if u:
+                        cur = bitable.get_field_number(u.get("fields", {}),
+                                                       F_HEART_REMAIN, INITIAL_HEARTS)
+                        bitable.update_record(USER_TABLE_ID, u["record_id"],
+                                              {F_HEART_REMAIN: min(MAX_HEARTS, cur + 1)})
+                        bitable.update_record(LIKE_TABLE_ID, op["record_id"],
+                                              {F_LIKE_HEART_DEDUCTED: False})
+                return True
         except Exception:
             pass
         time.sleep(2 ** attempt)
@@ -2303,11 +2317,10 @@ def cancel_like(target_openid):
     live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
     was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
     _recent_cancels[existing["record_id"]] = time.time()
-    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"]})
-    if was_deducted:
-        # 已扣过减的取消：立即发放「退款信用」，用户马上可再点；
-        # 真实余额由对账循环在 ≤25s 内写回，信用TTL短于其稳定周期
-        _credit_add(open_id)
+    # 退款动作交给 outbox 工作线程即时执行（翻标记 + 余额+1，~2s 内完成），
+    # 不再等机器人 25s 对账周期
+    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"],
+                     "initiator_oid": open_id, "refund": was_deducted})
 
     # 直接改写本地快照中该记录状态（规避飞书写后读延迟），
     # 再同步刷新：保证紧随其后的 /api/cards 立即把对方放回卡片池
@@ -2336,7 +2349,7 @@ def cancel_like(target_openid):
 
     me_snap = snap_find_user_by_openid(open_id)
     stored = bitable.get_field_number(me_snap.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS) if me_snap else INITIAL_HEARTS
-    hearts_now = min(MAX_HEARTS, stored + (_credit_count(open_id) if was_deducted else 0))
+    hearts_now = min(MAX_HEARTS, stored + (1 if was_deducted else 0))
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
 
 

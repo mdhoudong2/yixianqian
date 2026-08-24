@@ -1211,15 +1211,12 @@ def toggle_account_status():
         new_status = "活跃"
     else:
         return jsonify({"error": "当前状态暂不支持切换"}), 400
-    ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_ACCOUNT_STATUS: new_status})
-    if not ok:
-        return jsonify({"error": "状态更新失败，请稍后重试"}), 500
-    # 飞书存在写后读延迟，仅靠刷新快照仍可能拿到旧状态 → 直接改写本地快照，
-    # 保证紧随其后的点爱心/报名等门禁立即读到新状态
+    # 秒提交：spool 幂等写入绝对目标状态 + 本地快照立即生效
+    _spool_append({"type": "status", "record_id": user["record_id"],
+                   "to_status": new_status})
     for u in _snapshot.get("users", []):
         if u.get("record_id") == user["record_id"]:
             u.setdefault("fields", {})[F_ACCOUNT_STATUS] = new_status
-    refresh_snapshot_table("users")
     return jsonify({"ok": True, "account_status": new_status})
 
 
@@ -1483,6 +1480,9 @@ def _spool_process(op):
         if t == "cancel":
             return bitable.update_record(LIKE_TABLE_ID, op["record_id"],
                                          {F_LIKE_STATUS: "已取消"}) is not None
+        if t == "status":
+            return bitable.update_record(USER_TABLE_ID, op["record_id"],
+                                         {F_ACCOUNT_STATUS: op["to_status"]}) is not None
         if t == "cancel_pair":
             rows = bitable.search_records(LIKE_TABLE_ID, {
                 "conjunction": "and",
@@ -1787,6 +1787,9 @@ def create_message():
     if not open_id:
         return jsonify({"error": "未登录"}), 401
     # 留言属于互动行为：仅「活跃」可发（隐藏/待审核/已拒绝/已退出均拦截）
+    _status, _u = _account_status(open_id)
+    if _status == "已隐藏":
+        return jsonify({"error": "你当前处于隐藏状态，不能留言；请先在「我的」页恢复活跃"}), 403
     gate = active_gate(open_id)
     if gate:
         return jsonify(gate[0]), gate[1]

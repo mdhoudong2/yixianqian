@@ -1374,7 +1374,7 @@ def _outbox_process(op):
                     return True
             elif otype == "cancel":
                 if bitable.update_record(LIKE_TABLE_ID, op["record_id"],
-                                         {FIELD_LIKE_STATUS: "已取消"}) is not None:
+                                         {F_LIKE_STATUS: "已取消"}) is not None:
                     return True
         except Exception:
             pass

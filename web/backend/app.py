@@ -182,15 +182,22 @@ _BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")
 # 在途意图（进程级，页面重载不丢失）：
 #   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
 #   _intent_cancels  oid -> [(record_id, ts)] 取消已受理、快照可能仍显示活跃（TTL 60s）
-_intent_likes = {}
-_intent_cancels = {}
+_intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…}
+_intent_cancels = {}  # oid -> [(record_id, ts)]
 
 
 def _intent_prune():
     now = time.time()
-    for d, ttl in ((_intent_likes, 20), (_intent_cancels, 60)):
-        for k in list(d):
-            d[k] = [(a, b) for a, b in d[k] if now - b < ttl]
+    for k in list(_intent_likes):
+        if now - _intent_likes[k]["ts"] > 60:
+            _intent_likes.pop(k, None)
+    for k in list(_intent_cancels):
+        _intent_cancels[k] = [(a, b) for a, b in _intent_cancels[k] if now - b < 60]
+
+
+def _intent_complete(temp_key):
+    """worker 落库成功后消费该意图，避免与快照计数双算"""
+    _intent_likes.pop(temp_key, None)
 
 
 def _balances_file():
@@ -216,7 +223,7 @@ def computed_hearts(open_id):
         if l.get("record_id") in cancel_rids:
             continue
         cnt += 1
-    pending = len(_intent_likes.get(open_id, []))
+    pending = sum(1 for it in _intent_likes.values() if it["oid"] == open_id)
     invites = _balances_file().get("invites", {}).get(open_id, 0)
     return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - pending))
 
@@ -1452,8 +1459,12 @@ def _spool_process(op):
                     {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]},
                 ]})
             if dup:
+                _intent_complete(op.get("temp_key"))
                 return True  # 幂等命中：重复投递视为已完成
-            return bool(bitable.create_record(LIKE_TABLE_ID, op["fields"]))
+            ok = bool(bitable.create_record(LIKE_TABLE_ID, op["fields"]))
+            if ok:
+                _intent_complete(op.get("temp_key"))
+            return ok
         if t == "cancel":
             return bitable.update_record(LIKE_TABLE_ID, op["record_id"],
                                          {F_LIKE_STATUS: "已取消"}) is not None
@@ -1558,6 +1569,9 @@ def like_user():
             break
     if already:
         return jsonify({"error": "你已经喜欢过TA了"}), 400
+    # 在途意图查重：快照尚未见新记录时，同目标连点直接拦截
+    if any(it["target"] == target_openid for it in _intent_likes.values() if it["oid"] == open_id):
+        return jsonify({"error": "你已经喜欢过TA了"}), 400
     if not likes_snap and bitable.find_like(open_id, target_openid):
         return jsonify({"error": "你已经喜欢过TA了"}), 400
 
@@ -1584,7 +1598,7 @@ def like_user():
     _spool_append({"type": "like", "temp_key": temp_key,
                    "initiator_oid": open_id, "target_oid": target_openid,
                    "fields": like_fields})
-    _intent_likes.setdefault(open_id, []).append((temp_key, time.time()))
+    _intent_likes[temp_key] = {"oid": open_id, "target": target_openid, "ts": time.time()}
 
     hearts_now = computed_hearts(open_id)
     return jsonify({"ok": True, "mutual": False, "message": "喜欢成功", "hearts": hearts_now})

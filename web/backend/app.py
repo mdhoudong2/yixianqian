@@ -2352,6 +2352,7 @@ def cancel_like(target_openid):
     hearts_now = live_primary_hearts(open_id)
     if hearts_now is None:
         hearts_now = INITIAL_HEARTS
+    app.logger.warning(f"[归因] was_deducted={was_deducted} credit={_credit_count(open_id)} hearts_now={hearts_now}")
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
 
 

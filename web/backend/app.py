@@ -181,7 +181,7 @@ def live_primary_hearts(open_id):
     if not rec:
         return None
     stored = bitable.get_field_number(rec.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS)
-    return max(0, min(MAX_HEARTS, stored - _reserve_count(open_id)))
+    return max(0, min(MAX_HEARTS, stored))
 
 
 def snap_find_user_by_openid(open_id):
@@ -1347,137 +1347,6 @@ _like_reserves = {}
 _recent_cancels = {}  # record_id -> ts：取消意图已发出、表/快照尚未更新的宽限豁免
 
 
-def _reserve_add(oid):
-    _like_reserves.setdefault(oid, []).append(time.time())
-
-
-def _reserve_count(oid):
-    now = time.time()
-    arr = [t for t in _like_reserves.get(oid, []) if now - t < 25]
-    _like_reserves[oid] = arr
-    return len(arr)
-
-
-def _reserve_release(oid):
-    """取消一条「尚未扣减」的喜欢时调用：该喜欢永远不会被扣减，预合作废"""
-    arr = _like_reserves.get(oid, [])
-    if arr:
-        arr.pop(0)
-        _like_reserves[oid] = arr
-
-
-    return len(arr)
-
-# ===== 异步写出发送箱（outbox）：秒提交的核心 =====
-# 跨海单次飞书写入 ~1.4s；请求仅校验+磁盘持久化操作意图后立即回包（~0.1s），
-# 常驻后台线程执行真正的 create/update；失败重试3次（指数退避）后记入死信文件。
-_outbox_lock = threading.Lock()
-_outbox = []
-_OUTBOX_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_outbox.jsonl")
-_OUTBOX_DEAD = os.path.join(SHARED_DATA_DIR, "yixianqian_outbox_failed.log")
-
-
-def _outbox_enqueue(op):
-    with _outbox_lock:
-        _outbox.append(op)
-        try:
-            with open(_OUTBOX_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(op, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
-
-
-def _outbox_persist_remaining():
-    """把内存队列整体落盘（启动回放与兜底用）"""
-    with _outbox_lock:
-        ops = list(_outbox)
-    try:
-        with open(_OUTBOX_FILE, "w", encoding="utf-8") as f:
-            for op in ops:
-                f.write(json.dumps(op, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
-def _outbox_process(op):
-    otype = op.get("type")
-    for attempt in range(3):
-        try:
-            if otype == "like":
-                r = bitable.create_record(LIKE_TABLE_ID, op["fields"])
-                if not r:
-                    return False
-                # 即时扣减：主档余额-1 + 标记true（单一执行者；若失败由机器人扣减循环兜底）
-                recs = bitable.search_records(USER_TABLE_ID, [
-                    {"field_name": F_FEISHU_ID, "operator": "is",
-                     "value": [op.get("initiator_oid")]}])
-                u = _pick_primary_user(recs)
-                if u:
-                    cur = bitable.get_field_number(u.get("fields", {}),
-                                                   F_HEART_REMAIN, INITIAL_HEARTS)
-                    bitable.update_record(USER_TABLE_ID, u["record_id"],
-                                          {F_HEART_REMAIN: max(0, cur - 1)})
-                    bitable.update_record(LIKE_TABLE_ID, r["record_id"],
-                                          {F_LIKE_HEART_DEDUCTED: True})
-                return True
-            elif otype == "cancel":
-                if bitable.update_record(LIKE_TABLE_ID, op["record_id"],
-                                         {"状态": "已取消", "爱心已扣减": False}) is None:
-                    return False
-                if op.get("refund"):
-                    # 即时退款：读主档最新余额+1写回（先翻标记后写余额，与对账方向一致无冲突）
-                    recs = bitable.search_records(USER_TABLE_ID, [
-                        {"field_name": F_FEISHU_ID, "operator": "is",
-                         "value": [op.get("initiator_oid")]}])
-                    u = _pick_primary_user(recs)
-                    if u:
-                        cur = bitable.get_field_number(u.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS)
-                        bitable.update_record(USER_TABLE_ID, u["record_id"],
-                                              {F_HEART_REMAIN: min(MAX_HEARTS, cur + 1)})
-        except Exception:
-            pass
-        time.sleep(2 ** attempt)
-    try:
-        with open(_OUTBOX_DEAD, "a", encoding="utf-8") as f:
-            f.write(json.dumps(op, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    return False
-
-
-def _outbox_worker():
-    while True:
-        op = None
-        with _outbox_lock:
-            if _outbox:
-                op = _outbox.pop(0)
-        if op is None:
-            time.sleep(0.15)
-            continue
-        ok = _outbox_process(op)
-        if ok:
-            _outbox_persist_remaining()
-
-
-def _outbox_boot():
-    """启动时回放上次未完成的发送箱"""
-    try:
-        if os.path.exists(_OUTBOX_FILE):
-            with open(_OUTBOX_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            _outbox.append(json.loads(line))
-                        except Exception:
-                            pass
-            _outbox_persist_remaining()
-    except Exception:
-        pass
-    threading.Thread(target=_outbox_worker, daemon=True, name="outbox").start()
-
-
-_outbox_boot()
 
 
 
@@ -1560,7 +1429,7 @@ def like_user():
     if likes_snap:
         already, is_mutual, pending_unpaid = _scan()
     # 双花防护 + 退款信用：可用 = 余额 + 待到账退款信用 − 待扣减占用（取大者防双算）
-    effective_pending = max(pending_unpaid, _reserve_count(open_id))
+    effective_pending = pending_unpaid
     if my_hearts - effective_pending <= 0:
         return jsonify({"error": "爱心不足，无法喜欢"}), 400
     if already:
@@ -1588,12 +1457,25 @@ def like_user():
     if message:
         like_fields[F_LIKE_MESSAGE] = message
 
-    _outbox_enqueue({"type": "like", "fields": like_fields,
-                     "initiator_oid": open_id})
-    _reserve_add(open_id)
-
-    hearts_now = max(0, my_hearts - max(pending_unpaid, _reserve_count(open_id)))
+    # 同步语义：一次事务内 创建记录+扣减标记+余额-1，响应即真实值（无抖动）
+    prev_balance = live_primary_hearts(open_id)
+    if prev_balance is None:
+        prev_balance = my_hearts
+    with file_lock:
+        created = bitable.create_record(LIKE_TABLE_ID, like_fields)
+        if not created:
+            return jsonify({"error": "喜欢失败，请稍后重试"}), 500
+        bitable.update_record(LIKE_TABLE_ID, created["record_id"],
+                              {F_LIKE_HEART_DEDUCTED: True})
+        recs = bitable.search_records(USER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+        u = _pick_primary_user(recs)
+        hearts_now = max(0, min(MAX_HEARTS, prev_balance - 1))
+        if u:
+            bitable.update_record(USER_TABLE_ID, u["record_id"],
+                                  {F_HEART_REMAIN: hearts_now})
     refresh_snapshot_table_async("likes")
+    refresh_snapshot_table_async("users")
     return jsonify({"ok": True, "mutual": False, "message": "喜欢成功", "hearts": hearts_now})
 
 
@@ -2326,11 +2208,24 @@ def cancel_like(target_openid):
     live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
     was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
     _recent_cancels[existing["record_id"]] = time.time()
-    if not was_deducted:
-        # 未扣减过的取消：作废当初的预留计数（否则会持续少显示一颗直到TTL过期）
-        _reserve_release(open_id)
-    _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"],
-                     "initiator_oid": open_id, "refund": was_deducted})
+
+    # 同步语义：状态+标记一次写入；已扣减者即时退款（读主档余额+1写回）
+    hearts_now = None
+    with file_lock:
+        ok = bitable.update_record(LIKE_TABLE_ID, existing["record_id"], {
+            F_LIKE_STATUS: "已取消", F_LIKE_HEART_DEDUCTED: False})
+        if not ok:
+            return jsonify({"error": "取消失败，请稍后重试"}), 500
+        if was_deducted:
+            recs = bitable.search_records(USER_TABLE_ID, [
+                {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+            u = _pick_primary_user(recs)
+            if u:
+                cur = bitable.get_field_number(u.get("fields", {}),
+                                               F_HEART_REMAIN, INITIAL_HEARTS)
+                hearts_now = min(MAX_HEARTS, cur + 1)
+                bitable.update_record(USER_TABLE_ID, u["record_id"],
+                                      {F_HEART_REMAIN: hearts_now})
 
     # 直接改写本地快照中该记录状态（规避飞书写后读延迟），
     # 再同步刷新：保证紧随其后的 /api/cards 立即把对方放回卡片池
@@ -2357,8 +2252,9 @@ def cancel_like(target_openid):
 
     threading.Thread(target=_cancel_reverse, daemon=True).start()
 
-    # 与 /api/user/me 同一权威口径：实时表值 + 退款信用（快照余额可能滞后导致偏差）
-    hearts_now = live_primary_hearts(open_id)
+    # 已扣减者：同步退款时已算出精确值；未扣减者：余额本就未动，取实时表值即可
+    if hearts_now is None:
+        hearts_now = live_primary_hearts(open_id)
     if hearts_now is None:
         hearts_now = INITIAL_HEARTS
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})

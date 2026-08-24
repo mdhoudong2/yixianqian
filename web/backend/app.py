@@ -2166,7 +2166,9 @@ def cancel_like(target_openid):
     if not existing:
         return jsonify({"error": "未找到喜欢记录"}), 404
 
-    was_deducted = existing.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
+    # 实时核验扣减标记（快照可能滞后，误判会漏发退款信用）
+    live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
+    was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
     with file_lock:
         # 软取消：只改状态。爱心已扣减保持原值：
         #   扣减过(true)  → 机器人返还循环退1颗；

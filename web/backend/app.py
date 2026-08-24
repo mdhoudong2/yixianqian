@@ -1082,6 +1082,7 @@ def home():
     live_h = live_primary_hearts(open_id)
     if live_h is not None:
         user_brief["hearts"] = live_h
+    app.logger.warning(f"[探针-me] credit={_credit_count(open_id)} reserve={_reserve_count(open_id)} resp={live_h}")
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -1104,6 +1105,7 @@ def user_me():
     live_h = live_primary_hearts(open_id)
     if live_h is not None:
         brief["hearts"] = live_h
+    app.logger.warning(f"[探针-home] credit={_credit_count(open_id)} reserve={_reserve_count(open_id)} resp={live_h}")
     return jsonify(brief)
 
 
@@ -2352,6 +2354,7 @@ def cancel_like(target_openid):
     hearts_now = live_primary_hearts(open_id)
     if hearts_now is None:
         hearts_now = INITIAL_HEARTS
+    app.logger.warning(f"[探针-cancel] ded={was_deducted} credit={_credit_count(open_id)} reserve={_reserve_count(open_id)} resp={hearts_now}")
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
 
 

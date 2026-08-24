@@ -2279,8 +2279,6 @@ def cancel_like(target_openid):
             l.setdefault("fields", {})[F_LIKE_STATUS] = "已取消"
             l["fields"][F_LIKE_HEART_DEDUCTED] = bool(
                 bitable.get_field_number(l.get("fields", {}), F_LIKE_HEART_DEDUCTED, 0))
-    refresh_snapshot_table("likes")
-
     # 反向切断移到后台：「TA->我」的活跃记录也置已取消，避免残留误报双向喜欢/报名通知
     def _cancel_reverse():
         try:

@@ -41,7 +41,6 @@ if _REPO_ROOT not in sys.path:
 from auto_tasks import (
     auto_anonymous_like_loop,
     auto_bind_loop,
-    reconcile_hearts_loop,
     auto_detect_mutual_like_loop,
     auto_fill_like_loop,
     auto_fill_signup_loop,
@@ -49,6 +48,7 @@ from auto_tasks import (
     auto_notify_signup_loop,
     auto_send_view_loop,
     auto_update_activity_signup_loop,
+    reconcile_hearts_loop,
 )
 from cards import WELCOME_TEXT, send_main_menu_card
 from clients import *

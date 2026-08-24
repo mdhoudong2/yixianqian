@@ -1309,6 +1309,7 @@ def get_cards():
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零
 _like_reserves = {}
 _refund_credits = {}  # 取消喜欢后、对账写回余额前的「可用额度」信用记录
+_recent_cancels = {}  # record_id -> ts：取消意图已发出、表/快照尚未更新的宽限豁免
 
 
 def _reserve_add(oid):
@@ -1474,11 +1475,18 @@ def like_user():
     # 单趟扫描 likes 快照：重复检查 / 相互喜欢 / 待扣减占用（防双花）
     # 扣减延迟由机器人执行（≤25s），期间再点新喜欢需先预留：
     #   可用爱心 = 余额字段 − 「已创建但尚未扣减」的活跃喜欢数
+    now_ts = time.time()
+    for rid, t0 in list(_recent_cancels.items()):
+        if now_ts - t0 > 60:
+            _recent_cancels.pop(rid, None)
+
     def _scan():
         existing = False
         mutual = False
         pending_unpaid = 0
         for l in _snap("likes"):
+            if l.get("record_id") in _recent_cancels:
+                continue  # 取消意图已受理，不再计入占用/查重
             lf = l.get("fields", {})
             if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) == open_id                     and bitable.get_select_value(lf, F_LIKE_STATUS) != "已取消":
                 if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
@@ -2257,6 +2265,7 @@ def cancel_like(target_openid):
     # 实时核验扣减标记（快照可能滞后，误判会漏发退款信用）
     live_rec = bitable.get_record(LIKE_TABLE_ID, existing["record_id"]) or existing
     was_deducted = live_rec.get("fields", {}).get(F_LIKE_HEART_DEDUCTED) is True
+    _recent_cancels[existing["record_id"]] = time.time()
     _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"]})
     if was_deducted:
         # 已扣过减的取消：立即发放「退款信用」，用户马上可再点；

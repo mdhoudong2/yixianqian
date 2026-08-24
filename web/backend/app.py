@@ -1310,7 +1310,12 @@ def get_cards():
 
 @app.route("/api/like", methods=["POST"])
 def like_user():
-    """喜欢某人"""
+    """喜欢某人（秒提交版）：
+    校验全部走本地快照，同步路径只做 1 次飞书写入（落库即回包）；
+    扣爱心/匿名通知/相互喜欢配对与名片推送由机器人既有轮询循环处理
+    （auto_deduct_hearts / auto_send_anonymous_like_notification / auto_detect_mutual_like，
+    延迟 ≤30 秒）。跨海单次 API 往返 ~1.3s，任何多调用方案都无法秒回。
+    """
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -1330,132 +1335,71 @@ def like_user():
     if target_openid == open_id:
         return jsonify({"error": "不能喜欢自己"}), 400
 
-    with file_lock:
-        # 检查是否已经喜欢过（实时查，防连点重复）
+    # 双方信息走快照（≤15s 陈旧，性别/昵称等低敏数据可接受）
+    me = snap_find_user_by_openid(open_id)
+    target = snap_find_user_by_openid(target_openid)
+    if not me or not target:
+        return jsonify({"error": "用户不存在"}), 404
+
+    me_fields = me.get("fields", {})
+    target_fields = target.get("fields", {})
+    my_name = bitable.get_field_text(me_fields, F_NICKNAME)
+    target_name = bitable.get_field_text(target_fields, F_NICKNAME)
+    my_id = bitable.get_field_text(me_fields, F_USER_ID)
+    target_id = bitable.get_field_text(target_fields, F_USER_ID)
+    my_hearts = bitable.get_field_number(me_fields, F_HEART_REMAIN, INITIAL_HEARTS)
+    my_gender = bitable.get_select_value(me_fields, F_GENDER)
+    target_gender = bitable.get_select_value(target_fields, F_GENDER)
+
+    if not my_gender or not target_gender:
+        return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
+    if my_gender == target_gender:
+        return jsonify({"error": "仅限异性之间喜欢"}), 400
+    if my_hearts <= 0:
+        return jsonify({"error": "爱心不足，无法喜欢"}), 400
+
+    # 重复/相互检查：内存扫描 likes 快照（快照为空时回退实时查询）。
+    # 极小概率的双击重复由机器人去重循环自动置「已取消」兜底。
+    likes_snap = _snap("likes")
+    if not likes_snap:
         existing = bitable.find_like(open_id, target_openid)
         if existing:
             return jsonify({"error": "你已经喜欢过TA了"}), 400
+        is_mutual = bool(bitable.find_like(target_openid, open_id))
+    else:
+        active_pair = [(bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID),
+                        bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID))
+                       for l in likes_snap
+                       if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"]
+        if (open_id, target_openid) in active_pair:
+            return jsonify({"error": "你已经喜欢过TA了"}), 400
+        is_mutual = (target_openid, open_id) in active_pair
 
-        # 我的信息实时查（爱心扣减要最新值）；目标信息走本地快照（省一次跨海查询）
-        me = bitable.find_user_by_openid(open_id)
-        target = snap_find_user_by_openid(target_openid)
-        if not me or not target:
-            return jsonify({"error": "用户不存在"}), 404
+    # 喜欢类型字段存在性有进程内缓存，热路径为内存判断
+    has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)
+    like_fields = {
+        F_LIKE_INITIATOR: my_name,
+        F_LIKE_TARGET: target_name,
+        F_LIKE_INITIATOR_OPENID: open_id,
+        F_LIKE_TARGET_OPENID: target_openid,
+        F_LIKE_INITIATOR_ID: my_id,
+        F_LIKE_TARGET_ID: target_id,
+        F_LIKE_STATUS: "单向喜欢",
+        # 爱心已扣减留空(false)，由机器人 auto_deduct_hearts 统一扣减
+    }
+    if has_like_type_field:
+        like_fields[F_LIKE_TYPE] = like_type
+    if message:
+        like_fields[F_LIKE_MESSAGE] = message
 
-        me_fields = me.get("fields", {})
-        target_fields = target.get("fields", {})
-        my_name = bitable.get_field_text(me_fields, F_NICKNAME)
-        target_name = bitable.get_field_text(target_fields, F_NICKNAME)
-        my_id = bitable.get_field_text(me_fields, F_USER_ID)
-        target_id = bitable.get_field_text(target_fields, F_USER_ID)
-        my_hearts = bitable.get_field_number(me_fields, F_HEART_REMAIN, INITIAL_HEARTS)
-        my_gender = bitable.get_select_value(me_fields, F_GENDER)
-        target_gender = bitable.get_select_value(target_fields, F_GENDER)
-
-        # 同性不能喜欢（仅限异性），性别缺失先提示完善
-        if not my_gender or not target_gender:
-            return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
-        if my_gender == target_gender:
-            return jsonify({"error": "仅限异性之间喜欢"}), 400
-
-        if my_hearts <= 0:
-            return jsonify({"error": "爱心不足，无法喜欢"}), 400
-
-        # 喜欢类型字段（schema 变更前的防御：表里还没有「喜欢类型」字段时，匿名喜欢照常，实名暂不可用）
-        has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)
-
-        # 实名喜欢：每月限 1 次
-        if like_type == "实名":
-            if not has_like_type_field:
-                return jsonify({"error": "实名喜欢功能暂未开启，请先用匿名喜欢"}), 400
-            cur_month = time.strftime("%Y-%m")
-            my_real_likes = bitable.search_records(LIKE_TABLE_ID, [
-                {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]},
-                {"field_name": F_LIKE_TYPE, "operator": "is", "value": ["实名"]},
-            ])
-            for l in my_real_likes:
-                ct_str = bitable.get_datetime_value(l.get("fields", {}), "创建时间")
-                if ct_str and ct_str[:7] == cur_month:
-                    return jsonify({"error": "本月已用过实名喜欢，每月只有一次机会"}), 400
-
-        # 检查是否相互喜欢（实时查，保证互喜欢即刻成立）
-        target_likes_me = bitable.find_like(target_openid, open_id)
-        is_mutual = bool(target_likes_me)
-
-        # 创建喜欢记录（状态需使用飞书表格中已有的单选选项：单向喜欢/相互喜欢/已取消）
-        like_fields = {
-            F_LIKE_INITIATOR: my_name,
-            F_LIKE_TARGET: target_name,
-            F_LIKE_INITIATOR_OPENID: open_id,
-            F_LIKE_TARGET_OPENID: target_openid,
-            F_LIKE_INITIATOR_ID: my_id,
-            F_LIKE_TARGET_ID: target_id,
-            F_LIKE_STATUS: "相互喜欢" if is_mutual else "单向喜欢",
-            F_LIKE_HEART_DEDUCTED: True,
-        }
-        if has_like_type_field:
-            like_fields[F_LIKE_TYPE] = like_type
-        if message:
-            like_fields[F_LIKE_MESSAGE] = message
+    with file_lock:
         created = bitable.create_record(LIKE_TABLE_ID, like_fields)
-        if not created:
-            return jsonify({"error": "喜欢失败，请稍后重试"}), 500
-
-        # 扣减爱心
-        bitable.update_record(USER_TABLE_ID, me["record_id"], {
-            F_HEART_REMAIN: my_hearts - 1
-        })
-
-        # 如果对方也喜欢了我，更新对方的喜欢记录状态
-        if target_likes_me:
-            bitable.update_record(LIKE_TABLE_ID, target_likes_me["record_id"], {
-                F_LIKE_STATUS: "相互喜欢"
-            })
-
-    # 通知消息移到后台线程发送：飞书 IM 每条都是一次 HTTPS 往返，
-    # 放在请求路径里会让「点爱心」卡 2~5 秒；落库与扣心已完成，此处立即回包。
-    threading.Thread(
-        target=_send_like_notifications,
-        args=(open_id, target_openid, my_name, target_name, my_id, is_mutual, like_type),
-        daemon=True,
-    ).start()
+    if not created:
+        return jsonify({"error": "喜欢失败，请稍后重试"}), 500
 
     refresh_snapshot_table_async("likes")
-    refresh_snapshot_table_async("users")
-    return jsonify({"ok": True, "mutual": is_mutual, "message": "相互喜欢！" if is_mutual else "喜欢成功"})
+    return jsonify({"ok": True, "mutual": False, "message": "喜欢成功"})
 
-
-def _send_like_notifications(initiator_oid, target_oid, my_name, target_name, my_id, is_mutual, like_type):
-    """点喜欢后的飞书通知（后台线程执行，失败不影响已成立的喜欢关系）"""
-    try:
-        if is_mutual:
-            # 相互喜欢：推送双方名片，各自加飞书好友
-            send_text_message(initiator_oid, f"💕 恭喜！你和 {target_name} 相互喜欢了！名片已推送，快去加飞书好友吧～")
-            send_text_message(target_oid, f"💕 恭喜！你和 {my_name} 相互喜欢了！名片已推送，快去加飞书好友吧～")
-            send_user_card(initiator_oid, target_oid)
-            send_user_card(target_oid, initiator_oid)
-        else:
-            # 通知对方（实名喜欢会透露身份；匿名喜欢维持匿名）
-            h5_link = f"{H5_BASE_URL}/#/likes"
-            if like_type == "实名":
-                title = "💌 有人实名喜欢你了"
-                body = f"「{my_name}」（用户ID {my_id}）实名喜欢了你，快去看看吧～"
-            else:
-                title = "💌 有人喜欢你了"
-                body = "有一位用户喜欢了你，快去看看是谁吧～"
-            card = {
-                "header": {"title": {"tag": "plain_text", "content": title}},
-                "elements": [
-                    {"tag": "div", "text": {"tag": "lark_md", "content": body}},
-                    {"tag": "action", "actions": [
-                        {"tag": "button", "text": {"tag": "plain_text", "content": "查看是谁"},
-                         "type": "primary", "url": h5_link}
-                    ]}
-                ]
-            }
-            send_card_message(target_oid, card)
-    except Exception as e:
-        app.logger.warning(f"喜欢通知后台发送失败: {e}")
 
 
 @app.route("/api/feedback", methods=["POST"])

@@ -347,7 +347,8 @@ def snap_signups_by_activity(act_id):
     if not signups:
         return bitable.get_signups(act_id)
     return [s for s in signups
-            if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) == act_id]
+            if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) == act_id
+            and bitable.get_select_value(s.get("fields", {}), F_SIGNUP_STATUS) != "已取消"]
 
 
 def snap_signup(act_id, open_id):
@@ -356,7 +357,9 @@ def snap_signup(act_id, open_id):
         return bitable.get_user_signup(act_id, open_id)
     for s in signups:
         f = s.get("fields", {})
-        if bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) == act_id and bitable.get_field_text(f, F_SIGNUP_OPENID) == open_id:
+        if (bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) == act_id
+                and bitable.get_field_text(f, F_SIGNUP_OPENID) == open_id
+                and bitable.get_select_value(f, F_SIGNUP_STATUS) != "已取消"):
             return s
     return None
 
@@ -374,10 +377,10 @@ def snap_group_selection(act_id, open_id):
     gs = _snap("group_selections")
     if not gs:
         return bitable.get_user_group_selection(act_id, open_id)
-    for g in gs:
-        f = g.get("fields", {})
+    for sg in gs:
+        f = sg.get("fields", {})
         if bitable.get_field_text(f, F_GS_ACTIVITY_ID) == act_id and bitable.get_field_text(f, F_GS_SELECTOR_OID) == open_id:
-            return g
+            return sg
     return None
 
 
@@ -1372,9 +1375,8 @@ def signup(activity_id):
     if status != "报名中":
         return jsonify({"error": f"活动当前状态为「{status}」，无法报名"}), 400
 
-    # 查重：快照优先，未命中回退实时（防「刚报名完立刻重复提交」误判）
-    existing = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
-    if existing:
+    # 查重：实时为准（快照 ≤15s 滞后于「取消报名」，若依赖快照会导致取消后无法重新报名）
+    if bitable.get_user_signup(text_act_id, open_id):
         return jsonify({"error": "你已经报名了这个活动"}), 400
 
     # 人数上限：快照口径，机器人会对账修正
@@ -1432,6 +1434,11 @@ def cancel_signup(activity_id):
         })
     if not ok:
         return jsonify({"error": "取消失败，请稍后重试"}), 500
+
+    # 本地快照立即生效（与状态切换同款秒提交），避免取消后 15s 窗口内重复报名被误拦
+    for s in _snapshot.get("signups", []):
+        if s.get("record_id") == existing["record_id"]:
+            s.setdefault("fields", {})[F_SIGNUP_STATUS] = "已取消"
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")

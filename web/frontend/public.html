@@ -5,53 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>一线牵 · 祝你早日找到另一半</title>
 <link rel="stylesheet" href="lib/vant.min.css">
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f7f8fa; -webkit-tap-highlight-color: transparent; }
-  #app { min-height: 100vh; }
-  .hero { background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 48px 24px 56px; color: #fff; text-align: center; }
-  .hero-logo { font-size: 52px; }
-  .hero-title { font-size: 28px; font-weight: bold; margin-top: 12px; }
-  .hero-sub { font-size: 15px; opacity: 0.92; margin-top: 10px; line-height: 1.6; }
-  .content { padding: 0 12px 96px; margin-top: -30px; }
-  .card { background: #fff; border-radius: 16px; padding: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
-  .feature { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f5f6f7; }
-  .feature:last-child { border-bottom: none; }
-  .feature-icon { width: 40px; height: 40px; border-radius: 10px; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
-  .feature-title { font-size: 15px; font-weight: 600; color: #323233; }
-  .feature-desc { font-size: 12px; color: #969799; margin-top: 3px; line-height: 1.5; }
-  .section-title { font-size: 17px; font-weight: 600; color: #323233; margin: 20px 4px 12px; }
-  .user-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .user-card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.06); }
-  .user-photo { width: 100%; aspect-ratio: 3/4; object-fit: cover; background: #fff0f3; display: block; }
-  .user-info { padding: 10px 12px 12px; }
-  .user-name { font-size: 15px; font-weight: 600; color: #323233; display: flex; align-items: center; }
-  .user-name .gender-icon { font-size: 13px; margin-left: 4px; line-height: 1; }
-  .user-brief { font-size: 12px; color: #646566; margin-top: 4px; line-height: 1.5; }
-  .user-city { font-size: 12px; color: #ff6b81; margin-top: 3px; }
-  .cta-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.06); }
-  .cta-btn { width: 100%; height: 48px; border: none; border-radius: 24px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 17px; font-weight: 600; cursor: pointer; box-shadow: 0 6px 18px rgba(255,107,129,0.35); }
-  .cta-btn:active { transform: scale(0.98); }
-  .guide-step { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }
-  .guide-num { width: 26px; height: 26px; border-radius: 50%; background: #ff6b81; color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
-  .guide-text { font-size: 15px; color: #323233; line-height: 1.7; }
-  .guide-text b { color: #ff6b81; }
-  .guide-link { color: #ff6b81; text-decoration: underline; word-break: break-all; font-size: 14px; }
-  .guide-or { font-size: 15px; color: #323233; line-height: 1.7; margin: 0 0 12px 38px; }
-  .guide-or b { color: #ff6b81; }
-  .qrcode-wrap { text-align: center; margin-top: 8px; }
-  .qrcode-wrap img { width: 200px; height: 200px; border-radius: 12px; }
-  .qrcode-hint { font-size: 12px; color: #969799; margin-top: 8px; }
-  .guide-line { display: flex; align-items: center; gap: 10px; }
-  .feishu-logo { width: 44px; height: 44px; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); flex-shrink: 0; }
-</style>
+<link rel="stylesheet" href="public.css?v=2">
 </head>
 <body>
 <div id="app">
   <div class="hero">
     <div class="hero-logo">💕</div>
-    <div class="hero-title">一线牵</div>
-    <div class="hero-sub">为教会内未婚青年牵线搭桥<br>愿主内的兄弟姐妹，早日找到另一半</div>
+    <div class="hero-title">{{ t.heroTitle }}</div>
+    <div class="hero-sub" v-html="t.heroSub"></div>
   </div>
 
   <div class="content">
@@ -59,28 +20,27 @@
       <div class="feature">
         <div class="feature-icon">🛡️</div>
         <div>
-          <div class="feature-title">人工审核</div>
-          <div class="feature-desc">每一份资料都经过人工审核，拒绝虚假</div>
+          <div class="feature-title">{{ t.f1Title }}</div>
+          <div class="feature-desc">{{ t.f1Desc }}</div>
         </div>
       </div>
       <div class="feature">
         <div class="feature-icon">💌</div>
         <div>
-          <div class="feature-title">匿名喜欢</div>
-          <div class="feature-desc">点爱心，匿名喜欢，相互喜欢就自动牵线</div>
+          <div class="feature-title">{{ t.f2Title }}</div>
+          <div class="feature-desc">{{ t.f2Desc }}</div>
         </div>
       </div>
       <div class="feature">
         <div class="feature-icon">🔔</div>
         <div>
-          <div class="feature-title">动态通知</div>
-          <div class="feature-desc">你喜欢的人报名了活动，你就会收到通知</div>
+          <div class="feature-title">{{ t.f3Title }}</div>
+          <div class="feature-desc">{{ t.f3Desc }}</div>
         </div>
       </div>
     </div>
 
-    <!-- 活跃会员 -->
-    <div class="section-title">💙 活跃的男生们</div>
+    <div class="section-title">💙 {{ t.maleTitle }}</div>
     <div class="user-grid">
       <div class="user-card" v-for="u in maleUsers" :key="'m' + u.nickname">
         <img class="user-photo" :src="u.photos[0]" :alt="u.nickname" @error="u.photos[0]=''">
@@ -92,7 +52,7 @@
       </div>
     </div>
 
-    <div class="section-title">💗 活跃的女生们</div>
+    <div class="section-title">💗 {{ t.femaleTitle }}</div>
     <div class="user-grid">
       <div class="user-card" v-for="u in femaleUsers" :key="'f' + u.nickname">
         <img class="user-photo" :src="u.photos[0]" :alt="u.nickname" @error="u.photos[0]=''">
@@ -106,92 +66,36 @@
   </div>
 
   <div class="cta-bar">
-    <button class="cta-btn" @click="onJoin">如何注册</button>
+    <button class="cta-btn" @click="onJoin">{{ t.joinBtn }}</button>
   </div>
 
-  <!-- 引导注册弹窗 -->
-  <van-popup v-model:show="showGuide" round style="width: 86%; max-width: 360px;">
-    <div style="padding: 24px 20px;">
-      <div style="text-align:center; font-size:18px; font-weight:600; color:#323233; margin-bottom:20px;">加入一线牵 · 两步完成</div>
+  <van-popup v-model:show="showGuide" round class="guide-popup">
+    <div class="popup-body">
+      <div class="popup-title">{{ t.guideTitle }}</div>
       <div class="guide-step">
         <div class="guide-num">1</div>
         <div class="guide-text guide-line">
-          <div>下载 <b>飞书 App</b> 并注册<br><span style="font-size:13px;color:#969799;">（各手机应用市场均可下载）</span></div>
-          <img class="feishu-logo" src="feishu_logo.png" alt="飞书App图标">
+          <div>{{ t.step1a }}<b>{{ t.feishuApp }}</b>{{ t.step1b }}<br><span class="feishu-note">{{ t.step1c }}</span></div>
+          <img class="feishu-logo" src="feishu_logo.png" :alt="t.feishuAlt">
         </div>
       </div>
       <div class="guide-step">
         <div class="guide-num">2</div>
-        <div class="guide-text">点击下面链接，选择 <b>「飞书」</b> 中打开，点击 <b>「申请使用 → 开启单聊」</b>：<br>
+        <div class="guide-text">{{ t.step2a }}<b>{{ t.step2b }}</b>{{ t.step2c }}<b>{{ t.step2d }}</b>{{ t.step2e }}<br>
           <a class="guide-link" href="https://applink.feishu.cn/T996FhMkTERp" target="_blank">https://applink.feishu.cn/T996FhMkTERp</a>
         </div>
       </div>
-      <div class="guide-or">或者，用飞书扫描下方二维码，点击 <b>「申请使用 → 开启单聊」</b></div>
+      <div class="guide-or">{{ t.orA }}<b>{{ t.step2d }}</b></div>
       <div class="qrcode-wrap">
-        <img src="__PUBLIC_QR_CODE__" alt="一线牵二维码">
-        <div class="qrcode-hint">打开飞书「扫一扫」识别二维码</div>
+        <img src="__PUBLIC_QR_CODE__" :alt="t.qrAlt">
+        <div class="qrcode-hint">{{ t.qrHint }}</div>
       </div>
-      <van-button plain type="primary" color="#969799" block round style="margin-top:20px;" @click="showGuide = false">我知道了</van-button>
+      <van-button plain type="primary" color="#969799" block round class="popup-ok" @click="showGuide = false">{{ t.okBtn }}</van-button>
     </div>
   </van-popup>
 </div>
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/vant.min.js"></script>
-<script>
-const { createApp, ref, computed, onMounted } = Vue;
-createApp({
-  setup() {
-    const showGuide = ref(false);
-    const users = ref([]);
-
-    const maleUsers = computed(() => users.value.filter(u => u.gender === '男性'));
-    const femaleUsers = computed(() => users.value.filter(u => u.gender === '女性'));
-
-    function simpleLine(u) {
-      return (u.display_fields && u.display_fields.simple) || '';
-    }
-    function cityOf(u) {
-      const df = u.display_fields || {};
-      const sections = df.sections || [];
-      for (const sec of sections) {
-        const f = (sec.fields || []).find(x => x.label === '现居/工作城市');
-        if (f) return f.value;
-      }
-      return '';
-    }
-
-    function track(event) {
-      try {
-        fetch('/api/track', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event, from: 'public' })
-        }).catch(() => {});
-      } catch (e) {}
-    }
-    function onJoin() {
-      showGuide.value = true;
-      track('join_click');
-    }
-
-    async function loadUsers() {
-      try {
-        const resp = await fetch('/api/public/users');
-        const data = await resp.json();
-        users.value = data.users || [];
-      } catch (e) {}
-    }
-
-    onMounted(() => {
-      track('page_view');
-      loadUsers();
-      // 每 30 秒静默刷新，让新增用户的照片和资料实时更新到公开页
-      setInterval(loadUsers, 30000);
-    });
-
-    return { showGuide, users, maleUsers, femaleUsers, simpleLine, cityOf, onJoin };
-  }
-}).use(vant).mount('#app');
-</script>
+<script src="public.js?v=1"></script>
 </body>
 </html>

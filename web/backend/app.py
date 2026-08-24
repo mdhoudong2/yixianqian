@@ -95,6 +95,7 @@ SNAPSHOT_REFRESH_INTERVAL = 60  # 秒（曾为15s，高频轮询易触发飞书�
 _snapshot = {
     "users": [], "activities": [], "signups": [],
     "likes": [], "group_selections": [], "group_results": [],
+    "messages": [],
 }
 _snapshot_lock = threading.RLock()
 
@@ -105,6 +106,7 @@ _SNAPSHOT_FETCHERS = {
     "likes": lambda: bitable.search_records(LIKE_TABLE_ID),
     "group_selections": lambda: bitable.search_records(GROUP_SELECT_TABLE),
     "group_results": lambda: bitable.search_records(GROUP_RESULT_TABLE),
+    "messages": lambda: bitable.search_records(MESSAGE_TABLE_ID),
 }
 
 
@@ -1189,6 +1191,15 @@ def home():
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
                      for l in snap_likes_by_initiator(open_id)
                      if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"}
+    # 留言数：一次性按目标 open_id 计数（排除已删除/已举报），供前端「留言」tab 显示数量
+    msg_counts = {}
+    for m in _snap("messages"):
+        mf = m.get("fields", {})
+        if bitable.get_select_value(mf, F_MSG_STATUS) != "正常":
+            continue
+        t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
+        if t:
+            msg_counts[t] = msg_counts.get(t, 0) + 1
     cards = []
     for u in snap_active_users():
         fields = u.get("fields", {})
@@ -1201,6 +1212,7 @@ def home():
         brief["display_fields"] = build_display_fields(fields)
         brief["subtitle"] = build_subtitle(fields)
         brief["liked"] = uid in liked_openids
+        brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
 
     # 喜欢（谁喜欢了我 / 相互喜欢）
@@ -1511,6 +1523,16 @@ def get_cards():
         if bitable.get_select_value(like.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
 
+    # 留言数：一次性按目标 open_id 计数（排除已删除/已举报），供前端「留言」tab 显示数量
+    msg_counts = {}
+    for m in _snap("messages"):
+        mf = m.get("fields", {})
+        if bitable.get_select_value(mf, F_MSG_STATUS) != "正常":
+            continue
+        t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
+        if t:
+            msg_counts[t] = msg_counts.get(t, 0) + 1
+
     cards = []
     for u in all_users:
         fields = u.get("fields", {})
@@ -1530,6 +1552,7 @@ def get_cards():
         brief["display_fields"] = build_display_fields(fields)
         brief["subtitle"] = build_subtitle(fields)
         brief["liked"] = uid in liked_openids
+        brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
 
     # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出

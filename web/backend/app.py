@@ -1417,8 +1417,6 @@ _recent_cancels = {}  # record_id -> ts：取消意图已发出、表/快照尚�
 
 
 
-@app.route("/api/like", methods=["POST"])
-
 def _spool_append(op):
     line = json.dumps(op, ensure_ascii=False)
     with _spool_lock:
@@ -1506,6 +1504,7 @@ def _spool_boot():
 _spool_boot()
 
 
+@app.route("/api/like", methods=["POST"])
 def like_user():
     """喜欢某人（v6：校验→spool落盘→立即回包；爱心为事件计算值，0秒精确）"""
     open_id = require_login()

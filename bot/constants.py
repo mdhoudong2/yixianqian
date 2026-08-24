@@ -24,7 +24,7 @@ ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS
 REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")
 LIKE_FORM_URL = getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b")
 # 观察员注册（非单身看热闹，限权）：管理员批量生成的唯一邀请码 + 独立表单
-OBSERVER_FORM_URL = getattr(_cfg, "OBSERVER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnz9wvQvcyFlwIGpFQYWSCQA")
+OBSERVER_FORM_URL = getattr(_cfg, "OBSERVER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnaUgAS9uNQ9YqApwlp4jXlh")
 
 # ==================== 多维表格配置 ====================
 BASE_TOKEN = _cfg.BASE_TOKEN

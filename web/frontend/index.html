@@ -1188,7 +1188,7 @@ createApp({
     const inviteLink = computed(() => {
       const base = registerFormUrl.value || REGISTER_FORM_BASE;
       if (user.value && user.value.user_id) {
-        return base + '?prefill_' + encodeURIComponent('邀请人ID') + '=' + encodeURIComponent(user.value.user_id);
+        return base + '?prefill_' + encodeURIComponent('邀请人 ID') + '=' + encodeURIComponent(user.value.user_id);
       }
       return base;
     });
@@ -1900,7 +1900,7 @@ createApp({
         await vant.showConfirmDialog({ title: '取消喜欢', message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将在稍后退回。', confirmButtonColor: '#ee0a24' });
       } catch(e) { return; }
       try {
-        await api('/api/like/' + l.openid, { method: 'DELETE' });
+        const data = await api('/api/like/' + l.openid, { method: 'DELETE' });
         vant.showToast('已取消喜欢，爱心已退回');
         // 优先用后端返回的权威爱心数，无则本地乐观+1
         if (user.value) {

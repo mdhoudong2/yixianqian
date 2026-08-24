@@ -482,25 +482,35 @@ def roles_of(open_id):
 
 def snap_self_user():
     """按当前会话 role 解析「本人」档案：
-    observer → 状态为观察员的记录；user → 非观察员主档（活跃优先）。"""
+    observer → 状态为观察员的记录；user → 非观察员主档（活跃优先）。
+    快照优先；若快照显示门禁态（待审核/已拒绝/已退出），实时直查兜底，
+    避免刚被审核通过（待审核→活跃）时仍读到旧快照的「审核中」。"""
     open_id = g.yxq_open_id
     if not open_id:
         return None
+
+    def _resolve(matches):
+        if g.yxq_role == "observer":
+            obs = [u for u in matches
+                   if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER]
+            return (obs or matches)[0]
+        non_obs = [u for u in matches
+                   if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) != STATUS_OBSERVER]
+        return _pick_primary_user(non_obs or matches)
+
     users = _snap("users")
     matches = [u for u in users
                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
-    if not matches:
-        matches = bitable.search_records(USER_TABLE_ID, [
+    rec = _resolve(matches) if matches else None
+    # 快照未命中，或快照显示门禁态（可能已被审核通过但快照未刷新）→ 实时直查
+    gated = bool(rec) and bitable.get_select_value(
+        rec.get("fields", {}), F_ACCOUNT_STATUS) in ("待审核", "已拒绝", "已退出")
+    if not rec or gated:
+        live = bitable.search_records(USER_TABLE_ID, [
             {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
-    if not matches:
-        return None
-    if g.yxq_role == "observer":
-        obs = [u for u in matches
-               if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER]
-        return (obs or matches)[0]
-    non_obs = [u for u in matches
-               if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) != STATUS_OBSERVER]
-    return _pick_primary_user(non_obs or matches)
+        if live:
+            rec = _resolve(live)
+    return rec
 
 
 # ========== 账号状态门禁 ==========

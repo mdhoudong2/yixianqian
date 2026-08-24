@@ -183,7 +183,7 @@ _BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")
 #   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
 #   _intent_cancels  oid -> [(record_id, ts)] 取消已受理、快照可能仍显示活跃（TTL 60s）
 _intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…}
-_intent_cancels = {}  # oid -> [(record_id, ts)]
+_intent_cancels = {}  # oid -> [(target_openid, ts)]
 
 
 def _intent_prune():
@@ -212,7 +212,7 @@ def computed_hearts(open_id):
     """爱心数 = 初始 + 邀请奖励 − 有效喜欢数（快照 + 在途意图修正）。
     纯计算，零表读、零延迟、零竞争；对自己操作 0 秒精确。"""
     _intent_prune()
-    cancel_rids = {rid for rid, _ in _intent_cancels.get(open_id, [])}
+    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
     cnt = 0
     for l in _snap("likes"):
         f = l.get("fields", {})
@@ -220,7 +220,7 @@ def computed_hearts(open_id):
             continue
         if bitable.get_select_value(f, F_LIKE_STATUS) == "已取消":
             continue
-        if l.get("record_id") in cancel_rids:
+        if bitable.get_field_text(f, F_LIKE_TARGET_OPENID) in cancel_targets:
             continue
         cnt += 1
     snap_rids = set()
@@ -1483,6 +1483,20 @@ def _spool_process(op):
         if t == "cancel":
             return bitable.update_record(LIKE_TABLE_ID, op["record_id"],
                                          {F_LIKE_STATUS: "已取消"}) is not None
+        if t == "cancel_pair":
+            rows = bitable.search_records(LIKE_TABLE_ID, {
+                "conjunction": "and",
+                "conditions": [
+                    {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is",
+                     "value": [op.get("initiator_oid")]},
+                    {"field_name": F_LIKE_TARGET_OPENID, "operator": "is",
+                     "value": [op.get("target_oid")]},
+                    {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]},
+                ]})
+            for row in rows:
+                bitable.update_record(LIKE_TABLE_ID, row["record_id"],
+                                      {F_LIKE_STATUS: "已取消"})
+            return True  # 幂等：找不到即视为已完成
     except Exception:
         return False
     return False
@@ -1568,16 +1582,16 @@ def like_user():
 
     # 重复/相互检查（快照 + 取消意图豁免）
     _intent_prune()
-    cancel_rids = {rid for rid, _ in _intent_cancels.get(open_id, [])}
+    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
     already = False
     likes_snap = _snap("likes")
     for l in likes_snap:
-        if l.get("record_id") in cancel_rids:
-            continue
         lf = l.get("fields", {})
         if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
             continue
         if bitable.get_select_value(lf, F_LIKE_STATUS) == "已取消":
+            continue
+        if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) in cancel_targets:
             continue
         if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
             already = True
@@ -2339,22 +2353,18 @@ def cancel_like(target_openid):
                 and bitable.get_select_value(f, F_LIKE_STATUS) != "已取消"):
             existing = l
             break
-    if not existing:
-        if any(it["oid"] == open_id and it["target"] == target_openid
-               for it in _intent_likes.values()):
-            for _ in range(6):  # 等 worker 落库（最多 ~5s）
-                time.sleep(0.8)
-                existing = bitable.find_like(open_id, target_openid)
-                if existing:
-                    break
-        else:
-            existing = bitable.find_like(open_id, target_openid)
-    if not existing:
+    pending_like = any(it["oid"] == open_id and it["target"] == target_openid
+                       for it in _intent_likes.values())
+    if not existing and not pending_like:
+        existing = bitable.find_like(open_id, target_openid)
+    if not existing and not pending_like:
         return jsonify({"error": "未找到喜欢记录"}), 404
 
-    rid = existing["record_id"]
-    _spool_append({"type": "cancel", "record_id": rid})
-    _intent_cancels.setdefault(open_id, []).append((rid, time.time()))
+    rid = existing["record_id"] if existing else None
+    # 按对象幂等入队：worker 落库后或立即找到活跃记录执行取消；响应零等待
+    _spool_append({"type": "cancel_pair",
+                   "initiator_oid": open_id, "target_oid": target_openid})
+    _intent_cancels.setdefault(open_id, []).append((target_openid, time.time()))
     # 消费对应喜欢意图：否则其桥接计数会让取消后仍少显示一颗
     for k in list(_intent_likes):
         it = _intent_likes[k]
@@ -2363,7 +2373,9 @@ def cancel_like(target_openid):
 
     # 本地快照即时置灰：保证紧随其后的 /api/cards 立即把对方放回卡片池
     for l in _snapshot.get("likes", []):
-        if l.get("record_id") == rid:
+        lf = l.get("fields", {})
+        if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) == open_id and \
+                bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
             l.setdefault("fields", {})[F_LIKE_STATUS] = "已取消"
 
     # 反向切断（后台线程，幂等）

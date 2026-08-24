@@ -1361,6 +1361,14 @@ def _reserve_count(oid):
     return len(arr)
 
 
+def _reserve_release(oid):
+    """取消一条「尚未扣减」的喜欢时调用：该喜欢永远不会被扣减，预合作废"""
+    arr = _like_reserves.get(oid, [])
+    if arr:
+        arr.pop(0)
+        _like_reserves[oid] = arr
+
+
 def _credit_add(oid):
     _refund_credits.setdefault(oid, []).append(time.time())
 
@@ -2323,6 +2331,9 @@ def cancel_like(target_openid):
         # 已扣减过的取消：立即发放「退款信用」，首页/我的/可点额度即时体现；
         # 表内真实余额由机器人 ≤25s 写回，信用TTL 50s 覆盖收敛期后过期
         _credit_add(open_id)
+    else:
+        # 未扣减过的取消：作废当初的预留计数（否则会持续少显示一颗直到TTL过期）
+        _reserve_release(open_id)
     _outbox_enqueue({"type": "cancel", "record_id": existing["record_id"]})
 
     # 直接改写本地快照中该记录状态（规避飞书写后读延迟），

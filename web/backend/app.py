@@ -331,6 +331,27 @@ def require_login():
     return get_session()
 
 
+# ========== 账号状态门禁 ==========
+# 待审核/已退出：不允许浏览牵线内容与关键操作（点爱心/报名/志愿）；
+# 已隐藏：放行使用，只是不出现在他人卡片池（snap_active_users 已过滤）。
+GATE_MESSAGES = {
+    "待审核": {"error": "资料审核中，通过后即可使用一线牵App", "gate": "待审核"},
+    "已退出": {"error": "你已暂时退出相亲市场，如需恢复请联系管理员", "gate": "已退出"},
+}
+
+
+def account_gate(open_id):
+    """返回 None 表示放行；否则返回 (body, http_status) 由调用方直接返回"""
+    user = snap_find_user_by_openid(open_id)
+    if not user:
+        return {"error": "用户不存在"}, 404
+    status = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
+    body = GATE_MESSAGES.get(status)
+    if body:
+        return body, 403
+    return None
+
+
 # ========== 飞书消息 ==========
 
 def send_text_message(receive_id, text):
@@ -931,6 +952,9 @@ def home():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     # 自己的信息优先读快照，避免每次登录直连飞书超时（写操作后已异步刷新快照）
     user = snap_find_user_by_openid(open_id)
@@ -1086,6 +1110,9 @@ def signup(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     with file_lock:
         # 读取走快照，省实时API（人数/状态有 ≤15s 延迟，飞书侧自会修正）
@@ -1141,6 +1168,9 @@ def cancel_signup(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     with file_lock:
         # 读取走快照，省实时API（状态有 ≤15s 延迟）
@@ -1178,6 +1208,9 @@ def get_cards():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     user = snap_find_user_by_openid(open_id)
     if not user:
@@ -1253,6 +1286,9 @@ def like_user():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     data = request.get_json() or {}
     target_openid = data.get("target_openid", "")
@@ -1655,6 +1691,9 @@ def group_select(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     data = request.get_json() or {}
     choices = data.get("choices", [])  # [openid1, openid2, ...] 最多7个

@@ -275,12 +275,19 @@
   <van-loading size="24px">正在登录...</van-loading>
 </div>
 <!-- 未登录 -->
-<div v-else-if="!user" class="login-page">
+<div v-else-if="!user && !gateMessage" class="login-page">
   <div class="login-logo">💕</div>
   <div class="login-title">一线牵</div>
   <div class="login-desc">真实、纯粹的交友平台<br>请在飞书中搜索"一线牵"机器人<br>从机器人进入使用</div>
   <div v-if="loginError" style="color:#ee0a24;font-size:13px;margin-bottom:16px;padding:0 20px;">{{ loginErrorMessage || '登录失败，请重试' }}</div>
   <van-button type="primary" color="#ff6b81" @click="retryLogin" v-if="loginError">重新登录</van-button>
+</div>
+<!-- 账号状态门禁（待审核/已退出） -->
+<div v-else-if="gateMessage" class="login-page">
+  <div class="login-logo">{{ gateIcon }}</div>
+  <div class="login-title">{{ gateTitle }}</div>
+  <div class="login-desc">{{ gateMessage }}<br>如有疑问请联系管理员</div>
+  <van-button plain type="primary" color="#969799" style="margin-top:16px;" @click="retryGate">刷新重试</van-button>
 </div>
 <!-- 主界面 -->
 <template v-else>
@@ -1113,6 +1120,11 @@ createApp({
     const loggingIn = ref(true);
     const loginError = ref(false);
     const loginErrorMessage = ref('');
+    // 账号状态门禁（待审核/已退出）：后端 /api/home 返回 403 时整屏提示
+    const gateMessage = ref('');
+    const gateTitle = computed(() => gateMessage.value.includes('审核中') ? '资料审核中' : '账号已退出');
+    const gateIcon = computed(() => gateMessage.value.includes('审核中') ? '⏳' : '🚪');
+    function retryGate() { window.location.reload(); }
     const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me'];
 
     // 活动
@@ -1445,7 +1457,17 @@ createApp({
 
     // 一次拉取首页全部数据（我的信息 + 卡片 + 喜欢 + 活动）
     async function loadHome() {
-      const data = await api('/api/home');
+      let data;
+      try {
+        data = await api('/api/home');
+      } catch (e) {
+        // 账号状态门禁（待审核/已退出）：整屏提示，不当作登录失败
+        if (e.message && (e.message.includes('审核中') || e.message.includes('已暂时退出'))) {
+          gateMessage.value = e.message;
+          return;
+        }
+        throw e;
+      }
       user.value = data.user;
       cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
       likesData.value = data.likes || { liked_me: [], mutual: [] };
@@ -2063,6 +2085,7 @@ createApp({
     return {
       page, user, loggingIn, loginError,
       loginErrorMessage, retryLogin, subPages,
+      gateMessage, gateTitle, gateIcon, retryGate,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup,

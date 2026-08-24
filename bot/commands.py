@@ -6,6 +6,7 @@ from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 from store import load_invite_rewarded, reserve_notified, unreserve_notified
+from store import generate_observer_codes, load_observer_codes
 
 
 def handle_register_command(sender_id):
@@ -118,13 +119,14 @@ def handle_help_command(sender_id):
 
 
 def handle_observer_command(sender_id):
-    """观察员注册：返回独立表单链接 + 提示填固定邀请码（仅非单身看热闹用）"""
-    if not OBSERVER_INVITE_CODE or not OBSERVER_FORM_URL:
+    """观察员注册：返回独立表单链接 + 提示填管理员发放的邀请码（仅非单身看热闹用）"""
+    if not OBSERVER_FORM_URL:
         return "观察员注册尚未开放，如有需要请联系管理员。"
     return (
         "观察员（非单身看热闹）注册说明：\n\n"
         f"请在飞书APP内打开下方链接填写观察员注册表单：\n\n"
         f"{OBSERVER_FORM_URL}\n\n"
+        f"填写时需填入管理员发放的「邀请码」（每个邀请码仅可用一次）。\n"
         f"提交后可浏览男生/女生资料、留言、反馈、查看活动（不含点喜欢、报名等交友功能）。"
     )
 
@@ -353,6 +355,36 @@ def handle_group_help():
 
 
 
+def handle_admin_generate_observer_codes(keyword):
+    """管理员：批量生成观察员邀请码。格式：生成观察员邀请码 N"""
+    parts = keyword.strip().split()
+    if len(parts) != 1 or not parts[0].isdigit():
+        return "格式：生成观察员邀请码 数量\n例如：生成观察员邀请码 10"
+    n = int(parts[0])
+    if n <= 0 or n > 200:
+        return "数量需在 1~200 之间"
+    codes = generate_observer_codes(n)
+    return ("已生成 %d 个观察员邀请码（每个仅可用一次）：\n\n%s\n\n"
+            "请逐个发给观察员，注册时填写。") % (len(codes), "\n".join(codes))
+
+
+def handle_admin_list_observer_codes():
+    """管理员：查看观察员邀请码及使用状态"""
+    codes = load_observer_codes()
+    if not codes:
+        return "尚未生成观察员邀请码。发送「生成观察员邀请码 N」批量生成。"
+    unused = [(c, v) for c, v in codes.items() if not v.get("used")]
+    used = [(c, v) for c, v in codes.items() if v.get("used")]
+    lines = [f"观察员邀请码（未用 {len(unused)} / 已用 {len(used)}）：\n"]
+    lines.append("【未使用】")
+    lines.extend(sorted(c for c, _ in unused))
+    if used:
+        lines.append("\n【已使用】")
+        for c, v in sorted(used):
+            lines.append(f"{c} → {v.get('used_by', '')} ({v.get('used_at', '')})")
+    return "\n".join(lines)
+
+
 def handle_admin_help():
     return (
         "管理员指令：\n\n"
@@ -361,6 +393,8 @@ def handle_admin_help():
         "【拒绝/隐藏 U-xxx或姓名】拒绝用户\n"
         "【通知 U-xxx 内容】给用户发消息\n"
         "【用户统计】查看统计数据\n"
+        "【生成观察员邀请码 N】批量生成观察员邀请码\n"
+        "【查看观察员邀请码】查看邀请码使用状态\n"
         "【开始填志愿 活动ID 男数 女数】开始填志愿\n"
         "【开启分组功能 活动ID 开/关】控制 H5 我的页分组入口\n"
         "【查看未提交 活动ID】查看未提交志愿的报名者\n"

@@ -16,7 +16,9 @@ from queries import (
 )
 from store import (
     add_notification,
+    consume_observer_code,
     load_invite_rewarded,
+    load_observer_codes,
     reserve_notified,
     save_invite_rewarded,
     unreserve_notified,
@@ -67,12 +69,16 @@ def auto_bind_from_creator():
         if not open_id:
             continue
 
-        # 先判目标类型（邀请码）：正确码→观察员，错误码→已拒绝，空→普通注册
-        invite_code = get_field_text(fields, FIELD_INVITE_CODE)
-        is_observer = bool(OBSERVER_INVITE_CODE and invite_code
-                           and invite_code.strip() == OBSERVER_INVITE_CODE.strip())
-        is_wrong_code = bool(OBSERVER_INVITE_CODE and invite_code
-                             and invite_code.strip() != OBSERVER_INVITE_CODE.strip())
+        # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→已拒绝，空→普通注册
+        invite_code = (get_field_text(fields, FIELD_INVITE_CODE) or "").strip()
+        is_observer = False
+        is_wrong_code = False
+        codes = {}
+        if invite_code:
+            codes = load_observer_codes()
+            code_valid = invite_code in codes and not codes.get(invite_code, {}).get("used")
+            is_observer = code_valid
+            is_wrong_code = not code_valid
 
         # 防重复：只拦「同类型」重复，跨类型（普通↔观察员）放行
         if is_observer and open_id in existing_observer_oids:
@@ -107,8 +113,18 @@ def auto_bind_from_creator():
             send_main_menu_card(open_id)
             continue
 
-        # 观察员注册：正确码走限权分支（跳过人工审核），爱心置 0（观察员无喜欢/报名权限，不参与爱心账）
+        # 观察员注册：有效码走限权分支（跳过人工审核），爱心置 0（观察员无喜欢/报名权限，不参与爱心账）
         if is_observer:
+            # 原子消耗邀请码（未用→已用）；已被并发占用则拒绝，杜绝一码多用
+            if not consume_observer_code(invite_code, nickname):
+                update_record(USER_TABLE_ID, record_id, {
+                    FIELD_ACCOUNT_STATUS: "已拒绝",
+                    FIELD_FEISHU_ID: open_id,
+                })
+                duplicate_count += 1
+                log(f"观察员邀请码已被使用: {nickname} (open_id={open_id})")
+                send_text_message(open_id, "邀请码已被使用，注册未通过。如有疑问请联系管理员。")
+                continue
             update_record(USER_TABLE_ID, record_id, {
                 FIELD_ACCOUNT_STATUS: STATUS_OBSERVER,
                 FIELD_HEART_REMAIN: 0,
@@ -141,13 +157,14 @@ def auto_bind_from_creator():
             continue
 
         if is_wrong_code:
-            # 邀请码错误：已拒绝（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
+            # 邀请码错误或已被使用：已拒绝（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
+            msg = "邀请码已被使用" if invite_code in codes else "邀请码错误"
             update_record(USER_TABLE_ID, record_id, {
                 FIELD_ACCOUNT_STATUS: "已拒绝",
                 FIELD_FEISHU_ID: open_id,
             })
-            log(f"观察员注册邀请码错误: {nickname} (open_id={open_id})")
-            send_text_message(open_id, "邀请码错误，注册未通过。如有疑问请联系管理员。")
+            log(f"观察员注册邀请码无效: {nickname} (open_id={open_id})")
+            send_text_message(open_id, f"{msg}，注册未通过。如有疑问请联系管理员。")
             continue
 
         # 新注册用户强制设为待审核（防止表单默认值或用户自选导致直接活跃）

@@ -2081,8 +2081,10 @@ createApp({
     const replyTarget = ref(null);
     let msgLoadedFor = null;  // 已加载留言的卡片 openid（切卡片前不重复请求）
     const threadedMessages = computed(() => {
-      const tops = messages.value.filter(m => !m.parent_id);
-      const replies = messages.value.filter(m => m.parent_id);
+      const ids = new Set(messages.value.map(m => m.id));
+      // 父留言已删除的「孤儿回复」也作顶级显示，保证列表条数与角标一致
+      const tops = messages.value.filter(m => !m.parent_id || !ids.has(m.parent_id));
+      const replies = messages.value.filter(m => m.parent_id && ids.has(m.parent_id));
       return tops.map(t => ({ ...t, replies: replies.filter(r => r.parent_id === t.id) }));
     });
     function fmtTimeAgo(ts) {

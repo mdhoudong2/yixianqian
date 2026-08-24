@@ -1979,6 +1979,12 @@ def delete_message(record_id):
     if open_id != author_oid and open_id != target_oid:
         return jsonify({"error": "无权删除"}), 403
     bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
+    # 级联删除该留言下的回复，避免产生「父留言已删、回复仍挂 parent_id」的孤儿，导致角标比可见条数多
+    replies = bitable.search_records(MESSAGE_TABLE_ID, [
+        {"field_name": F_MSG_PARENT_ID, "operator": "is", "value": [record_id]}
+    ])
+    for r in replies:
+        bitable.update_record(MESSAGE_TABLE_ID, r.get("record_id"), {F_MSG_STATUS: "已删除"})
     return jsonify({"ok": True})
 
 

@@ -210,6 +210,8 @@
   .admin-help-panel { padding: 20px 16px 16px; }
   .admin-help-title { font-size: 17px; font-weight: 600; color: #323233; text-align: center; margin-bottom: 16px; }
   .admin-help-list { max-height: 55vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .admin-help-cat { font-size: 13px; font-weight: 600; color: #ff6b81; padding: 12px 2px 6px; }
+  .admin-help-cat:first-child { padding-top: 0; }
   .admin-help-item { font-size: 14px; color: #323233; line-height: 1.5; padding: 10px 12px; background: #f7f8fa; border-radius: 8px; margin-bottom: 10px; word-break: break-all; }
   .admin-help-item:last-child { margin-bottom: 0; }
   .admin-help-close { margin-top: 16px; text-align: center; font-size: 15px; color: #ff6b81; padding: 10px; cursor: pointer; }
@@ -512,7 +514,7 @@
     </div>
     <div class="profile-name">{{ user.nickname }}
       <button v-if="!isObserver" class="status-toggle" :class="accountStatusLabel === '隐藏' ? 'status-hidden' : 'status-active'" @click="toggleAccountStatus">{{ accountStatusLabel }}</button>
-      <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">观察员</span>
+      <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">吃瓜群众</span>
     </div>
     <div class="profile-hearts" v-if="!isObserver"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
   </div>
@@ -535,7 +537,7 @@
         <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
         <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
         <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
-        <van-cell :title="isObserver ? '切换为普通用户' : '切换为观察员'" is-link @click="switchRole"></van-cell>
+        <van-cell :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>
         <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       </van-cell-group>
     </div>
@@ -955,7 +957,10 @@
   <div class="admin-help-panel">
     <div class="admin-help-title">管理员指令</div>
     <div class="admin-help-list">
-      <div v-for="(c, i) in adminCommands" :key="i" class="admin-help-item">{{ c }}</div>
+      <template v-for="(g, gi) in adminCommands" :key="gi">
+        <div class="admin-help-cat">{{ g.title }}</div>
+        <div v-for="(c, i) in g.items" :key="i" class="admin-help-item">{{ c }}</div>
+      </template>
     </div>
     <div class="admin-help-close" @click="showAdminHelp = false">关闭</div>
   </div>
@@ -1179,19 +1184,29 @@ createApp({
     const showInviteDialog = ref(false);
     const showAdminHelp = ref(false);
     const adminCommands = [
-      "【待审核】查看待审核用户",
-      "【通过 U-xxx或姓名】审核通过该用户",
-      "【拒绝/隐藏 U-xxx或姓名】拒绝/隐藏该用户",
-      "【通知 U-xxx 内容】给用户发消息",
-      "【用户统计】查看统计数据",
-      "【开始填志愿 活动ID 男数 女数】开始填志愿",
-      "【开启分组功能 活动ID 开/关】控制「我的分组」入口",
-      "【查看未提交 活动ID】查看未提交志愿的报名者",
-      "【执行分组 活动ID 轮次】执行分组算法",
-      "【分组状态 活动ID】查看分组进度",
-      "【分组帮助】分组指令说明",
-      "【管理员帮助】查看本帮助",
-      "【重连】手动重连机器人",
+      { title: "审核管理", items: [
+        "【待审核】查看待审核用户",
+        "【通过 U-xxx或姓名】审核通过该用户",
+        "【拒绝/隐藏 U-xxx或姓名】拒绝/隐藏该用户",
+        "【通知 U-xxx 内容】给用户发消息",
+        "【用户统计】查看统计数据",
+      ]},
+      { title: "吃瓜群众", items: [
+        "【生成吃瓜群众邀请码 N】批量生成吃瓜群众邀请码",
+        "【查看吃瓜群众邀请码】查看邀请码使用状态",
+      ]},
+      { title: "分组活动", items: [
+        "【开始填志愿 活动ID 男数 女数】开始填志愿",
+        "【开启分组功能 活动ID 开/关】控制「我的分组」入口",
+        "【查看未提交 活动ID】查看未提交志愿的报名者",
+        "【执行分组 活动ID 轮次】执行分组算法",
+        "【分组状态 活动ID】查看分组进度",
+        "【分组帮助】分组指令说明",
+      ]},
+      { title: "系统", items: [
+        "【重连】手动重连机器人",
+        "【管理员帮助】查看本帮助",
+      ]},
     ];
     const REGISTER_FORM_BASE = 'https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf';
     const registerFormUrl = ref(REGISTER_FORM_BASE);
@@ -1772,7 +1787,7 @@ createApp({
       const target = isObserver.value ? 'user' : 'observer';
       const roles = availableRoles.value || [];
       if (roles.length <= 1 || !roles.includes(target)) {
-        const name = target === 'observer' ? '观察员' : '普通用户';
+        const name = target === 'observer' ? '吃瓜群众' : '普通用户';
         vant.showToast(`你尚未注册${name}身份，请先完成对应注册`);
         return;
       }

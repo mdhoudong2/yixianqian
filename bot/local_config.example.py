@@ -21,7 +21,7 @@ SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（
 # GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
 
 # H5 前端入口（测试服覆盖为测试域名，卡片/通知链接据此生成）
-# H5_BASE_URL = "https://test.app.nantou.love"
+# H5_BASE_URL = "https://testapp.nantou.love"
 
 # 飞书分享链接（表单）。测试服若用「复制的多维表格」，这些 URL 会变，需重新生成后覆盖。
 # REGISTER_FORM_URL = "https://xxx.feishu.cn/share/base/form/xxx"

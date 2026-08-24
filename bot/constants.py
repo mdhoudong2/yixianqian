@@ -92,7 +92,7 @@ FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同�
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
 INITIAL_HEARTS = 3
 MAX_HEARTS = 30
-# H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://test.app.nantou.love
+# H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://testapp.nantou.love
 H5_BASE_URL = getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love")
 
 # ==================== 本地记录文件 ====================

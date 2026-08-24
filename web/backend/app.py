@@ -1477,6 +1477,7 @@ def _spool_process(op):
             r = bitable.create_record(LIKE_TABLE_ID, op["fields"])
             if r:
                 e = _intent_likes.get(op.get("temp_key"))
+                app.logger.warning(f"[dbg-spool] key={op.get('temp_key')} rid={r.get('record_id')} hit={bool(e)} keys={list(_intent_likes.keys())[:5]}")
                 if e:
                     e["rid"] = r.get("record_id")
             return bool(r)

@@ -1799,7 +1799,8 @@ createApp({
         if (data.mutual) {
           vant.showDialog({ title: '💕 相互喜欢', message: '恭喜！你和' + target.nickname + '相互喜欢了！名片已推送，快去加飞书好友吧～', confirmButtonColor: '#ff6b81' });
         } else { vant.showToast('喜欢成功'); }
-        try { const me = await api('/api/user/me'); user.value = me; } catch(e) {}
+        // 乐观扣减：后端扣心由机器人延迟执行，立即本地减1避免显示滞后
+        if (user.value) user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
         myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
         if (page.value === 'user_detail') {
           // 从他人资料页喜欢：返回上一页
@@ -1849,6 +1850,10 @@ createApp({
     }
 
     // 消息
+    // 静默对账：机器人延迟扣/退爱心，切页时轻量刷新本人余额（不阻塞界面）
+    async function syncMe() {
+      try { const me = await api('/api/user/me'); if (user.value && me) user.value.hearts = me.hearts; } catch(e) {}
+    }
     async function loadLikes() {
       // 每次进入消息页都强制刷新（旧逻辑「有数据就跳过」导致喜欢数不实时）
       loadingLikes.value = true;
@@ -1894,7 +1899,6 @@ createApp({
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;
         cards.value = [];
-        try { const me = await api('/api/user/me'); user.value = me; } catch(e) {}
       } catch(e) { vant.showToast(e.message); }
     }
 
@@ -1995,6 +1999,7 @@ createApp({
 
     // 页面切换加载数据
     watch(page, (p, old) => {
+      syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
       if (p === 'likes') { loadLikes(); loadMyLikesCount(); loadNotifications(); }
@@ -2105,7 +2110,7 @@ createApp({
     return {
       page, user, loggingIn, loginError,
       loginErrorMessage, retryLogin, subPages,
-      gateMessage, gateTitle, gateIcon, retryGate,
+      gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup,

@@ -1351,25 +1351,37 @@ def like_user():
         return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
     if my_gender == target_gender:
         return jsonify({"error": "仅限异性之间喜欢"}), 400
-    if my_hearts <= 0:
-        return jsonify({"error": "爱心不足，无法喜欢"}), 400
 
-    # 重复/相互检查：内存扫描 likes 快照（快照为空时回退实时查询）。
-    # 极小概率的双击重复由机器人去重循环自动置「已取消」兜底。
+    # 单趟扫描 likes 快照：重复检查 / 相互喜欢 / 待扣减占用（防双花）
+    # 扣减延迟由机器人执行（≤25s），期间再点新喜欢需先预留：
+    #   可用爱心 = 余额字段 − 「已创建但尚未扣减」的活跃喜欢数
+    def _scan():
+        existing = False
+        mutual = False
+        pending_unpaid = 0
+        for l in _snap("likes"):
+            lf = l.get("fields", {})
+            if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) == open_id                     and bitable.get_select_value(lf, F_LIKE_STATUS) != "已取消":
+                if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
+                    existing = True
+                if lf.get(F_LIKE_HEART_DEDUCTED) is not True:
+                    pending_unpaid += 1
+            elif bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) == target_openid                     and bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == open_id                     and bitable.get_select_value(lf, F_LIKE_STATUS) != "已取消":
+                mutual = True
+        return existing, mutual, pending_unpaid
+
     likes_snap = _snap("likes")
-    if not likes_snap:
-        existing = bitable.find_like(open_id, target_openid)
-        if existing:
+    if likes_snap:
+        already, is_mutual, pending_unpaid = _scan()
+        if already:
+            return jsonify({"error": "你已经喜欢过TA了"}), 400
+        if my_hearts - pending_unpaid <= 0:
+            return jsonify({"error": "爱心不足，无法喜欢"}), 400
+    else:
+        # 快照未就绪：回退实时查询（罕见；放弃待扣减预估，接受极小并发窗口）
+        if bitable.find_like(open_id, target_openid):
             return jsonify({"error": "你已经喜欢过TA了"}), 400
         is_mutual = bool(bitable.find_like(target_openid, open_id))
-    else:
-        active_pair = [(bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID),
-                        bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID))
-                       for l in likes_snap
-                       if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"]
-        if (open_id, target_openid) in active_pair:
-            return jsonify({"error": "你已经喜欢过TA了"}), 400
-        is_mutual = (target_openid, open_id) in active_pair
 
     # 喜欢类型字段存在性有进程内缓存，热路径为内存判断
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)

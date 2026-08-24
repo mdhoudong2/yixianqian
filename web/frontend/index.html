@@ -247,6 +247,7 @@
   .card-tab { flex: 1; text-align: center; padding: 10px 0; font-size: 15px; font-weight: 500; color: #969799; cursor: pointer; position: relative; }
   .card-tab.active { color: #ff6b81; font-weight: 600; }
   .card-tab.active::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -1px; width: 32px; height: 3px; border-radius: 2px; background: #ff6b81; }
+  .msg-count-badge { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; margin-left: 4px; border-radius: 8px; background: #ff6b81; color: #fff; font-size: 11px; font-weight: 600; vertical-align: 1px; }
   .message-panel { display: flex; flex-direction: column; height: 100%; }
   .msg-tip { padding: 30px 0; text-align: center; color: #969799; font-size: 14px; }
   .msg-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -332,7 +333,7 @@
       </div>
       <div class="card-tabs">
         <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
-        <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言</div>
+        <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
       </div>
       <div class="card-info">
         <template v-if="cardTab==='profile'">
@@ -1166,6 +1167,7 @@ createApp({
     const cardIndex = ref(0);
     const photoIndex = ref(0);
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
+    const currentMsgCount = computed(() => (currentCard.value && currentCard.value.msg_count) || 0);
     const currentPhotoUrl = computed(() => {
       if (!currentCard.value) return '';
       const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
@@ -2105,6 +2107,8 @@ createApp({
         const data = await api('/api/messages?target=' + encodeURIComponent(c.openid));
         messages.value = data.messages || [];
         msgLoadedFor = c.openid;
+        // 同步 tab 上的留言数角标，避免快照滞后
+        if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
       } catch (e) {
         messages.value = [];
       } finally {

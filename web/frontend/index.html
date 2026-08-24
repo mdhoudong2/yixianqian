@@ -512,7 +512,7 @@
     </div>
     <div class="profile-name">{{ user.nickname }}
       <button v-if="!isObserver" class="status-toggle" :class="accountStatusLabel === '隐藏' ? 'status-hidden' : 'status-active'" @click="toggleAccountStatus">{{ accountStatusLabel }}</button>
-      <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">观察员</span>
+      <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">吃瓜群众</span>
     </div>
     <div class="profile-hearts" v-if="!isObserver"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
   </div>
@@ -535,7 +535,7 @@
         <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
         <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
         <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
-        <van-cell :title="isObserver ? '切换为普通用户' : '切换为观察员'" is-link @click="switchRole"></van-cell>
+        <van-cell :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>
         <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       </van-cell-group>
     </div>
@@ -1772,7 +1772,7 @@ createApp({
       const target = isObserver.value ? 'user' : 'observer';
       const roles = availableRoles.value || [];
       if (roles.length <= 1 || !roles.includes(target)) {
-        const name = target === 'observer' ? '观察员' : '普通用户';
+        const name = target === 'observer' ? '吃瓜群众' : '普通用户';
         vant.showToast(`你尚未注册${name}身份，请先完成对应注册`);
         return;
       }

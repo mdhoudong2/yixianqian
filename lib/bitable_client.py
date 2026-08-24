@@ -14,6 +14,11 @@ import requests
 
 API_BASE = "https://open.feishu.cn/open-apis"
 
+# 模块级连接池：复用 TCP/TLS 连接（跨海握手一次 ~1s，复用后每次调用省掉）
+_http = requests.Session()
+_adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16)
+_http.mount("https://", _adapter)
+
 
 class BitableClient:
     def __init__(self, app_id, app_secret, base_token, logger=None, timeout=10):
@@ -40,7 +45,7 @@ class BitableClient:
         url = API_BASE + "/auth/v3/tenant_access_token/internal"
         for attempt in range(3):
             try:
-                resp = requests.post(
+                resp = _http.post(
                     url, json={"app_id": self.app_id, "app_secret": self.app_secret}, timeout=15)
                 result = resp.json()
                 if result.get("code") == 0:
@@ -87,7 +92,7 @@ class BitableClient:
             result = None
             for attempt in range(2):
                 try:
-                    resp = requests.post(url, headers=self._headers(), json=body, timeout=self.timeout)
+                    resp = _http.post(url, headers=self._headers(), json=body, timeout=self.timeout)
                     result = resp.json()
                 except Exception as e:
                     self.log(f"搜索记录异常(table={table_id},第{attempt + 1}次): {e}")
@@ -116,7 +121,7 @@ class BitableClient:
     def get_record(self, table_id, record_id):
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/records/{record_id}"
         try:
-            resp = requests.get(url, headers=self._headers(), timeout=self.timeout)
+            resp = _http.get(url, headers=self._headers(), timeout=self.timeout)
             result = resp.json()
             if result.get("code") == 0:
                 return result.get("data", {}).get("record")
@@ -127,7 +132,7 @@ class BitableClient:
     def create_record(self, table_id, fields):
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/records"
         try:
-            resp = requests.post(url, headers=self._headers(), json={"fields": fields},
+            resp = _http.post(url, headers=self._headers(), json={"fields": fields},
                                  timeout=self.timeout)
             result = resp.json()
             if result.get("code") == 0:
@@ -140,7 +145,7 @@ class BitableClient:
     def update_record(self, table_id, record_id, fields):
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/records/{record_id}"
         try:
-            resp = requests.put(url, headers=self._headers(), json={"fields": fields},
+            resp = _http.put(url, headers=self._headers(), json={"fields": fields},
                                 timeout=self.timeout)
             result = resp.json()
             if result.get("code") == 0:
@@ -153,7 +158,7 @@ class BitableClient:
     def delete_record(self, table_id, record_id):
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/records/{record_id}"
         try:
-            resp = requests.delete(url, headers=self._headers(), timeout=self.timeout)
+            resp = _http.delete(url, headers=self._headers(), timeout=self.timeout)
             result = resp.json()
             if result.get("code") == 0:
                 return True
@@ -177,7 +182,7 @@ class BitableClient:
         for i in range(0, len(records), batch_size):
             chunk = records[i:i + batch_size]
             try:
-                resp = requests.post(url, headers=self._headers(), json={"records": chunk},
+                resp = _http.post(url, headers=self._headers(), json={"records": chunk},
                                      timeout=30)
                 result = resp.json()
                 if result.get("code") == 0:
@@ -198,7 +203,7 @@ class BitableClient:
         for i in range(0, len(ids), batch_size):
             chunk = ids[i:i + batch_size]
             try:
-                resp = requests.post(url, headers=self._headers(), json={"records": chunk},
+                resp = _http.post(url, headers=self._headers(), json={"records": chunk},
                                      timeout=30)
                 result = resp.json()
                 if result.get("code") == 0:
@@ -220,7 +225,7 @@ class BitableClient:
         exists = True  # 查询失败时假定存在，避免误伤正常写入
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/fields"
         try:
-            resp = requests.get(url, headers=self._headers(), params={"page_size": 100},
+            resp = _http.get(url, headers=self._headers(), params={"page_size": 100},
                                 timeout=self.timeout)
             result = resp.json()
             if result.get("code") == 0:
@@ -240,7 +245,7 @@ class BitableClient:
         # multipart 上传不能带 Content-Type: application/json，交由 requests 自动生成 boundary
         headers = {"Authorization": f"Bearer {token}"}
         try:
-            resp = requests.post(
+            resp = _http.post(
                 url,
                 headers=headers,
                 data={

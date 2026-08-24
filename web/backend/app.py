@@ -332,20 +332,43 @@ def require_login():
 
 
 # ========== 账号状态门禁 ==========
-# 待审核/已退出：不允许浏览牵线内容与关键操作（点爱心/报名/志愿）；
-# 已隐藏：放行使用，只是不出现在他人卡片池（snap_active_users 已过滤）。
+# 三级权限：
+#   活跃        → 全功能
+#   已隐藏(自隐) → 可浏览、可取消喜欢/取消报名；不可点爱心、不可报名、不可提交志愿
+#   待审核/已拒绝/已退出 → 仅可登录与查看「我的资料」，内容与操作全拦
 GATE_MESSAGES = {
     "待审核": {"error": "资料审核中，通过后即可使用一线牵App", "gate": "待审核"},
+    "已拒绝": {"error": "很抱歉，你的资料未通过审核，如有疑问请联系管理员", "gate": "已拒绝"},
     "已退出": {"error": "你已暂时退出相亲市场，如需恢复请联系管理员", "gate": "已退出"},
 }
+LIKE_BLOCKED_MESSAGE = {"error": "账号已隐藏，恢复活跃后才能点爱心", "gate": "已隐藏"}
+
+
+def _account_status(open_id):
+    user = snap_find_user_by_openid(open_id)
+    if not user:
+        return None, None
+    return bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS), user
 
 
 def account_gate(open_id):
-    """返回 None 表示放行；否则返回 (body, http_status) 由调用方直接返回"""
-    user = snap_find_user_by_openid(open_id)
-    if not user:
+    """浏览级门禁：待审核/已拒绝/已退出 全拦。返回 None 放行；否则 (body, status)"""
+    status, _ = _account_status(open_id)
+    if status is None:
         return {"error": "用户不存在"}, 404
-    status = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
+    body = GATE_MESSAGES.get(status)
+    if body:
+        return body, 403
+    return None
+
+
+def active_gate(open_id):
+    """操作级门禁：仅「活跃」可用（点爱心/报名/提交志愿）。"""
+    status, _ = _account_status(open_id)
+    if status is None:
+        return {"error": "用户不存在"}, 404
+    if status == "已隐藏":
+        return LIKE_BLOCKED_MESSAGE, 403
     body = GATE_MESSAGES.get(status)
     if body:
         return body, 403
@@ -1059,6 +1082,11 @@ def toggle_account_status():
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
     if cur == "活跃":
         new_status = "已隐藏"
+        # 已报名活动者不可自行隐藏（先取消报名）
+        active_signups = [s for s in snap_signups_by_openid(open_id)
+                          if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_STATUS) == "已报名"]
+        if active_signups:
+            return jsonify({"error": "你已报名活动，请先取消报名再隐藏"}), 400
     elif cur == "已隐藏":
         new_status = "活跃"
     else:
@@ -1110,7 +1138,7 @@ def signup(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
+    gate = active_gate(open_id)
     if gate:
         return jsonify(gate[0]), gate[1]
 
@@ -1286,7 +1314,7 @@ def like_user():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
+    gate = active_gate(open_id)
     if gate:
         return jsonify(gate[0]), gate[1]
 
@@ -1303,14 +1331,14 @@ def like_user():
         return jsonify({"error": "不能喜欢自己"}), 400
 
     with file_lock:
-        # 检查是否已经喜欢过
+        # 检查是否已经喜欢过（实时查，防连点重复）
         existing = bitable.find_like(open_id, target_openid)
         if existing:
             return jsonify({"error": "你已经喜欢过TA了"}), 400
 
-        # 获取双方信息
+        # 我的信息实时查（爱心扣减要最新值）；目标信息走本地快照（省一次跨海查询）
         me = bitable.find_user_by_openid(open_id)
-        target = bitable.find_user_by_openid(target_openid)
+        target = snap_find_user_by_openid(target_openid)
         if not me or not target:
             return jsonify({"error": "用户不存在"}), 404
 
@@ -1350,7 +1378,7 @@ def like_user():
                 if ct_str and ct_str[:7] == cur_month:
                     return jsonify({"error": "本月已用过实名喜欢，每月只有一次机会"}), 400
 
-        # 检查是否相互喜欢
+        # 检查是否相互喜欢（实时查，保证互喜欢即刻成立）
         target_likes_me = bitable.find_like(target_openid, open_id)
         is_mutual = bool(target_likes_me)
 
@@ -1384,37 +1412,50 @@ def like_user():
                 F_LIKE_STATUS: "相互喜欢"
             })
 
-    # 发送通知（在锁外执行，避免长时间阻塞）
-    if is_mutual:
-        # 相互喜欢：推送双方名片，各自加飞书好友
-        send_text_message(open_id, f"💕 恭喜！你和 {target_name} 相互喜欢了！名片已推送，快去加飞书好友吧～")
-        send_text_message(target_openid, f"💕 恭喜！你和 {my_name} 相互喜欢了！名片已推送，快去加飞书好友吧～")
-        send_user_card(open_id, target_openid)
-        send_user_card(target_openid, open_id)
-    else:
-        # 通知对方（实名喜欢会透露身份；匿名喜欢维持匿名）
-        h5_link = f"{H5_BASE_URL}/#/likes"
-        if like_type == "实名":
-            title = "💌 有人实名喜欢你了"
-            body = f"「{my_name}」（用户ID {my_id}）实名喜欢了你，快去看看吧～"
-        else:
-            title = "💌 有人喜欢你了"
-            body = "有一位用户喜欢了你，快去看看是谁吧～"
-        card = {
-            "header": {"title": {"tag": "plain_text", "content": title}},
-            "elements": [
-                {"tag": "div", "text": {"tag": "lark_md", "content": body}},
-                {"tag": "action", "actions": [
-                    {"tag": "button", "text": {"tag": "plain_text", "content": "查看是谁"},
-                     "type": "primary", "url": h5_link}
-                ]}
-            ]
-        }
-        send_card_message(target_openid, card)
+    # 通知消息移到后台线程发送：飞书 IM 每条都是一次 HTTPS 往返，
+    # 放在请求路径里会让「点爱心」卡 2~5 秒；落库与扣心已完成，此处立即回包。
+    threading.Thread(
+        target=_send_like_notifications,
+        args=(open_id, target_openid, my_name, target_name, my_id, is_mutual, like_type),
+        daemon=True,
+    ).start()
 
     refresh_snapshot_table_async("likes")
     refresh_snapshot_table_async("users")
     return jsonify({"ok": True, "mutual": is_mutual, "message": "相互喜欢！" if is_mutual else "喜欢成功"})
+
+
+def _send_like_notifications(initiator_oid, target_oid, my_name, target_name, my_id, is_mutual, like_type):
+    """点喜欢后的飞书通知（后台线程执行，失败不影响已成立的喜欢关系）"""
+    try:
+        if is_mutual:
+            # 相互喜欢：推送双方名片，各自加飞书好友
+            send_text_message(initiator_oid, f"💕 恭喜！你和 {target_name} 相互喜欢了！名片已推送，快去加飞书好友吧～")
+            send_text_message(target_oid, f"💕 恭喜！你和 {my_name} 相互喜欢了！名片已推送，快去加飞书好友吧～")
+            send_user_card(initiator_oid, target_oid)
+            send_user_card(target_oid, initiator_oid)
+        else:
+            # 通知对方（实名喜欢会透露身份；匿名喜欢维持匿名）
+            h5_link = f"{H5_BASE_URL}/#/likes"
+            if like_type == "实名":
+                title = "💌 有人实名喜欢你了"
+                body = f"「{my_name}」（用户ID {my_id}）实名喜欢了你，快去看看吧～"
+            else:
+                title = "💌 有人喜欢你了"
+                body = "有一位用户喜欢了你，快去看看是谁吧～"
+            card = {
+                "header": {"title": {"tag": "plain_text", "content": title}},
+                "elements": [
+                    {"tag": "div", "text": {"tag": "lark_md", "content": body}},
+                    {"tag": "action", "actions": [
+                        {"tag": "button", "text": {"tag": "plain_text", "content": "查看是谁"},
+                         "type": "primary", "url": h5_link}
+                    ]}
+                ]
+            }
+            send_card_message(target_oid, card)
+    except Exception as e:
+        app.logger.warning(f"喜欢通知后台发送失败: {e}")
 
 
 @app.route("/api/feedback", methods=["POST"])
@@ -1691,7 +1732,7 @@ def group_select(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
+    gate = active_gate(open_id)
     if gate:
         return jsonify(gate[0]), gate[1]
 
@@ -2111,6 +2152,10 @@ def cancel_like(target_openid):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    # 已隐藏允许取消喜欢；待审核/已拒绝/已退出全拦
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     with file_lock:
         existing = bitable.find_like(open_id, target_openid)

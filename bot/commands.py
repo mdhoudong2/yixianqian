@@ -98,8 +98,10 @@ def handle_status_command(sender_id):
         lines.append("账号已激活，发送「一线牵」即可进入App查看异性资料。")
     elif status == "已退出":
         lines.append("你已暂时退出相亲市场，如需恢复请联系管理员。")
+    elif status == "已拒绝":
+        lines.append("很抱歉，你的资料未通过审核，如有疑问请联系管理员。")
     elif status == "已隐藏":
-        lines.append("账号已被隐藏，如有疑问请联系管理员。")
+        lines.append("账号已被隐藏（不出现在他人牵线中），可随时在App「我的」页恢复活跃。")
     else:
         lines.append("如有疑问请联系管理员。")
     return "\n".join(lines)
@@ -215,7 +217,7 @@ def handle_admin_approve(keyword):
 
 
 def handle_admin_reject(keyword):
-    """管理员拒绝/隐藏用户"""
+    """管理员拒绝用户（写入「已拒绝」，与用户自隐「已隐藏」区分，被拒者不可自助恢复）"""
     records = find_user_by_id_or_name(keyword)
     if not records:
         return f"未找到用户：{keyword}"
@@ -229,16 +231,17 @@ def handle_admin_reject(keyword):
     uid = fields.get("用户ID", "")
     current_status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
 
-    if current_status == "已隐藏":
-        return f"{uid} {nickname} 已经是隐藏状态。"
+    if current_status == "已拒绝":
+        return f"{uid} {nickname} 已经是拒绝状态。"
 
-    if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "已隐藏"}):
+    if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "已拒绝"}):
         log(f"管理员拒绝用户: {uid} {nickname}")
         # 通知用户
         open_id = get_field_text(fields, FIELD_FEISHU_ID)
         if open_id:
-            send_text_message(open_id, "很抱歉，你的资料暂未通过审核。如有疑问请联系管理员。")
-        return f"已隐藏用户：{uid} {nickname}\n该用户将不会出现在浏览列表中。"
+            send_text_message(open_id, "很抱歉，你的资料未通过审核，如有疑问请联系管理员。")
+        return (f"已拒绝用户：{uid} {nickname}\n"
+                f"该用户将不能进入App浏览和使用（区别于自行隐藏）。")
     else:
         return "操作失败，请稍后重试。"
 
@@ -345,7 +348,7 @@ def handle_admin_stats():
     """用户统计"""
     all_users = search_records(USER_TABLE_ID)
     total = len(all_users)
-    pending = active = hidden = exited = unbound = 0
+    pending = active = hidden = rejected = exited = unbound = 0
     for item in all_users:
         fields = item.get("fields", {})
         status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
@@ -355,6 +358,8 @@ def handle_admin_stats():
             active += 1
         elif status == "已隐藏":
             hidden += 1
+        elif status == "已拒绝":
+            rejected += 1
         elif status == "已退出":
             exited += 1
         if not get_field_text(fields, FIELD_FEISHU_ID):
@@ -366,6 +371,7 @@ def handle_admin_stats():
         f"待审核：{pending}人\n"
         f"活跃：{active}人\n"
         f"已隐藏：{hidden}人\n"
+        f"已拒绝：{rejected}人\n"
         f"已退出：{exited}人\n"
         f"未绑定open_id：{unbound}人"
     )

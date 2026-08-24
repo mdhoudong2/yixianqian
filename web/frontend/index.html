@@ -1120,10 +1120,20 @@ createApp({
     const loggingIn = ref(true);
     const loginError = ref(false);
     const loginErrorMessage = ref('');
-    // 账号状态门禁（待审核/已退出）：后端 /api/home 返回 403 时整屏提示
+    // 账号状态门禁（待审核/已拒绝/已退出）：后端 /api/home 返回 403 时整屏提示
     const gateMessage = ref('');
-    const gateTitle = computed(() => gateMessage.value.includes('审核中') ? '资料审核中' : '账号已退出');
-    const gateIcon = computed(() => gateMessage.value.includes('审核中') ? '⏳' : '🚪');
+    const gateTitle = computed(() => {
+      const m = gateMessage.value;
+      if (m.includes('审核中')) return '资料审核中';
+      if (m.includes('未通过审核')) return '未通过审核';
+      return '账号已退出';
+    });
+    const gateIcon = computed(() => {
+      const m = gateMessage.value;
+      if (m.includes('审核中')) return '⏳';
+      if (m.includes('未通过审核')) return '💔';
+      return '🚪';
+    });
     function retryGate() { window.location.reload(); }
     const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me'];
 
@@ -1461,8 +1471,8 @@ createApp({
       try {
         data = await api('/api/home');
       } catch (e) {
-        // 账号状态门禁（待审核/已退出）：整屏提示，不当作登录失败
-        if (e.message && (e.message.includes('审核中') || e.message.includes('已暂时退出'))) {
+        // 账号状态门禁（待审核/已拒绝/已退出）：整屏提示，不当作登录失败
+        if (e.message && (e.message.includes('审核中') || e.message.includes('未通过审核') || e.message.includes('已暂时退出'))) {
           gateMessage.value = e.message;
           return;
         }

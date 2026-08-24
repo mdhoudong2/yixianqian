@@ -582,7 +582,14 @@ def auto_detect_mutual_like_loop(interval=30):
 
 
 def auto_deduct_hearts():
-    # 扣减：非已取消且未扣减（单向喜欢或相互喜欢都扣，避免竞态）
+    """爱心记账 v2（标记翻转 + 对账单写者）：
+    本函数只负责翻转「爱心已扣减」标记，不再直接增减用户余额字段；
+    余额统一由 reconcile_hearts() 按标记反推写回——单一写入者，杜绝多写者竞态。
+      扣减：未取消 且 未扣减 → 翻为已扣减（对账循环随后 -1）
+      爱心不足：直接取消该喜欢并通知（未扣过钱，无需退还）
+      退还：已取消 且 已扣减 → 翻为未扣减（对账循环随后 +1）
+    """
+    # ---- 扣减标记 ----
     pending_deduct = search_records(LIKE_TABLE_ID, {
         "conjunction": "and",
         "conditions": [
@@ -591,7 +598,6 @@ def auto_deduct_hearts():
         ]
     })
     for item in pending_deduct:
-        record_id = item.get("record_id")
         fields = item.get("fields", {})
         status = get_field_text(fields, FIELD_LIKE_STATUS)
         if status == "已取消":
@@ -603,12 +609,10 @@ def auto_deduct_hearts():
         user_records = find_user_by_openid(initiator_oid)
         if not user_records:
             continue
-        user = user_records[0]
-        user_record_id = user.get("record_id")
-        current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, INITIAL_HEARTS)
+        current_hearts = get_field_number(user_records[0].get("fields", {}), FIELD_HEART_REMAIN, INITIAL_HEARTS)
         if current_hearts <= 0:
             log(f"扣减爱心失败: {initiator_name} 爱心不足")
-            update_record(LIKE_TABLE_ID, record_id, {
+            update_record(LIKE_TABLE_ID, item.get("record_id"), {
                 FIELD_LIKE_STATUS: "已取消"
             })
             send_text_message(
@@ -618,12 +622,10 @@ def auto_deduct_hearts():
             )
             send_main_menu_card(initiator_oid)
             continue
-        new_hearts = current_hearts - 1
-        if update_record(USER_TABLE_ID, user_record_id, {FIELD_HEART_REMAIN: new_hearts}):
-            update_record(LIKE_TABLE_ID, record_id, {FIELD_LIKE_HEART_DEDUCTED: True})
-            log(f"扣减爱心成功: {initiator_name} 剩余 {new_hearts}")
+        if update_record(LIKE_TABLE_ID, item.get("record_id"), {FIELD_LIKE_HEART_DEDUCTED: True}):
+            log(f"扣减标记完成: {initiator_name}")
 
-    # 返还：已取消且已扣减
+    # ---- 退还标记 ----
     pending_refund = search_records(LIKE_TABLE_ID, {
         "conjunction": "and",
         "conditions": [
@@ -632,31 +634,58 @@ def auto_deduct_hearts():
         ]
     })
     for item in pending_refund:
-        record_id = item.get("record_id")
         fields = item.get("fields", {})
         initiator_oid = get_field_text(fields, FIELD_LIKE_INITIATOR_OPENID)
         initiator_name = get_field_text(fields, FIELD_LIKE_INITIATOR)
         if not initiator_oid:
             continue
-        user_records = find_user_by_openid(initiator_oid)
-        if not user_records:
+        if update_record(LIKE_TABLE_ID, item.get("record_id"), {FIELD_LIKE_HEART_DEDUCTED: False}):
+            log(f"退还标记完成: {initiator_name}")
+
+
+def reconcile_hearts():
+    """爱心对账（余额唯一写入者）：
+    期望余额 = 初始爱心 + 已发放邀请奖励 − 未退还的已扣记录数(含待退还)。
+    与「爱心剩余」字段不符时以期望值写回，账实永远收敛；每轮随扣减循环执行。
+    """
+    likes = search_records(LIKE_TABLE_ID)
+    owed_map = {}
+    for l in likes:
+        f = l.get("fields", {})
+        if f.get(FIELD_LIKE_HEART_DEDUCTED) is not True:
             continue
-        user = user_records[0]
-        user_record_id = user.get("record_id")
-        current_hearts = get_field_number(user.get("fields", {}), FIELD_HEART_REMAIN, INITIAL_HEARTS)
-        new_hearts = min(MAX_HEARTS, current_hearts + 1)
-        if update_record(USER_TABLE_ID, user_record_id, {FIELD_HEART_REMAIN: new_hearts}):
-            update_record(LIKE_TABLE_ID, record_id, {FIELD_LIKE_HEART_DEDUCTED: False})
-            log(f"返还爱心成功: {initiator_name} 剩余 {new_hearts}")
+        oid = get_field_text(f, FIELD_LIKE_INITIATOR_OPENID)
+        if oid:
+            owed_map[oid] = owed_map.get(oid, 0) + 1
 
+    invited_map = {}
+    for inviter_oid in load_invite_rewarded().values():
+        invited_map[inviter_oid] = invited_map.get(inviter_oid, 0) + 1
 
+    fixed = 0
+    for u in search_records(USER_TABLE_ID):
+        uf = u.get("fields", {})
+        oid = get_field_text(uf, FIELD_FEISHU_ID)
+        if not oid:
+            continue
+        expected = INITIAL_HEARTS + invited_map.get(oid, 0) - owed_map.get(oid, 0)
+        expected = max(0, min(expected, MAX_HEARTS))
+        current = get_field_number(uf, FIELD_HEART_REMAIN, None)
+        if current != expected:
+            nickname = get_field_text(uf, FIELD_NICKNAME)
+            update_record(USER_TABLE_ID, u["record_id"], {FIELD_HEART_REMAIN: expected})
+            fixed += 1
+            log(f"爱心对账: {nickname} {current} → {expected}")
+    if fixed:
+        log(f"爱心对账完成，本次校正 {fixed} 人")
 
 
 def auto_deduct_hearts_loop(interval=25):
-    log(f"自动扣减爱心服务已启动，轮询间隔 {interval} 秒")
+    log(f"自动扣减+爱心对账服务已启动，轮询间隔 {interval} 秒")
     while True:
         try:
             auto_deduct_hearts()
+            reconcile_hearts()
         except Exception as e:
             log(f"自动扣减爱心循环异常: {e}")
         time.sleep(interval)

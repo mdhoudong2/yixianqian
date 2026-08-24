@@ -11,8 +11,11 @@ post_fork 在每次 worker 进程 fork 之后、开始接收请求之前执行�
 import logging
 import os
 
-workers = 2
-threads = 4
+# 单 worker 多线程：快照缓存在进程内共享，多 worker 会各自持有快照副本，
+# 造成「切换状态后另一 worker 门禁漏拦」「取消喜欢后卡片池短暂不更新」等竞态。
+# 当前用户量级下单 worker + 8 线程吞吐足够，且后台快照轮询配额减半。
+workers = 1
+threads = 8
 # 绑定地址可通过环境变量 BIND 覆盖（测试服 127.0.0.1:8092）
 bind = os.environ.get("BIND", "127.0.0.1:8091")
 timeout = 120

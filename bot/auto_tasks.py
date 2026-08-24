@@ -428,6 +428,13 @@ def auto_send_anonymous_like_notification():
             unreserve_notified("like_notified", record_id)
             continue
 
+        # 发送前复核：若刚被判定为相互喜欢（相互消息已发/将发），
+        # 撤销本次匿名通知，避免「相互喜欢」后紧跟一条多余的「有人喜欢了你」
+        live = bitable.get_record(LIKE_TABLE_ID, record_id)
+        if not live or get_field_text(live.get("fields", {}), FIELD_LIKE_STATUS) != "单向喜欢":
+            unreserve_notified("like_notified", record_id)
+            continue
+
         like_count = len(target_likers.get(target_openid, set()))
 
         # 改为 H5 入口链接（在 App 内交互更友好）
@@ -562,6 +569,9 @@ def auto_detect_mutual_like():
                     # 通知全部成功后才落状态
                     update_record(LIKE_TABLE_ID, info["record_id"], {FIELD_LIKE_STATUS: "相互喜欢"})
                     update_record(LIKE_TABLE_ID, reverse_info["record_id"], {FIELD_LIKE_STATUS: "相互喜欢"})
+                    # 撤销两条记录的匿名通知预约位：杜绝翻转窗口内匿名循环补发「有人喜欢了你」
+                    unreserve_notified("like_notified", info["record_id"])
+                    unreserve_notified("like_notified", reverse_info["record_id"])
                     mutual_count += 1
                     log(f"相互喜欢通知已发送: {info['initiator_name']} <-> {info['target_name']}")
 

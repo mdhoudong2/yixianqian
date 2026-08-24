@@ -1094,7 +1094,11 @@ def toggle_account_status():
     ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_ACCOUNT_STATUS: new_status})
     if not ok:
         return jsonify({"error": "状态更新失败，请稍后重试"}), 500
-    # 同步刷新：保证紧随其后的点爱心/报名等门禁读到新状态（异步会有竞态漏拦）
+    # 飞书存在写后读延迟，仅靠刷新快照仍可能拿到旧状态 → 直接改写本地快照，
+    # 保证紧随其后的点爱心/报名等门禁立即读到新状态
+    for u in _snapshot.get("users", []):
+        if u.get("record_id") == user["record_id"]:
+            u.setdefault("fields", {})[F_ACCOUNT_STATUS] = new_status
     refresh_snapshot_table("users")
     return jsonify({"ok": True, "account_status": new_status})
 
@@ -2126,7 +2130,13 @@ def cancel_like(target_openid):
     if not ok:
         return jsonify({"error": "取消失败，请稍后重试"}), 500
 
-    # 同步刷新 likes 快照：保证紧随其后的 /api/cards 立即把对方放回卡片池
+    # 直接改写本地快照中该记录状态（规避飞书写后读延迟），
+    # 再同步刷新：保证紧随其后的 /api/cards 立即把对方放回卡片池
+    for l in _snapshot.get("likes", []):
+        if l.get("record_id") == existing["record_id"]:
+            l.setdefault("fields", {})[F_LIKE_STATUS] = "已取消"
+            l["fields"][F_LIKE_HEART_DEDUCTED] = bool(
+                bitable.get_field_number(l.get("fields", {}), F_LIKE_HEART_DEDUCTED, 0))
     refresh_snapshot_table("likes")
 
     # 反向切断移到后台：「TA->我」的活跃记录也置已取消，避免残留误报双向喜欢/报名通知

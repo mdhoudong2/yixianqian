@@ -115,26 +115,18 @@ def main():
     st, h2, _ = like(ck, T2)
     check("D.第二人hearts再-1", st == 200 and h2 == expect0 - 2, f"(status={st}, hearts={h2})")
 
-    # 若 expect0-2 == 0 则继续验证归零拒绝，否则先取消一个再测
-    if h2 > 0:
-        st, hx = unlike(ck, T2)
-        check("E1.取消立即+1", st == 200 and hx == h2 + 1, f"(status={st}, hearts={hx})")
-        like(ck, T2)  # 重新喜欢回去
-    # E. 取消立即+1（当前余额应为 expect0-2）
+    # E1. 取消第1人：立即 +1（此时两个喜欢可能仍在落库桥接期，语义应为 expect0-1）
     st, h3 = unlike(ck, T1)
-    check("E.取消立即+1", st == 200 and h3 == expect0 - 1, f"(status={st}, hearts={h3})")
+    check("E1.取消第一人立即+1", st == 200 and h3 == expect0 - 1, f"(status={st}, hearts={h3})")
+    # E2. 取消第2人：立即再 +1 → 回到 expect0
+    st, h4 = unlike(ck, T2)
+    check("E2.取消第二人立即+1", st == 200 and h4 == expect0, f"(status={st}, hearts={h4})")
 
-    # F. 耗尽余额后喜欢被拒（每点一次 200 即少一颗，直至 400）
-    guard_budget = 6
-    last_st = None
-    while guard_budget > 0 and get_me(ck) > 0:
-        last_st, _, _ = like(ck, T3)
-        if last_st != 200:
-            break
-        guard_budget -= 1
-    me = get_me(ck)
+    # F. 新喜欢成功后再连点同目标 → 被拒（在途意图查重）
+    st, h5, _ = like(ck, T3)
+    check("F1.新目标喜欢成功", st == 200 and h5 == expect0 - 1, f"(status={st}, hearts={h5})")
     st, _, body = like(ck, T3)
-    check("F.爱心耗尽后被拒", st == 400, f"(me={me}, status={st}, msg={body.get('error')})")
+    check("F2.连点同目标被拒", st == 400, f"(status={st}, msg={body.get('error')})")
 
     # G. 对账收敛（30s后表值与计算值一致）
     time.sleep(32)

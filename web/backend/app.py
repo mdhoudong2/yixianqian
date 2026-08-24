@@ -223,9 +223,19 @@ def computed_hearts(open_id):
         if l.get("record_id") in cancel_rids:
             continue
         cnt += 1
-    pending = sum(1 for it in _intent_likes.values() if it["oid"] == open_id)
+    snap_rids = set()
+    for l in _snap("likes"):
+        if l.get("record_id"):
+            snap_rids.add(l.get("record_id"))
+    extra = 0
+    for it in _intent_likes.values():
+        if it["oid"] != open_id:
+            continue
+        rid = it.get("rid")
+        if rid is None or rid not in snap_rids:
+            extra += 1  # 未落库 / 已落库但快照未见：均需桥接计数
     invites = _balances_file().get("invites", {}).get(open_id, 0)
-    return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - pending))
+    return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - extra))
 
 
 def _pick_primary_user(records):
@@ -1459,12 +1469,17 @@ def _spool_process(op):
                     {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]},
                 ]})
             if dup:
-                _intent_complete(op.get("temp_key"))
-                return True  # 幂等命中：重复投递视为已完成
-            ok = bool(bitable.create_record(LIKE_TABLE_ID, op["fields"]))
-            if ok:
-                _intent_complete(op.get("temp_key"))
-            return ok
+                # 幂等命中：登记已有记录 rid，供桥接计数
+                e = _intent_likes.get(op.get("temp_key"))
+                if e:
+                    e["rid"] = dup[0].get("record_id")
+                return True
+            r = bitable.create_record(LIKE_TABLE_ID, op["fields"])
+            if r:
+                e = _intent_likes.get(op.get("temp_key"))
+                if e:
+                    e["rid"] = r.get("record_id")
+            return bool(r)
         if t == "cancel":
             return bitable.update_record(LIKE_TABLE_ID, op["record_id"],
                                          {F_LIKE_STATUS: "已取消"}) is not None
@@ -2325,7 +2340,15 @@ def cancel_like(target_openid):
             existing = l
             break
     if not existing:
-        existing = bitable.find_like(open_id, target_openid)
+        if any(it["oid"] == open_id and it["target"] == target_openid
+               for it in _intent_likes.values()):
+            for _ in range(6):  # 等 worker 落库（最多 ~5s）
+                time.sleep(0.8)
+                existing = bitable.find_like(open_id, target_openid)
+                if existing:
+                    break
+        else:
+            existing = bitable.find_like(open_id, target_openid)
     if not existing:
         return jsonify({"error": "未找到喜欢记录"}), 404
 

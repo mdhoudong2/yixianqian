@@ -1053,6 +1053,7 @@ def home():
         "cards": cards,
         "likes": {"liked_me": liked_me_list, "mutual": mutual_list},
         "activities": activities,
+        "register_form_url": REGISTER_FORM_URL,
     })
 
 

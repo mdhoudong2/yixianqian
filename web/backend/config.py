@@ -260,3 +260,6 @@ PUBLIC_SOURCE_ID = "PUBLIC"
 
 # public.html「如何注册」弹窗展示的二维码文件名（测试服在 local_config.py 覆盖为 qrcode_test.png）
 PUBLIC_QR_CODE = getattr(_lc, "PUBLIC_QR_CODE", "qrcode.png")
+
+# 注册表单链接（H5「邀请好友得爱心」邀请链接，测试服在 local_config.py 覆盖为测试表单）
+REGISTER_FORM_URL = getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcn04AWZCwqilzelLqT5CJsNd")

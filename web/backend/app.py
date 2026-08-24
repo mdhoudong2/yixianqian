@@ -1304,6 +1304,22 @@ def get_cards():
     return jsonify({"cards": cards})
 
 
+# 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
+# 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零
+_like_reserves = {}
+
+
+def _reserve_add(oid):
+    _like_reserves.setdefault(oid, []).append(time.time())
+
+
+def _reserve_count(oid):
+    now = time.time()
+    arr = [t for t in _like_reserves.get(oid, []) if now - t < 25]
+    _like_reserves[oid] = arr
+    return len(arr)
+
+
 @app.route("/api/like", methods=["POST"])
 def like_user():
     """喜欢某人（秒提交版）：
@@ -1371,12 +1387,15 @@ def like_user():
         return existing, mutual, pending_unpaid
 
     likes_snap = _snap("likes")
+    already, is_mutual, pending_unpaid = False, False, 0
     if likes_snap:
         already, is_mutual, pending_unpaid = _scan()
-        if already:
-            return jsonify({"error": "你已经喜欢过TA了"}), 400
-        if my_hearts - pending_unpaid <= 0:
-            return jsonify({"error": "爱心不足，无法喜欢"}), 400
+    # 双花防护：余额 − 待扣减占用（快照口径 与 本进程预留数 取大者）≤0 则拦截
+    effective_pending = max(pending_unpaid, _reserve_count(open_id))
+    if my_hearts - effective_pending <= 0:
+        return jsonify({"error": "爱心不足，无法喜欢"}), 400
+    if already:
+        return jsonify({"error": "你已经喜欢过TA了"}), 400
     else:
         # 快照未就绪：回退实时查询（罕见；放弃待扣减预估，接受极小并发窗口）
         if bitable.find_like(open_id, target_openid):
@@ -1404,6 +1423,7 @@ def like_user():
         created = bitable.create_record(LIKE_TABLE_ID, like_fields)
     if not created:
         return jsonify({"error": "喜欢失败，请稍后重试"}), 500
+    _reserve_add(open_id)
 
     refresh_snapshot_table_async("likes")
     return jsonify({"ok": True, "mutual": False, "message": "喜欢成功"})

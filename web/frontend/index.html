@@ -1196,6 +1196,8 @@ createApp({
 
     // 喜欢我的
     const likesData = ref({ liked_me: [], mutual: [] });
+    // 本会话内已成功喜欢（未取消）的目标：本地即时排除/置灰，覆盖后端快照刷新的时间窗
+    const justLiked = new Set();
     const loadingLikes = ref(false);
 
     // 我的喜欢
@@ -1592,7 +1594,8 @@ createApp({
       loadingCards.value = true;
       try {
         const data = await api('/api/cards' + buildFilterQuery());
-        cards.value = data.cards; cardIndex.value = 0; photoIndex.value = 0;
+        cards.value = (data.cards || []).filter(c => !justLiked.has(c.openid));
+        cardIndex.value = 0; photoIndex.value = 0;
         photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
         preloadAround();
       }
@@ -1749,7 +1752,7 @@ createApp({
     // 喜欢 - 弹出附言对话框
     function openLikeDialog() {
       if (!currentCard.value || !currentCard.value.openid) return;
-      if (currentCard.value.liked) {
+      if (currentCard.value.liked || justLiked.has(currentCard.value.openid)) {
         vant.showToast('你已经喜欢过TA了');
         return;
       }
@@ -1799,6 +1802,8 @@ createApp({
         if (data.mutual) {
           vant.showDialog({ title: '💕 相互喜欢', message: '恭喜！你和' + target.nickname + '相互喜欢了！名片已推送，快去加飞书好友吧～', confirmButtonColor: '#ff6b81' });
         } else { vant.showToast('喜欢成功'); }
+        justLiked.add(target.openid);
+        if (currentCard.value && currentCard.value.openid === target.openid) currentCard.value.liked = true;
         // 乐观扣减：后端扣心由机器人延迟执行，立即本地减1避免显示滞后
         if (user.value) user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
         myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
@@ -1900,6 +1905,7 @@ createApp({
         if (user.value) user.value.hearts = Math.min(30, (user.value.hearts || 0) + 1);
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;
+        justLiked.delete(l.openid);
         cards.value = [];
       } catch(e) { vant.showToast(e.message); }
     }

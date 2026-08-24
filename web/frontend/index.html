@@ -1200,17 +1200,7 @@ createApp({
     const likesData = ref({ liked_me: [], mutual: [] });
     // 本会话内已成功喜欢（未取消）的目标：本地即时排除/置灰，覆盖后端快照刷新的时间窗
     const justLiked = new Set();
-    // 爱心意图帐：喜欢-1/取消+1 的在途记录，校正服务端滞后返回值（50s 过期）
-    const heartIntents = [];
-    function addHeartIntent(d) { heartIntents.push({ d, ts: Date.now() }); }
-    function intentDelta() {
-      const now = Date.now();
-      while (heartIntents.length && now - heartIntents[0].ts > 8000) heartIntents.shift();
-      return heartIntents.reduce((a, i) => a + i.d, 0);
-    }
-    function applyHearts(base) {
-      if (user.value) user.value.hearts = Math.max(0, Math.min(30, base + intentDelta()));
-    }
+
     const loadingLikes = ref(false);
 
     // 我的喜欢
@@ -1441,7 +1431,7 @@ createApp({
       try {
         const data = await api('/api/auth/feishu?code=' + code);
         user.value = data.user;
-        user.value.hearts = (data.user.hearts || 0) + intentDelta();
+        user.value.hearts = data.user.hearts || 0;
         window.history.replaceState({}, '', window.location.pathname);
         await loadHome();
         return 'ok';
@@ -1825,8 +1815,8 @@ createApp({
         if (currentCard.value && currentCard.value.openid === target.openid) currentCard.value.liked = true;
         // 优先用后端返回的权威爱心数（含预留/信用口径），无则本地乐观-1
         if (user.value) {
-          addHeartIntent(-1);
-          applyHearts(typeof data.hearts === 'number' ? data.hearts : (user.value.hearts || 1) - 1);
+          if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
+          else user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
         }
         myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
       } catch(e) { vant.showToast(e.message); }
@@ -1870,7 +1860,7 @@ createApp({
     // 消息
     // 静默对账：机器人延迟扣/退爱心，切页时轻量刷新本人余额（不阻塞界面）
     async function syncMe() {
-      if (user.value && me) user.value.hearts = me.hearts + intentDelta();
+      if (user.value && me) user.value.hearts = me.hearts;
     }
     async function loadLikes() {
       // 每次进入消息页都强制刷新（旧逻辑「有数据就跳过」导致喜欢数不实时）
@@ -1916,8 +1906,8 @@ createApp({
         vant.showToast('已取消喜欢，爱心已退回');
         // 优先用后端返回的权威爱心数，无则本地乐观+1
         if (user.value) {
-          addHeartIntent(1);
-          applyHearts(typeof data.hearts === 'number' ? data.hearts : (user.value.hearts || 0) + 1);
+          if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
+          else user.value.hearts = Math.min(30, (user.value.hearts || 0) + 1);
         }
         myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
         myLikesCount.value = myLikesList.value.length;

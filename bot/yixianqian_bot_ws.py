@@ -41,7 +41,7 @@ if _REPO_ROOT not in sys.path:
 from auto_tasks import (
     auto_anonymous_like_loop,
     auto_bind_loop,
-    auto_deduct_hearts_loop,
+    reconcile_hearts_loop,
     auto_detect_mutual_like_loop,
     auto_fill_like_loop,
     auto_fill_signup_loop,
@@ -443,7 +443,7 @@ def start_worker_threads():
         ("喜欢记录填充", auto_fill_like_loop, 20),
         ("匿名喜欢通知", auto_anonymous_like_loop, 25),
         ("相互喜欢检测", auto_detect_mutual_like_loop, 30),
-        ("自动扣减爱心", auto_deduct_hearts_loop, 25),
+        ("爱心对账", reconcile_hearts_loop, 25),
         ("报名信息填充", auto_fill_signup_loop, 20),
         ("报名通知", auto_notify_signup_loop, 30),
         ("活动报名更新", auto_update_activity_signup_loop, 30),

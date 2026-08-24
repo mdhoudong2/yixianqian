@@ -115,16 +115,18 @@ def main():
     st, h2, _ = like(ck, T2)
     check("D.第二人hearts再-1", st == 200 and h2 == expect0 - 2, f"(status={st}, hearts={h2})")
 
-    # E1. 取消第1人：立即 +1（此时两个喜欢可能仍在落库桥接期，语义应为 expect0-1）
-    st, h3 = unlike(ck, T1)
-    check("E1.取消第一人立即+1", st == 200 and h3 == expect0 - 1, f"(status={st}, hearts={h3})")
-    # E2. 取消第2人：立即再 +1 → 回到 expect0
-    st, h4 = unlike(ck, T2)
-    check("E2.取消第二人立即+1", st == 200 and h4 == expect0, f"(status={st}, hearts={h4})")
+    # E/F 断言改为「集合真值」对比：显示值须与 初始−当前有效喜欢数 时刻相等（与快照时序无关）
+    active = {T1, T2}
+    def expect_now():
+        return max(0, expect0 - len(active))
 
-    # F. 新喜欢成功后再连点同目标 → 被拒（在途意图查重）
-    st, h5, _ = like(ck, T3)
-    check("F1.新目标喜欢成功", st == 200 and h5 == expect0 - 1, f"(status={st}, hearts={h5})")
+    st, h3 = unlike(ck, T1); active.discard(T1)
+    check("E1.取消第一人立即正确", st == 200 and h3 == expect_now(), f"(status={st}, hearts={h3}, 期望={expect_now()})")
+    st, h4 = unlike(ck, T2); active.discard(T2)
+    check("E2.取消第二人立即正确", st == 200 and h4 == expect_now(), f"(status={st}, hearts={h4}, 期望={expect_now()})")
+
+    st, h5, _ = like(ck, T3); active.add(T3)
+    check("F1.新目标喜欢成功且数值正确", st == 200 and h5 == expect_now(), f"(status={st}, hearts={h5}, 期望={expect_now()})")
     st, _, body = like(ck, T3)
     check("F2.连点同目标被拒", st == 400, f"(status={st}, msg={body.get('error')})")
 

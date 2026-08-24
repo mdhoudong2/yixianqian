@@ -1477,7 +1477,6 @@ def _spool_process(op):
             r = bitable.create_record(LIKE_TABLE_ID, op["fields"])
             if r:
                 e = _intent_likes.get(op.get("temp_key"))
-                app.logger.warning(f"[dbg-spool] key={op.get('temp_key')} rid={r.get('record_id')} hit={bool(e)} keys={list(_intent_likes.keys())[:5]}")
                 if e:
                     e["rid"] = r.get("record_id")
             return bool(r)
@@ -2356,6 +2355,11 @@ def cancel_like(target_openid):
     rid = existing["record_id"]
     _spool_append({"type": "cancel", "record_id": rid})
     _intent_cancels.setdefault(open_id, []).append((rid, time.time()))
+    # 消费对应喜欢意图：否则其桥接计数会让取消后仍少显示一颗
+    for k in list(_intent_likes):
+        it = _intent_likes[k]
+        if it.get("oid") == open_id and it.get("target") == target_openid:
+            _intent_likes.pop(k, None)
 
     # 本地快照即时置灰：保证紧随其后的 /api/cards 立即把对方放回卡片池
     for l in _snapshot.get("likes", []):

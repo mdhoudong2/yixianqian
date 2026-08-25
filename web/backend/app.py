@@ -241,6 +241,12 @@ def computed_hearts(open_id):
     return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - extra))
 
 
+def hearts_total(open_id):
+    """爱心总额 = 初始 + 邀请奖励（上限 MAX_HEARTS），不含已使用"""
+    invites = _balances_file().get("invites", {}).get(open_id, 0)
+    return min(MAX_HEARTS, INITIAL_HEARTS + invites)
+
+
 def _pick_primary_user(records):
     """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小（与 bot/queries 同规则）"""
     if not records:
@@ -1252,6 +1258,7 @@ def home():
     user_brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     user_brief["available_roles"] = sorted(roles_of(open_id))
     user_brief["hearts"] = computed_hearts(open_id)
+    user_brief["hearts_total"] = hearts_total(open_id)
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -1273,6 +1280,7 @@ def user_me():
     brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     brief["available_roles"] = sorted(roles_of(open_id))
     brief["hearts"] = computed_hearts(open_id)
+    brief["hearts_total"] = hearts_total(open_id)
     return jsonify(brief)
 
 

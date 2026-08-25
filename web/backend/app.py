@@ -1164,6 +1164,25 @@ def logout():
     return resp
 
 
+def _build_self_card(open_id, active_users, msg_counts):
+    """观察员预览自己的「普通用户」卡片（别人看我的样子）。
+
+    同一 open_id 下若有单身档案，则把它按卡片同格式拼出，标 is_self=True，
+    前端据此展示「这是你」角标并隐藏喜欢/留言等自操作。无单身档案返回 None。
+    """
+    for u in active_users:
+        if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id:
+            fields = u.get("fields", {})
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
+            brief["liked"] = False
+            brief["msg_count"] = msg_counts.get(open_id, 0)
+            brief["is_self"] = True
+            return brief
+    return None
+
+
 @app.route("/api/home", methods=["GET"])
 def home():
     """首页聚合接口：一次返回 我的信息 + 卡片 + 喜欢 + 活动（全部走本地快照）"""
@@ -1196,8 +1215,9 @@ def home():
         t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
         if t:
             msg_counts[t] = msg_counts.get(t, 0) + 1
+    active_users = snap_active_users()
     cards = []
-    for u in snap_active_users():
+    for u in active_users:
         fields = u.get("fields", {})
         uid = bitable.get_field_text(fields, F_FEISHU_ID)
         if uid == open_id:
@@ -1220,6 +1240,11 @@ def home():
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
     cards = order_cards_likes_first(cards, liked_me_openids)
+    # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
+    if is_observer:
+        self_card = _build_self_card(open_id, active_users, msg_counts)
+        if self_card:
+            cards.insert(0, self_card)
     i_liked = snap_likes_by_initiator(open_id)
     i_liked_targets = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
@@ -1562,6 +1587,11 @@ def get_cards():
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
     cards = order_cards_likes_first(cards, liked_me_openids)
+    # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
+    if is_observer:
+        self_card = _build_self_card(open_id, all_users, msg_counts)
+        if self_card:
+            cards.insert(0, self_card)
 
     return jsonify({"cards": cards})
 

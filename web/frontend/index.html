@@ -315,6 +315,7 @@
         <div class="card-photo-overlay">
           <div class="card-overlay-box">
             <div class="card-overlay-text">
+              <div v-if="currentCard.is_self" style="margin-bottom:6px;"><span style="background:#ff6b81;color:#fff;font-size:11px;padding:3px 9px;border-radius:999px;">这是你 · 他人视角</span></div>
               <div class="card-name">{{ currentCard.nickname }}
                 <span class="gender-icon">{{ currentCard.gender==='男性' ? '♂' : '♀' }}</span>
               </div>
@@ -328,7 +329,7 @@
       </div>
       <div class="card-tabs">
         <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
-        <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
+        <div v-if="!currentCard.is_self" class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
       </div>
       <div class="card-info">
         <template v-if="cardTab==='profile'">
@@ -386,8 +387,8 @@
       </div>
     </div>
       <div class="card-actions" v-if="cardTab==='profile'">
-        <button class="feedback-btn" @click="openFeedbackDialog">反馈</button>
-        <button v-if="!isObserver" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
+        <button v-if="!currentCard.is_self" class="feedback-btn" @click="openFeedbackDialog">反馈</button>
+        <button v-if="!isObserver && !currentCard.is_self" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
       </div>
     </template>
   </template>
@@ -527,9 +528,9 @@
       </div>
     </div>
   </div>
-  <div style="padding:12px 12px 24px;">
+  <div style="padding:12px 12px 24px;" v-if="!isObserver || availableRoles.length > 1 || user.is_admin">
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
-      <van-cell title="我的资料" is-link @click="openProfileDetail"></van-cell>
+      <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>

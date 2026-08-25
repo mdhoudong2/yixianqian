@@ -159,7 +159,7 @@ def _snap(key):
 # ---- 快照读取辅助（镜像 bitable 常用查询；快照为空时回退到飞书，保证启动初期可用） ----
 
 def _pick_primary_user(records):
-    """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小（与 bot/queries 同规则）"""
+    """同一 open_id 多条记录时取主档案：单身优先，其次用户ID最小（与 bot/queries 同规则）"""
     if not records:
         return None
 
@@ -168,7 +168,7 @@ def _pick_primary_user(records):
         st = bitable.get_select_value(uf, F_ACCOUNT_STATUS)
         m = re.match(r"[Uu]-?(\d+)", bitable.get_field_text(uf, F_USER_ID))
         uid_num = int(m.group(1)) if m else 10 ** 9
-        return (0 if st == "活跃" else 1, uid_num)
+        return (0 if st == "单身" else 1, uid_num)
 
     return sorted(records, key=rank)[0]
 
@@ -184,7 +184,7 @@ _BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")
 
 # 在途意图（进程级，页面重载不丢失）：
 #   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
-#   _intent_cancels  oid -> [(record_id, ts)] 取消已受理、快照可能仍显示活跃（TTL 60s）
+#   _intent_cancels  oid -> [(record_id, ts)] 取消已受理、快照可能仍显示单身（TTL 60s）
 _intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…}
 _intent_cancels = {}  # oid -> [(target_openid, ts)]
 
@@ -248,7 +248,7 @@ def hearts_total(open_id):
 
 
 def _pick_primary_user(records):
-    """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小（与 bot/queries 同规则）"""
+    """同一 open_id 多条记录时取主档案：单身优先，其次用户ID最小（与 bot/queries 同规则）"""
     if not records:
         return None
 
@@ -257,7 +257,7 @@ def _pick_primary_user(records):
         st = bitable.get_select_value(uf, F_ACCOUNT_STATUS)
         m = re.match(r"[Uu]-?(\d+)", bitable.get_field_text(uf, F_USER_ID))
         uid_num = int(m.group(1)) if m else 10 ** 9
-        return (0 if st == "活跃" else 1, uid_num)
+        return (0 if st == "单身" else 1, uid_num)
 
     return sorted(records, key=rank)[0]
 
@@ -280,7 +280,7 @@ def snap_active_users():
     if not users:
         return bitable.get_all_users()
     return [u for u in users
-            if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "活跃"]
+            if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "单身"]
 
 
 def snap_find_activity(act_id):
@@ -476,9 +476,9 @@ def roles_of(open_id):
 
 def snap_self_user():
     """按当前会话 role 解析「本人」档案：
-    observer → 状态为观察员的记录；user → 非观察员主档（活跃优先）。
-    快照优先；若快照显示门禁态（待审核/已拒绝/已退出），实时直查兜底，
-    避免刚被审核通过（待审核→活跃）时仍读到旧快照的「审核中」。"""
+    observer → 状态为观察员的记录；user → 非观察员主档（单身优先）。
+    快照优先；若快照显示门禁态（待审核/审核不通过/已退出），实时直查兜底，
+    避免刚被审核通过（待审核→单身）时仍读到旧快照的「审核中」。"""
     open_id = g.yxq_open_id
     if not open_id:
         return None
@@ -498,7 +498,7 @@ def snap_self_user():
     rec = _resolve(matches) if matches else None
     # 快照未命中，或快照显示门禁态（可能已被审核通过但快照未刷新）→ 实时直查
     gated = bool(rec) and bitable.get_select_value(
-        rec.get("fields", {}), F_ACCOUNT_STATUS) in ("待审核", "已拒绝", "已退出")
+        rec.get("fields", {}), F_ACCOUNT_STATUS) in ("待审核", "审核不通过", "已退出")
     if not rec or gated:
         live = bitable.search_records(USER_TABLE_ID, [
             {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
@@ -509,15 +509,15 @@ def snap_self_user():
 
 # ========== 账号状态门禁 ==========
 # 三级权限：
-#   活跃        → 全功能
-#   已隐藏(自隐) → 可浏览、可取消喜欢/取消报名；不可点爱心、不可报名、不可提交志愿
-#   待审核/已拒绝/已退出 → 仅可登录与查看「我的资料」，内容与操作全拦
+#   单身        → 全功能
+#   已脱单(自隐) → 可浏览、可取消喜欢/取消报名；不可点爱心、不可报名、不可提交志愿
+#   待审核/审核不通过/已退出 → 仅可登录与查看「我的资料」，内容与操作全拦
 GATE_MESSAGES = {
     "待审核": {"error": "资料审核中，通过后即可使用一线牵App", "gate": "待审核"},
-    "已拒绝": {"error": "很抱歉，你的资料未通过审核，如有疑问请联系管理员", "gate": "已拒绝"},
+    "审核不通过": {"error": "很抱歉，你的资料未通过审核，如有疑问请联系管理员", "gate": "审核不通过"},
     "已退出": {"error": "你已暂时退出相亲市场，如需恢复请联系管理员", "gate": "已退出"},
 }
-LIKE_BLOCKED_MESSAGE = {"error": "你当前处于隐藏状态（他人看不到你），请先在「我的」页恢复活跃后再操作", "gate": "已隐藏"}
+LIKE_BLOCKED_MESSAGE = {"error": "你当前处于已脱单状态（他人看不到你），请先在「我的」页恢复单身后再操作", "gate": "已脱单"}
 OBSERVER_BLOCKED_MESSAGE = {"error": "你是吃瓜群众账号，无此操作权限", "gate": "观察员"}
 
 
@@ -529,7 +529,7 @@ def _account_status(open_id):
 
 
 def account_gate(open_id):
-    """浏览级门禁：待审核/已拒绝/已退出 全拦。返回 None 放行；否则 (body, status)"""
+    """浏览级门禁：待审核/审核不通过/已退出 全拦。返回 None 放行；否则 (body, status)"""
     status, _ = _account_status(open_id)
     if status is None:
         return {"error": "用户不存在"}, 404
@@ -540,11 +540,11 @@ def account_gate(open_id):
 
 
 def active_gate(open_id):
-    """操作级门禁：仅「活跃」可用（点爱心/报名/提交志愿）。"""
+    """操作级门禁：仅「单身」可用（点爱心/报名/提交志愿）。"""
     status, _ = _account_status(open_id)
     if status is None:
         return {"error": "用户不存在"}, 404
-    if status == "已隐藏":
+    if status == "已脱单":
         return LIKE_BLOCKED_MESSAGE, 403
     if status == STATUS_OBSERVER:
         return OBSERVER_BLOCKED_MESSAGE, 403
@@ -1182,7 +1182,7 @@ def home():
     target_gender = "女性" if my_gender == "男性" else "男性"
     is_observer = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
 
-    # 卡片（不含筛选，默认展示全部异性；观察员展示全部活跃用户，男女均可浏览）
+    # 卡片（不含筛选，默认展示全部异性；观察员展示全部单身用户，男女均可浏览）
     # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
                      for l in snap_likes_by_initiator(open_id)
@@ -1286,7 +1286,7 @@ def user_me():
 
 @app.route("/api/account/status", methods=["POST"])
 def toggle_account_status():
-    """切换账号状态：活跃 <-> 已隐藏（秒提交版：状态读快照，同步仅 1 次写入）"""
+    """切换账号状态：单身 <-> 已脱单（秒提交版：状态读快照，同步仅 1 次写入）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -1296,15 +1296,15 @@ def toggle_account_status():
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
     if cur == STATUS_OBSERVER:
         return jsonify({"error": "吃瓜群众账号不可切换账号状态"}), 403
-    if cur == "活跃":
-        new_status = "已隐藏"
-        # 已报名活动者不可自行隐藏（先取消报名）；读快照（≤15s 窗口，见文档说明）
+    if cur == "单身":
+        new_status = "已脱单"
+        # 已报名活动者不可自行脱单（先取消报名）；读快照（≤15s 窗口，见文档说明）
         active_signups = [s for s in snap_signups_by_openid(open_id)
                           if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_STATUS) == "已报名"]
         if active_signups:
-            return jsonify({"error": "你已报名活动，请先取消报名再隐藏"}), 400
-    elif cur == "已隐藏":
-        new_status = "活跃"
+            return jsonify({"error": "你已报名活动，请先取消报名再脱单"}), 400
+    elif cur == "已脱单":
+        new_status = "单身"
     else:
         return jsonify({"error": "当前状态暂不支持切换"}), 400
     # 秒提交：spool 幂等写入绝对目标状态 + 本地快照立即生效
@@ -1963,11 +1963,11 @@ def create_message():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    # 留言属于互动行为：「活跃」与「观察员」可发（隐藏/待审核/已拒绝/已退出均拦截）
+    # 留言属于互动行为：「单身」与「观察员」可发（已脱单/待审核/审核不通过/已退出均拦截）
     _status, _u = _account_status(open_id)
-    if _status == "已隐藏":
-        return jsonify({"error": "你当前处于隐藏状态，不能留言；请先在「我的」页恢复活跃"}), 403
-    if _status in ("待审核", "已拒绝", "已退出"):
+    if _status == "已脱单":
+        return jsonify({"error": "你当前处于已脱单状态，不能留言；请先在「我的」页恢复单身"}), 403
+    if _status in ("待审核", "审核不通过", "已退出"):
         return jsonify(GATE_MESSAGES[_status]), 403
     data = request.get_json(silent=True) or {}
     target = (data.get("target_openid") or "").strip()
@@ -2318,7 +2318,10 @@ def _normalize_editable_update(data):
         if ftype is None:
             continue
         if ftype in ("text", "phone"):
-            update_fields[k] = str(v).strip() if v is not None else ""
+            val = str(v).strip() if v is not None else ""
+            if k == F_NICKNAME and not val:
+                continue  # 昵称不可清空：bot 按昵称查找/展示，清空会导致功能失效
+            update_fields[k] = val
         elif ftype == "select":
             update_fields[k] = str(v).strip() if v is not None else ""
         elif ftype == "number":
@@ -2832,7 +2835,7 @@ def track_stats():
 
 @app.route("/api/public/users", methods=["GET"])
 def public_users():
-    """公开接口：返回活跃用户列表（引流页展示用，不含敏感信息；走本地快照）"""
+    """公开接口：返回单身用户列表（引流页展示用，不含敏感信息；走本地快照）"""
     all_users = snap_active_users()
     result = []
     for u in all_users:

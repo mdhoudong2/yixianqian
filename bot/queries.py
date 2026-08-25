@@ -12,14 +12,14 @@ def _uid_sort_key(rec):
 
 
 def pick_primary_record(records):
-    """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小。
+    """同一 open_id 多条记录时取主档案：单身优先，其次用户ID最小。
     全系统身份解析唯一入口——头像/资料/记账/归属一致性都依赖它。"""
     if not records:
         return records
 
     def rank(r):
         st = get_field_text(r.get("fields", {}), FIELD_ACCOUNT_STATUS)
-        return (0 if st == "活跃" else 1, _uid_sort_key(r))
+        return (0 if st == "单身" else 1, _uid_sort_key(r))
 
     return [sorted(records, key=rank)[0]]
 

@@ -69,7 +69,7 @@ def auto_bind_from_creator():
         if not open_id:
             continue
 
-        # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→已拒绝，空→普通注册
+        # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→审核不通过，空→普通注册
         invite_code = (get_field_text(fields, FIELD_INVITE_CODE) or "").strip()
         is_observer = False
         is_wrong_code = False
@@ -84,7 +84,7 @@ def auto_bind_from_creator():
         if is_observer and open_id in existing_observer_oids:
             old_nick = existing_nick.get(open_id, "")
             update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "已拒绝",
+                FIELD_ACCOUNT_STATUS: "审核不通过",
                 FIELD_FEISHU_ID: open_id,
             })
             duplicate_count += 1
@@ -98,10 +98,10 @@ def auto_bind_from_creator():
 
         if not is_observer and not is_wrong_code and open_id in existing_user_oids:
             old_nick = existing_nick.get(open_id, "")
-            # 重复记录标记「已拒绝」（门禁全拦、不可被普通激活），并补写飞书ID：
+            # 重复记录标记「审核不通过」（门禁全拦、不可被普通激活），并补写飞书ID：
             # 否则飞书ID仍为空，下一轮会被当成"未绑定"重复轮询、反复发"已注册过"
             update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "已拒绝",
+                FIELD_ACCOUNT_STATUS: "审核不通过",
                 FIELD_FEISHU_ID: open_id,
             })
             duplicate_count += 1
@@ -118,7 +118,7 @@ def auto_bind_from_creator():
             # 原子消耗邀请码（未用→已用）；已被并发占用则拒绝，杜绝一码多用
             if not consume_observer_code(invite_code, nickname):
                 update_record(USER_TABLE_ID, record_id, {
-                    FIELD_ACCOUNT_STATUS: "已拒绝",
+                    FIELD_ACCOUNT_STATUS: "审核不通过",
                     FIELD_FEISHU_ID: open_id,
                 })
                 duplicate_count += 1
@@ -157,20 +157,20 @@ def auto_bind_from_creator():
             continue
 
         if is_wrong_code:
-            # 邀请码错误或已被使用：已拒绝（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
+            # 邀请码错误或已被使用：审核不通过（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
             msg = "邀请码已被使用" if invite_code in codes else "邀请码错误"
             update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "已拒绝",
+                FIELD_ACCOUNT_STATUS: "审核不通过",
                 FIELD_FEISHU_ID: open_id,
             })
             log(f"观察员注册邀请码无效: {nickname} (open_id={open_id})")
             send_text_message(open_id, f"{msg}，注册未通过。如有疑问请联系管理员。")
             continue
 
-        # 新注册用户强制设为待审核（防止表单默认值或用户自选导致直接活跃）
+        # 新注册用户强制设为待审核（防止表单默认值或用户自选导致直接单身）
         current_status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
         update_fields_bind = {}
-        if current_status != "已隐藏":
+        if current_status != "已脱单":
             update_fields_bind[FIELD_ACCOUNT_STATUS] = "待审核"
         # 设置初始爱心（仅字段为空时兜底写3；表格默认值已设为3，此处不覆盖）
         existing_hearts = get_field_number(fields, FIELD_HEART_REMAIN, -1)
@@ -249,11 +249,11 @@ def auto_bind_loop(interval=30):
 
 
 def auto_send_view_after_approval():
-    """检测账号状态从待审核变为活跃，发送H5链接并处理邀请奖励"""
+    """检测账号状态从待审核变为单身，发送H5链接并处理邀请奖励"""
     items = search_records(USER_TABLE_ID, {
         "conjunction": "and",
         "conditions": [
-            {"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["活跃"]},
+            {"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]},
             {"field_name": FIELD_FEISHU_ID, "operator": "isNotEmpty", "value": []}
         ]
     })
@@ -687,7 +687,7 @@ def auto_detect_mutual_like_loop(interval=30):
 def reconcile_hearts():
     """爱心对账（v6 事件溯源，余额唯一写者）：
     期望值 = 初始 + 邀请奖励 − 有效喜欢数（状态≠已取消）。
-    同 open_id 多档案：只对主档案记账（活跃优先/用户ID最小），副本强制 0。
+    同 open_id 多档案：只对主档案记账（单身优先/用户ID最小），副本强制 0。
     同时把邀请奖励汇总发布到共享文件，供 H5 端计算显示。
     """
     likes = search_records(LIKE_TABLE_ID)
@@ -1048,7 +1048,7 @@ def auto_generate_match_recommendations():
         return
     active_users = search_records(USER_TABLE_ID, {
         "conjunction": "and",
-        "conditions": [{"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["活跃"]}]
+        "conditions": [{"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]}]
     })
     if len(active_users) < 2:
         return

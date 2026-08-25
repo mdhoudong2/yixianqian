@@ -766,23 +766,6 @@ def build_subtitle(fields):
     return " · ".join(parts)
 
 
-def order_cards_likes_first(cards, liked_me_openids):
-    """把「喜欢我的异性」卡片靠前，但前 10 个位置随机混排。
-
-    匿名喜欢不能让用户一翻牌就猜出「第一个/前几个就是喜欢我的人」，否则会暴露是谁喜欢、
-    破坏匿名体面。所以把喜欢我的人推进前 10 个位置里，和普通卡片随机打乱。
-    """
-    if not liked_me_openids:
-        return cards
-    liked = [c for c in cards if c.get("openid") in liked_me_openids]
-    others = [c for c in cards if c.get("openid") not in liked_me_openids]
-    random.shuffle(others)
-    # 前 10 个位置：喜欢我的人 + 若干普通卡片随机混排
-    front = liked + others[:max(0, 10 - len(liked))]
-    random.shuffle(front)
-    return front + others[max(0, 10 - len(liked)):]
-
-
 def pass_card_filters(fields, f):
     """卡片筛选：全部条件满足才返回 True"""
     # 身高（范围：最低/最高可独立选填；未填身高的用户不参与身高筛选）
@@ -1233,13 +1216,8 @@ def home():
 
     # 喜欢（谁喜欢了我 / 相互喜欢）
     liked_me = snap_likes_by_target(open_id)
-    # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出
-    liked_me_openids = {
-        bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
-        for l in liked_me
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
-    }
-    cards = order_cards_likes_first(cards, liked_me_openids)
+    # 卡片打乱推送：避免按用户ID连号排序，也不把「喜欢我的人」集中在前面暴露是谁
+    random.shuffle(cards)
     # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
     if is_observer:
         self_card = _build_self_card(open_id, active_users, msg_counts)
@@ -1580,13 +1558,8 @@ def get_cards():
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
 
-    # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出
-    liked_me_openids = {
-        bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
-        for l in snap_likes_by_target(open_id)
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
-    }
-    cards = order_cards_likes_first(cards, liked_me_openids)
+    # 卡片打乱推送：避免按用户ID连号排序，也不把「喜欢我的人」集中在前面暴露是谁
+    random.shuffle(cards)
     # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
     if is_observer:
         self_card = _build_self_card(open_id, all_users, msg_counts)

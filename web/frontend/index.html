@@ -527,9 +527,9 @@
       </div>
     </div>
   </div>
-  <div style="padding:12px 12px 24px;" v-if="!isObserver || availableRoles.length > 1 || user.is_admin">
+  <div style="padding:12px 12px 24px;">
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
-      <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
+      <van-cell title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>

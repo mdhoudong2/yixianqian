@@ -961,6 +961,8 @@ threading.Thread(target=_image_cleanup_loop, daemon=True).start()
 def _get_cached_image(file_token):
     """检查磁盘缓存，返回 (path, content_type) 或 None"""
     for fname in os.listdir(IMAGE_CACHE_DIR):
+        if fname.endswith(".tmp"):
+            continue
         if fname.startswith(file_token + "."):
             fpath = os.path.join(IMAGE_CACHE_DIR, fname)
             ext = fname.rsplit(".", 1)[-1].lower()
@@ -1090,8 +1092,10 @@ def proxy_image(file_token):
         # 压缩后保存（GIF/HEIC 原样保存）
         compressed = _compress_image(resp.content, ext)
         cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, ext))
-        with open(cache_path, "wb") as f:
+        tmp = cache_path + ".tmp"
+        with open(tmp, "wb") as f:
             f.write(compressed)
+        os.replace(tmp, cache_path)  # 原子替换，避免与请求线程并发写坏
         return Response(compressed, content_type=content_type,
                         headers={"Cache-Control": "public, max-age=604800"})
     except Exception:
@@ -1349,6 +1353,9 @@ def activities():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     result = []
     for item in snap_all_activities():
@@ -1363,6 +1370,9 @@ def activity_detail(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     act_record, text_act_id = snap_resolve_activity(activity_id)
     if not act_record:
@@ -1839,6 +1849,9 @@ def my_likes():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     # 谁喜欢了我
     liked_me = bitable.search_records(LIKE_TABLE_ID, [
@@ -1889,6 +1902,9 @@ def list_messages():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
     target = (request.args.get("target") or "").strip()
     if not target:
         return jsonify({"messages": []})
@@ -2009,6 +2025,9 @@ def group_candidates(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     # 检查活动状态
     act_record, text_act_id = snap_resolve_activity(activity_id)
@@ -2137,6 +2156,9 @@ def group_status(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     act_record, text_act_id = snap_resolve_activity(activity_id)
     if not act_record:
@@ -2167,6 +2189,9 @@ def group_result(activity_id):
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     act_record, text_act_id = snap_resolve_activity(activity_id)
     if not act_record:
@@ -2456,6 +2481,9 @@ def my_liked_list():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     my_likes = bitable.search_records(LIKE_TABLE_ID, [
         {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
@@ -2574,6 +2602,9 @@ def my_activities():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     signups = snap_signups_by_openid(open_id)
 
@@ -2596,6 +2627,9 @@ def my_groups():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     signups = snap_signups_by_openid(open_id)
 
@@ -2636,6 +2670,9 @@ def my_groups_flag():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
 
     signups = snap_signups_by_openid(open_id)
     for s in signups:
@@ -2660,6 +2697,9 @@ def activity_signups(activity_id):
     oid = require_login()
     if not oid:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(oid)
+    if gate:
+        return jsonify(gate[0]), gate[1]
     # 仅已报名该活动的用户可查看名单
     _, _text_act_id_chk = snap_resolve_activity(activity_id)
     if _text_act_id_chk and not bitable.get_user_signup(_text_act_id_chk, oid):
@@ -2694,6 +2734,9 @@ def get_user_public(openid):
     oid = require_login()
     if not oid:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(oid)
+    if gate:
+        return jsonify(gate[0]), gate[1]
     u = snap_find_user_by_openid(openid)
     if not u:
         return jsonify({"error": "用户不存在"}), 404
@@ -2713,6 +2756,9 @@ def get_notifications():
     oid = require_login()
     if not oid:
         return jsonify({"error": "未登录"}), 401
+    gate = account_gate(oid)
+    if gate:
+        return jsonify(gate[0]), gate[1]
     items = [n for n in load_notifications() if n.get("recipient") == oid]
     items.sort(key=lambda n: n.get("time", ""), reverse=True)
     return jsonify({"notifications": items})

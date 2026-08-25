@@ -256,20 +256,6 @@ def _pick_primary_user(records):
     return sorted(records, key=rank)[0]
 
 
-def live_primary_hearts(open_id):
-    """实时直查主档案余额，并叠加进程内在途口径：
-    + 退款信用（已取消、对账尚未写回）
-    − 预留占用（已提交、机器人尚未扣减）
-    用于首页/我的等低频读点，保证显示即时且与最终真值收敛"""
-    recs = bitable.search_records(USER_TABLE_ID, [
-        {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
-    rec = _pick_primary_user(recs)
-    if not rec:
-        return None
-    stored = bitable.get_field_number(rec.get("fields", {}), F_HEART_REMAIN, INITIAL_HEARTS)
-    return max(0, min(MAX_HEARTS, stored))
-
-
 def snap_find_user_by_openid(open_id):
     """快照优先、实时兜底；同号多档统一解析到主档案"""
     users = _snap("users")
@@ -1265,9 +1251,7 @@ def home():
     user_brief = format_user_brief(user)
     user_brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     user_brief["available_roles"] = sorted(roles_of(open_id))
-    live_h = live_primary_hearts(open_id)
-    if live_h is not None:
-        user_brief["hearts"] = live_h
+    user_brief["hearts"] = computed_hearts(open_id)
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -1288,9 +1272,7 @@ def user_me():
     brief = format_user_brief(user)
     brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     brief["available_roles"] = sorted(roles_of(open_id))
-    live_h = live_primary_hearts(open_id)
-    if live_h is not None:
-        brief["hearts"] = live_h
+    brief["hearts"] = computed_hearts(open_id)
     return jsonify(brief)
 
 

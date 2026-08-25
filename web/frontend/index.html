@@ -91,17 +91,20 @@
   .msg-count { color: #ff6b81; font-weight: 700; font-size: 18px; }
   .section-title { font-size: 15px; color: #969799; margin: 16px 4px 8px; }
   /* 个人中心 */
-  .profile-header { background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 30px 20px; color: #fff; text-align: center; }
-  .profile-header .avatar { width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.3); margin: 0 auto 10px; display: flex; align-items: center; justify-content: center; font-size: 28px; overflow: hidden; }
+  .profile-header { background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 28px 20px 32px; color: #fff; text-align: center; }
+  .profile-header .avatar { width: 68px; height: 68px; border-radius: 50%; background: rgba(255,255,255,0.3); border: 2px solid rgba(255,255,255,0.6); display: flex; align-items: center; justify-content: center; font-size: 30px; overflow: hidden; margin: 0 auto 12px; }
   .profile-header .avatar img { width: 100%; height: 100%; object-fit: cover; }
-  .profile-name { font-size: 20px; font-weight: bold; display: inline-block; position: relative; }
-  .profile-hearts { margin-top: 8px; font-size: 14px; opacity: 0.9; }
-  .hearts-num { font-size: 22px; font-weight: bold; }
-  .profile-top { display: flex; align-items: center; justify-content: center; gap: 14px; margin-bottom: 10px; }
-  .profile-top .avatar { margin: 0; }
-  .status-toggle { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%); white-space: nowrap; border-radius: 14px; padding: 4px 12px; font-size: 12px; cursor: pointer; line-height: 1.4; border: 1px solid transparent; }
-  .status-toggle.status-active { background: #fff; color: #ff6b81; border-color: rgba(255,255,255,0.9); box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
-  .status-toggle.status-hidden { background: rgba(0,0,0,0.28); color: rgba(255,255,255,0.6); border-color: rgba(255,255,255,0.35); }
+  .profile-name-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .profile-name { font-size: 20px; font-weight: bold; }
+  .role-pill { font-size: 12px; line-height: 1; padding: 5px 10px; border-radius: 20px; background: rgba(255,255,255,0.92); color: #ff6b81; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
+  .role-pill.role-pill-hidden { background: rgba(0,0,0,0.28); color: rgba(255,255,255,0.85); }
+  .profile-card { background: #fff; border-radius: 12px; padding: 0 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .profile-card-row { display: flex; align-items: center; gap: 10px; padding: 14px 0; font-size: 15px; color: #323233; }
+  .profile-card-divider { height: 1px; background: #f2f3f5; }
+  .row-label { flex: 1; min-width: 0; }
+  .hearts-total { color: #969799; font-size: 13px; }
+  .hearts-left { color: #ff6b81; font-weight: 700; font-size: 15px; }
+  .invite-code-inline { flex: 1; text-align: right; font-weight: 600; font-size: 15px; letter-spacing: 1px; color: #323233; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* 我的资料 */
   .profile-detail { padding: 12px; }
   .profile-detail .van-cell { font-size: 14px; }
@@ -197,15 +200,7 @@
   .invite-dialog-body p { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 12px; }
   .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; }
   /* 我的页-邀请入口 */
-  .invite-cta { padding: 0 12px 8px; }
-  .invite-block { padding: 12px 12px 4px; }
-  .invite-note { font-size: 12px; color: #c8c9cc; text-align: center; line-height: 1.6; margin-top: 8px; }
-  .invite-tip { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 8px; }
   .invite-close { position: absolute; top: 10px; right: 14px; font-size: 20px; color: #c8c9cc; cursor: pointer; z-index: 2; }
-  .invite-code-box { background: #fff; border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .invite-code-label { font-size: 12px; color: #969799; }
-  .invite-code-value { font-size: 18px; font-weight: 600; color: #323233; margin-top: 2px; letter-spacing: 1px; }
-  .invite-code-note { font-size: 12px; color: #969799; margin-top: 4px; }
   .profile-cells .van-cell { font-size: 16px; }
   .admin-help-panel { padding: 20px 16px 16px; }
   .admin-help-title { font-size: 17px; font-weight: 600; color: #323233; text-align: center; margin-bottom: 16px; }
@@ -405,7 +400,7 @@
       <div class="msg-name">我喜欢的</div>
       <div class="msg-sub">查看我喜欢的人，管理喜欢列表</div>
     </div>
-    <div class="msg-right"><span class="msg-count">{{ myLikesCount }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ myLikesCount }}</span><van-loading v-else size="14px" /><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
   <div class="msg-card" @click="openMutual" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💞</div>
@@ -413,7 +408,7 @@
       <div class="msg-name">相互喜欢</div>
       <div class="msg-sub">你们已相互喜欢，可查看联系方式</div>
     </div>
-    <div class="msg-right"><span class="msg-count">{{ likesData.mutual.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ likesData.mutual.length }}</span><van-loading v-else size="14px" /><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
   <div class="msg-card" @click="openLikedMe" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">👤</div>
@@ -421,24 +416,19 @@
       <div class="msg-name">谁喜欢了我</div>
       <div class="msg-sub">查看喜欢你的匿名用户</div>
     </div>
-    <div class="msg-right"><span class="msg-count">{{ likesData.liked_me.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ likesData.liked_me.length }}</span><van-loading v-else size="14px" /><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
-  <div v-if="loadingLikes" style="text-align:center; padding:40px;">
-    <van-loading size="24px">加载中...</van-loading>
-  </div>
-  <template v-else>
-    <div class="section-title" v-if="notifications.length">🔔 动态</div>
-    <div v-for="(n, i) in notifications" :key="i" class="msg-card">
-      <div class="msg-avatar">🔔</div>
-      <div class="msg-body">
-        <div class="msg-sub" style="color:#323233;">{{ n.text }}</div>
-        <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
-      </div>
-      <div class="msg-right" v-if="n.activity_id">
-        <van-button type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
-      </div>
+  <div class="section-title" v-if="notifications.length">🔔 动态</div>
+  <div v-for="(n, i) in notifications" :key="i" class="msg-card">
+    <div class="msg-avatar">🔔</div>
+    <div class="msg-body">
+      <div class="msg-sub" style="color:#323233;">{{ n.text }}</div>
+      <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
     </div>
-  </template>
+    <div class="msg-right" v-if="n.activity_id">
+      <van-button type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
+    </div>
+  </div>
 </div>
 <!-- ========== 相互喜欢列表 ========== -->
 <div v-else-if="page==='mutual'">
@@ -507,41 +497,45 @@
 <!-- ========== 我的页 ========== -->
 <div v-else-if="page==='profile'" style="padding:0;">
   <div class="profile-header">
-    <div class="profile-top">
-      <div class="avatar">
-        <img v-if="user.photo" :src="user.photo" alt="" @error="user.photo=''">
-        <template v-else>{{ user.gender==='男性' ? '👨' : '👩' }}</template>
+    <div class="avatar">
+      <img v-if="user.photo" :src="user.photo" alt="" @error="user.photo=''">
+      <template v-else>{{ user.gender==='男性' ? '👨' : '👩' }}</template>
+    </div>
+    <div class="profile-name-row">
+      <span class="profile-name">{{ user.nickname }}</span>
+      <span v-if="isObserver" class="role-pill">吃瓜群众</span>
+      <span v-else class="role-pill" :class="accountStatusLabel === '隐藏' ? 'role-pill-hidden' : ''" @click="toggleAccountStatus">{{ accountStatusLabel }}</span>
+    </div>
+  </div>
+  <div style="padding:12px 12px 0;" v-if="!isObserver">
+    <div class="profile-card">
+      <div class="profile-card-row">
+        <span class="row-label">💕 爱心</span>
+        <span class="hearts-total">共 {{ user.hearts_total || 3 }} 颗</span>
+        <span class="hearts-left">剩 {{ user.hearts }} 颗</span>
+      </div>
+      <div class="profile-card-divider"></div>
+      <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
+        <span class="row-label">🎁 邀请好友得爱心</span>
+        <van-icon name="arrow" color="#c8c9cc" />
+      </div>
+      <div class="profile-card-divider"></div>
+      <div class="profile-card-row">
+        <span class="row-label">我的邀请码</span>
+        <span class="invite-code-inline">{{ user.user_id || '未获取' }}</span>
+        <van-button size="mini" plain type="primary" color="#ff6b81" @click="copyInviteCode">复制</van-button>
       </div>
     </div>
-    <div class="profile-name">{{ user.nickname }}
-      <button v-if="!isObserver" class="status-toggle" :class="accountStatusLabel === '隐藏' ? 'status-hidden' : 'status-active'" @click="toggleAccountStatus">{{ accountStatusLabel }}</button>
-      <span v-if="isObserver" class="status-toggle status-active" style="cursor:default;">吃瓜群众</span>
-    </div>
-    <div class="profile-hearts" v-if="!isObserver"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
   </div>
-  <div class="invite-block" v-if="!isObserver">
-    <van-button plain type="primary" color="#ff6b81" block @click="showInviteDialog=true">邀请好友得爱心</van-button>
-    <div class="invite-note">初始3颗爱心，每邀请1人注册+1颗，上限30颗，请邀请未婚教友哦！</div>
+  <div style="padding:12px 12px 24px;" v-if="!isObserver || availableRoles.length > 1 || user.is_admin">
+    <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
+      <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
+      <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
+      <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
+      <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>
+      <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+    </van-cell-group>
   </div>
-  <div style="padding:0 12px 8px;" v-if="!isObserver">
-    <div class="invite-code-box">
-      <div>
-        <div class="invite-code-label">我的邀请码</div>
-        <div class="invite-code-value">{{ user.user_id || '未获取' }}</div>
-        <div class="invite-code-note">在注册时，填进“邀请人ID”</div>
-      </div>
-      <van-button size="small" plain type="primary" color="#ff6b81" @click="copyInviteCode">复制邀请码</van-button>
-    </div>
-  </div>
-    <div style="padding:0 12px 20px;">
-      <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
-        <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
-        <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
-        <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
-        <van-cell :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>
-        <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
-      </van-cell-group>
-    </div>
 </div>
 <!-- ========== 我的资料详情 ========== -->
 <div v-else-if="page==='profile_detail'">
@@ -1909,6 +1903,7 @@ createApp({
       try {
         const me = await api('/api/user/me');
         if (me && typeof me.hearts === 'number') user.value.hearts = me.hearts;
+        if (me && typeof me.hearts_total === 'number') user.value.hearts_total = me.hearts_total;
       } catch (e) {}
     }
     async function loadLikes() {
@@ -1916,6 +1911,7 @@ createApp({
       loadingLikes.value = true;
       try { const data = await api('/api/likes/me'); likesData.value = data; }
       catch(e) { vant.showToast(e.message); }
+      await loadMyLikesCount();
       loadingLikes.value = false;
     }
     async function loadMyLikesCount() {
@@ -2067,7 +2063,7 @@ createApp({
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
-      if (p === 'likes') { loadLikes(); loadMyLikesCount(); loadNotifications(); }
+      if (p === 'likes') { loadingLikes.value = true; loadLikes(); loadNotifications(); }
       if (p === 'profile') checkGroupEntry();
     });
 

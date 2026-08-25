@@ -241,6 +241,12 @@ def computed_hearts(open_id):
     return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - extra))
 
 
+def hearts_total(open_id):
+    """爱心总额 = 初始 + 邀请奖励（上限 MAX_HEARTS），不含已使用"""
+    invites = _balances_file().get("invites", {}).get(open_id, 0)
+    return min(MAX_HEARTS, INITIAL_HEARTS + invites)
+
+
 def _pick_primary_user(records):
     """同一 open_id 多条记录时取主档案：活跃优先，其次用户ID最小（与 bot/queries 同规则）"""
     if not records:
@@ -1146,7 +1152,7 @@ def feishu_auth():
     brief = format_user_brief(user)
     brief["available_roles"] = sorted(roles)
     resp = make_response(jsonify({"ok": True, "user": brief}))
-    resp.set_cookie("yxq_session", session_id, httponly=True,
+    resp.set_cookie("yxq_session", session_id, httponly=True, secure=True,
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
 
@@ -1252,6 +1258,7 @@ def home():
     user_brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     user_brief["available_roles"] = sorted(roles_of(open_id))
     user_brief["hearts"] = computed_hearts(open_id)
+    user_brief["hearts_total"] = hearts_total(open_id)
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -1273,6 +1280,7 @@ def user_me():
     brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     brief["available_roles"] = sorted(roles_of(open_id))
     brief["hearts"] = computed_hearts(open_id)
+    brief["hearts_total"] = hearts_total(open_id)
     return jsonify(brief)
 
 
@@ -1323,7 +1331,7 @@ def switch_account_role():
         return jsonify({"error": "你尚未注册该身份，请先完成对应注册"}), 403
     session_id = create_session(open_id, role)
     resp = make_response(jsonify({"ok": True, "role": role}))
-    resp.set_cookie("yxq_session", session_id, httponly=True,
+    resp.set_cookie("yxq_session", session_id, httponly=True, secure=True,
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
 
@@ -1639,6 +1647,31 @@ def _spool_process(op):
     return False
 
 
+_dead_alert_state = {"last_ts": 0.0}
+
+
+def _alert_spool_dead(op):
+    """死信告警：spool 重试耗尽、写入失败记录落入死信文件后，通知管理员。
+
+    限频：10 分钟内最多一条，避免飞书 API 抖动时对管理员消息轰炸。
+    告警内容只含操作概要，不带用户字段，避免隐私信息外发。
+    """
+    now = time.time()
+    if now - _dead_alert_state["last_ts"] < 600:
+        return
+    _dead_alert_state["last_ts"] = now
+    brief = {
+        "type": op.get("type"),
+        "initiator_oid": op.get("initiator_oid"),
+        "target_oid": op.get("target_oid"),
+        "record_id": op.get("record_id"),
+    }
+    text = ("[一线牵] H5 写入飞书连续失败，已进入死信队列，请检查："
+            + json.dumps(brief, ensure_ascii=False))
+    for admin_oid in ADMIN_OPEN_IDS:
+        send_text_message(admin_oid, text)
+
+
 def _spool_worker():
     while True:
         op = None
@@ -1663,6 +1696,7 @@ def _spool_worker():
             except Exception:
                 pass
             _spool_rewrite()
+            _alert_spool_dead(op)
 
 
 def _spool_boot():

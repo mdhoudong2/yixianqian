@@ -47,6 +47,7 @@ class _FileLock:
 
 def load_json(path, default=None):
     """读取 JSON，文件不存在或损坏时返回 default（不抛异常）"""
+    path = os.fspath(path)
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -56,6 +57,7 @@ def load_json(path, default=None):
 
 def save_json(path, data):
     """原子写 JSON：先写同目录临时文件，fsync 后 rename 覆盖"""
+    path = os.fspath(path)
     d = os.path.dirname(os.path.abspath(path))
     os.makedirs(d, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".yx-", suffix=".tmp")
@@ -78,6 +80,7 @@ def update_json(path, default, mutator):
 
     返回：写入后的数据（放弃写入时返回原数据）。
     """
+    path = os.fspath(path)
     with _thread_lock(path), _FileLock(path + ".lock"):
         data = load_json(path, default)
         new_data = mutator(data)

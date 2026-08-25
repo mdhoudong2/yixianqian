@@ -72,7 +72,7 @@ def handle_h5_command(sender_id):
         return "你还没有注册哦~\n发送「注册」先填写资料，审核通过后即可使用一线牵App。"
     user_fields = user_records[0].get("fields", {})
     status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-    if status not in ("活跃", STATUS_OBSERVER):
+    if status not in ("单身", STATUS_OBSERVER):
         return f"你的资料当前状态：{status}\n审核通过后即可使用一线牵App，请耐心等待~"
     if send_main_menu_card(sender_id):
         log(f"已发送卡片1(主菜单): {sender_id}")
@@ -101,14 +101,14 @@ def handle_status_command(sender_id):
     ]
     if status == "待审核":
         lines.append("资料正在审核中，请耐心等待，通过后会通知你。")
-    elif status == "活跃":
+    elif status == "单身":
         lines.append("账号已激活，发送「一线牵」即可进入App查看异性资料。")
     elif status == "已退出":
         lines.append("你已暂时退出相亲市场，如需恢复请联系管理员。")
-    elif status == "已拒绝":
+    elif status == "审核不通过":
         lines.append("很抱歉，你的资料未通过审核，如有疑问请联系管理员。")
-    elif status == "已隐藏":
-        lines.append("账号已被隐藏（不出现在他人牵线中），可随时在App「我的」页恢复活跃。")
+    elif status == "已脱单":
+        lines.append("账号已脱单（不出现在他人牵线中），可随时在App「我的」页恢复单身。")
     elif status == STATUS_OBSERVER:
         lines.append("你是吃瓜群众账号：可浏览男生/女生资料、留言、反馈、查看活动。")
     else:
@@ -177,7 +177,7 @@ def handle_admin_pending():
         lines.append("")
 
     lines.append("回复「通过 用户ID」或「通过 昵称」审核通过")
-    lines.append("回复「拒绝 用户ID」或「拒绝 昵称」隐藏该用户")
+    lines.append("回复「拒绝 用户ID」或「拒绝 昵称」审核不通过")
     return "\n".join(lines)
 
 
@@ -199,38 +199,38 @@ def handle_admin_approve(keyword):
     current_status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
     open_id = get_field_text(fields, FIELD_FEISHU_ID)
 
-    if current_status == "活跃":
-        return f"{uid} {nickname} 已经是活跃状态，无需重复操作。"
+    if current_status == "单身":
+        return f"{uid} {nickname} 已经是单身状态，无需重复操作。"
 
     if not open_id:
         return f"{uid} {nickname} 尚未绑定飞书账号（open_id为空），无法发送通知。请等待自动绑定后再审核。"
 
-    # 同号重复档案守卫：该飞书账号名下已有其他活跃档案时拒绝激活，
+    # 同号重复档案守卫：该飞书账号名下已有其他单身档案时拒绝激活，
     # 防止同一人多个档案并存导致头像/资料/爱心归属错乱
     others = [r for r in search_records(USER_TABLE_ID, {
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "is", "value": [open_id]}]
     }) if r.get("record_id") != record_id
-        and get_field_text(r.get("fields", {}), FIELD_ACCOUNT_STATUS) == "活跃"]
+        and get_field_text(r.get("fields", {}), FIELD_ACCOUNT_STATUS) == "单身"]
     if others:
         other = others[0]
         other_uid = get_field_text(other.get("fields", {}), FIELD_NICKNAME)
         other_id = get_field_text(other.get("fields", {}), "用户ID") or "无ID"
-        return (f"⚠️ 激活被拦截：该飞书账号已绑定活跃档案 {other_id} {other_uid}，"
+        return (f"⚠️ 激活被拦截：该飞书账号已绑定单身档案 {other_id} {other_uid}，"
                 f"疑似重复资料。\n如确需替换，请先将旧档案「拒绝」后再操作本条。")
 
-    # 更新状态为活跃
-    if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "活跃"}):
+    # 更新状态为单身
+    if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "单身"}):
         log(f"管理员审核通过: {uid} {nickname}")
         # 立即发送审核通过通知（原子预约去重，避免与 30s 轮询线程重复发送）
         if reserve_notified("approval_sent", record_id):
             gender = get_field_text(fields, FIELD_GENDER)
             if gender == "男性":
-                view_desc = "活跃女生"
+                view_desc = "单身女生"
             elif gender == "女性":
-                view_desc = "活跃男生"
+                view_desc = "单身男生"
             else:
-                view_desc = "活跃异性"
+                view_desc = "单身异性"
 
             h5_url = generate_h5_url(open_id)
             user_msg = (
@@ -253,7 +253,7 @@ def handle_admin_approve(keyword):
 
 
 def handle_admin_reject(keyword):
-    """管理员拒绝用户（写入「已拒绝」，与用户自隐「已隐藏」区分，被拒者不可自助恢复）"""
+    """管理员拒绝用户（写入「审核不通过」，与用户自隐「已脱单」区分，被拒者不可自助恢复）"""
     records = find_user_by_id_or_name(keyword)
     if not records:
         return f"未找到用户：{keyword}"
@@ -267,17 +267,17 @@ def handle_admin_reject(keyword):
     uid = fields.get("用户ID", "")
     current_status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
 
-    if current_status == "已拒绝":
-        return f"{uid} {nickname} 已经是拒绝状态。"
+    if current_status == "审核不通过":
+        return f"{uid} {nickname} 已经是审核不通过状态。"
 
-    if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "已拒绝"}):
+    if update_record(USER_TABLE_ID, record_id, {FIELD_ACCOUNT_STATUS: "审核不通过"}):
         log(f"管理员拒绝用户: {uid} {nickname}")
         # 通知用户
         open_id = get_field_text(fields, FIELD_FEISHU_ID)
         if open_id:
             send_text_message(open_id, "很抱歉，你的资料未通过审核，如有疑问请联系管理员。")
         return (f"已拒绝用户：{uid} {nickname}\n"
-                f"该用户将不能进入App浏览和使用（区别于自行隐藏）。")
+                f"该用户将不能进入App浏览和使用（区别于自行脱单）。")
     else:
         return "操作失败，请稍后重试。"
 
@@ -396,7 +396,7 @@ def handle_admin_help():
         "【审核管理】\n"
         "【待审核】查看待审核用户\n"
         "【通过 U-xxx或姓名】审核通过\n"
-        "【拒绝/隐藏 U-xxx或姓名】拒绝用户\n"
+        "【拒绝 U-xxx或姓名】审核不通过\n"
         "【通知 U-xxx 内容】给用户发消息\n"
         "【用户统计】查看统计数据\n\n"
         "【吃瓜群众】\n"
@@ -427,11 +427,11 @@ def handle_admin_stats():
         status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
         if status == "待审核":
             pending += 1
-        elif status == "活跃":
+        elif status == "单身":
             active += 1
-        elif status == "已隐藏":
+        elif status == "已脱单":
             hidden += 1
-        elif status == "已拒绝":
+        elif status == "审核不通过":
             rejected += 1
         elif status == "已退出":
             exited += 1
@@ -444,9 +444,9 @@ def handle_admin_stats():
         f"用户统计：\n\n"
         f"总注册：{total}人\n"
         f"待审核：{pending}人\n"
-        f"活跃：{active}人\n"
-        f"已隐藏：{hidden}人\n"
-        f"已拒绝：{rejected}人\n"
+        f"单身：{active}人\n"
+        f"已脱单：{hidden}人\n"
+        f"审核不通过：{rejected}人\n"
         f"已退出：{exited}人\n"
         f"吃瓜群众：{observer}人\n"
         f"未绑定open_id：{unbound}人"

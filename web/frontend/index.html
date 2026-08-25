@@ -315,6 +315,7 @@
         <div class="card-photo-overlay">
           <div class="card-overlay-box">
             <div class="card-overlay-text">
+              <div v-if="currentCard.is_self" style="margin-bottom:6px;"><span style="background:#ff6b81;color:#fff;font-size:11px;padding:3px 9px;border-radius:999px;">这是你 · 他人视角</span></div>
               <div class="card-name">{{ currentCard.nickname }}
                 <span class="gender-icon">{{ currentCard.gender==='男性' ? '♂' : '♀' }}</span>
               </div>
@@ -328,7 +329,7 @@
       </div>
       <div class="card-tabs">
         <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
-        <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
+        <div v-if="!currentCard.is_self" class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
       </div>
       <div class="card-info">
         <template v-if="cardTab==='profile'">
@@ -386,8 +387,8 @@
       </div>
     </div>
       <div class="card-actions" v-if="cardTab==='profile'">
-        <button class="feedback-btn" @click="openFeedbackDialog">反馈</button>
-        <button v-if="!isObserver" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
+        <button v-if="!currentCard.is_self" class="feedback-btn" @click="openFeedbackDialog">反馈</button>
+        <button v-if="!isObserver && !currentCard.is_self" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
       </div>
     </template>
   </template>
@@ -504,7 +505,7 @@
     <div class="profile-name-row">
       <span class="profile-name">{{ user.nickname }}</span>
       <span v-if="isObserver" class="role-pill">吃瓜群众</span>
-      <span v-else class="role-pill" :class="accountStatusLabel === '隐藏' ? 'role-pill-hidden' : ''" @click="toggleAccountStatus">{{ accountStatusLabel }}</span>
+      <span v-else class="role-pill" :class="accountStatusLabel === '已脱单' ? 'role-pill-hidden' : ''" @click="toggleAccountStatus">{{ accountStatusLabel }}</span>
     </div>
   </div>
   <div style="padding:12px 12px 0;" v-if="!isObserver">
@@ -1130,7 +1131,7 @@ createApp({
     const loggingIn = ref(true);
     const loginError = ref(false);
     const loginErrorMessage = ref('');
-    // 账号状态门禁（待审核/已拒绝/已退出）：后端 /api/home 返回 403 时整屏提示
+    // 账号状态门禁（待审核/审核不通过/已退出）：后端 /api/home 返回 403 时整屏提示
     const gateMessage = ref('');
     const gateTitle = computed(() => {
       const m = gateMessage.value;
@@ -1498,7 +1499,7 @@ createApp({
       try {
         data = await api('/api/home');
       } catch (e) {
-        // 账号状态门禁（待审核/已拒绝/已退出）：整屏提示，不当作登录失败
+        // 账号状态门禁（待审核/审核不通过/已退出）：整屏提示，不当作登录失败
         if (e.message && (e.message.includes('审核中') || e.message.includes('未通过审核') || e.message.includes('已暂时退出'))) {
           gateMessage.value = e.message;
           return;
@@ -1756,16 +1757,16 @@ createApp({
       copyText(code, '邀请码已复制');
     }
 
-    // 账号状态切换（活跃 <-> 已隐藏）
-    const accountStatusLabel = computed(() => (user.value && user.value.account_status === '已隐藏') ? '隐藏' : '活跃');
+    // 账号状态切换（单身 <-> 已脱单）
+    const accountStatusLabel = computed(() => (user.value && user.value.account_status === '已脱单') ? '已脱单' : '单身');
     async function toggleAccountStatus() {
-      const toHidden = user.value && user.value.account_status === '活跃';
+      const toHidden = user.value && user.value.account_status === '单身';
       try {
         await vant.showConfirmDialog({
-          title: toHidden ? '隐藏账号' : '恢复活跃',
+          title: toHidden ? '脱单' : '恢复单身',
           message: toHidden
-            ? '隐藏后你将不出现在他人的牵线卡片中（自己仍可浏览），确定吗？'
-            : '恢复后你的资料将重新出现在他人的牵线卡片中，确定吗？',
+            ? '脱单后你将不出现在他人的牵线卡片中（自己仍可浏览），确定吗？'
+            : '恢复单身后你的资料将重新出现在他人的牵线卡片中，确定吗？',
           confirmButtonColor: '#ff6b81',
         });
       } catch(e) { return; }
@@ -1773,7 +1774,7 @@ createApp({
       try {
         const data = await api('/api/account/status', { method: 'POST' });
         if (user.value) user.value.account_status = data.account_status;
-        vant.showToast(data.account_status === '已隐藏' ? '已隐藏，将不再出现在他人牵线中' : '已恢复活跃');
+        vant.showToast(data.account_status === '已脱单' ? '已脱单，将不再出现在他人牵线中' : '已恢复单身');
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
     }

@@ -161,12 +161,12 @@ def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChat
         if user_records:
             user_fields = user_records[0].get("fields", {})
             status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-            if status == "活跃":
+            if status == "单身":
                 # 取消「重新登录就发卡片」：历史消息卡片也能触发进入单聊事件，多发刷屏
-                log(f"用户 {user_open_id} 为活跃用户，不再发送菜单卡片")
+                log(f"用户 {user_open_id} 为单身用户，不再发送菜单卡片")
                 return
             else:
-                # 非活跃用户，发送卡片1（只发一次）
+                # 非单身用户，发送卡片1（只发一次）
                 def _mark(_lst):
                     if user_open_id in _lst:
                         return None
@@ -354,7 +354,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 reply = "请指定用户，如：通过 U-0003 或 通过 姓名"
             else:
                 reply = handle_admin_approve(keyword)
-        elif text.startswith("拒绝") or text.startswith("隐藏"):
+        elif text.startswith("拒绝"):
             keyword = text[2:].strip()
             if not keyword:
                 reply = "请指定用户，如：拒绝 U-0003"

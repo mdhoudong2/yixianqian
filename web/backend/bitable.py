@@ -54,7 +54,7 @@ def get_all_users():
     for item in items:
         fields = item.get("fields", {})
         status = get_select_value(fields, F_ACCOUNT_STATUS)
-        if status == "活跃":
+        if status == "单身":
             users.append(item)
     return users
 

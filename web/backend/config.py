@@ -125,7 +125,7 @@ CARD_SECTIONS = [
     ]),
 ]
 
-# 「我的资料-修改资料」可编辑字段（姓名/圣名/生日/家乡 及 用户ID/昵称/爱心/账号状态/注册时间 等系统字段不可改）
+# 「我的资料-修改资料」可编辑字段（姓名/圣名/生日/家乡 及 用户ID/爱心/账号状态/注册时间 等系统字段不可改；昵称已改为可编辑）
 # 每项: (字段常量, 展示名, 类型, 选项列表或 None)；类型: text/number/select/multi/phone
 _OPT_TRAITS = [
     "喜欢安静", "比较主动", "非常自律", "做事严谨", "性格沉稳", "积极乐观",
@@ -148,6 +148,7 @@ _OPT_INCOME = ["10W以下", "10W - 20W", "20W - 30W", "30W - 50W", "50W以上"]
 _OPT_LIVE_WITH_PARENTS = ["独立生活", "与父母住在一起", "根据具体情况而定"]
 
 EDITABLE_FIELDS = [
+    (F_NICKNAME, "昵称", "text", None),
     (F_HEIGHT, "身高", "number", None),
     (F_EDUCATION, "学历", "select", _OPT_EDUCATION),
     (F_CITY, "现居/工作城市", "text", None),

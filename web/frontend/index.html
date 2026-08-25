@@ -100,8 +100,7 @@
   .profile-name { font-size: 20px; font-weight: bold; }
   .role-pill { font-size: 12px; line-height: 1; padding: 5px 10px; border-radius: 20px; background: rgba(255,255,255,0.92); color: #ff6b81; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
   .role-pill.role-pill-hidden { background: rgba(0,0,0,0.28); color: rgba(255,255,255,0.85); }
-  .profile-hearts { margin-top: 8px; font-size: 14px; opacity: 0.95; }
-  .hearts-num { font-size: 22px; font-weight: bold; }
+  .hearts-cell-num { color: #ff6b81; font-weight: 700; font-size: 16px; }
   /* 我的资料 */
   .profile-detail { padding: 12px; }
   .profile-detail .van-cell { font-size: 14px; }
@@ -402,7 +401,7 @@
       <div class="msg-name">我喜欢的</div>
       <div class="msg-sub">查看我喜欢的人，管理喜欢列表</div>
     </div>
-    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ myLikesCount }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ myLikesCount }}</span><van-loading v-else size="14px" /><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
   <div class="msg-card" @click="openMutual" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💞</div>
@@ -410,7 +409,7 @@
       <div class="msg-name">相互喜欢</div>
       <div class="msg-sub">你们已相互喜欢，可查看联系方式</div>
     </div>
-    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ likesData.mutual.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ likesData.mutual.length }}</span><van-loading v-else size="14px" /><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
   <div class="msg-card" @click="openLikedMe" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">👤</div>
@@ -418,24 +417,19 @@
       <div class="msg-name">谁喜欢了我</div>
       <div class="msg-sub">查看喜欢你的匿名用户</div>
     </div>
-    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ likesData.liked_me.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span v-if="!loadingLikes" class="msg-count">{{ likesData.liked_me.length }}</span><van-loading v-else size="14px" /><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
-  <div v-if="loadingLikes" style="text-align:center; padding:40px;">
-    <van-loading size="24px" />
-  </div>
-  <template v-else>
-    <div class="section-title" v-if="notifications.length">🔔 动态</div>
-    <div v-for="(n, i) in notifications" :key="i" class="msg-card">
-      <div class="msg-avatar">🔔</div>
-      <div class="msg-body">
-        <div class="msg-sub" style="color:#323233;">{{ n.text }}</div>
-        <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
-      </div>
-      <div class="msg-right" v-if="n.activity_id">
-        <van-button type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
-      </div>
+  <div class="section-title" v-if="notifications.length">🔔 动态</div>
+  <div v-for="(n, i) in notifications" :key="i" class="msg-card">
+    <div class="msg-avatar">🔔</div>
+    <div class="msg-body">
+      <div class="msg-sub" style="color:#323233;">{{ n.text }}</div>
+      <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
     </div>
-  </template>
+    <div class="msg-right" v-if="n.activity_id">
+      <van-button type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
+    </div>
+  </div>
 </div>
 <!-- ========== 相互喜欢列表 ========== -->
 <div v-else-if="page==='mutual'">
@@ -515,7 +509,6 @@
           <span v-if="isObserver" class="role-pill">吃瓜群众</span>
           <span v-else class="role-pill" :class="accountStatusLabel === '隐藏' ? 'role-pill-hidden' : ''" @click="toggleAccountStatus">{{ accountStatusLabel }}</span>
         </div>
-        <div class="profile-hearts" v-if="!isObserver"><span class="hearts-num">{{ user.hearts }}</span> 颗爱心</div>
       </div>
     </div>
   </div>
@@ -535,6 +528,9 @@
   </div>
   <div style="padding:12px 12px 24px;" v-if="!isObserver || availableRoles.length > 1 || user.is_admin">
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
+      <van-cell v-if="!isObserver" title="💕 我的爱心">
+        <template #right-icon><span class="hearts-cell-num">{{ user.hearts }} 颗</span></template>
+      </van-cell>
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>

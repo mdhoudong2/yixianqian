@@ -291,6 +291,11 @@ def do_p2_im_message_message_read_v1(data: lark.im.v1.P2ImMessageMessageReadV1) 
     """已读回执事件：无业务逻辑，仅注册以消除日志中 "processor not found" 刷屏。"""
 
 
+def do_p2_p2p_chat_create(data) -> None:
+    """单聊创建事件：无业务逻辑（进入单聊由 p2p_chat_entered 处理），
+    仅注册以消除 "processor not found" 刷屏并 ACK 事件，避免飞书反复重投。"""
+
+
 
 
 # 消息去重：记录已处理的message_id，防止飞书重连重复投递
@@ -499,6 +504,7 @@ def main():
                 .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(do_p2_im_chat_access_event_bot_p2p_chat_entered_v1) \
                 .register_p2_card_action_trigger(do_p2_card_action_trigger) \
                 .register_p2_application_bot_menu_v6(do_p2_application_bot_menu_v6) \
+                .register_p2_customized_event("p2p_chat_create", do_p2_p2p_chat_create) \
                 .build()
             cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=event_handler, log_level=lark.LogLevel.INFO)
 

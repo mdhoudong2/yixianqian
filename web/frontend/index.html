@@ -1905,7 +1905,11 @@ createApp({
     // 消息
     // 静默对账：机器人延迟扣/退爱心，切页时轻量刷新本人余额（不阻塞界面）
     async function syncMe() {
-      if (user.value && me) user.value.hearts = me.hearts;
+      if (!user.value) return;
+      try {
+        const me = await api('/api/user/me');
+        if (me && typeof me.hearts === 'number') user.value.hearts = me.hearts;
+      } catch (e) {}
     }
     async function loadLikes() {
       // 每次进入消息页都强制刷新（旧逻辑「有数据就跳过」导致喜欢数不实时）

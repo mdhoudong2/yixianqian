@@ -5,8 +5,13 @@ from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
-from store import load_invite_rewarded, reserve_notified, unreserve_notified
-from store import generate_observer_codes, load_observer_codes
+from store import (
+    generate_observer_codes,
+    load_invite_rewarded,
+    load_observer_codes,
+    reserve_notified,
+    unreserve_notified,
+)
 
 
 def handle_register_command(sender_id):

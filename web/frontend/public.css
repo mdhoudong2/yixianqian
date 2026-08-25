@@ -1,11 +1,11 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f7f8fa; -webkit-tap-highlight-color: transparent; }
-  #app { min-height: 100vh; }
+  #app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
   .hero { background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 48px 24px 56px; color: #fff; text-align: center; }
   .hero-logo { font-size: 52px; }
   .hero-title { font-size: 28px; font-weight: bold; margin-top: 12px; }
   .hero-sub { font-size: 15px; opacity: 0.92; margin-top: 10px; line-height: 1.6; }
-  .content { padding: 0 12px 96px; margin-top: -30px; }
+  .content { padding: 0 12px 16px; margin-top: -30px; flex: 1; }
   .card { background: #fff; border-radius: 16px; padding: 18px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
   .feature { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f5f6f7; }
   .feature:last-child { border-bottom: none; }
@@ -21,7 +21,7 @@
   .user-name .gender-icon { font-size: 13px; margin-left: 4px; line-height: 1; }
   .user-brief { font-size: 12px; color: #646566; margin-top: 4px; line-height: 1.5; }
   .user-city { font-size: 12px; color: #ff6b81; margin-top: 3px; }
-  .cta-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.06); }
+  .cta-bar { position: sticky; position: -webkit-sticky; bottom: 0; z-index: 10; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -2px 10px rgba(0,0,0,0.06); }
   .cta-btn { width: 100%; height: 48px; border: none; border-radius: 24px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 17px; font-weight: 600; cursor: pointer; box-shadow: 0 6px 18px rgba(255,107,129,0.35); }
   .cta-btn:active { transform: scale(0.98); }
   .guide-step { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; }

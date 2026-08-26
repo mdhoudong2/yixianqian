@@ -712,7 +712,7 @@
           <div class="like-item-meta">{{ l.age ? l.age+'岁' : '' }} {{ l.church ? '· '+l.church : '' }}</div>
           <div class="like-item-msg" v-if="l.mutual && l.message">附言：{{ l.message }}</div>
         </div>
-        <van-button v-if="!l.mutual" size="mini" plain type="danger" @click="cancelLike(l)">取消喜欢</van-button>
+        <van-button v-if="!l.mutual && l.like_type !== '实名'" size="mini" plain type="danger" @click="cancelLike(l)">取消喜欢</van-button>
       </div>
     </div>
   </div>

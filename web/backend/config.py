@@ -189,6 +189,7 @@ F_LIKE_TARGET_OPENID = "目标用户open_id"
 F_LIKE_INITIATOR_ID = "发起用户ID"
 F_LIKE_TARGET_ID = "目标用户ID"
 F_LIKE_TYPE = "喜欢类型"
+F_LIKE_CREATED_AT = "创建时间"
 
 # 活动表字段
 F_ACTIVITY_ID = "活动ID"

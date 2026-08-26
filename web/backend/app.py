@@ -458,7 +458,12 @@ def require_login():
 
 
 def roles_of(open_id):
-    """返回该 open_id 拥有的角色集合 {"user","observer"}（快照优先、实时兜底）"""
+    """返回该 open_id 拥有的角色集合 {"user","observer"}（快照优先、实时兜底）。
+
+    「user」角色仅在存在有效普通用户档案时授予：单身/已脱单/待审核。
+    「审核不通过」「已退出」不算有效用户档案——否则用户先提交了被拒/退出记录、
+    后成功注册为观察员时，会被误判同时拥有 user 角色，登录默认进 user 档而被「未通过审核」门禁拦住。
+    """
     users = _snap("users")
     matches = [u for u in users
                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
@@ -467,9 +472,10 @@ def roles_of(open_id):
             {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
     roles = set()
     for u in matches:
-        if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER:
+        st = bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS)
+        if st == STATUS_OBSERVER:
             roles.add("observer")
-        else:
+        elif st in ("单身", "已脱单", "待审核"):
             roles.add("user")
     return roles
 

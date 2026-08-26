@@ -69,7 +69,7 @@ def auto_bind_from_creator():
         if not open_id:
             continue
 
-        # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→审核不通过，空→普通注册
+        # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→删除记录，空→普通注册
         invite_code = (get_field_text(fields, FIELD_INVITE_CODE) or "").strip()
         is_observer = False
         is_wrong_code = False
@@ -83,12 +83,10 @@ def auto_bind_from_creator():
         # 防重复：只拦「同类型」重复，跨类型（普通↔观察员）放行
         if is_observer and open_id in existing_observer_oids:
             old_nick = existing_nick.get(open_id, "")
-            update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "审核不通过",
-                FIELD_FEISHU_ID: open_id,
-            })
+            # 重复记录直接删除，避免用户表堆积无效记录
+            delete_record(USER_TABLE_ID, record_id)
             duplicate_count += 1
-            log(f"重复注册观察员已拦截: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
+            log(f"重复注册观察员已拦截并删除: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
             send_text_message(open_id,
                 f"你已经注册过村情六处啦！姓名：{old_nick}\n\n"
                 f"快去「一线牵 App」中浏览资料。"
@@ -98,14 +96,10 @@ def auto_bind_from_creator():
 
         if not is_observer and not is_wrong_code and open_id in existing_user_oids:
             old_nick = existing_nick.get(open_id, "")
-            # 重复记录标记「审核不通过」（门禁全拦、不可被普通激活），并补写飞书ID：
-            # 否则飞书ID仍为空，下一轮会被当成"未绑定"重复轮询、反复发"已注册过"
-            update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "审核不通过",
-                FIELD_FEISHU_ID: open_id,
-            })
+            # 重复记录直接删除（删除后无需补写飞书ID，避免下一轮重复轮询）
+            delete_record(USER_TABLE_ID, record_id)
             duplicate_count += 1
-            log(f"重复注册已拦截: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
+            log(f"重复注册已拦截并删除: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
             send_text_message(open_id,
                 f"你已经注册过啦！姓名：{old_nick}\n\n"
                 f"快去「一线牵 App」中浏览异性资料。"
@@ -117,10 +111,7 @@ def auto_bind_from_creator():
         if is_observer:
             # 原子消耗邀请码（未用→已用）；已被并发占用则拒绝，杜绝一码多用
             if not consume_observer_code(invite_code, nickname):
-                update_record(USER_TABLE_ID, record_id, {
-                    FIELD_ACCOUNT_STATUS: "审核不通过",
-                    FIELD_FEISHU_ID: open_id,
-                })
+                delete_record(USER_TABLE_ID, record_id)
                 duplicate_count += 1
                 log(f"观察员邀请码已被使用: {nickname} (open_id={open_id})")
                 send_text_message(open_id, "邀请码已被使用，注册未通过。如有疑问请联系管理员。")
@@ -157,12 +148,9 @@ def auto_bind_from_creator():
             continue
 
         if is_wrong_code:
-            # 邀请码错误或已被使用：审核不通过（门禁全拦），补写飞书ID避免下一轮被当成「未绑定」重复轮询
+            # 邀请码错误或已被使用：直接删除记录，不在用户表堆积无效用户
             msg = "邀请码已被使用" if invite_code in codes else "邀请码错误"
-            update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: "审核不通过",
-                FIELD_FEISHU_ID: open_id,
-            })
+            delete_record(USER_TABLE_ID, record_id)
             log(f"观察员注册邀请码无效: {nickname} (open_id={open_id})")
             send_text_message(open_id, f"{msg}，注册未通过。如有疑问请联系管理员。")
             continue

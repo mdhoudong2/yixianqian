@@ -393,10 +393,10 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         elif text.startswith("开启分组功能"):
             keyword = text[len("开启分组功能"):].strip()
             reply = handle_admin_toggle_group_flag(keyword)
-        elif text.startswith("生成吃瓜群众邀请码"):
-            keyword = text[len("生成吃瓜群众邀请码"):].strip()
+        elif text.startswith("生成村情六处邀请码"):
+            keyword = text[len("生成村情六处邀请码"):].strip()
             reply = handle_admin_generate_observer_codes(keyword)
-        elif text_lower in ["查看吃瓜群众邀请码", "吃瓜群众邀请码"]:
+        elif text_lower in ["查看村情六处邀请码", "村情六处邀请码"]:
             reply = handle_admin_list_observer_codes()
         elif text_lower in ["分组帮助", "group help"]:
             reply = handle_group_help()
@@ -407,7 +407,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_register_command(sender_id)
         elif text_lower in ["邀请", "invite", "邀请好友", "分享"]:
             reply = handle_invite_command(sender_id)
-        elif text_lower in ["吃瓜群众", "吃瓜群众注册", "observer"]:
+        elif text_lower in ["村情六处", "村情六处注册", "observer"]:
             reply = handle_observer_command(sender_id)
         elif text_lower in ["h5", "一线牵", "app", "进入", "打开", "网页版", "网页", "web"]:
             reply = handle_h5_command(sender_id)

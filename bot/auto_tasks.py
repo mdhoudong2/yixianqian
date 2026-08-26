@@ -90,7 +90,7 @@ def auto_bind_from_creator():
             duplicate_count += 1
             log(f"重复注册观察员已拦截: {nickname} (open_id={open_id}), 已注册为 {old_nick}")
             send_text_message(open_id,
-                f"你已经注册过吃瓜群众啦！姓名：{old_nick}\n\n"
+                f"你已经注册过村情六处啦！姓名：{old_nick}\n\n"
                 f"快去「一线牵 App」中浏览资料。"
             )
             send_main_menu_card(open_id)
@@ -145,8 +145,8 @@ def auto_bind_from_creator():
                 update_bindings(_bind_observer)
                 send_text_message(
                     open_id,
-                    "欢迎你成为一线牵「吃瓜群众」！\U0001f389\n\n"
-                    "作为吃瓜群众，你可以：\n"
+                    "欢迎你成为一线牵「村情六处」！\U0001f389\n\n"
+                    "作为村情六处，你可以：\n"
                     "• 浏览男生/女生资料\n"
                     "• 留言、反馈\n"
                     "• 查看活动\n\n"

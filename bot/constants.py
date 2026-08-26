@@ -93,7 +93,7 @@ FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同�
 # 邀请功能
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
 FIELD_INVITE_CODE = "邀请码"  # 观察员注册表单的邀请码字段
-STATUS_OBSERVER = "吃瓜群众"  # 账号状态值：吃瓜群众（非单身看热闹，限权）
+STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身看热闹，限权）
 INITIAL_HEARTS = 3
 MAX_HEARTS = 30
 # H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://testapp.nantou.love

@@ -504,7 +504,7 @@
     </div>
     <div class="profile-name-row">
       <span class="profile-name">{{ user.nickname }}</span>
-      <span v-if="isObserver" class="role-pill">吃瓜群众</span>
+      <span v-if="isObserver" class="role-pill">村情六处</span>
       <span v-else class="role-pill" :class="accountStatusLabel === '已脱单' ? 'role-pill-hidden' : ''" @click="toggleAccountStatus">{{ accountStatusLabel }}</span>
     </div>
   </div>
@@ -533,7 +533,7 @@
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
-      <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为吃瓜群众'" is-link @click="switchRole"></van-cell>
+      <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
     </van-cell-group>
   </div>
@@ -1188,9 +1188,9 @@ createApp({
         "【通知 U-xxx 内容】给用户发消息",
         "【用户统计】查看统计数据",
       ]},
-      { title: "吃瓜群众", items: [
-        "【生成吃瓜群众邀请码 N】批量生成吃瓜群众邀请码",
-        "【查看吃瓜群众邀请码】查看邀请码使用状态",
+      { title: "村情六处", items: [
+        "【生成村情六处邀请码 N】批量生成村情六处邀请码",
+        "【查看村情六处邀请码】查看邀请码使用状态",
       ]},
       { title: "分组活动", items: [
         "【开始填志愿 活动ID 男数 女数】开始填志愿",
@@ -1784,7 +1784,7 @@ createApp({
       const target = isObserver.value ? 'user' : 'observer';
       const roles = availableRoles.value || [];
       if (roles.length <= 1 || !roles.includes(target)) {
-        const name = target === 'observer' ? '吃瓜群众' : '普通用户';
+        const name = target === 'observer' ? '村情六处' : '普通用户';
         vant.showToast(`你尚未注册${name}身份，请先完成对应注册`);
         return;
       }

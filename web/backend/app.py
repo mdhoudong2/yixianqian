@@ -518,7 +518,7 @@ GATE_MESSAGES = {
     "已退出": {"error": "你已暂时退出相亲市场，如需恢复请联系管理员", "gate": "已退出"},
 }
 LIKE_BLOCKED_MESSAGE = {"error": "你当前处于已脱单状态（他人看不到你），请先在「我的」页恢复单身后再操作", "gate": "已脱单"}
-OBSERVER_BLOCKED_MESSAGE = {"error": "你是吃瓜群众账号，无此操作权限", "gate": "观察员"}
+OBSERVER_BLOCKED_MESSAGE = {"error": "你是村情六处账号，无此操作权限", "gate": "观察员"}
 
 
 def _account_status(open_id):
@@ -1320,7 +1320,7 @@ def toggle_account_status():
         return jsonify({"error": "用户不存在"}), 404
     cur = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS)
     if cur == STATUS_OBSERVER:
-        return jsonify({"error": "吃瓜群众账号不可切换账号状态"}), 403
+        return jsonify({"error": "村情六处账号不可切换账号状态"}), 403
     if cur == "单身":
         new_status = "已脱单"
         # 已报名活动者不可自行脱单（先取消报名）；读快照（≤15s 窗口，见文档说明）

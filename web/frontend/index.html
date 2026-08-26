@@ -1000,7 +1000,7 @@
       <van-radio name="实名">实名喜欢</van-radio>
     </van-radio-group>
     <van-field v-model="likeMessage" type="textarea" rows="3" autosize
-      placeholder="写几句想对TA说的话（必填）" class="like-textarea" />
+      placeholder="为什么关注TA？（必填，须10字以上。你们相互喜欢后会发给TA，单向喜欢不发送。）" class="like-textarea" />
   </div>
 </van-dialog>
 <!-- 反馈弹窗 -->
@@ -1828,8 +1828,13 @@ createApp({
     }
     async function onLikeDialogBeforeClose(action) {
       if (action === 'confirm') {
-        if (!likeMessage.value.trim()) {
+        const msg = likeMessage.value.trim();
+        if (!msg) {
           vant.showToast('请填写附言');
+          return false;
+        }
+        if ([...msg].length < 10) {
+          vant.showToast('附言需10字以上');
           return false;
         }
         await doLike();

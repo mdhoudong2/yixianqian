@@ -381,7 +381,7 @@
           </div>
           <div class="msg-input-bar">
             <input v-model="msgText" class="msg-input" :placeholder="replyTarget ? '回复 ' + replyTarget.author_nickname + '：' : '写下你的留言…'" />
-            <button class="msg-send" :disabled="!msgText.trim()" @click="sendMessage">发送</button>
+            <button class="msg-send" :disabled="!msgText.trim() || msgSending" @click="sendMessage">{{ msgSending ? '发送中…' : '发送' }}</button>
           </div>
         </div>
       </div>
@@ -2083,6 +2083,7 @@ createApp({
     const cardTab = ref('profile');
     const messages = ref([]);
     const msgLoading = ref(false);
+    const msgSending = ref(false);
     const msgText = ref('');
     const replyTarget = ref(null);
     let msgLoadedFor = null;  // 已加载留言的卡片 openid（切卡片前不重复请求）
@@ -2128,9 +2129,11 @@ createApp({
       await loadMessages();
     }
     async function sendMessage() {
+      if (msgSending.value) return;
       const c = currentCard.value;
       const text = msgText.value.trim();
       if (!c || !c.openid || !text) return;
+      msgSending.value = true;
       try {
         await api('/api/messages', {
           method: 'POST',
@@ -2142,6 +2145,8 @@ createApp({
       } catch (e) {
         console.error(e);
         vant.showToast(e.message || '发送失败');
+      } finally {
+        msgSending.value = false;
       }
     }
     async function deleteMessage(m) {
@@ -2206,7 +2211,7 @@ createApp({
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
       onPhotoError,
-      cardTab, messages, msgLoading, msgText, replyTarget, threadedMessages, currentMsgCount,
+      cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchEnd,

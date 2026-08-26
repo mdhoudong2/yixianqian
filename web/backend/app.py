@@ -766,21 +766,35 @@ def build_subtitle(fields):
     return " · ".join(parts)
 
 
-def order_cards_likes_first(cards, liked_me_openids):
-    """把「喜欢我的异性」卡片靠前，但前 10 个位置随机混排。
+def order_cards(cards, liked_me_openids):
+    """牵线卡片排序：整副牌随机打乱，避免按用户ID连号泄露身份。
 
-    匿名喜欢不能让用户一翻牌就猜出「第一个/前几个就是喜欢我的人」，否则会暴露是谁喜欢、
-    破坏匿名体面。所以把喜欢我的人推进前 10 个位置里，和普通卡片随机打乱。
+    喜欢我的人不集中放在最前，而是随机前移到前 30% 区域（随机散落、位置随机），
+    既能被较快翻到，又不会因「前几张/前10张都是喜欢我的人」暴露是谁。
     """
     if not liked_me_openids:
+        random.shuffle(cards)
         return cards
     liked = [c for c in cards if c.get("openid") in liked_me_openids]
     others = [c for c in cards if c.get("openid") not in liked_me_openids]
+    random.shuffle(liked)
     random.shuffle(others)
-    # 前 10 个位置：喜欢我的人 + 若干普通卡片随机混排
-    front = liked + others[:max(0, 10 - len(liked))]
-    random.shuffle(front)
-    return front + others[max(0, 10 - len(liked)):]
+    n = len(cards)
+    front_n = max(1, int(n * 0.3))
+    take_liked = min(len(liked), front_n)
+    positions = set(random.sample(range(front_n), take_liked))
+    front = [None] * front_n
+    li = oi = 0
+    for i in range(front_n):
+        if i in positions:
+            front[i] = liked[li]
+            li += 1
+        else:
+            front[i] = others[oi]
+            oi += 1
+    rest = liked[li:] + others[oi:]
+    random.shuffle(rest)
+    return front + rest
 
 
 def pass_card_filters(fields, f):
@@ -1233,13 +1247,13 @@ def home():
 
     # 喜欢（谁喜欢了我 / 相互喜欢）
     liked_me = snap_likes_by_target(open_id)
-    # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出
+    # 喜欢我的人随机前移到前30%，其余整副牌打乱
     liked_me_openids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in liked_me
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
-    cards = order_cards_likes_first(cards, liked_me_openids)
+    cards = order_cards(cards, liked_me_openids)
     # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
     if is_observer:
         self_card = _build_self_card(open_id, active_users, msg_counts)
@@ -1580,13 +1594,13 @@ def get_cards():
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
 
-    # 喜欢我的异性卡片靠前（前10随机混排），匿名不被猜出
+    # 喜欢我的人随机前移到前30%，其余整副牌打乱
     liked_me_openids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in snap_likes_by_target(open_id)
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
-    cards = order_cards_likes_first(cards, liked_me_openids)
+    cards = order_cards(cards, liked_me_openids)
     # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
     if is_observer:
         self_card = _build_self_card(open_id, all_users, msg_counts)

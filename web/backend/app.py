@@ -1859,6 +1859,10 @@ def like_user():
     }
     if has_like_type_field:
         like_fields[F_LIKE_TYPE] = like_type
+    if bitable.field_exists(LIKE_TABLE_ID, F_LIKE_INITIATOR_GENDER):
+        like_fields[F_LIKE_INITIATOR_GENDER] = my_gender
+    if bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TARGET_GENDER):
+        like_fields[F_LIKE_TARGET_GENDER] = target_gender
     if message:
         like_fields[F_LIKE_MESSAGE] = message
 

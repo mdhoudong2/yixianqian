@@ -1829,6 +1829,24 @@ def like_user():
     if computed_hearts(open_id) <= 0:
         return jsonify({"error": "爱心不足，无法喜欢"}), 400
 
+    # 实名喜欢：按自然月限一次（不可取消，用完锁定）
+    if like_type == "实名":
+        if any(it.get("oid") == open_id and it.get("type") == "实名"
+               for it in _intent_likes.values()):
+            return jsonify({"error": "本月已使用过实名喜欢，每月仅一次机会"}), 400
+        this_month = time.strftime("%Y-%m")
+        for l in likes_snap:
+            lf = l.get("fields", {})
+            if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
+                continue
+            if bitable.get_select_value(lf, F_LIKE_STATUS) == "已取消":
+                continue
+            if bitable.get_field_text(lf, F_LIKE_TYPE) != "实名":
+                continue
+            created = bitable.get_datetime_value(lf, F_LIKE_CREATED_AT)
+            if created and created[:7] == this_month:
+                return jsonify({"error": "本月已使用过实名喜欢，每月仅一次机会"}), 400
+
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)
     like_fields = {
         F_LIKE_INITIATOR: bitable.get_field_text(me_fields, F_NICKNAME),
@@ -1848,7 +1866,7 @@ def like_user():
     _spool_append({"type": "like", "temp_key": temp_key,
                    "initiator_oid": open_id, "target_oid": target_openid,
                    "fields": like_fields})
-    _intent_likes[temp_key] = {"oid": open_id, "target": target_openid, "ts": time.time()}
+    _intent_likes[temp_key] = {"oid": open_id, "target": target_openid, "ts": time.time(), "type": like_type}
 
     hearts_now = computed_hearts(open_id)
     return jsonify({"ok": True, "mutual": False, "message": "喜欢成功", "hearts": hearts_now})
@@ -2588,6 +2606,7 @@ def my_liked_list():
             }
         brief["mutual"] = is_mutual
         brief["like_record_id"] = like["record_id"]
+        brief["like_type"] = bitable.get_field_text(fields, F_LIKE_TYPE)
         brief["message"] = bitable.get_field_text(fields, F_LIKE_MESSAGE) if is_mutual else ""
         result.append(brief)
     return jsonify({"likes": result})
@@ -2621,6 +2640,13 @@ def cancel_like(target_openid):
         existing = bitable.find_like(open_id, target_openid)
     if not existing and not pending_like:
         return jsonify({"error": "未找到喜欢记录"}), 404
+
+    # 实名喜欢不可取消（每月仅一次，用完锁定）
+    if existing and bitable.get_field_text(existing.get("fields", {}), F_LIKE_TYPE) == "实名":
+        return jsonify({"error": "实名喜欢不可取消"}), 400
+    if pending_like and any(it.get("oid") == open_id and it.get("target") == target_openid
+                            and it.get("type") == "实名" for it in _intent_likes.values()):
+        return jsonify({"error": "实名喜欢不可取消"}), 400
 
     rid = existing["record_id"] if existing else None
     # 按对象幂等入队：worker 落库后或立即找到活跃记录执行取消；响应零等待

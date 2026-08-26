@@ -778,7 +778,7 @@ def order_cards(cards, liked_me_openids):
     喜欢我的人不集中放在最前，而是随机前移到前 30% 区域（随机散落、位置随机），
     既能被较快翻到，又不会因「前几张/前10张都是喜欢我的人」暴露是谁。
     """
-    if not liked_me_openids:
+    if not cards or not liked_me_openids:
         random.shuffle(cards)
         return cards
     liked = [c for c in cards if c.get("openid") in liked_me_openids]

@@ -2052,6 +2052,20 @@ def create_message():
     author = snap_self_user()
     if not author:
         return jsonify({"error": "用户不存在"}), 404
+    now_ms = int(time.time() * 1000)
+    dup_rows = bitable.search_records(MESSAGE_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": F_MSG_AUTHOR_OID, "operator": "is", "value": [open_id]},
+            {"field_name": F_MSG_TARGET_OID, "operator": "is", "value": [target]},
+            {"field_name": F_MSG_CONTENT, "operator": "is", "value": [content]},
+            {"field_name": F_MSG_STATUS, "operator": "is", "value": ["正常"]},
+        ]})
+    for row in dup_rows:
+        f = row.get("fields", {})
+        if bitable.get_field_text(f, F_MSG_PARENT_ID) == parent_id and \
+                now_ms - bitable.get_field_number(f, F_MSG_CREATED_AT) <= 5000:
+            return jsonify({"ok": True, "id": row.get("record_id")})
     af = author.get("fields", {})
     rec = bitable.create_record(MESSAGE_TABLE_ID, {
         F_MSG_TARGET_OID: target,
@@ -2060,7 +2074,7 @@ def create_message():
         F_MSG_AUTHOR_UID: bitable.get_field_text(af, F_USER_ID),
         F_MSG_PARENT_ID: parent_id,
         F_MSG_CONTENT: content,
-        F_MSG_CREATED_AT: int(time.time() * 1000),
+        F_MSG_CREATED_AT: now_ms,
         F_MSG_STATUS: "正常",
     })
     if not rec:

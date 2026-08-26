@@ -298,6 +298,8 @@ def handle_admin_notify(text):
     users = find_user_by_id_or_name(target_id)
     if not users:
         return f"未找到用户「{target_id}」"
+    if len(users) > 1:
+        return "找到多个匹配用户，请使用用户ID操作，如：通知 U-0003 内容"
 
     target_fields = users[0].get("fields", {})
     target_open_id = get_field_text(target_fields, FIELD_FEISHU_ID)

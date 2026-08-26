@@ -253,10 +253,13 @@ def get_activity_signups(activity_id):
     def _fetch(row):
         oid, nickname = row
         gender = ""
+        uid = ""
         user_recs = find_user_by_openid(oid)
         if user_recs:
-            gender = get_field_text(user_recs[0].get("fields", {}), FIELD_GENDER)
-        return {"open_id": oid, "nickname": nickname, "gender": gender}
+            uf = user_recs[0].get("fields", {})
+            gender = get_field_text(uf, FIELD_GENDER)
+            uid = get_field_text(uf, "用户ID")
+        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid}
 
     users = []
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="signup-gender") as pool:
@@ -289,22 +292,37 @@ def get_user_group_selection(activity_id, open_id):
 
 
 
+def _dup_nicknames(participants):
+    """参与者昵称是否存在重复（决定下拉选项是否需要追加编号消歧）"""
+    names = [p.get("nickname", "") for p in participants]
+    return len(names) != len(set(names))
+
+
+def _option_label(nickname, user_id, with_uid):
+    """下拉选项文案：有重名时统一追加编号，避免选错人；缺编号时退回纯昵称"""
+    if with_uid and user_id:
+        return f"{nickname}（{user_id}）"
+    return nickname
+
+
 def build_group_select_card(activity_id, activity_name, participants, user_gender, existing_choices=None):
     """构建分组选择卡片（表单容器，一次性提交）"""
     opp_gender = "女性" if user_gender == "男性" else "男性"
     opp_participants = [p for p in participants if p["gender"] == opp_gender]
     use_select = len(opp_participants) <= 50
+    dup_nick = use_select and _dup_nicknames(opp_participants)
 
+    hint = "如遇同名请以编号为准。" if dup_nick else ""
     form_elements = [
         {
             "tag": "markdown",
-            "content": f"**活动：{activity_name}**\n请从{len(opp_participants)}位{opp_gender}中选择7位想同组的人，按意愿从高到低排序。"
+            "content": f"**活动：{activity_name}**\n请从{len(opp_participants)}位{opp_gender}中选择7位想同组的人，按意愿从高到低排序。{hint}"
         },
         {"tag": "hr"}
     ]
 
     if use_select:
-        options = [{"text": {"tag": "plain_text", "content": p["nickname"]},
+        options = [{"text": {"tag": "plain_text", "content": _option_label(p["nickname"], p.get("user_id", ""), dup_nick)},
                     "value": p["open_id"]} for p in opp_participants]
         for i in range(7):
             sel = {
@@ -468,11 +486,18 @@ def handle_group_submit(operator_open_id, action_value, form_value):
             if hasattr(form_value, 'get'):
                 val = form_value.get(f"choice_{i}", "")
             if val:
-                # 如果输入的是用户ID（如U-0003），转换为open_id
+                # 输入编号（如U-0003）直接按ID转换；输名字则精确匹配，重名时报错引导改用编号
                 val = val.strip()
                 if val.startswith("U-") or val.startswith("u-"):
                     target = find_user_by_id_or_name(val)
                     if target:
+                        val = get_field_text(target[0].get("fields", {}), FIELD_FEISHU_ID)
+                else:
+                    target = find_user_by_id_or_name(val)
+                    if len(target) > 1:
+                        return {"toast": {"type": "error",
+                                          "content": f"「{val}」有同名多人，第{i+1}志愿请改用对方编号（如U-0003）"}}
+                    if len(target) == 1:
                         val = get_field_text(target[0].get("fields", {}), FIELD_FEISHU_ID)
                 choices.append(val)
     # 从action_value获取（select_static方式，在卡片回调中逐个收集）

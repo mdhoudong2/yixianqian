@@ -380,6 +380,22 @@ def auto_fill_like_initiator():
             target_records = find_user_by_id_or_name(target_user_id)
         elif target_nickname:
             target_records = find_user_by_nickname(target_nickname)
+        if len(target_records) > 1:
+            # 昵称兜底命中多条：无法确认目标，置已取消并告知发起人，避免静默喜欢到同名他人
+            update_record(LIKE_TABLE_ID, record_id, {
+                FIELD_LIKE_INITIATOR: initiator_nickname,
+                FIELD_LIKE_INITIATOR_OPENID: initiator_openid,
+                FIELD_LIKE_INITIATOR_ID: str(initiator_user_id) if initiator_user_id else "",
+                FIELD_LIKE_TARGET: target_nickname,
+                FIELD_LIKE_STATUS: "已取消",
+            })
+            log(f"同名昵称无法定位目标已拦截: {initiator_nickname} -> {target_nickname}")
+            send_text_message(
+                initiator_openid,
+                f"你喜欢的「{target_nickname}」昵称与其他用户重复，无法确认是哪一位。\n"
+                f"请在TA的资料页点「喜欢TA」重新操作~"
+            )
+            continue
         if target_records:
             target_fields = target_records[0].get("fields", {})
             target_openid = get_field_text(target_fields, FIELD_FEISHU_ID)

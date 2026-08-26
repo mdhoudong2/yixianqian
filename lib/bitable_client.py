@@ -96,7 +96,7 @@ class BitableClient:
                     result = resp.json()
                 except Exception as e:
                     self.log(f"搜索记录异常(table={table_id},第{attempt + 1}次): {e}")
-                    if attempt < 2:
+                    if attempt < 1:
                         time.sleep(2 ** attempt)
                         continue
                     return all_items

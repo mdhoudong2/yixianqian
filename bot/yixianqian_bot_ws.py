@@ -504,6 +504,7 @@ def main():
                 .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(do_p2_im_chat_access_event_bot_p2p_chat_entered_v1) \
                 .register_p2_card_action_trigger(do_p2_card_action_trigger) \
                 .register_p2_application_bot_menu_v6(do_p2_application_bot_menu_v6) \
+                .register_p1_customized_event("p2p_chat_create", do_p2_p2p_chat_create) \
                 .register_p2_customized_event("p2p_chat_create", do_p2_p2p_chat_create) \
                 .build()
             cli = lark.ws.Client(APP_ID, APP_SECRET, event_handler=event_handler, log_level=lark.LogLevel.INFO)

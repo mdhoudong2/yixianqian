@@ -1947,6 +1947,69 @@ def feedback():
     return jsonify({"ok": True})
 
 
+SUGGESTION_TYPES = ("功能建议", "问题反馈", "其他")
+SUGGESTION_MAX_LEN = 500
+
+
+def validate_suggestion(data):
+    """校验意见反馈请求体，返回 (错误信息, 类型, 内容)；通过时错误为 None"""
+    sg_type = data.get("type")
+    content = data.get("content")
+    if not isinstance(sg_type, str) or sg_type.strip() not in SUGGESTION_TYPES:
+        return "请选择反馈类型", "", ""
+    if not isinstance(content, str):
+        return "请填写反馈内容", "", ""
+    sg_type = sg_type.strip()
+    content = content.strip()
+    if not content:
+        return "请填写反馈内容", "", ""
+    if len(content) > SUGGESTION_MAX_LEN:
+        return f"反馈内容最多 {SUGGESTION_MAX_LEN} 字", "", ""
+    return None, sg_type, content
+
+
+@app.route("/api/suggestions", methods=["POST"])
+def suggestions():
+    """产品意见反馈：写意见反馈表 + 通知管理员（一期仅收集，不做站内回复）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+
+    data = request.get_json() or {}
+    err, sg_type, content = validate_suggestion(data)
+    if err:
+        return jsonify({"error": err}), 400
+
+    me = snap_self_user()
+    if not me:
+        return jsonify({"error": "用户不存在"}), 404
+
+    me_fields = me.get("fields", {})
+    my_name = bitable.get_field_text(me_fields, F_NICKNAME)
+    my_id = bitable.get_field_text(me_fields, F_USER_ID)
+
+    created = bitable.create_record(SUGGESTION_TABLE_ID, {
+        F_SG_AUTHOR: my_name,
+        F_SG_UID: my_id,
+        F_SG_TYPE: sg_type,
+        F_SG_CONTENT: content,
+        F_SG_CREATED_AT: int(time.time() * 1000),
+    })
+    if not created:
+        return jsonify({"error": "提交失败，请稍后重试"}), 500
+
+    author_label = f"{my_name}（{my_id}）" if my_id else my_name
+    admin_msg = f"📮 收到意见反馈\n提交人：{author_label}\n类型：{sg_type}\n内容：{content}"
+
+    def _notify_admins():
+        for admin_oid in ADMIN_OPEN_IDS:
+            send_text_message(admin_oid, admin_msg)
+
+    threading.Thread(target=_notify_admins, daemon=True).start()
+
+    return jsonify({"ok": True})
+
+
 @app.route("/api/likes/me", methods=["GET"])
 def my_likes():
     """查看谁喜欢了我 / 相互喜欢列表"""

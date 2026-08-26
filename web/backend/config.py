@@ -26,6 +26,7 @@ GROUP_SELECT_TABLE = getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
 GROUP_RESULT_TABLE = getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
 REPORT_TABLE_ID = getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T")
 MESSAGE_TABLE_ID = getattr(_lc, "MESSAGE_TABLE_ID", "")  # 留言表（生产表ID待建，测试服在 local_config 覆盖）
+SUGGESTION_TABLE_ID = getattr(_lc, "SUGGESTION_TABLE_ID", "tbldZ7aWtCA5V3Cg")  # 意见反馈表
 
 # 用户表字段
 F_USER_ID = "用户ID"
@@ -238,6 +239,13 @@ F_GR_ROUND = "轮次"
 F_REPORT_REPORTER = "举报人昵称"
 F_REPORT_TARGET = "被举报人昵称"
 F_REPORT_REASON = "举报原因"
+
+# 意见反馈表字段
+F_SG_AUTHOR = "反馈人"
+F_SG_UID = "用户ID"
+F_SG_TYPE = "类型"
+F_SG_CONTENT = "内容"
+F_SG_CREATED_AT = "提交时间"
 
 # 管理员open_id（敏感，配置于 local_config.py；此处留空回退）
 ADMIN_OPEN_IDS = getattr(_lc, "ADMIN_OPEN_IDS", [])

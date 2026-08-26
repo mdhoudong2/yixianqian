@@ -528,13 +528,14 @@
       </div>
     </div>
   </div>
-  <div style="padding:12px 12px 24px;" v-if="!isObserver || availableRoles.length > 1 || user.is_admin">
+  <div style="padding:12px 12px 24px;">
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+      <van-cell title="意见反馈" is-link @click="openSuggestionDialog"></van-cell>
     </van-cell-group>
   </div>
 </div>
@@ -1018,6 +1019,20 @@
       placeholder="补充说明（选填）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
+<!-- 意见反馈弹窗 -->
+<van-dialog v-model:show="showSuggestionDialog" title="意见反馈" show-cancel-button
+  confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :before-close="onSuggestionBeforeClose">
+  <div class="like-dialog-body">
+    <van-radio-group v-model="suggestionType" class="feedback-radio-group" style="padding-bottom: 8px;">
+      <van-radio name="功能建议">功能建议</van-radio>
+      <van-radio name="问题反馈">问题反馈</van-radio>
+      <van-radio name="其他">其他</van-radio>
+    </van-radio-group>
+    <van-field v-model="suggestionText" type="textarea" rows="3" autosize maxlength="500" show-word-limit
+      placeholder="请写下你的建议或遇到的问题（必填）" class="like-textarea" />
+  </div>
+</van-dialog>
 <!-- 邀请好友得爱心弹窗 -->
 <van-dialog v-model:show="showInviteDialog" title="邀请好友得爱心" :show-confirm-button="false" close-on-click-overlay>
   <div class="invite-dialog-body">
@@ -1154,6 +1169,10 @@ createApp({
     const feedbackReason = ref('已有对象');
     const feedbackText = ref('');
     const feedbackTarget = ref(null);  // 当前要反馈的对象 {openid, nickname}
+    const showSuggestionDialog = ref(false);
+    const suggestionType = ref('功能建议');
+    const suggestionText = ref('');
+    const suggestionSubmitting = ref(false);
     const showInviteDialog = ref(false);
     const showAdminHelp = ref(false);
     const adminCommands = [
@@ -1876,6 +1895,32 @@ createApp({
       actionLoading.value = false;
     }
 
+    // 意见反馈
+    function openSuggestionDialog() {
+      suggestionType.value = '功能建议';
+      suggestionText.value = '';
+      showSuggestionDialog.value = true;
+    }
+    async function onSuggestionBeforeClose(action) {
+      if (action !== 'confirm') return true;
+      if (suggestionSubmitting.value) return false;
+      if (!suggestionText.value.trim()) {
+        vant.showToast('请填写反馈内容');
+        return false;
+      }
+      suggestionSubmitting.value = true;
+      try {
+        await api('/api/suggestions', {
+          method: 'POST',
+          body: JSON.stringify({ type: suggestionType.value, content: suggestionText.value.trim() })
+        });
+        vant.showToast('感谢反馈，已收到');
+        showSuggestionDialog.value = false;
+      } catch(e) { vant.showToast(e.message); }
+      suggestionSubmitting.value = false;
+      return false;
+    }
+
     // 消息
     // 静默对账：机器人延迟扣/退爱心，切页时轻量刷新本人余额（不阻塞界面）
     async function syncMe() {
@@ -2173,6 +2218,7 @@ createApp({
       showLikeDialog, likeDialogTitle, likeTarget, likeType,
       showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,
       openFeedbackDialog, onFeedbackBeforeClose, doFeedback,
+      showSuggestionDialog, suggestionType, suggestionText, openSuggestionDialog, onSuggestionBeforeClose,
       likesData, loadingLikes, loadMyLikesCount, notifications,
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe, cancelLike,
       myActivitiesList, loadingMyActivities, openMyActivities,

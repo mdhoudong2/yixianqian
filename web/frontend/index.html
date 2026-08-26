@@ -639,7 +639,7 @@
         </div>
       </div>
       <div v-if="profilePhotos.length < 9" class="edit-photo-add-btn" @click="pickPhoto">
-        <van-icon name="plus" />
+        <van-icon name="plus"></van-icon>
         <span>{{ uploadingPhoto ? '上传中…' : '添加照片' }}</span>
       </div>
       <div v-else class="edit-photo-limit">最多上传 9 张</div>
@@ -1000,7 +1000,7 @@
       <van-radio name="实名">实名喜欢</van-radio>
     </van-radio-group>
     <van-field v-model="likeMessage" type="textarea" rows="3" autosize
-      placeholder="为什么关注TA？（必填，须10字以上。单向喜欢不发送，相互喜欢后会发给TA。）" class="like-textarea" />
+      placeholder="为什么关注TA？（必填，须10字以上。单向喜欢不发送，相互喜欢后会发给TA。）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
 <!-- 反馈弹窗 -->
@@ -1015,7 +1015,7 @@
       <van-radio name="其他">其他</van-radio>
     </van-radio-group>
     <van-field v-model="feedbackText" type="textarea" rows="2" autosize
-      placeholder="补充说明（选填）" class="like-textarea" />
+      placeholder="补充说明（选填）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
 <!-- 邀请好友得爱心弹窗 -->
@@ -1045,23 +1045,23 @@
         <div class="filter-label">用户ID</div>
         <div style="display:flex; align-items:center;">
           <span style="color:#969799; font-size:14px; margin-right:2px;">U-</span>
-          <van-field v-model="filter.user_id" placeholder="如：0003" class="filter-input" style="flex:1;" />
+          <van-field v-model="filter.user_id" placeholder="如：0003" class="filter-input" style="flex:1;"></van-field>
         </div>
       </div>
       <div class="filter-row">
         <div class="filter-label">身高 (cm)</div>
         <div style="display:flex; gap:8px; align-items:center;">
-          <van-field v-model="filter.height_min" type="number" placeholder="最低" class="filter-input" />
+          <van-field v-model="filter.height_min" type="number" placeholder="最低" class="filter-input" style="flex:1; min-width:0;"></van-field>
           <span style="color:#969799;">-</span>
-          <van-field v-model="filter.height_max" type="number" placeholder="最高" class="filter-input" />
+          <van-field v-model="filter.height_max" type="number" placeholder="最高" class="filter-input" style="flex:1; min-width:0;"></van-field>
         </div>
       </div>
       <div class="filter-row">
         <div class="filter-label">年龄</div>
         <div style="display:flex; gap:8px; align-items:center;">
-          <van-field v-model="filter.age_min" type="number" placeholder="最小" class="filter-input" />
+          <van-field v-model="filter.age_min" type="number" placeholder="最小" class="filter-input" style="flex:1; min-width:0;"></van-field>
           <span style="color:#969799;">-</span>
-          <van-field v-model="filter.age_max" type="number" placeholder="最大" class="filter-input" />
+          <van-field v-model="filter.age_max" type="number" placeholder="最大" class="filter-input" style="flex:1; min-width:0;"></van-field>
         </div>
       </div>
       <div class="filter-row">

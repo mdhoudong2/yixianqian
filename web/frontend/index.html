@@ -535,6 +535,10 @@
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+    </van-cell-group>
+  </div>
+  <div style="padding:0 12px 24px;">
+    <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
       <van-cell title="意见反馈" is-link @click="openSuggestionDialog"></van-cell>
     </van-cell-group>
   </div>

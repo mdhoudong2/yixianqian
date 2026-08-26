@@ -803,6 +803,22 @@ def order_cards(cards, liked_me_openids):
     return front + rest
 
 
+def _coerce_filter_num(v):
+    """筛选数值参数安全转 float：None/空/非数值（含 bool/nan/inf）一律视为未填。
+
+    用于年龄/身高等区间筛选，杜绝字符串或异常值与年龄整数比较时抛 TypeError 导致 500。
+    """
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        num = float(v)
+    except (TypeError, ValueError):
+        return None
+    if num != num or abs(num) == float("inf"):
+        return None
+    return num
+
+
 def pass_card_filters(fields, f):
     """卡片筛选：全部条件满足才返回 True"""
     # 身高（范围：最低/最高可独立选填；未填身高的用户不参与身高筛选）
@@ -826,8 +842,8 @@ def pass_card_filters(fields, f):
         if bmax and bday > bmax + "-31":
             return False
     # 年龄区间（age_min/age_max，单位：岁）
-    age_min = f.get("age_min")
-    age_max = f.get("age_max")
+    age_min = _coerce_filter_num(f.get("age_min"))
+    age_max = _coerce_filter_num(f.get("age_max"))
     if age_min is not None or age_max is not None:
         bday = bitable.get_datetime_value(fields, F_BIRTHDAY)  # "YYYY-MM-DD" or ""
         if not bday:

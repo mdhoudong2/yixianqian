@@ -639,7 +639,7 @@
         </div>
       </div>
       <div v-if="profilePhotos.length < 9" class="edit-photo-add-btn" @click="pickPhoto">
-        <van-icon name="plus" />
+        <van-icon name="plus"></van-icon>
         <span>{{ uploadingPhoto ? '上传中…' : '添加照片' }}</span>
       </div>
       <div v-else class="edit-photo-limit">最多上传 9 张</div>
@@ -1000,7 +1000,7 @@
       <van-radio name="实名">实名喜欢</van-radio>
     </van-radio-group>
     <van-field v-model="likeMessage" type="textarea" rows="3" autosize
-      placeholder="为什么关注TA？（必填，须10字以上。单向喜欢不发送，相互喜欢后会发给TA。）" class="like-textarea" />
+      placeholder="为什么关注TA？（必填，须10字以上。单向喜欢不发送，相互喜欢后会发给TA。）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
 <!-- 反馈弹窗 -->
@@ -1015,7 +1015,7 @@
       <van-radio name="其他">其他</van-radio>
     </van-radio-group>
     <van-field v-model="feedbackText" type="textarea" rows="2" autosize
-      placeholder="补充说明（选填）" class="like-textarea" />
+      placeholder="补充说明（选填）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
 <!-- 邀请好友得爱心弹窗 -->
@@ -1045,23 +1045,23 @@
         <div class="filter-label">用户ID</div>
         <div style="display:flex; align-items:center;">
           <span style="color:#969799; font-size:14px; margin-right:2px;">U-</span>
-          <van-field v-model="filter.user_id" placeholder="如：0003" class="filter-input" style="flex:1;" />
+          <van-field v-model="filter.user_id" placeholder="如：0003" class="filter-input" style="flex:1;"></van-field>
         </div>
       </div>
       <div class="filter-row">
         <div class="filter-label">身高 (cm)</div>
         <div style="display:flex; gap:8px; align-items:center;">
-          <van-field v-model="filter.height_min" type="number" placeholder="最低" class="filter-input" />
+          <van-field v-model="filter.height_min" type="number" placeholder="最低" class="filter-input" style="flex:1; min-width:0;"></van-field>
           <span style="color:#969799;">-</span>
-          <van-field v-model="filter.height_max" type="number" placeholder="最高" class="filter-input" />
+          <van-field v-model="filter.height_max" type="number" placeholder="最高" class="filter-input" style="flex:1; min-width:0;"></van-field>
         </div>
       </div>
       <div class="filter-row">
         <div class="filter-label">年龄</div>
         <div style="display:flex; gap:8px; align-items:center;">
-          <van-field v-model="filter.age_min" type="number" placeholder="最小" class="filter-input" />
+          <van-field v-model="filter.age_min" type="number" placeholder="最小" class="filter-input" style="flex:1; min-width:0;"></van-field>
           <span style="color:#969799;">-</span>
-          <van-field v-model="filter.age_max" type="number" placeholder="最大" class="filter-input" />
+          <van-field v-model="filter.age_max" type="number" placeholder="最大" class="filter-input" style="flex:1; min-width:0;"></van-field>
         </div>
       </div>
       <div class="filter-row">
@@ -1075,30 +1075,6 @@
         <div class="filter-tags">
           <span v-for="i in incomeOptions" :key="i" class="filter-tag" :class="{active: filter.income.includes(i)}" @click="toggleMultiTag('income', i)">{{ i }}</span>
         </div>
-      </div>
-      <div class="filter-row">
-        <div class="filter-label">经常去的教堂</div>
-        <van-field v-model="filter.church" placeholder="如：南头堂" class="filter-input" />
-      </div>
-      <div class="filter-row">
-        <div class="filter-label">家乡</div>
-        <van-field v-model="filter.native_place" placeholder="如：广东" class="filter-input" />
-      </div>
-      <div class="filter-row">
-        <div class="filter-label">现居/工作城市</div>
-        <van-field v-model="filter.city" placeholder="如：广州" class="filter-input" />
-      </div>
-      <div class="filter-row">
-        <div class="filter-label">从事行业</div>
-        <van-field v-model="filter.industry" placeholder="如：金融" class="filter-input" />
-      </div>
-      <div class="filter-row">
-        <div class="filter-label">房产状况</div>
-        <van-field v-model="filter.house" placeholder="如：有房" class="filter-input" />
-      </div>
-      <div class="filter-row">
-        <div class="filter-label">汽车</div>
-        <van-field v-model="filter.driving" placeholder="如：有" class="filter-input" />
       </div>
     </div>
     <div style="display:flex; gap:12px; margin-top:16px;">
@@ -1559,8 +1535,7 @@ createApp({
       user_id: '',
       height_min: '', height_max: '',
       age_min: '', age_max: '',
-      education: [], income: [], church: '',
-      native_place: '', city: '', industry: '', house: '', driving: ''
+      education: [], income: []
     });
     const educationOptions = ['大专以下', '大专', '本科', '硕士', '博士'];
     const incomeOptions = ['10W以下', '10W - 20W', '20W - 30W', '30W - 50W', '50W以上'];
@@ -1568,7 +1543,7 @@ createApp({
     const slideDir = ref('');
     const hasActiveFilter = computed(() => {
       const f = filter.value;
-      return !!(f.gender || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.church || f.native_place || f.city || f.industry || f.house || f.driving);
+      return !!(f.gender || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length);
     });
     function buildFilterQuery() {
       const f = filter.value;
@@ -1580,7 +1555,6 @@ createApp({
       f.income.forEach(i => parts.push('income=' + encodeURIComponent(i)));
       const uid = (f.user_id || '').trim();
       if (uid) parts.push('user_id=' + encodeURIComponent(uid.toUpperCase().startsWith('U-') ? uid.toUpperCase() : 'U-' + uid));
-      ['church','native_place','city','industry','house','driving'].forEach(k => { if (f[k]) parts.push(k + '=' + encodeURIComponent(f[k])); });
       return parts.length ? ('?' + parts.join('&')) : '';
     }
     function toggleMultiTag(field, val) {
@@ -1590,7 +1564,7 @@ createApp({
       else arr.push(val);
     }
     async function resetFilter() {
-      filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], church: '', native_place: '', city: '', industry: '', house: '', driving: '' };
+      filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [] };
       showFilter.value = false;
       cards.value = [];
       cardIndex.value = 0;

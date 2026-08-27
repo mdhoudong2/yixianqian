@@ -93,7 +93,7 @@ def resolve_activity(act_id):
 SNAPSHOT_REFRESH_INTERVAL = 60  # 秒（曾为15s，高频轮询易触发飞书限流/超时，导致登录卡顿）
 
 _snapshot = {
-    "users": [], "activities": [], "signups": [],
+    "users": [], "observers": [], "activities": [], "signups": [],
     "likes": [], "group_selections": [], "group_results": [],
     "messages": [],
 }
@@ -101,6 +101,7 @@ _snapshot_lock = threading.RLock()
 
 _SNAPSHOT_FETCHERS = {
     "users": lambda: bitable.search_records(USER_TABLE_ID),
+    "observers": (lambda: bitable.search_records(OBSERVER_TABLE_ID)) if OBSERVER_TABLE_ID else None,
     "activities": lambda: bitable.search_records(ACTIVITY_TABLE_ID),
     "signups": lambda: bitable.search_records(SIGNUP_TABLE_ID),
     "likes": lambda: bitable.search_records(LIKE_TABLE_ID),
@@ -108,6 +109,7 @@ _SNAPSHOT_FETCHERS = {
     "group_results": lambda: bitable.search_records(GROUP_RESULT_TABLE),
     "messages": lambda: bitable.search_records(MESSAGE_TABLE_ID),
 }
+_SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
 
 
 def refresh_snapshot_table(key):
@@ -463,45 +465,53 @@ def roles_of(open_id):
     「user」角色仅在存在有效普通用户档案时授予：单身/已脱单/待审核。
     「审核不通过」「已退出」不算有效用户档案——否则用户先提交了被拒/退出记录、
     后成功注册为观察员时，会被误判同时拥有 user 角色，登录默认进 user 档而被「未通过审核」门禁拦住。
+    「observer」角色：村情六处独立表里有该 open_id 的记录。
     """
-    users = _snap("users")
-    matches = [u for u in users
-               if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
-    if not matches:
-        matches = bitable.search_records(USER_TABLE_ID, [
-            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
     roles = set()
-    for u in matches:
+    users = _snap("users")
+    user_matches = [u for u in users
+                    if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
+    if not user_matches:
+        user_matches = bitable.search_records(USER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+    for u in user_matches:
         st = bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS)
-        if st == STATUS_OBSERVER:
-            roles.add("observer")
-        elif st in ("单身", "已脱单", "待审核"):
+        if st in ("单身", "已脱单", "待审核"):
             roles.add("user")
+    if OBSERVER_TABLE_ID:
+        obs = _snap("observers")
+        obs_matches = [o for o in obs
+                       if bitable.get_field_text(o.get("fields", {}), F_FEISHU_ID) == open_id]
+        if not obs_matches:
+            obs_matches = bitable.search_records(OBSERVER_TABLE_ID, [
+                {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+        if obs_matches:
+            roles.add("observer")
     return roles
 
 
 def snap_self_user():
     """按当前会话 role 解析「本人」档案：
-    observer → 状态为观察员的记录；user → 非观察员主档（单身优先）。
+    observer → 村情六处独立表中的记录；user → 用户表主档（单身优先）。
     快照优先；若快照显示门禁态（待审核/审核不通过/已退出），实时直查兜底，
     避免刚被审核通过（待审核→单身）时仍读到旧快照的「审核中」。"""
     open_id = g.yxq_open_id
     if not open_id:
         return None
 
-    def _resolve(matches):
-        if g.yxq_role == "observer":
-            obs = [u for u in matches
-                   if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER]
-            return (obs or matches)[0]
-        non_obs = [u for u in matches
-                   if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) != STATUS_OBSERVER]
-        return _pick_primary_user(non_obs or matches)
+    if g.yxq_role == "observer":
+        obs = _snap("observers")
+        matches = [o for o in obs
+                   if bitable.get_field_text(o.get("fields", {}), F_FEISHU_ID) == open_id]
+        if not matches and OBSERVER_TABLE_ID:
+            matches = bitable.search_records(OBSERVER_TABLE_ID, [
+                {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+        return matches[0] if matches else None
 
     users = _snap("users")
     matches = [u for u in users
                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
-    rec = _resolve(matches) if matches else None
+    rec = _pick_primary_user(matches) if matches else None
     # 快照未命中，或快照显示门禁态（可能已被审核通过但快照未刷新）→ 实时直查
     gated = bool(rec) and bitable.get_select_value(
         rec.get("fields", {}), F_ACCOUNT_STATUS) in ("待审核", "审核不通过", "已退出")
@@ -509,7 +519,7 @@ def snap_self_user():
         live = bitable.search_records(USER_TABLE_ID, [
             {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
         if live:
-            rec = _resolve(live)
+            rec = _pick_primary_user(live)
     return rec
 
 
@@ -672,8 +682,8 @@ def format_user_brief(record, include_openid=False, full=False):
             "partner_hobbies": "、".join(bitable.get_multi_select_value(fields, F_PARTNER_HOBBIES)),
             "partner_sports": "、".join(bitable.get_multi_select_value(fields, F_PARTNER_SPORTS)),
             "marriage": bitable.get_select_value(fields, F_MARRIAGE),
-            "house": bitable.get_field_text(fields, F_HOUSE),
-            "driving": bitable.get_field_text(fields, F_DRIVING),
+            "house": _select_with_note(fields, F_HOUSE, F_HOUSE_NOTE_HAVE, F_HOUSE_NOTE_NONE),
+            "driving": _select_with_note(fields, F_DRIVING, F_DRIVING_NOTE_HAVE, F_DRIVING_NOTE_NONE),
             "family": bitable.get_field_text(fields, F_FAMILY),
             "live_with_parents": bitable.get_select_value(fields, F_LIVE_WITH_PARENTS),
             "birthday": format_birthday(fields),
@@ -682,6 +692,16 @@ def format_user_brief(record, include_openid=False, full=False):
     if include_openid:
         data["openid"] = bitable.get_field_text(fields, F_FEISHU_ID)
     return data
+
+
+def _select_with_note(fields, select_key, note_have_key, note_none_key):
+    """单选值 + 对应补充内容：如「有 · 补充内容」，补充内容为空则只返回「有」/「无」"""
+    val = bitable.get_select_value(fields, select_key)
+    if not val:
+        return ""
+    note_key = note_have_key if val == "有" else note_none_key
+    note = bitable.get_field_text(fields, note_key).strip()
+    return f"{val} · {note}" if note else val
 
 
 def format_user_profile(record):
@@ -863,11 +883,16 @@ def pass_card_filters(fields, f):
         return False
     if f.get("income") and bitable.get_select_value(fields, F_INCOME) not in f["income"]:
         return False
+    # 单选精确匹配（房产状况/是否有车）
+    if f.get("house") and bitable.get_select_value(fields, F_HOUSE) != f["house"]:
+        return False
+    if f.get("driving") and bitable.get_select_value(fields, F_DRIVING) != f["driving"]:
+        return False
     # 文本包含匹配
     for key, fname in [
         ("user_id", F_USER_ID),
         ("church", F_CHURCH), ("native_place", F_NATIVE_PLACE), ("city", F_CITY),
-        ("industry", F_INDUSTRY), ("house", F_HOUSE), ("driving", F_DRIVING),
+        ("industry", F_INDUSTRY),
     ]:
         if f.get(key) and f[key] not in bitable.get_field_text(fields, fname):
             return False

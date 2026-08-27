@@ -31,6 +31,7 @@ BASE_TOKEN = _cfg.BASE_TOKEN
 # 表 ID 默认值 = 生产环境；测试服在 local_config.py 覆盖同名变量即可（getattr 回退默认值）。
 # 复制多维表格到新 base 后表 ID 会变，需在 local_config.py 里按新值填。
 USER_TABLE_ID = getattr(_cfg, "USER_TABLE_ID", "tblsecbZZv0thaPe")
+OBSERVER_TABLE_ID = getattr(_cfg, "OBSERVER_TABLE_ID", "")  # 村情六处独立表（观察员，非普通用户）
 LIKE_TABLE_ID = getattr(_cfg, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
 ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
 SIGNUP_TABLE_ID = getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")

@@ -33,6 +33,8 @@
   @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: #f2f3f5; overflow: hidden; touch-action: pan-y; }
+  .card-photo-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; }
+  .card-photo-item { flex: 0 0 100%; width: 100%; height: 100%; object-fit: cover; display: block; }
   .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; will-change: opacity, transform; }
   .card-photo.photo-enter { animation: photoFadeIn 0.28s ease; }
   .card-photo.photo-slide-left { animation: photoSlideLeft 0.28s ease; }
@@ -192,7 +194,10 @@
   .like-item-meta { font-size: 13px; color: #969799; margin-top: 2px; }
   .like-item-msg { font-size: 13px; color: #646566; margin-top: 4px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
   /* 全屏图片预览 */
-  .photo-viewer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 999; display: flex; align-items: center; justify-content: center; }
+  .photo-viewer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 999; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .photo-viewer-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; }
+  .photo-viewer-item { flex: 0 0 100%; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .photo-viewer-item img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; will-change: opacity, transform; animation: viewerFadeIn 0.25s ease; }
   .photo-viewer img.viewer-slide-left { animation: viewerSlideLeft 0.28s ease; }
   .photo-viewer img.viewer-slide-right { animation: viewerSlideRight 0.28s ease; }
@@ -319,7 +324,10 @@
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
       :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')">
       <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @click="onPhotoClick">
-        <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" :class="photoSlideDir === 'left' ? 'photo-slide-left' : (photoSlideDir === 'right' ? 'photo-slide-right' : 'photo-enter')" alt="" @load="photoLoading=false" @error="onPhotoError">
+        <div v-if="photoLoading" class="photo-loading"></div>
+        <div v-if="currentPhotoList.length" class="card-photo-track" :style="{ transform: 'translateX(-' + photoIndex * 100 + '%)' }">
+          <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt="" @load="onPhotoLoad" @error="onPhotoError">
+        </div>
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
           <div v-for="(p,i) in currentCard.photos" :key="i" class="photo-dot" :class="{active: i===photoIndex}"></div>
@@ -997,7 +1005,11 @@
 <div v-if="showPhotoViewer" class="photo-viewer" @click="closePhotoViewer">
   <div class="photo-viewer-close" @click.stop="closePhotoViewer">✕</div>
   <div class="photo-viewer-nav prev" v-if="viewerPhotos.length > 1" @click.stop="viewerPrev">‹</div>
-  <img :src="viewerPhotos[viewerIndex]" :key="viewerIndex" alt="" :class="viewerSlideDir === 'left' ? 'viewer-slide-left' : (viewerSlideDir === 'right' ? 'viewer-slide-right' : '')" @click.stop="onViewerImageClick" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd">
+  <div class="photo-viewer-track" :style="{ transform: 'translateX(-' + viewerIndex * 100 + '%)' }" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd">
+    <div v-for="(p,i) in viewerPhotos" :key="i" class="photo-viewer-item">
+      <img :src="p" alt="" @click.stop="onViewerImageClick">
+    </div>
+  </div>
   <div class="photo-viewer-nav next" v-if="viewerPhotos.length > 1" @click.stop="viewerNext">›</div>
   <div class="photo-viewer-counter" v-if="viewerPhotos.length > 1">{{ viewerIndex + 1 }} / {{ viewerPhotos.length }}</div>
 </div>
@@ -1188,7 +1200,37 @@ createApp({
       const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
       return photos[photoIndex.value] || '';
     });
+    const currentPhotoList = computed(() => {
+      if (!currentCard.value) return [];
+      return currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
+    });
     const photoLoading = ref(false);
+    let photoLoadingTimer = null;
+    const loadedPhotoSet = new Set();
+    function onPhotoLoad(e) {
+      try {
+        const raw = e && e.target && e.target.getAttribute ? e.target.getAttribute('src') : '';
+        if (raw) loadedPhotoSet.add(raw);
+        if (e && e.target && e.target.src) loadedPhotoSet.add(e.target.src);
+        if (currentPhotoUrl.value) loadedPhotoSet.add(currentPhotoUrl.value);
+      } catch (_) {}
+      clearTimeout(photoLoadingTimer);
+      photoLoading.value = false;
+    }
+    function triggerPhotoLoading() {
+      clearTimeout(photoLoadingTimer);
+      photoLoading.value = false;
+      const url = currentPhotoUrl.value;
+      if (!url) return;
+      if (loadedPhotoSet.has(url)) return;
+      for (const s of loadedPhotoSet) { if (s.endsWith(url) || url.endsWith(s)) return; }
+      try {
+        const imgs = document.querySelectorAll('.card-photo-item');
+        const img = imgs[photoIndex.value];
+        if (img && img.complete && img.naturalWidth) { loadedPhotoSet.add(url); return; }
+      } catch (_) {}
+      photoLoadingTimer = setTimeout(() => { if (currentPhotoUrl.value === url) photoLoading.value = true; }, 160);
+    }
     const likeMessage = ref('');
     const showLikeDialog = ref(false);
     const likeDialogTitle = ref('');
@@ -1534,7 +1576,7 @@ createApp({
       cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
       likesData.value = data.likes || { liked_me: [], mutual: [] };
       activities.value = data.activities || [];
-      photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
+      triggerPhotoLoading();
       preloadAround();
     }
 
@@ -1650,13 +1692,13 @@ createApp({
         // 已喜欢的人保留在牌堆（liked=true 置灰），justLiked 覆盖快照刷新窗口
         cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardIndex.value = 0; photoIndex.value = 0;
-        photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
+        triggerPhotoLoading();
         preloadAround();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
     }
-    function onPhotoError() { /* 图片加载失败时显示占位符 */ }
+    function onPhotoError() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
     // —— 卡片滑动（仅下半区） ——
     let cardTouchStartX = 0, cardTouchStartY = 0;
     function onCardTouchStart(e) {
@@ -2167,7 +2209,7 @@ createApp({
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
-      photoLoading.value = !!currentPhotoUrl.value;
+      triggerPhotoLoading();
       preloadAround();
     });
 
@@ -2283,7 +2325,7 @@ createApp({
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup,
-      cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, photoLoading,
+      cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
@@ -2305,7 +2347,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
-      onPhotoError,
+      onPhotoError, onPhotoLoad,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,

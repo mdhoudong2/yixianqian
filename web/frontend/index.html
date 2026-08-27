@@ -1206,8 +1206,31 @@ createApp({
     });
     const photoLoading = ref(false);
     let photoLoadingTimer = null;
-    function onPhotoLoad() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
-    function triggerPhotoLoading() { clearTimeout(photoLoadingTimer); photoLoading.value = false; if (!currentPhotoUrl.value) return; photoLoadingTimer = setTimeout(() => { if (currentPhotoUrl.value) photoLoading.value = true; }, 160); }
+    const loadedPhotoSet = new Set();
+    function onPhotoLoad(e) {
+      try {
+        const raw = e && e.target && e.target.getAttribute ? e.target.getAttribute('src') : '';
+        if (raw) loadedPhotoSet.add(raw);
+        if (e && e.target && e.target.src) loadedPhotoSet.add(e.target.src);
+        if (currentPhotoUrl.value) loadedPhotoSet.add(currentPhotoUrl.value);
+      } catch (_) {}
+      clearTimeout(photoLoadingTimer);
+      photoLoading.value = false;
+    }
+    function triggerPhotoLoading() {
+      clearTimeout(photoLoadingTimer);
+      photoLoading.value = false;
+      const url = currentPhotoUrl.value;
+      if (!url) return;
+      if (loadedPhotoSet.has(url)) return;
+      for (const s of loadedPhotoSet) { if (s.endsWith(url) || url.endsWith(s)) return; }
+      try {
+        const imgs = document.querySelectorAll('.card-photo-item');
+        const img = imgs[photoIndex.value];
+        if (img && img.complete && img.naturalWidth) { loadedPhotoSet.add(url); return; }
+      } catch (_) {}
+      photoLoadingTimer = setTimeout(() => { if (currentPhotoUrl.value === url) photoLoading.value = true; }, 160);
+    }
     const likeMessage = ref('');
     const showLikeDialog = ref(false);
     const likeDialogTitle = ref('');

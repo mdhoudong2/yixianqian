@@ -1045,7 +1045,8 @@ def _get_cached_image(file_token):
             fpath = os.path.join(IMAGE_CACHE_DIR, fname)
             ext = fname.rsplit(".", 1)[-1].lower()
             ct_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
-                      "gif": "image/gif", "webp": "image/webp", "heic": "image/heic"}
+                      "gif": "image/gif", "webp": "image/webp", "heic": "image/heic",
+                      "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm"}
             return fpath, ct_map.get(ext, "image/jpeg")
     return None
 
@@ -1054,11 +1055,28 @@ def _compress_image(image_bytes, ext):
     """用 Pillow 压缩图片，返回压缩后的字节。
     - 最大宽度 1080px，等比缩放，不放大
     - JPEG 质量 85，PNG 优化
-    - 保留原始格式（jpg/png/webp）
-    - GIF / HEIC 不做处理，直接返回原字节
+    - GIF 原样返回；HEIC 转 JPEG（pillow-heif）
     """
-    if ext in ("gif", "heic"):
+    if ext == "gif":
         return image_bytes
+    if ext == "heic":
+        try:
+            import pillow_heif
+            from PIL import Image
+            import io
+            heif = pillow_heif.open_heif(io.BytesIO(image_bytes))
+            im = Image.frombytes(heif.mode, heif.size, heif.data, "raw", heif.mode, heif.stride)
+            if max(im.size) > 1080:
+                ratio = 1080.0 / im.width
+                new_h = int(im.height * ratio)
+                im = im.resize((1080, new_h), Image.LANCZOS)
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=85, optimize=True)
+            return out.getvalue()
+        except Exception:
+            return image_bytes
     fmt_map = {"jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP"}
     fmt = fmt_map.get(ext, "JPEG")
     try:
@@ -1106,9 +1124,13 @@ def _download_and_cache_image(file_token):
             return False
         content_type = resp.headers.get("Content-Type", "image/jpeg")
         ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif",
-                   "image/webp": "webp", "image/heic": "heic"}
+                   "image/webp": "webp", "image/heic": "heic",
+                   "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
         ext = ext_map.get(content_type, "jpg")
-        compressed = _compress_image(resp.content, ext)
+        if content_type.startswith("video/"):
+            compressed = resp.content
+        else:
+            compressed = _compress_image(resp.content, ext)
         cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, ext))
         tmp = cache_path + ".tmp"
         with open(tmp, "wb") as f:
@@ -1165,10 +1187,14 @@ def proxy_image(file_token):
         content_type = resp.headers.get("Content-Type", "image/jpeg")
         # 根据content-type确定扩展名
         ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif",
-                   "image/webp": "webp", "image/heic": "heic"}
+                   "image/webp": "webp", "image/heic": "heic",
+                   "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
         ext = ext_map.get(content_type, "jpg")
-        # 压缩后保存（GIF/HEIC 原样保存）
-        compressed = _compress_image(resp.content, ext)
+        # 视频原样保存，图片再压缩（HEIC 已在 _compress_image 内转 JPEG）
+        if content_type.startswith("video/"):
+            compressed = resp.content
+        else:
+            compressed = _compress_image(resp.content, ext)
         cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, ext))
         tmp = cache_path + ".tmp"
         with open(tmp, "wb") as f:
@@ -2636,6 +2662,29 @@ def update_profile_photo():
         return jsonify({"error": "图片为空"}), 400
     if len(data) > 10 * 1024 * 1024:
         return jsonify({"error": "图片不能超过10MB"}), 400
+    # 视频直接拒绝
+    if (f.mimetype or "").startswith("video/") or (f.filename or "").lower().endswith((".mp4",".mov",".avi",".webm")):
+        return jsonify({"error": "请上传 JPG/PNG 图片，暂不支持视频"}), 400
+    # HEIC 转 JPEG（iPhone 实况）
+    if (f.mimetype == "image/heic" or (f.filename or "").lower().endswith((".heic",".heif"))):
+        try:
+            import pillow_heif
+            from PIL import Image
+            heif = pillow_heif.open_heif(io.BytesIO(data))
+            im = Image.frombytes(heif.mode, heif.size, heif.data, "raw", heif.mode, heif.stride)
+            if max(im.size) > 1080:
+                ratio = 1080.0 / im.width
+                new_h = int(im.height * ratio)
+                im = im.resize((1080, new_h), Image.LANCZOS)
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=85, optimize=True)
+            data = out.getvalue()
+            f.mimetype = "image/jpeg"
+            filename = (f.filename or "photo.jpg").rsplit(".",1)[0] + ".jpg"
+        except Exception:
+            return jsonify({"error": "HEIC 图片处理失败，请转成 JPG 后重试"}), 400
     try:
         Image.open(io.BytesIO(data)).verify()
     except Exception:

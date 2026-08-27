@@ -33,12 +33,12 @@ def find_user_by_nickname(nickname):
 
 
 def find_user_by_openid(open_id):
-    """通过 open_id 查找用户。同号多档时返回主档案（单元素列表），
-    调用方无需感知重复注册的存在。"""
-    items = search_records(USER_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "is", "value": [open_id]}]
-    })
+    """通过 open_id 查找用户（普通用户表 + 村情六处独立表）。同号多档时返回主档案（单元素列表），
+    调用方无需感知重复注册的存在。pick_primary_record 单身优先，双身份仍回落 user 档。"""
+    cond = {"field_name": FIELD_FEISHU_ID, "operator": "is", "value": [open_id]}
+    items = search_records(USER_TABLE_ID, {"conjunction": "and", "conditions": [cond]})
+    if OBSERVER_TABLE_ID:
+        items += search_records(OBSERVER_TABLE_ID, {"conjunction": "and", "conditions": [cond]})
     return pick_primary_record(items)
 
 

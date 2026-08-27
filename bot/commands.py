@@ -422,8 +422,9 @@ def handle_admin_help():
 def handle_admin_stats():
     """用户统计"""
     all_users = search_records(USER_TABLE_ID)
-    total = len(all_users)
-    pending = active = hidden = rejected = exited = observer = unbound = 0
+    observers = search_records(OBSERVER_TABLE_ID) if OBSERVER_TABLE_ID else []
+    total = len(all_users) + len(observers)
+    pending = active = hidden = rejected = exited = unbound = 0
     for item in all_users:
         fields = item.get("fields", {})
         status = get_field_text(fields, FIELD_ACCOUNT_STATUS)
@@ -437,8 +438,6 @@ def handle_admin_stats():
             rejected += 1
         elif status == "已退出":
             exited += 1
-        elif status == STATUS_OBSERVER:
-            observer += 1
         if not get_field_text(fields, FIELD_FEISHU_ID):
             unbound += 1
 
@@ -450,7 +449,7 @@ def handle_admin_stats():
         f"已脱单：{hidden}人\n"
         f"审核不通过：{rejected}人\n"
         f"已退出：{exited}人\n"
-        f"村情六处：{observer}人\n"
+        f"村情六处：{len(observers)}人\n"
         f"未绑定open_id：{unbound}人"
     )
 

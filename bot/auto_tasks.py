@@ -28,6 +28,29 @@ from store import (
 from lib import storage
 
 
+# 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
+_AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
+
+
+def _move_record_to_observer_table(record_id, fields, open_id):
+    """把观察员记录从用户表搬进村情六处独立表：复制可写字段 → 建新记录 → 删旧记录。
+    返回新 record_id；失败返回 None（保留旧记录，下轮重试）。"""
+    if not OBSERVER_TABLE_ID:
+        return None
+    move_fields = {k: v for k, v in (fields or {}).items() if k not in _AUTO_FIELD_NAMES}
+    move_fields[FIELD_ACCOUNT_STATUS] = STATUS_OBSERVER
+    move_fields[FIELD_HEART_REMAIN] = 0
+    move_fields[FIELD_FEISHU_ID] = open_id
+    new_rec = create_record(OBSERVER_TABLE_ID, move_fields)
+    if not new_rec or not new_rec.get("record_id"):
+        log(f"观察员搬移失败(建新记录): {(fields or {}).get(FIELD_NICKNAME)} open_id={open_id}")
+        return None
+    new_record_id = new_rec["record_id"]
+    if not delete_record(USER_TABLE_ID, record_id):
+        log(f"观察员搬移告警(删旧记录失败): record_id={record_id} 新record_id={new_record_id}")
+    return new_record_id
+
+
 def auto_bind_from_creator():
     """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册"""
     items = search_records(USER_TABLE_ID, {
@@ -53,10 +76,16 @@ def auto_bind_from_creator():
         if not eoid:
             continue
         existing_nick.setdefault(eoid, get_field_text(ef, FIELD_NICKNAME))
-        if get_field_text(ef, FIELD_ACCOUNT_STATUS) == STATUS_OBSERVER:
+        existing_user_oids.add(eoid)
+    # 村情六处已独立建表：从独立表读已注册观察员，用于跨类型去重
+    if OBSERVER_TABLE_ID:
+        for e in search_records(OBSERVER_TABLE_ID):
+            ef = e.get("fields", {})
+            eoid = get_field_text(ef, FIELD_FEISHU_ID)
+            if not eoid:
+                continue
             existing_observer_oids.add(eoid)
-        else:
-            existing_user_oids.add(eoid)
+            existing_nick.setdefault(eoid, get_field_text(ef, FIELD_NICKNAME))
 
     bound_count = 0
     duplicate_count = 0
@@ -116,11 +145,8 @@ def auto_bind_from_creator():
                 log(f"观察员邀请码已被使用: {nickname} (open_id={open_id})")
                 send_text_message(open_id, "邀请码已被使用，注册未通过。如有疑问请联系管理员。")
                 continue
-            update_record(USER_TABLE_ID, record_id, {
-                FIELD_ACCOUNT_STATUS: STATUS_OBSERVER,
-                FIELD_HEART_REMAIN: 0,
-            })
-            if update_user_feishu_id(record_id, open_id):
+            new_record_id = _move_record_to_observer_table(record_id, fields, open_id)
+            if new_record_id:
                 bound_count += 1
                 log(f"观察员注册成功: {nickname} -> {open_id}")
                 existing_observer_oids.add(open_id)
@@ -128,7 +154,7 @@ def auto_bind_from_creator():
 
                 def _bind_observer(_data):
                     _data[open_id] = {
-                        "open_id": open_id, "nickname": nickname, "record_id": record_id,
+                        "open_id": open_id, "nickname": nickname, "record_id": new_record_id,
                         "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "observer"
                     }
                     return _data

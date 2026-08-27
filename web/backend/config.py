@@ -19,6 +19,7 @@ os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 # 表 ID 默认值 = 生产环境；测试服可在 local_config.py 覆盖同名变量（getattr 回退默认值）。
 # 复制多维表格到新 base 后表 ID 会变，需在 local_config.py 里按新值填。
 USER_TABLE_ID = getattr(_lc, "USER_TABLE_ID", "tblsecbZZv0thaPe")
+OBSERVER_TABLE_ID = getattr(_lc, "OBSERVER_TABLE_ID", "")  # 村情六处独立表（观察员，非普通用户）
 LIKE_TABLE_ID = getattr(_lc, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
 ACTIVITY_TABLE_ID = getattr(_lc, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
 SIGNUP_TABLE_ID = getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
@@ -47,7 +48,11 @@ F_INDUSTRY = "从事行业"
 F_POSITION = "职位"
 F_INCOME = "年收入"
 F_HOUSE = "房产状况"
-F_DRIVING = "是否拥有汽车"
+F_DRIVING = "是否有车"
+F_HOUSE_NOTE_HAVE = "房产状况-有-补充内容"
+F_HOUSE_NOTE_NONE = "房产状况-无-补充内容"
+F_DRIVING_NOTE_HAVE = "是否有车-有-补充内容"
+F_DRIVING_NOTE_NONE = "是否有车-无-补充内容"
 F_MARRIAGE = "你结过婚吗？"
 F_FAMILY = "家庭成员情况"
 F_LIVE_WITH_PARENTS = "婚后是否与父母同住"
@@ -106,8 +111,8 @@ CARD_SECTIONS = [
         ("从事行业", F_INDUSTRY, "text"),
         ("职位", F_POSITION, "text"),
         ("年收入", F_INCOME, "select"),
-        ("房产状况", F_HOUSE, "text"),
-        ("汽车", F_DRIVING, "text"),
+        ("房产状况", F_HOUSE, "select"),
+        ("汽车", F_DRIVING, "select"),
     ]),
     ("关于我", "✨", [
         ("我是怎样的人", F_PERSONALITY, "text"),
@@ -159,8 +164,8 @@ EDITABLE_FIELDS = [
     (F_INDUSTRY, "从事行业", "text", None),
     (F_POSITION, "职位", "text", None),
     (F_INCOME, "年收入", "select", _OPT_INCOME),
-    (F_HOUSE, "房产状况", "text", None),
-    (F_DRIVING, "汽车", "text", None),
+    (F_HOUSE, "房产状况", "select", ["有", "无"]),
+    (F_DRIVING, "汽车", "select", ["有", "无"]),
     (F_PERSONALITY, "我是怎样的人", "text", None),
     (F_SELF_TRAITS, "性格", "multi", _OPT_TRAITS),
     (F_SELF_HOBBIES, "爱好", "multi", _OPT_HOBBIES),

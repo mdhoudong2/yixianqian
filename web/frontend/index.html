@@ -32,18 +32,18 @@
   .swipe-card.slide-in-left { animation: slideInLeft 0.28s ease; }
   @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
-  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); overflow: hidden; touch-action: pan-y; }
+  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: #f2f3f5; overflow: hidden; touch-action: pan-y; }
   .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; will-change: opacity, transform; }
   .card-photo.photo-enter { animation: photoFadeIn 0.28s ease; }
   .card-photo.photo-slide-left { animation: photoSlideLeft 0.28s ease; }
   .card-photo.photo-slide-right { animation: photoSlideRight 0.28s ease; }
   @keyframes photoFadeIn { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes photoSlideLeft { from { transform: translateX(20%); opacity: 0.45; } to { transform: translateX(0); opacity: 1; } }
-  @keyframes photoSlideRight { from { transform: translateX(-20%); opacity: 0.45; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes photoSlideLeft { from { transform: translateX(10%); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes photoSlideRight { from { transform: translateX(-10%); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
   .photo-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1; }
   .photo-loading::after { content: ''; width: 28px; height: 28px; border: 3px solid rgba(255,255,255,0.45); border-top-color: #fff; border-radius: 50%; animation: photoSpin 0.8s linear infinite; }
   @keyframes photoSpin { to { transform: rotate(360deg); } }
-  .card-photo-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 72px; color: rgba(255,255,255,0.6); }
+  .card-photo-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 72px; color: rgba(255,255,255,0.6); background: linear-gradient(135deg, #ff6b81, #ff8e9b); }
   .photo-dots { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 5px; z-index: 5; }
   .photo-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.5); }
   .photo-dot.active { background: #fff; }

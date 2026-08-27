@@ -32,7 +32,7 @@
   .swipe-card.slide-in-left { animation: slideInLeft 0.28s ease; }
   @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
-  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); overflow: hidden; }
+  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); overflow: hidden; touch-action: pan-y; }
   .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
   .photo-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1; }
   .photo-loading::after { content: ''; width: 28px; height: 28px; border: 3px solid rgba(255,255,255,0.45); border-top-color: #fff; border-radius: 50%; animation: photoSpin 0.8s linear infinite; }
@@ -47,6 +47,9 @@
   .card-name { font-size: 20px; font-weight: bold; }
   .card-name .gender-icon { font-size: 16px; margin-left: 6px; }
   .card-subtitle { font-size: 13px; opacity: 0.9; margin-top: 2px; }
+  .card-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  .card-main .card-tabs { flex-shrink: 0; }
+  .card-main .card-info { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .photo-zoom-btn { flex-shrink: 0; width: 32px; height: 32px; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.95; }
   .photo-zoom-btn:active { transform: scale(0.9); }
   .card-info { flex: 1; overflow-y: auto; padding: 14px 16px; -webkit-overflow-scrolling: touch; }
@@ -303,9 +306,8 @@
     <van-empty v-if="!cards.length" :description="hasActiveFilter ? '没有符合筛选条件的人，试试调整筛选' : '暂时没有可推荐的人了～'"></van-empty>
     <template v-else>
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
-      :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')"
-      @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd">
-      <div class="card-photo-wrap" @click="openPhotoViewer(0)">
+      :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')">
+      <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @click="onPhotoClick">
         <div v-if="photoLoading" class="photo-loading"></div>
         <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" alt="" @load="photoLoading=false" @error="onPhotoError">
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
@@ -321,12 +323,11 @@
               </div>
               <div class="card-subtitle" v-if="currentCard.display_fields && currentCard.display_fields.simple">{{ currentCard.display_fields.simple }}</div>
             </div>
-            <div class="photo-zoom-btn" @click.stop="openPhotoViewerForCurrent">
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
-            </div>
+
           </div>
         </div>
       </div>
+      <div class="card-main" @touchstart="onCardTouchStart" @touchmove="onCardTouchMove" @touchend="onCardTouchEnd">
       <div class="card-tabs">
         <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
         <div v-if="!currentCard.is_self" class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
@@ -386,6 +387,7 @@
         </div>
       </div>
     </div>
+      </div>
       <div class="card-actions" v-if="cardTab==='profile'">
         <button v-if="!currentCard.is_self" class="feedback-btn" @click="openFeedbackDialog">反馈</button>
         <button v-if="!isObserver && !currentCard.is_self" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
@@ -985,7 +987,7 @@
 <div v-if="showPhotoViewer" class="photo-viewer" @click="closePhotoViewer">
   <div class="photo-viewer-close" @click.stop="closePhotoViewer">✕</div>
   <div class="photo-viewer-nav prev" v-if="viewerPhotos.length > 1" @click.stop="viewerPrev">‹</div>
-  <img :src="viewerPhotos[viewerIndex]" alt="" @click.stop="" @touchstart="onViewerTouchStart" @touchend="onViewerTouchEnd">
+  <img :src="viewerPhotos[viewerIndex]" alt="" @click.stop="onViewerImageClick" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd">
   <div class="photo-viewer-nav next" v-if="viewerPhotos.length > 1" @click.stop="viewerNext">›</div>
   <div class="photo-viewer-counter" v-if="viewerPhotos.length > 1">{{ viewerIndex + 1 }} / {{ viewerPhotos.length }}</div>
 </div>
@@ -1373,7 +1375,6 @@ createApp({
     const showPhotoViewer = ref(false);
     const viewerPhotos = ref([]);
     const viewerIndex = ref(0);
-    let viewerTouchX = 0;
 
     // 进入牵线前的页面（喜欢完最后一人后返回）
     const prevPage = ref('likes');
@@ -1391,8 +1392,7 @@ createApp({
     const userDetail = ref(null);
     const userDetailFrom = ref('home');
 
-    // 触摸滑动
-    let touchStartX = 0, touchStartY = 0, isSwipingCard = false;
+    // 触摸滑动（卡片/图片分离）
 
     const BASE_PATH = '';
     async function api(url, options = {}) {
@@ -1645,12 +1645,13 @@ createApp({
       loadingCards.value = false;
     }
     function onPhotoError() { /* 图片加载失败时显示占位符 */ }
-    function onTouchStart(e) {
-      touchStartX = e.touches[0].clientX; touchStartY = e.touches[0].clientY; isSwipingCard = false;
+    // —— 卡片滑动（仅下半区） ——
+    let cardTouchStartX = 0, cardTouchStartY = 0;
+    function onCardTouchStart(e) {
+      cardTouchStartX = e.touches[0].clientX; cardTouchStartY = e.touches[0].clientY;
     }
-    function onTouchMove(e) {}
+    function onCardTouchMove(e) {}
     function switchCard(dir) {
-      // dir < 0 下一张，dir > 0 上一张；配合滑动动画
       if (dir < 0 && cardIndex.value < cards.value.length - 1) {
         slideDir.value = 'right';
         cardIndex.value++;
@@ -1663,26 +1664,54 @@ createApp({
         photoLoading.value = true;
       }
     }
-    function onTouchEnd(e) {
-      const dx = e.changedTouches[0].clientX - touchStartX;
-      const dy = e.changedTouches[0].clientY - touchStartY;
+    function onCardTouchEnd(e) {
+      const dx = e.changedTouches[0].clientX - cardTouchStartX;
+      const dy = e.changedTouches[0].clientY - cardTouchStartY;
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
-        isSwipingCard = true;
         switchCard(dx < 0 ? -1 : 1);
       }
     }
-
-    // 点击照片区域切换图片/打开预览
-    function openPhotoViewer(idx) {
-      const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
-      if (photos.length <= 1) {
-        // 单张直接全屏
-        if (photos.length === 1) { viewerPhotos.value = photos; viewerIndex.value = 0; showPhotoViewer.value = true; }
+    // 兼容旧模板（如有残留调用）
+    const onTouchStart = onCardTouchStart;
+    const onTouchMove = onCardTouchMove;
+    const onTouchEnd = onCardTouchEnd;
+    // —— 图片区：横滑切换照片，点击放大 ——
+    let photoTouchStartX = 0, photoTouchStartY = 0, photoTouchStartTime = 0;
+    let photoDidSwipe = false;
+    function onPhotoTouchStart(e) {
+      photoTouchStartX = e.touches[0].clientX;
+      photoTouchStartY = e.touches[0].clientY;
+      photoTouchStartTime = Date.now();
+      photoDidSwipe = false;
+    }
+    function onPhotoTouchMove(e) {
+      if (!photoTouchStartTime) return;
+      const dx = Math.abs(e.touches[0].clientX - photoTouchStartX);
+      const dy = Math.abs(e.touches[0].clientY - photoTouchStartY);
+      if (dx > 15 || dy > 15) photoDidSwipe = true;
+    }
+    function onPhotoTouchEnd(e) {
+      const dx = e.changedTouches[0].clientX - photoTouchStartX;
+      const dy = e.changedTouches[0].clientY - photoTouchStartY;
+      photoTouchStartTime = 0;
+      const photos = currentCard.value ? (currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : [])) : [];
+      if (Math.abs(dx) > 35 && Math.abs(dx) > Math.abs(dy)) {
+        photoDidSwipe = true;
+        if (photos.length > 1) {
+          if (dx < 0) photoIndex.value = (photoIndex.value + 1) % photos.length;
+          else photoIndex.value = (photoIndex.value - 1 + photos.length) % photos.length;
+          photoLoading.value = true;
+        }
         return;
       }
-      // 多张：点击切换到下一张
-      photoIndex.value = (photoIndex.value + 1) % photos.length;
-      photoLoading.value = true;
+    }
+    function onPhotoClick(e) {
+      if (photoDidSwipe) { photoDidSwipe = false; return; }
+      const photos = currentCard.value ? (currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : [])) : [];
+      if (photos.length) openPhotoViewerForCurrent();
+    }
+    function openPhotoViewer(idx) {
+      openPhotoViewerForCurrent();
     }
     function closePhotoViewer() { showPhotoViewer.value = false; }
     function openPhotoViewerForCurrent() {
@@ -1705,10 +1734,22 @@ createApp({
     function viewerNext() {
       if (viewerPhotos.value.length > 1) viewerIndex.value = (viewerIndex.value + 1) % viewerPhotos.value.length;
     }
-    function onViewerTouchStart(e) { viewerTouchX = e.touches[0].clientX; }
+    let viewerTouchX = 0, viewerTouchY = 0, viewerTouchTime = 0, viewerDidSwipe = false;
+    function onViewerTouchStart(e) { viewerTouchX = e.touches[0].clientX; viewerTouchY = e.touches[0].clientY; viewerTouchTime = Date.now(); viewerDidSwipe = false; }
+    function onViewerTouchMove(e) {
+      if (!viewerTouchTime) return;
+      const dx = Math.abs(e.touches[0].clientX - viewerTouchX);
+      const dy = Math.abs(e.touches[0].clientY - viewerTouchY);
+      if (dx > 15 || dy > 15) viewerDidSwipe = true;
+    }
     function onViewerTouchEnd(e) {
       const dx = e.changedTouches[0].clientX - viewerTouchX;
-      if (Math.abs(dx) > 40) { dx < 0 ? viewerNext() : viewerPrev(); }
+      const dy = e.changedTouches[0].clientY - viewerTouchY;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { viewerDidSwipe = true; dx < 0 ? viewerNext() : viewerPrev(); return; }
+    }
+    function onViewerImageClick(e) {
+      if (viewerDidSwipe) { viewerDidSwipe = false; return; }
+      closePhotoViewer();
     }
     function openPhotoViewerForUser(u) {
       const photos = u.photos || (u.photo ? [u.photo] : []);
@@ -2233,6 +2274,8 @@ createApp({
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
+      onCardTouchStart, onCardTouchMove, onCardTouchEnd,
+      onPhotoTouchStart, onPhotoTouchMove, onPhotoTouchEnd, onPhotoClick,
       openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage,
       showLikeDialog, likeDialogTitle, likeTarget, likeType,
       showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,
@@ -2253,7 +2296,7 @@ createApp({
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, openPhotoViewer, closePhotoViewer, viewPoster,
-      viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchEnd,
+      viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,
       showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,

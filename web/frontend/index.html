@@ -319,7 +319,8 @@
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
       :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')">
       <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @click="onPhotoClick">
-        <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" :class="photoSlideDir === 'left' ? 'photo-slide-left' : (photoSlideDir === 'right' ? 'photo-slide-right' : 'photo-enter')" alt="" @load="photoLoading=false" @error="onPhotoError">
+        <div v-if="photoLoading" class="photo-loading"></div>
+        <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" :class="photoSlideDir === 'left' ? 'photo-slide-left' : (photoSlideDir === 'right' ? 'photo-slide-right' : 'photo-enter')" alt="" @load="onPhotoLoad" @error="onPhotoError">
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
           <div v-for="(p,i) in currentCard.photos" :key="i" class="photo-dot" :class="{active: i===photoIndex}"></div>
@@ -1189,6 +1190,9 @@ createApp({
       return photos[photoIndex.value] || '';
     });
     const photoLoading = ref(false);
+    let photoLoadingTimer = null;
+    function onPhotoLoad() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
+    function triggerPhotoLoading() { clearTimeout(photoLoadingTimer); photoLoading.value = false; if (!currentPhotoUrl.value) return; photoLoadingTimer = setTimeout(() => { if (currentPhotoUrl.value) photoLoading.value = true; }, 160); }
     const likeMessage = ref('');
     const showLikeDialog = ref(false);
     const likeDialogTitle = ref('');
@@ -1534,7 +1538,7 @@ createApp({
       cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
       likesData.value = data.likes || { liked_me: [], mutual: [] };
       activities.value = data.activities || [];
-      photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
+      triggerPhotoLoading();
       preloadAround();
     }
 
@@ -1650,13 +1654,13 @@ createApp({
         // 已喜欢的人保留在牌堆（liked=true 置灰），justLiked 覆盖快照刷新窗口
         cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardIndex.value = 0; photoIndex.value = 0;
-        photoLoading.value = !!(currentCard.value && currentCard.value.photos && currentCard.value.photos.length);
+        triggerPhotoLoading();
         preloadAround();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
     }
-    function onPhotoError() { /* 图片加载失败时显示占位符 */ }
+    function onPhotoError() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
     // —— 卡片滑动（仅下半区） ——
     let cardTouchStartX = 0, cardTouchStartY = 0;
     function onCardTouchStart(e) {
@@ -2167,7 +2171,7 @@ createApp({
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
-      photoLoading.value = !!currentPhotoUrl.value;
+      triggerPhotoLoading();
       preloadAround();
     });
 

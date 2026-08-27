@@ -22,7 +22,7 @@ from flask import (
     send_from_directory,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from PIL import Image, ImageOps
+from PIL import ImageOps
 
 # 共享库 lib/ 位于仓库根目录（web/backend 的上两级）
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1061,9 +1061,10 @@ def _compress_image(image_bytes, ext):
         return image_bytes
     if ext == "heic":
         try:
+            import io
+
             import pillow_heif
             from PIL import Image
-            import io
             heif = pillow_heif.open_heif(io.BytesIO(image_bytes))
             im = Image.frombytes(heif.mode, heif.size, heif.data, "raw", heif.mode, heif.stride)
             if max(im.size) > 1080:

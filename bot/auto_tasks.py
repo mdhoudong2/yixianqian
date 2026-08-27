@@ -27,7 +27,6 @@ from store import (
 
 from lib import storage
 
-
 # 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
 _AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
 

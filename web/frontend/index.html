@@ -2261,13 +2261,16 @@ createApp({
         return;
       }
       isHandlingPopState = true;
+      // 兼容：van-popup 存在但 show* 未同步（如直接操作 DOM），也尝试关闭
+      const hasFilterPopup = document.querySelector('.van-popup--round') && showFilter.value;
+      const hasAdminPopup = document.querySelector('.van-popup') && showAdminHelp.value;
       if(showPhotoViewer.value){ showPhotoViewer.value=false; isHandlingPopState=false; return; }
-      if(showFilter.value){ showFilter.value=false; isHandlingPopState=false; return; }
+      if(showFilter.value || hasFilterPopup){ showFilter.value=false; isHandlingPopState=false; return; }
       if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
       if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
       if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
-      if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
+      if(showAdminHelp.value || hasAdminPopup){ showAdminHelp.value=false; isHandlingPopState=false; return; }
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
       if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }

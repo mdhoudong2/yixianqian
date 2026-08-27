@@ -754,6 +754,11 @@ def format_activity(record):
 # ========== 卡片动态字段 ==========
 def _field_value(fields, fname, ftype):
     """按类型读取字段值，返回字符串（空则返回 ''）"""
+    # 房产/汽车：单选值 + 补充内容（如「有 · 已购2套」，补充为空则只显示「有」/「无」）
+    if fname == F_HOUSE:
+        return _select_with_note(fields, F_HOUSE, F_HOUSE_NOTE_HAVE, F_HOUSE_NOTE_NONE)
+    if fname == F_DRIVING:
+        return _select_with_note(fields, F_DRIVING, F_DRIVING_NOTE_HAVE, F_DRIVING_NOTE_NONE)
     if ftype == "text":
         return bitable.get_field_text(fields, fname)
     if ftype == "select":
@@ -905,6 +910,18 @@ def pass_card_filters(fields, f):
         if f.get(key) and f[key] not in bitable.get_field_text(fields, fname):
             return False
     return True
+
+
+def _has_active_filter(filters):
+    """是否启用了任一筛选条件（列表非空 / 标量非空）。
+    观察员自预览卡片仅在无任何筛选时置顶，否则会混进筛选结果造成「筛 U-0022 却看到自己」。"""
+    for v in filters.values():
+        if isinstance(v, list):
+            if v:
+                return True
+        elif v not in (None, ""):
+            return True
+    return False
 
 
 # ========== 页面路由 ==========
@@ -1656,8 +1673,8 @@ def get_cards():
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
     cards = order_cards(cards, liked_me_openids)
-    # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
-    if is_observer:
+    # 观察员预览自己的普通用户卡片（别人看我的样子），仅无任何筛选时置顶展示
+    if is_observer and not gender_filter and not _has_active_filter(filters):
         self_card = _build_self_card(open_id, all_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)

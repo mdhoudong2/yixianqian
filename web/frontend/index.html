@@ -318,7 +318,7 @@
       <div class="card-counter">{{ cards.length ? (cardIndex + 1) + ' / ' + cards.length : '0 / 0' }}</div>
       <div class="hearts-badge" v-if="!isObserver">💕 {{ user.hearts }}</div>
     </div>
-    <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
+    <div class="filter-btn" :class="{active: hasActiveFilter}" @click="openFilter">⚙ 筛选</div>
     <van-empty v-if="!cards.length" :description="hasActiveFilter ? '没有符合筛选条件的人，试试调整筛选' : '暂时没有可推荐的人了～'"></van-empty>
     <template v-else>
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
@@ -536,7 +536,7 @@
         <span class="hearts-left">剩 {{ user.hearts }} 颗</span>
       </div>
       <div class="profile-card-divider"></div>
-      <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
+      <div class="profile-card-row" style="cursor:pointer;" @click="openInvite">
         <span class="row-label">🎁 邀请好友得爱心</span>
         <van-icon name="arrow" color="#c8c9cc" />
       </div>
@@ -554,7 +554,7 @@
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
-      <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+      <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="openAdminHelp"></van-cell>
     </van-cell-group>
   </div>
   <div style="padding:12px 12px 24px;">
@@ -693,9 +693,9 @@
   </div>
 
   <!-- 单选弹窗 -->
-  <van-popup v-model:show="showSelectPopup" position="bottom" round>
+  <van-popup :show="showSelectPopup" @update:show="v => setOverlay('selectPopup', v)" position="bottom" round>
     <div class="picker-header">
-      <span @click="showSelectPopup=false">取消</span>
+      <span @click="closeOverlay('selectPopup')">取消</span>
       <span style="font-weight:600;">{{ pickerField ? pickerField.label : '' }}</span>
       <span style="color:#ff6b81;" @click="clearPickerField">清除</span>
     </div>
@@ -705,11 +705,11 @@
   </van-popup>
 
   <!-- 多选弹窗 -->
-  <van-popup v-model:show="showMultiPopup" position="bottom" round>
+  <van-popup :show="showMultiPopup" @update:show="v => setOverlay('multiPopup', v)" position="bottom" round>
     <div class="picker-header">
-      <span @click="showMultiPopup=false">取消</span>
+      <span @click="closeOverlay('multiPopup')">取消</span>
       <span style="font-weight:600;">{{ pickerField ? pickerField.label : '' }}</span>
-      <span style="color:#ff6b81;" @click="showMultiPopup=false">确定</span>
+      <span style="color:#ff6b81;" @click="closeOverlay('multiPopup')">确定</span>
     </div>
     <div class="multi-options">
       <div v-for="opt in (pickerField ? (pickerField.options || []) : [])" :key="opt" class="multi-option" :class="{active: pickerField && pickerField.value && pickerField.value.includes(opt)}" @click="toggleMulti(opt)">{{ opt }}</div>
@@ -974,7 +974,7 @@
   <div v-else style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
 </div>
 <!-- 管理员指令弹窗 -->
-<van-popup v-model:show="showAdminHelp" position="bottom" round style="max-height:75vh;">
+<van-popup :show="showAdminHelp" @update:show="v => setOverlay('adminHelp', v)" position="bottom" round style="max-height:75vh;">
   <div class="admin-help-panel">
     <div class="admin-help-title">管理员指令</div>
     <div class="admin-help-list">
@@ -983,11 +983,11 @@
         <div v-for="(c, i) in g.items" :key="i" class="admin-help-item">{{ c }}</div>
       </template>
     </div>
-    <div class="admin-help-close" @click="showAdminHelp = false">关闭</div>
+    <div class="admin-help-close" @click="closeOverlay('adminHelp')">关闭</div>
   </div>
 </van-popup>
 <!-- ========== 报名名单弹层 ========== -->
-<van-popup v-model:show="signupSheetShow" position="bottom" round style="max-height:70vh; overflow-y:auto;">
+<van-popup :show="signupSheetShow" @update:show="v => setOverlay('signupSheet', v)" position="bottom" round style="max-height:70vh; overflow-y:auto;">
   <div style="padding:16px;">
     <div style="font-size:16px; font-weight:500; text-align:center; margin-bottom:8px; color:#323233;">报名名单（{{ signupList.length }}）</div>
     <van-empty v-if="loadingSignups" description="加载中..." image-size="50"></van-empty>
@@ -1014,7 +1014,7 @@
   <div class="photo-viewer-counter" v-if="viewerPhotos.length > 1">{{ viewerIndex + 1 }} / {{ viewerPhotos.length }}</div>
 </div>
 <!-- 送爱心弹窗 -->
-<van-dialog v-model:show="showLikeDialog" :title="likeDialogTitle" show-cancel-button
+<van-dialog :show="showLikeDialog" @update:show="v => setOverlay('likeDialog', v)" :title="likeDialogTitle" show-cancel-button
   confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :before-close="onLikeDialogBeforeClose">
   <div class="like-dialog-body">
@@ -1033,7 +1033,7 @@
   </div>
 </van-dialog>
 <!-- 反馈弹窗 -->
-<van-dialog v-model:show="showFeedbackDialog" title="反馈该用户" show-cancel-button
+<van-dialog :show="showFeedbackDialog" @update:show="v => setOverlay('feedbackDialog', v)" title="反馈该用户" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :before-close="onFeedbackBeforeClose">
   <div class="like-dialog-body">
@@ -1048,7 +1048,7 @@
   </div>
 </van-dialog>
 <!-- 意见反馈弹窗 -->
-<van-dialog v-model:show="showSuggestionDialog" title="意见反馈" show-cancel-button
+<van-dialog :show="showSuggestionDialog" @update:show="v => setOverlay('suggestionDialog', v)" title="意见反馈" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :before-close="onSuggestionBeforeClose">
   <div class="like-dialog-body">
@@ -1062,16 +1062,16 @@
   </div>
 </van-dialog>
 <!-- 邀请好友得爱心弹窗 -->
-<van-dialog v-model:show="showInviteDialog" title="邀请好友得爱心" :show-confirm-button="false" close-on-click-overlay>
+<van-dialog :show="showInviteDialog" @update:show="v => setOverlay('inviteDialog', v)" title="邀请好友得爱心" :show-confirm-button="false" close-on-click-overlay>
   <div class="invite-dialog-body">
-    <div class="invite-close" @click="showInviteDialog=false">✕</div>
+    <div class="invite-close" @click="closeOverlay('inviteDialog')">✕</div>
     <p>分享下面链接给好友，TA 通过链接注册成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
     <div class="invite-link-box">{{ inviteFullText }}</div>
     <van-button type="primary" color="#ff6b81" block @click="copyInviteLink">复制链接</van-button>
   </div>
 </van-dialog>
 <!-- 筛选弹层 -->
-<van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
+<van-popup :show="showFilter" @update:show="v => setOverlay('filter', v)" position="bottom" round style="max-height:85vh;">
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
       <div style="font-size:17px; font-weight:600; color:#323233;">筛选</div>
@@ -1133,13 +1133,13 @@
       </div>
     </div>
     <div style="display:flex; gap:12px; margin-top:16px;">
-      <van-button block plain type="primary" color="#ff6b81" @click="showFilter=false">取消</van-button>
+      <van-button block plain type="primary" color="#ff6b81" @click="closeOverlay('filter')">取消</van-button>
       <van-button block type="primary" color="#ff6b81" @click="applyFilter">应用筛选</van-button>
     </div>
   </div>
 </van-popup>
 <!-- 底部导航 -->
-<van-tabbar v-model="page" active-color="#ff6b81" inactive-color="#969799"
+<van-tabbar :model-value="page" @change="onTabChange" active-color="#ff6b81" inactive-color="#969799"
   v-if="!subPages.includes(page)">
   <van-tabbar-item name="cards" icon="like-o">牵线</van-tabbar-item>
   <van-tabbar-item name="likes" icon="chat-o">消息</van-tabbar-item>
@@ -1156,46 +1156,88 @@ const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {
     const page = ref('cards');
-    // —— 返回拦截（飞书手势/物理返回）——
-    let isHandlingPopState = false;
-    let ignoreNextPop = false;
-    function pushHistory(state){
-      if(isHandlingPopState) return;
-      try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
+    // —— 返回栈：模拟原生 APP 后退（飞书手势/物理返回拦截）——
+    const navStack = [];
+    let popCount = 0;
+    function pushFrame(f) {
+      navStack.push(f);
+      try { history.pushState({ n: navStack.length }, '', location.pathname + '#' + navStack.length); } catch (e) {}
     }
-    function handleBack(){
-      // 统一返回：有浮层先关浮层，无则回退页面（带 fallback，避免历史栈异常导致无效）
-      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
-        history.back();
-        return;
-      }
-      const cur = page.value;
-      const parentMapHB = {
-        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile',
-        'profile_detail': 'profile', 'profile_edit': 'profile_detail',
-        'activity_detail': activityDetailFrom.value || 'home',
-        'group_select': groupSelectFrom.value || 'my_groups',
-        'group_result': groupResultFrom.value || 'my_groups',
-        'user_detail': userDetailFrom.value || 'home',
-        'likes': 'cards', 'home': 'cards', 'profile': 'cards'
-      };
-      const parent = parentMapHB[cur];
-      if(parent){
-        // 若历史栈顶部确为当前页，则正常 back 让 popstate 处理；否则直接回退并修正历史
-        if(history.state && history.state.page === cur){
-          history.back();
-          return;
-        }
-        // 历史异常或无记录时直接切换并修正栈
-        isHandlingPopState = true;
-        page.value = parent;
-        isHandlingPopState = false;
-        try{ history.replaceState({page: parent}, '', location.pathname + '#' + parent); }catch(e){}
-        return;
-      }
-      history.back();
+    function popFrames(k) {
+      if (k <= 0 || !navStack.length) return;
+      k = Math.min(k, navStack.length);
+      popCount += k;
+      navStack.splice(navStack.length - k, k);
+      try { history.go(-k); } catch (e) { popCount -= k; }
     }
+    function indexOfTopFrame(type, id) {
+      for (let i = navStack.length - 1; i >= 0; i--) {
+        const f = navStack[i];
+        if (f.type === type && (id === undefined || f.id === id)) return i;
+      }
+      return -1;
+    }
+    function syncCloseOverlay(id) {
+      const i = indexOfTopFrame('overlay', id);
+      if (i >= 0) popFrames(navStack.length - i);
+    }
+    function setOverlay(id, val) {
+      switch (id) {
+        case 'viewer': showPhotoViewer.value = val; break;
+        case 'filter': showFilter.value = val; break;
+        case 'adminHelp': showAdminHelp.value = val; break;
+        case 'inviteDialog': showInviteDialog.value = val; break;
+        case 'likeDialog': showLikeDialog.value = val; break;
+        case 'feedbackDialog': showFeedbackDialog.value = val; break;
+        case 'suggestionDialog': showSuggestionDialog.value = val; break;
+        case 'selectPopup': showSelectPopup.value = val; break;
+        case 'multiPopup': showMultiPopup.value = val; break;
+        case 'signupSheet': signupSheetShow.value = val; break;
+        case 'confirm':
+          if (!val) {
+            const cancelBtn = document.querySelector('.van-dialog__cancel');
+            const confirmBtn = document.querySelector('.van-dialog__confirm');
+            if (cancelBtn) cancelBtn.click();
+            else if (confirmBtn) confirmBtn.click();
+            else if (window.vant && window.vant.closeDialog) { try { window.vant.closeDialog(); } catch (_) {} }
+          }
+          break;
+      }
+      if (!val) syncCloseOverlay(id);
+    }
+    function closeOverlay(id) { setOverlay(id, false); }
+    function pushOverlay(id) {
+      if (indexOfTopFrame('overlay', id) === navStack.length - 1) return;
+      pushFrame({ type: 'overlay', id });
+    }
+    function goPage(p) {
+      if (page.value === p) return;
+      page.value = p;
+      pushFrame({ type: 'page', page: p });
+    }
+    function findPrevPage() {
+      for (let i = navStack.length - 1; i >= 0; i--) {
+        if (navStack[i].type === 'page') return navStack[i].page;
+      }
+      return 'cards';
+    }
+    function applyBack() {
+      if (!navStack.length) return;
+      const f = navStack[navStack.length - 1];
+      navStack.pop();
+      if (f.type === 'overlay') { setOverlay(f.id, false); return; }
+      if (f.type === 'page') { page.value = findPrevPage(); }
+    }
+    function onPopState() {
+      if (popCount > 0) { popCount--; return; }
+      applyBack();
+    }
+    function handleBack() { history.back(); }
+    function onTabChange(name) { goPage(name); }
+    function openFilter() { showFilter.value = true; pushOverlay('filter'); }
+    function openAdminHelp() { showAdminHelp.value = true; pushOverlay('adminHelp'); }
+    function openInvite() { showInviteDialog.value = true; pushOverlay('inviteDialog'); }
+    function openLike() { showLikeDialog.value = true; pushOverlay('likeDialog'); }
     const user = ref(null);
     const isObserver = computed(() => !!(user.value && user.value.is_observer));
     const availableRoles = computed(() => (user.value && user.value.available_roles) || []);
@@ -1377,7 +1419,7 @@ createApp({
       profilePhotos.value = (profileData.value.photos && profileData.value.photos.length)
         ? [...profileData.value.photos]
         : (profileData.value.photo ? [profileData.value.photo] : []);
-      page.value = 'profile_edit';
+      goPage('profile_edit');
     }
     function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
     async function onPhotoChange(e) {
@@ -1421,10 +1463,10 @@ createApp({
         vant.showToast('已设为封面');
       } catch (err) { vant.showToast(err.message || '操作失败'); }
     }
-    function openPicker(f) { pickerField.value = f; showSelectPopup.value = true; }
-    function openMultiPicker(f) { pickerField.value = f; showMultiPopup.value = true; }
-    function pickSelect(opt) { if (pickerField.value) pickerField.value.value = opt; showSelectPopup.value = false; }
-    function clearPickerField() { if (pickerField.value) pickerField.value.value = ''; showSelectPopup.value = false; }
+    function openPicker(f) { pickerField.value = f; showSelectPopup.value = true; pushOverlay('selectPopup'); }
+    function openMultiPicker(f) { pickerField.value = f; showMultiPopup.value = true; pushOverlay('multiPopup'); }
+    function pickSelect(opt) { if (pickerField.value) pickerField.value.value = opt; closeOverlay('selectPopup'); }
+    function clearPickerField() { if (pickerField.value) pickerField.value.value = ''; closeOverlay('selectPopup'); }
     function toggleMulti(opt) {
       if (!pickerField.value) return;
       if (!Array.isArray(pickerField.value.value)) pickerField.value.value = [];
@@ -1632,7 +1674,7 @@ createApp({
       // 记录来路，用于返回（从活动详情内部刷新时不重置）
       const noReset = ['activity_detail', 'group_select', 'group_result'];
       if (!noReset.includes(page.value)) activityDetailFrom.value = page.value;
-      try { const data = await api('/api/activities/' + id); currentActivity.value = data; currentActivityId.value = id; page.value = 'activity_detail'; }
+      try { const data = await api('/api/activities/' + id); currentActivity.value = data; currentActivityId.value = id; goPage('activity_detail'); }
       catch(e) { vant.showToast(e.message); }
     }
     async function doSignup() {
@@ -1697,14 +1739,14 @@ createApp({
     }
     async function resetFilter() {
       filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], house: '', driving: '' };
-      showFilter.value = false;
+      closeOverlay('filter');
       cards.value = [];
       cardIndex.value = 0;
       await loadCards(true);
     }
 
     async function applyFilter() {
-      showFilter.value = false;
+      closeOverlay('filter');
       cards.value = [];
       cardIndex.value = 0;
       await loadCards(true);
@@ -1807,25 +1849,20 @@ createApp({
     function openPhotoViewer(idx) {
       openPhotoViewerForCurrent();
     }
-    function closePhotoViewer(fromPop){
-      if(!fromPop && showPhotoViewer.value && history.state && history.state.overlay==='viewer'){
-        history.back(); return;
-      }
-      showPhotoViewer.value = false;
-    }
+    function closePhotoViewer(){ setOverlay('viewer', false); }
     function openPhotoViewerForCurrent() {
       const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
       if (!photos.length) return;
       viewerPhotos.value = photos;
       viewerIndex.value = photoIndex.value;
       viewerSlideDir.value = '';
-      showPhotoViewer.value = true;
+      showPhotoViewer.value = true; pushOverlay('viewer');
     }
     function viewPoster() {
       if (currentActivity.value && currentActivity.value.poster) {
         viewerPhotos.value = [currentActivity.value.poster];
         viewerIndex.value = 0;
-        showPhotoViewer.value = true;
+        showPhotoViewer.value = true; pushOverlay('viewer');
       }
     }
     function viewerPrev() {
@@ -1854,11 +1891,11 @@ createApp({
     function openPhotoViewerForUser(u) {
       const photos = u.photos || (u.photo ? [u.photo] : []);
       if (!photos.length) return;
-      viewerPhotos.value = photos; viewerIndex.value = 0; showPhotoViewer.value = true;
+      viewerPhotos.value = photos; viewerIndex.value = 0; showPhotoViewer.value = true; pushOverlay('viewer');
     }
     function gotoCards(from) {
       prevPage.value = from || 'likes';
-      page.value = 'cards';
+      goPage('cards');
     }
     async function loadNotifications() {
       try { const data = await api('/api/notifications'); notifications.value = data.notifications || []; }
@@ -1866,6 +1903,7 @@ createApp({
     }
     async function openSignupSheet() {
       signupSheetShow.value = true;
+      pushOverlay('signupSheet');
       const aid = currentActivity.value.record_id;
       // 命中缓存则直接展示，避免每次都加载
       if (signupCache.value[aid]) { signupList.value = signupCache.value[aid]; return; }
@@ -1879,9 +1917,9 @@ createApp({
       loadingSignups.value = false;
     }
     async function openUserDetail(openid) {
-      signupSheetShow.value = false;
+      closeOverlay('signupSheet');
       userDetailFrom.value = 'activity_detail';
-      page.value = 'user_detail';
+      goPage('user_detail');
       userDetail.value = null;
       try {
         const data = await api('/api/users/' + openid + '/public');
@@ -1957,27 +1995,27 @@ createApp({
       }
       if ((user.value.hearts || 0) <= 0) {
         vant.showToast('爱心已用完，邀请好友可得爱心');
-        showInviteDialog.value = true;
+        openInvite();
         return;
       }
       likeTarget.value = { openid: currentCard.value.openid, nickname: currentCard.value.nickname };
       likeMessage.value = '';
       likeType.value = '匿名';
       likeDialogTitle.value = '送给「' + currentCard.value.nickname + '」一颗爱心';
-      showLikeDialog.value = true;
+      openLike();
     }
     function openLikeDialogForUser(u) {
       if (!u || !u.openid) return;
       if ((user.value.hearts || 0) <= 0) {
         vant.showToast('爱心已用完，邀请好友可得爱心');
-        showInviteDialog.value = true;
+        openInvite();
         return;
       }
       likeTarget.value = { openid: u.openid, nickname: u.nickname };
       likeMessage.value = '';
       likeType.value = '匿名';
       likeDialogTitle.value = '送给「' + u.nickname + '」一颗爱心';
-      showLikeDialog.value = true;
+      openLike();
     }
     async function onLikeDialogBeforeClose(action) {
       if (action === 'confirm') {
@@ -2028,6 +2066,7 @@ createApp({
       feedbackReason.value = '已有对象';
       feedbackText.value = '';
       showFeedbackDialog.value = true;
+      pushOverlay('feedbackDialog');
     }
     async function onFeedbackBeforeClose(action) {
       if (action === 'confirm') {
@@ -2050,7 +2089,7 @@ createApp({
           body: JSON.stringify({ target_openid: feedbackTarget.value.openid, reason })
         });
         vant.showToast('感谢反馈，已提交管理员');
-        showFeedbackDialog.value = false;
+        closeOverlay('feedbackDialog');
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
     }
@@ -2060,6 +2099,7 @@ createApp({
       suggestionType.value = '功能建议';
       suggestionText.value = '';
       showSuggestionDialog.value = true;
+      pushOverlay('suggestionDialog');
     }
     async function onSuggestionBeforeClose(action) {
       if (action !== 'confirm') return true;
@@ -2075,7 +2115,7 @@ createApp({
           body: JSON.stringify({ type: suggestionType.value, content: suggestionText.value.trim() })
         });
         vant.showToast('感谢反馈，已收到');
-        showSuggestionDialog.value = false;
+        closeOverlay('suggestionDialog');
       } catch(e) { vant.showToast(e.message); }
       suggestionSubmitting.value = false;
       return false;
@@ -2108,7 +2148,7 @@ createApp({
 
     // 我的喜欢
     async function openMyLikes() {
-      page.value = 'my_likes';
+      goPage('my_likes');
       if (myLikesLoaded.value) return; // 已加载则直接展示缓存
       loadingMyLikes.value = true;
       try {
@@ -2121,11 +2161,11 @@ createApp({
     }
     function openMutual() {
       loadLikes();
-      page.value = 'mutual';
+      goPage('mutual');
     }
     function openLikedMe() {
       loadLikes();
-      page.value = 'liked_me';
+      goPage('liked_me');
     }
     async function cancelLike(l) {
       try {
@@ -2150,7 +2190,7 @@ createApp({
 
     // 我的活动
     async function openMyActivities() {
-      page.value = 'my_activities';
+      goPage('my_activities');
       if (myActivitiesLoaded.value) return; // 已加载则直接展示缓存
       loadingMyActivities.value = true;
       try { const data = await api('/api/activities/mine'); myActivitiesList.value = data.activities; myActivitiesLoaded.value = true; }
@@ -2159,7 +2199,7 @@ createApp({
     }
     // 我的分组
     async function openMyGroups() {
-      page.value = 'my_groups';
+      goPage('my_groups');
       if (myGroupsLoaded.value) return; // 已加载则直接展示缓存
       loadingMyGroups.value = true;
       try { const data = await api('/api/activities/mine/groups'); myGroupsList.value = data.activities; myGroupsLoaded.value = true; }
@@ -2174,15 +2214,15 @@ createApp({
 
     // 我的资料
     async function openProfileDetail() {
-      if (profileLoaded.value) { page.value = 'profile_detail'; return; } // 已加载则直接展示缓存
-      try { const data = await api('/api/profile'); profileData.value = data; profileLoaded.value = true; page.value = 'profile_detail'; }
+      if (profileLoaded.value) { goPage('profile_detail'); return; } // 已加载则直接展示缓存
+      try { const data = await api('/api/profile'); profileData.value = data; profileLoaded.value = true; goPage('profile_detail'); }
       catch(e) { vant.showToast(e.message); }
     }
     // 分组
     async function goGroupSelect(activityId) {
       groupSelectFrom.value = page.value; // 记录来路，用于返回
       currentActivityId.value = activityId;
-      page.value = 'group_select'; loadingCandidates.value = true; selectedChoices.value = []; candidatesError.value = '';
+      goPage('group_select'); loadingCandidates.value = true; selectedChoices.value = []; candidatesError.value = '';
       try {
         const candData = await api('/api/activities/' + activityId + '/group/candidates');
         candidates.value = candData.candidates || [];
@@ -2235,7 +2275,7 @@ createApp({
     async function goGroupResult(activityId) {
       groupResultFrom.value = page.value; // 记录来路，用于返回
       currentActivityId.value = activityId;
-      page.value = 'group_result';
+      goPage('group_result');
       groupResult.value = {};
       await loadGroupResult(activityId);
     }
@@ -2244,62 +2284,6 @@ createApp({
     }
 
     // 页面切换加载数据
-    // 拦截 popstate：按 浮层 > 子页 优先级关闭
-    function handlePopState(e){
-      if(ignoreNextPop){ ignoreNextPop=false; return; }
-      // 优先关闭 Vant 编程式弹窗（showConfirmDialog/showDialog），它们不在 show* 中
-      const vanDialog = document.querySelector('.van-dialog');
-      if(vanDialog){
-        isHandlingPopState = true;
-        // 尝试触发取消，若无取消则触发确认
-        const cancelBtn = document.querySelector('.van-dialog__cancel');
-        const confirmBtn = document.querySelector('.van-dialog__confirm');
-        if(cancelBtn) cancelBtn.click();
-        else if(confirmBtn) confirmBtn.click();
-        else if(window.vant && window.vant.closeDialog) { try{ window.vant.closeDialog(); }catch(_){} }
-        isHandlingPopState=false;
-        return;
-      }
-      isHandlingPopState = true;
-      // 兼容：van-popup 存在但 show* 未同步（如直接操作 DOM），也尝试关闭
-      const hasFilterPopup = document.querySelector('.van-popup--round') && showFilter.value;
-      const hasAdminPopup = document.querySelector('.van-popup') && showAdminHelp.value;
-      if(showPhotoViewer.value){ showPhotoViewer.value=false; isHandlingPopState=false; return; }
-      if(showFilter.value || hasFilterPopup){ showFilter.value=false; isHandlingPopState=false; return; }
-      if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
-      if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
-      if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
-      if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
-      if(showAdminHelp.value || hasAdminPopup){ showAdminHelp.value=false; isHandlingPopState=false; return; }
-      if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
-      if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
-      if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
-      // 子页回退：主Tabs(cards/home/likes/profile) 再退必回 cards；子页优先按 state 回退，否则按 parent 映射
-      const st = e.state;
-      // 主Tabs特殊处理：无论历史如何，再退必回牵线页
-      if(page.value === 'likes' || page.value === 'home' || page.value === 'profile'){
-        page.value = 'cards';
-        isHandlingPopState=false; return;
-      }
-      if(st && st.page && st.page !== page.value){
-        // 若当前为子页且 state 为主Tab之外的子页，按 state 回退以保证按次序
-        // 若 state 为主Tab且当前也为子页，仍按 state 回退（子页->主Tab）
-        page.value = st.page;
-        isHandlingPopState=false; return;
-      }
-      const parentMap = {
-        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile',
-        'profile_detail': 'profile', 'profile_edit': 'profile_detail',
-        'activity_detail': activityDetailFrom.value || 'home',
-        'group_select': groupSelectFrom.value || 'my_groups',
-        'group_result': groupResultFrom.value || 'my_groups',
-        'user_detail': userDetailFrom.value || 'home',
-        'likes': 'cards', 'home': 'cards', 'profile': 'cards'
-      };
-      if(parentMap[page.value]){ page.value = parentMap[page.value]; }
-      isHandlingPopState=false;
-    }
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
@@ -2307,24 +2291,6 @@ createApp({
       if (p === 'likes') { loadingLikes.value = true; loadLikes(); loadNotifications(); }
       if (p === 'profile') checkGroupEntry();
     });
-    // pushState for page forward navigation
-    watch(page, (nv, ov) => {
-      if(isHandlingPopState) return;
-      if(nv !== ov){
-        pushHistory({page: nv});
-      }
-    });
-    // pushState for overlays
-    watch(showPhotoViewer, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'viewer'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='viewer'){ ignoreNextPop=true; history.back(); } });
-    watch(showFilter, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'filter'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='filter'){ ignoreNextPop=true; history.back(); } });
-    watch(showLikeDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'likeDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='likeDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showFeedbackDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'feedbackDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='feedbackDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showSuggestionDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'suggestionDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='suggestionDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showInviteDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'inviteDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='inviteDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
-    watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
-    watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
-    watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
@@ -2428,42 +2394,33 @@ createApp({
     });
 
     onMounted(() => {
-      try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
-      // 接管 Vant 编程式弹窗的返回
-      try{
-        if(window.vant){
+      try { history.replaceState({ n: 0 }, '', location.pathname); } catch (e) {}
+      // 接管 Vant 编程式弹窗的返回：打开压栈，关闭出栈
+      try {
+        if (window.vant) {
           const origConfirm = window.vant.showConfirmDialog;
-          if(origConfirm){
-            window.vant.showConfirmDialog = function(opts){
-              pushHistory({overlay:'confirmDialog'});
+          if (origConfirm) {
+            window.vant.showConfirmDialog = function (opts) {
+              pushOverlay('confirm');
               const p = origConfirm.call(window.vant, opts);
-              if(p && p.finally) p.finally(()=>{
-                if(!isHandlingPopState && history.state && history.state.overlay==='confirmDialog'){
-                  ignoreNextPop=true; history.back();
-                }
-              });
-              // 也处理 catch 情况（Vant 旧版可能不返回 Promise）
-              if(p && p.catch) p.catch(()=>{});
+              if (p && p.finally) p.finally(() => { syncCloseOverlay('confirm'); });
+              if (p && p.catch) p.catch(() => {});
               return p;
             };
           }
           const origDialog = window.vant.showDialog;
-          if(origDialog){
-            window.vant.showDialog = function(opts){
-              pushHistory({overlay:'dialog'});
+          if (origDialog) {
+            window.vant.showDialog = function (opts) {
+              pushOverlay('confirm');
               const p = origDialog.call(window.vant, opts);
-              if(p && p.finally) p.finally(()=>{
-                if(!isHandlingPopState && history.state && history.state.overlay==='dialog'){
-                  ignoreNextPop=true; history.back();
-                }
-              });
-              if(p && p.catch) p.catch(()=>{});
+              if (p && p.finally) p.finally(() => { syncCloseOverlay('confirm'); });
+              if (p && p.catch) p.catch(() => {});
               return p;
             };
           }
         }
-      }catch(e){}
-      window.addEventListener('popstate', handlePopState);
+      } catch (e) {}
+      window.addEventListener('popstate', onPopState);
       doLogin().then(() => {
         if (user.value) {
           const hash = window.location.hash;
@@ -2507,7 +2464,8 @@ createApp({
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,
-      handleBack, showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
+      handleBack, onTabChange, openFilter, openAdminHelp, openInvite, setOverlay, closeOverlay,
+      showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,

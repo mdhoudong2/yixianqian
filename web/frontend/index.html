@@ -1164,16 +1164,36 @@ createApp({
       try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
     }
     function handleBack(){
-      // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
+      // 统一返回：有浮层先关浮层，无则回退页面（带 fallback，避免历史栈异常导致无效）
       if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
         history.back();
         return;
       }
-      if(page.value !== 'cards' && page.value !== 'home' && page.value !== 'likes' && page.value !== 'profile'){
-        history.back();
+      const cur = page.value;
+      const parentMapHB = {
+        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes',
+        'my_activities': 'profile', 'my_groups': 'profile',
+        'profile_detail': 'profile', 'profile_edit': 'profile_detail',
+        'activity_detail': activityDetailFrom.value || 'home',
+        'group_select': groupSelectFrom.value || 'my_groups',
+        'group_result': groupResultFrom.value || 'my_groups',
+        'user_detail': userDetailFrom.value || 'home',
+        'likes': 'cards', 'home': 'cards', 'profile': 'cards'
+      };
+      const parent = parentMapHB[cur];
+      if(parent){
+        // 若历史栈顶部确为当前页，则正常 back 让 popstate 处理；否则直接回退并修正历史
+        if(history.state && history.state.page === cur){
+          history.back();
+          return;
+        }
+        // 历史异常或无记录时直接切换并修正栈
+        isHandlingPopState = true;
+        page.value = parent;
+        isHandlingPopState = false;
+        try{ history.replaceState({page: parent}, '', location.pathname + '#' + parent); }catch(e){}
         return;
       }
-      // 主Tab下直接返回由容器处理（关闭网页）
       history.back();
     }
     const user = ref(null);

@@ -33,7 +33,13 @@
   @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: linear-gradient(135deg, #ff6b81, #ff8e9b); overflow: hidden; touch-action: pan-y; }
-  .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; will-change: opacity, transform; }
+  .card-photo.photo-enter { animation: photoFadeIn 0.28s ease; }
+  .card-photo.photo-slide-left { animation: photoSlideLeft 0.28s ease; }
+  .card-photo.photo-slide-right { animation: photoSlideRight 0.28s ease; }
+  @keyframes photoFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes photoSlideLeft { from { transform: translateX(20%); opacity: 0.45; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes photoSlideRight { from { transform: translateX(-20%); opacity: 0.45; } to { transform: translateX(0); opacity: 1; } }
   .photo-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 1; }
   .photo-loading::after { content: ''; width: 28px; height: 28px; border: 3px solid rgba(255,255,255,0.45); border-top-color: #fff; border-radius: 50%; animation: photoSpin 0.8s linear infinite; }
   @keyframes photoSpin { to { transform: rotate(360deg); } }
@@ -187,7 +193,12 @@
   .like-item-msg { font-size: 13px; color: #646566; margin-top: 4px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
   /* 全屏图片预览 */
   .photo-viewer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 999; display: flex; align-items: center; justify-content: center; }
-  .photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; will-change: opacity, transform; animation: viewerFadeIn 0.25s ease; }
+  .photo-viewer img.viewer-slide-left { animation: viewerSlideLeft 0.28s ease; }
+  .photo-viewer img.viewer-slide-right { animation: viewerSlideRight 0.28s ease; }
+  @keyframes viewerFadeIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
+  @keyframes viewerSlideLeft { from { transform: translateX(18%); opacity: 0.5; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes viewerSlideRight { from { transform: translateX(-18%); opacity: 0.5; } to { transform: translateX(0); opacity: 1; } }
   .photo-viewer-close { position: absolute; top: 20px; right: 20px; color: #fff; font-size: 30px; cursor: pointer; z-index: 1000; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.4); border-radius: 50%; }
   .photo-viewer-counter { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 14px; background: rgba(0,0,0,0.4); padding: 4px 14px; border-radius: 20px; }
   /* 送爱心弹窗 */
@@ -308,8 +319,7 @@
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
       :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')">
       <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @click="onPhotoClick">
-        <div v-if="photoLoading" class="photo-loading"></div>
-        <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" alt="" @load="photoLoading=false" @error="onPhotoError">
+        <img v-if="currentPhotoUrl" :key="cardIndex + '-' + photoIndex" :src="currentPhotoUrl" class="card-photo" :class="photoSlideDir === 'left' ? 'photo-slide-left' : (photoSlideDir === 'right' ? 'photo-slide-right' : 'photo-enter')" alt="" @load="photoLoading=false" @error="onPhotoError">
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
           <div v-for="(p,i) in currentCard.photos" :key="i" class="photo-dot" :class="{active: i===photoIndex}"></div>
@@ -987,7 +997,7 @@
 <div v-if="showPhotoViewer" class="photo-viewer" @click="closePhotoViewer">
   <div class="photo-viewer-close" @click.stop="closePhotoViewer">✕</div>
   <div class="photo-viewer-nav prev" v-if="viewerPhotos.length > 1" @click.stop="viewerPrev">‹</div>
-  <img :src="viewerPhotos[viewerIndex]" alt="" @click.stop="onViewerImageClick" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd">
+  <img :src="viewerPhotos[viewerIndex]" :key="viewerIndex" alt="" :class="viewerSlideDir === 'left' ? 'viewer-slide-left' : (viewerSlideDir === 'right' ? 'viewer-slide-right' : '')" @click.stop="onViewerImageClick" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd">
   <div class="photo-viewer-nav next" v-if="viewerPhotos.length > 1" @click.stop="viewerNext">›</div>
   <div class="photo-viewer-counter" v-if="viewerPhotos.length > 1">{{ viewerIndex + 1 }} / {{ viewerPhotos.length }}</div>
 </div>
@@ -1170,6 +1180,7 @@ createApp({
     const loadingCards = ref(false);
     const cardIndex = ref(0);
     const photoIndex = ref(0);
+    const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
     const currentMsgCount = computed(() => (currentCard.value && currentCard.value.msg_count) || 0);
     const currentPhotoUrl = computed(() => {
@@ -1375,6 +1386,7 @@ createApp({
     const showPhotoViewer = ref(false);
     const viewerPhotos = ref([]);
     const viewerIndex = ref(0);
+    const viewerSlideDir = ref('');
 
     // 进入牵线前的页面（喜欢完最后一人后返回）
     const prevPage = ref('likes');
@@ -1656,12 +1668,12 @@ createApp({
         slideDir.value = 'right';
         cardIndex.value++;
         photoIndex.value = 0;
-        photoLoading.value = true;
+        photoSlideDir.value = '';
       } else if (dir > 0 && cardIndex.value > 0) {
         slideDir.value = 'left';
         cardIndex.value--;
         photoIndex.value = 0;
-        photoLoading.value = true;
+        photoSlideDir.value = '';
       }
     }
     function onCardTouchEnd(e) {
@@ -1698,9 +1710,9 @@ createApp({
       if (Math.abs(dx) > 35 && Math.abs(dx) > Math.abs(dy)) {
         photoDidSwipe = true;
         if (photos.length > 1) {
+          photoSlideDir.value = dx < 0 ? 'left' : 'right';
           if (dx < 0) photoIndex.value = (photoIndex.value + 1) % photos.length;
           else photoIndex.value = (photoIndex.value - 1 + photos.length) % photos.length;
-          photoLoading.value = true;
         }
         return;
       }
@@ -1719,6 +1731,7 @@ createApp({
       if (!photos.length) return;
       viewerPhotos.value = photos;
       viewerIndex.value = photoIndex.value;
+      viewerSlideDir.value = '';
       showPhotoViewer.value = true;
     }
     function viewPoster() {
@@ -1729,10 +1742,10 @@ createApp({
       }
     }
     function viewerPrev() {
-      if (viewerPhotos.value.length > 1) viewerIndex.value = (viewerIndex.value - 1 + viewerPhotos.value.length) % viewerPhotos.value.length;
+      if (viewerPhotos.value.length > 1) { viewerSlideDir.value = 'right'; viewerIndex.value = (viewerIndex.value - 1 + viewerPhotos.value.length) % viewerPhotos.value.length; }
     }
     function viewerNext() {
-      if (viewerPhotos.value.length > 1) viewerIndex.value = (viewerIndex.value + 1) % viewerPhotos.value.length;
+      if (viewerPhotos.value.length > 1) { viewerSlideDir.value = 'left'; viewerIndex.value = (viewerIndex.value + 1) % viewerPhotos.value.length; }
     }
     let viewerTouchX = 0, viewerTouchY = 0, viewerTouchTime = 0, viewerDidSwipe = false;
     function onViewerTouchStart(e) { viewerTouchX = e.touches[0].clientX; viewerTouchY = e.touches[0].clientY; viewerTouchTime = Date.now(); viewerDidSwipe = false; }
@@ -2270,7 +2283,7 @@ createApp({
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup,
-      cards, loadingCards, currentCard, cardIndex, photoIndex, currentPhotoUrl, photoLoading,
+      cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
@@ -2295,7 +2308,7 @@ createApp({
       onPhotoError,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
-      showPhotoViewer, viewerPhotos, viewerIndex, openPhotoViewer, closePhotoViewer, viewPoster,
+      showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,
       showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
       showAdminHelp, adminCommands,

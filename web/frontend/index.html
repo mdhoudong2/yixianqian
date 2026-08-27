@@ -2227,6 +2227,19 @@ createApp({
     // 拦截 popstate：按 浮层 > 子页 优先级关闭
     function handlePopState(e){
       if(ignoreNextPop){ ignoreNextPop=false; return; }
+      // 优先关闭 Vant 编程式弹窗（showConfirmDialog/showDialog），它们不在 show* 中
+      const vanDialog = document.querySelector('.van-dialog');
+      if(vanDialog){
+        isHandlingPopState = true;
+        // 尝试触发取消，若无取消则触发确认
+        const cancelBtn = document.querySelector('.van-dialog__cancel');
+        const confirmBtn = document.querySelector('.van-dialog__confirm');
+        if(cancelBtn) cancelBtn.click();
+        else if(confirmBtn) confirmBtn.click();
+        else if(window.vant && window.vant.closeDialog) { try{ window.vant.closeDialog(); }catch(_){} }
+        isHandlingPopState=false;
+        return;
+      }
       isHandlingPopState = true;
       if(showPhotoViewer.value){ showPhotoViewer.value=false; isHandlingPopState=false; return; }
       if(showFilter.value){ showFilter.value=false; isHandlingPopState=false; return; }
@@ -2386,6 +2399,40 @@ createApp({
 
     onMounted(() => {
       try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
+      // 接管 Vant 编程式弹窗的返回
+      try{
+        if(window.vant){
+          const origConfirm = window.vant.showConfirmDialog;
+          if(origConfirm){
+            window.vant.showConfirmDialog = function(opts){
+              pushHistory({overlay:'confirmDialog'});
+              const p = origConfirm.call(window.vant, opts);
+              if(p && p.finally) p.finally(()=>{
+                if(!isHandlingPopState && history.state && history.state.overlay==='confirmDialog'){
+                  ignoreNextPop=true; history.back();
+                }
+              });
+              // 也处理 catch 情况（Vant 旧版可能不返回 Promise）
+              if(p && p.catch) p.catch(()=>{});
+              return p;
+            };
+          }
+          const origDialog = window.vant.showDialog;
+          if(origDialog){
+            window.vant.showDialog = function(opts){
+              pushHistory({overlay:'dialog'});
+              const p = origDialog.call(window.vant, opts);
+              if(p && p.finally) p.finally(()=>{
+                if(!isHandlingPopState && history.state && history.state.overlay==='dialog'){
+                  ignoreNextPop=true; history.back();
+                }
+              });
+              if(p && p.catch) p.catch(()=>{});
+              return p;
+            };
+          }
+        }
+      }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {
         if (user.value) {

@@ -2274,9 +2274,16 @@ createApp({
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
       if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
-      // 子页回退：优先用 state.page，否则按 parent 映射
+      // 子页回退：主Tabs(cards/home/likes/profile) 再退必回 cards；子页优先按 state 回退，否则按 parent 映射
       const st = e.state;
+      // 主Tabs特殊处理：无论历史如何，再退必回牵线页
+      if(page.value === 'likes' || page.value === 'home' || page.value === 'profile'){
+        page.value = 'cards';
+        isHandlingPopState=false; return;
+      }
       if(st && st.page && st.page !== page.value){
+        // 若当前为子页且 state 为主Tab之外的子页，按 state 回退以保证按次序
+        // 若 state 为主Tab且当前也为子页，仍按 state 回退（子页->主Tab）
         page.value = st.page;
         isHandlingPopState=false; return;
       }

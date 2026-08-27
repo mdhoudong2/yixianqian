@@ -265,15 +265,23 @@ def _pick_primary_user(records):
 
 
 def snap_find_user_by_openid(open_id):
-    """快照优先、实时兜底；同号多档统一解析到主档案"""
+    """快照优先、实时兜底；同号多档统一解析到主档案（用户表 + 村情六处独立表）。
+    纯观察员（仅观察员表有记录）也能被解析，否则登录入口会误判「尚未注册」。"""
     users = _snap("users")
     matches = [u for u in users
                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
+    if OBSERVER_TABLE_ID:
+        obs = _snap("observers")
+        matches += [o for o in obs
+                    if bitable.get_field_text(o.get("fields", {}), F_FEISHU_ID) == open_id]
     if matches:
         return _pick_primary_user(matches)
     # 快照为空或未命中（如快照在用户写入前加载、尚未刷新）：回退到飞书直查，避免误判「用户不存在」
     recs = bitable.search_records(USER_TABLE_ID, [
         {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+    if OBSERVER_TABLE_ID:
+        recs += bitable.search_records(OBSERVER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
     return _pick_primary_user(recs)
 
 

@@ -453,7 +453,7 @@
 </div>
 <!-- ========== 相互喜欢列表 ========== -->
 <div v-else-if="page==='mutual'">
-  <div class="back-nav" @click="page='likes'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -470,7 +470,7 @@
 </div>
 <!-- ========== 谁喜欢了我列表 ========== -->
 <div v-else-if="page==='liked_me'">
-  <div class="back-nav" @click="page='likes'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -565,7 +565,7 @@
 </div>
 <!-- ========== 我的资料详情 ========== -->
 <div v-else-if="page==='profile_detail'">
-  <div class="back-nav" @click="page='profile'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="profile-detail">
@@ -649,7 +649,7 @@
 </div>
 <!-- ========== 修改资料 ========== -->
 <div v-else-if="page==='profile_edit'">
-  <div class="back-nav" @click="page='profile_detail'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="profile-detail">
@@ -718,7 +718,7 @@
 </div>
 <!-- ========== 我的喜欢列表 ========== -->
 <div v-else-if="page==='my_likes'">
-  <div class="back-nav" @click="page='likes'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -744,7 +744,7 @@
 </div>
 <!-- ========== 我的活动 ========== -->
 <div v-else-if="page==='my_activities'">
-  <div class="back-nav" @click="page='profile'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -776,7 +776,7 @@
 </div>
 <!-- ========== 我的分组 ========== -->
 <div v-else-if="page==='my_groups'">
-  <div class="back-nav" @click="page='profile'">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -809,7 +809,7 @@
 </div>
 <!-- ========== 活动详情 ========== -->
 <div v-else-if="page==='activity_detail'">
-  <div class="back-nav" @click="page=activityDetailFrom">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -861,7 +861,7 @@
 </div>
 <!-- ========== 分组选择 ========== -->
 <div v-else-if="page==='group_select'">
-  <div class="back-nav" @click="page=groupSelectFrom">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -913,7 +913,7 @@
 </div>
 <!-- ========== 分组结果 ========== -->
 <div v-else-if="page==='group_result'">
-  <div class="back-nav" @click="page=groupResultFrom">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
@@ -939,7 +939,7 @@
 </div>
 <!-- ========== 他人资料页 ========== -->
 <div v-else-if="page==='user_detail'">
-  <div class="back-nav" @click="page=userDetailFrom">
+  <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="user-detail-card" v-if="userDetail">
@@ -1156,6 +1156,26 @@ const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {
     const page = ref('cards');
+    // —— 返回拦截（飞书手势/物理返回）——
+    let isHandlingPopState = false;
+    let ignoreNextPop = false;
+    function pushHistory(state){
+      if(isHandlingPopState) return;
+      try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
+    }
+    function handleBack(){
+      // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
+      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
+        history.back();
+        return;
+      }
+      if(page.value !== 'cards' && page.value !== 'home' && page.value !== 'likes' && page.value !== 'profile'){
+        history.back();
+        return;
+      }
+      // 主Tab下直接返回由容器处理（关闭网页）
+      history.back();
+    }
     const user = ref(null);
     const isObserver = computed(() => !!(user.value && user.value.is_observer));
     const availableRoles = computed(() => (user.value && user.value.available_roles) || []);
@@ -1767,7 +1787,12 @@ createApp({
     function openPhotoViewer(idx) {
       openPhotoViewerForCurrent();
     }
-    function closePhotoViewer() { showPhotoViewer.value = false; }
+    function closePhotoViewer(fromPop){
+      if(!fromPop && showPhotoViewer.value && history.state && history.state.overlay==='viewer'){
+        history.back(); return;
+      }
+      showPhotoViewer.value = false;
+    }
     function openPhotoViewerForCurrent() {
       const photos = currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : []);
       if (!photos.length) return;
@@ -2199,6 +2224,39 @@ createApp({
     }
 
     // 页面切换加载数据
+    // 拦截 popstate：按 浮层 > 子页 优先级关闭
+    function handlePopState(e){
+      if(ignoreNextPop){ ignoreNextPop=false; return; }
+      isHandlingPopState = true;
+      if(showPhotoViewer.value){ showPhotoViewer.value=false; isHandlingPopState=false; return; }
+      if(showFilter.value){ showFilter.value=false; isHandlingPopState=false; return; }
+      if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
+      if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
+      if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
+      if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
+      if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
+      if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
+      if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
+      if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
+      // 子页回退：优先用 state.page，否则按 parent 映射
+      const st = e.state;
+      if(st && st.page && st.page !== page.value){
+        page.value = st.page;
+        isHandlingPopState=false; return;
+      }
+      const parentMap = {
+        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes',
+        'my_activities': 'profile', 'my_groups': 'profile',
+        'profile_detail': 'profile', 'profile_edit': 'profile_detail',
+        'activity_detail': activityDetailFrom.value || 'home',
+        'group_select': groupSelectFrom.value || 'my_groups',
+        'group_result': groupResultFrom.value || 'my_groups',
+        'user_detail': userDetailFrom.value || 'home',
+        'likes': 'cards', 'home': 'cards', 'profile': 'cards'
+      };
+      if(parentMap[page.value]){ page.value = parentMap[page.value]; }
+      isHandlingPopState=false;
+    }
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
@@ -2206,6 +2264,24 @@ createApp({
       if (p === 'likes') { loadingLikes.value = true; loadLikes(); loadNotifications(); }
       if (p === 'profile') checkGroupEntry();
     });
+    // pushState for page forward navigation
+    watch(page, (nv, ov) => {
+      if(isHandlingPopState) return;
+      if(nv !== ov){
+        pushHistory({page: nv});
+      }
+    });
+    // pushState for overlays
+    watch(showPhotoViewer, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'viewer'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='viewer'){ ignoreNextPop=true; history.back(); } });
+    watch(showFilter, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'filter'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='filter'){ ignoreNextPop=true; history.back(); } });
+    watch(showLikeDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'likeDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='likeDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showFeedbackDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'feedbackDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='feedbackDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showSuggestionDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'suggestionDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='suggestionDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showInviteDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'inviteDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='inviteDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
+    watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
+    watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
+    watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
@@ -2309,6 +2385,8 @@ createApp({
     });
 
     onMounted(() => {
+      try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
+      window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {
         if (user.value) {
           const hash = window.location.hash;
@@ -2352,7 +2430,7 @@ createApp({
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,
-      showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
+      handleBack, showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,

@@ -27,6 +27,28 @@ from store import (
 
 from lib import storage
 
+# 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
+_AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
+
+
+def _move_record_to_observer_table(record_id, fields, open_id):
+    """把观察员记录从用户表搬进村情六处独立表：复制可写字段 → 建新记录 → 删旧记录。
+    返回新 record_id；失败返回 None（保留旧记录，下轮重试）。"""
+    if not OBSERVER_TABLE_ID:
+        return None
+    move_fields = {k: v for k, v in (fields or {}).items() if k not in _AUTO_FIELD_NAMES}
+    move_fields[FIELD_ACCOUNT_STATUS] = STATUS_OBSERVER
+    move_fields[FIELD_HEART_REMAIN] = 0
+    move_fields[FIELD_FEISHU_ID] = open_id
+    new_rec = create_record(OBSERVER_TABLE_ID, move_fields)
+    if not new_rec or not new_rec.get("record_id"):
+        log(f"观察员搬移失败(建新记录): {(fields or {}).get(FIELD_NICKNAME)} open_id={open_id}")
+        return None
+    new_record_id = new_rec["record_id"]
+    if not delete_record(USER_TABLE_ID, record_id):
+        log(f"观察员搬移告警(删旧记录失败): record_id={record_id} 新record_id={new_record_id}")
+    return new_record_id
+
 
 # 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
 _AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}

@@ -1282,6 +1282,20 @@ def feishu_auth():
     roles = roles_of(open_id)
     default_role = "user" if "user" in roles else "observer"
 
+    # 最近登录回写（后台异步，失败仅告警不影响登录；按角色选对表，观察员档案在村情六处表）
+    login_table = USER_TABLE_ID if default_role == "user" else OBSERVER_TABLE_ID
+    if login_table and user.get("record_id"):
+        login_rid = user["record_id"]
+        login_ts = int(time.time() * 1000)
+
+        def _touch_last_login():
+            try:
+                bitable.update_record(login_table, login_rid, {F_LAST_LOGIN: login_ts})
+            except Exception as e:
+                app.logger.warning(f"回写最近登录失败: {e}")
+
+        threading.Thread(target=_touch_last_login, daemon=True).start()
+
     session_id = create_session(open_id, default_role)
     brief = format_user_brief(user)
     brief["available_roles"] = sorted(roles)

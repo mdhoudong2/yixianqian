@@ -1194,13 +1194,13 @@ def warm_image_cache():
             logging.getLogger(__name__).warning(f"预热图片 {t} 失败: {e}")
     if warmed:
         logging.getLogger(__name__).info(f"图片预热完成，本次下载 {warmed} 张")
-    # 人脸检测补齐：仅对尚无 sidecar 的照片做检测（存量照片分多轮渐进补齐）
+    # 人脸检测补齐：仅对尚无完整 sidecar 的照片做检测（存量照片分多轮渐进补齐）
     for t in tokens:
         if not t:
             continue
         try:
             with _image_warm_lock:
-                if _get_cached_image(t) and not os.path.exists(_face_sidecar_path(t)):
+                if _get_cached_image(t):
                     ensure_face_center(t)
         except Exception:
             pass
@@ -1316,50 +1316,72 @@ def _detect_face_center(img_path):
         b = max(valid, key=lambda b: b[2] * b[3])
         cx = (b[0] + b[2] / 2) / w
         cy = (b[1] + b[3] / 2) / h
-        return [round(cx, 4), round(cy, 4)]
+        return {"c": [round(cx, 4), round(cy, 4)],
+                "box": [round(b[2] / w, 4), round(b[3] / h, 4)]}
     except Exception as e:
         logging.getLogger(__name__).warning(f"人脸检测失败 {img_path}: {e}")
         return None
 
 
+def _face_sidecar_valid(d):
+    """sidecar 数据是否完整可用（v2：同时含中心与框尺寸）"""
+    return isinstance(d, dict) and d.get("c") and d.get("box")
+
+
 def ensure_face_center(token):
-    """检测并持久化人脸中心（仅后台路径调用，请求线程不实时检测）"""
+    """确保人脸数据（中心+框）就绪：内存 → 完整 sidecar → 实时检测。
+    仅后台路径调用；旧版 sidecar（缺 box）自动重新检测"""
     with _face_cache_lock:
         if token in _face_cache:
             return _face_cache[token]
-    cached = _get_cached_image(token)
-    if not cached:
-        return None
-    center = _detect_face_center(cached[0])
-    try:
-        os.makedirs(_FACE_DIR, exist_ok=True)
-        tmp = _face_sidecar_path(token) + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"c": center}, f)
-        os.replace(tmp, _face_sidecar_path(token))
-    except Exception:
-        pass
-    with _face_cache_lock:
-        _face_cache[token] = center
-    return center
-
-
-def get_face_center(token):
-    """读人脸中心（内存 → sidecar → None）。不做实时检测，保证请求路径零开销"""
-    with _face_cache_lock:
-        if token in _face_cache:
-            return _face_cache[token]
-    center = None
     try:
         p = _face_sidecar_path(token)
         if os.path.exists(p):
             with open(p) as f:
-                center = json.load(f).get("c")
+                d = json.load(f)
+            if _face_sidecar_valid(d):
+                face = {"c": d["c"], "box": d["box"]}
+                with _face_cache_lock:
+                    _face_cache[token] = face
+                return face
     except Exception:
-        center = None
+        pass
+    cached = _get_cached_image(token)
+    if not cached:
+        return None
+    face = _detect_face_center(cached[0])
+    try:
+        os.makedirs(_FACE_DIR, exist_ok=True)
+        tmp = _face_sidecar_path(token) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"c": face["c"] if face else None,
+                       "box": face["box"] if face else None}, f)
+        os.replace(tmp, _face_sidecar_path(token))
+    except Exception:
+        pass
     with _face_cache_lock:
-        _face_cache[token] = center
-    return center
+        _face_cache[token] = face
+    return face
+
+
+def get_face_center(token):
+    """读人脸数据（内存 → sidecar → None）。不做实时检测，保证请求路径零开销"""
+    with _face_cache_lock:
+        if token in _face_cache:
+            return _face_cache[token]
+    face = None
+    try:
+        p = _face_sidecar_path(token)
+        if os.path.exists(p):
+            with open(p) as f:
+                d = json.load(f)
+            if _face_sidecar_valid(d):
+                face = {"c": d["c"], "box": d["box"]}
+    except Exception:
+        face = None
+    with _face_cache_lock:
+        _face_cache[token] = face
+    return face
 
 
 @app.route("/api/image/<file_token>")

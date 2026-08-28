@@ -1398,24 +1398,36 @@ createApp({
     const photoLoading = ref(false);
     let photoLoadingTimer = null;
     const loadedPhotoSet = new Set();
-    // 人脸对准：卡片照片 object-position（px），按人脸中心对齐容器中心；无脸数据保持居中
+    // 人脸对准：默认居中时人脸完整可见则不动；不完整才上下平移最小量（顶对齐/底对齐），不做居中
     const photoPositions = ref([]);
     function recalcPhotoPosition(e, i) {
       try {
         const f = (currentCard.value.faces || [])[i];
         const img = e.target;
-        if (!f || !img || !img.naturalWidth) return;
+        if (!f || !f.c || !img || !img.naturalWidth) return;
         const wrap = img.closest('.card-photo-wrap');
         if (!wrap) return;
         const cw = wrap.clientWidth, ch = wrap.clientHeight;
         const iw = img.naturalWidth, ih = img.naturalHeight;
         if (!cw || !ch || !iw || !ih) return;
         const scale = Math.max(cw / iw, ch / ih);
-        const dw = iw * scale, dh = ih * scale;
-        const ox = Math.round(cw / 2 - f[0] * dw);
-        const oy = Math.round(ch / 2 - f[1] * dh);
+        const dh = ih * scale;
+        if (dh <= ch + 1) return; // 整图已完整可见，无需调整
+        const cy = f.c[1];
+        const fh = (f.box && f.box[1]) ? f.box[1] : 0;
+        const top = (cy - fh / 2) * dh;     // 人脸顶（显示坐标）
+        const bottom = (cy + fh / 2) * dh;  // 人脸底
+        const offDef = (ch - dh) / 2;       // 默认偏移（居中显示）
+        // 默认下人脸已完整可见 → 不动
+        if (offDef + top >= 0 && offDef + bottom <= ch) return;
+        let off;
+        if (offDef + top < 0) off = -top;               // 头顶被裁 → 上移使脸顶贴容器顶
+        else if (offDef + bottom > ch) off = ch - bottom; // 下巴被裁 → 下移使脸底贴容器底
+        else return;
+        off = Math.max(ch - dh, Math.min(0, off)); // 限制在合法偏移范围
+        if (Math.abs(off - offDef) < 1) return;    // 几乎没动，保持默认
         const arr = photoPositions.value.slice();
-        arr[i] = ox + 'px ' + oy + 'px';
+        arr[i] = '50% ' + Math.round(off) + 'px';
         photoPositions.value = arr;
       } catch (_) {}
     }

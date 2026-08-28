@@ -4,3 +4,5 @@ gunicorn
 Pillow
 itsdangerous
 pillow-heif
+numpy<2
+opencv-python-headless<4.12

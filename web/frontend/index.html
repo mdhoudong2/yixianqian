@@ -395,7 +395,9 @@
       <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @mousedown="onPhotoMouseDown" @mousemove="onPhotoMouseMove" @mouseup="onPhotoMouseUp" @mouseleave="onPhotoMouseLeave" @click="onPhotoClick">
         <div v-if="photoLoading" class="photo-loading"></div>
         <div v-if="currentPhotoList.length" class="card-photo-track" :style="{ transform: 'translateX(-' + photoIndex * 100 + '%)' }">
-          <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt="" @load="onPhotoLoad" @error="onPhotoError">
+          <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt=""
+            :style="photoPositions[i] ? { objectPosition: photoPositions[i] } : null"
+            @load="onPhotoLoad($event); recalcPhotoPosition($event, i)" @error="onPhotoError">
         </div>
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
@@ -1396,6 +1398,27 @@ createApp({
     const photoLoading = ref(false);
     let photoLoadingTimer = null;
     const loadedPhotoSet = new Set();
+    // 人脸对准：卡片照片 object-position（px），按人脸中心对齐容器中心；无脸数据保持居中
+    const photoPositions = ref([]);
+    function recalcPhotoPosition(e, i) {
+      try {
+        const f = (currentCard.value.faces || [])[i];
+        const img = e.target;
+        if (!f || !img || !img.naturalWidth) return;
+        const wrap = img.closest('.card-photo-wrap');
+        if (!wrap) return;
+        const cw = wrap.clientWidth, ch = wrap.clientHeight;
+        const iw = img.naturalWidth, ih = img.naturalHeight;
+        if (!cw || !ch || !iw || !ih) return;
+        const scale = Math.max(cw / iw, ch / ih);
+        const dw = iw * scale, dh = ih * scale;
+        const ox = Math.round(cw / 2 - f[0] * dw);
+        const oy = Math.round(ch / 2 - f[1] * dh);
+        const arr = photoPositions.value.slice();
+        arr[i] = ox + 'px ' + oy + 'px';
+        photoPositions.value = arr;
+      } catch (_) {}
+    }
     function onPhotoLoad(e) {
       try {
         const raw = e && e.target && e.target.getAttribute ? e.target.getAttribute('src') : '';
@@ -2785,12 +2808,16 @@ createApp({
       msgText.value = '';
     }
     // 换卡片时重置留言面板
+    watch(cards, () => {
+      photoPositions.value = [];
+    });
     watch(cardIndex, () => {
       cardTab.value = 'profile';
       messages.value = [];
       msgLoadedFor = null;
       replyTarget.value = null;
       msgText.value = '';
+      photoPositions.value = [];
     });
 
     onMounted(() => {
@@ -2840,7 +2867,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
-      onPhotoError, onPhotoLoad,
+      onPhotoError, onPhotoLoad, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,

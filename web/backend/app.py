@@ -709,6 +709,7 @@ def format_user_brief(record, include_openid=False, full=False):
             "live_with_parents": bitable.get_select_value(fields, F_LIVE_WITH_PARENTS),
             "birthday": format_birthday(fields),
             "photos": ["/api/image/" + t for t in photos],
+            "faces": [get_face_center(t) for t in photos],
         })
     if include_openid:
         data["openid"] = bitable.get_field_text(fields, F_FEISHU_ID)
@@ -1039,7 +1040,8 @@ def cleanup_image_cache(max_age_days=7, max_files=1000):
     """过期与超量清理：删 7 天前文件，超 1000 个时删最旧的（后台线程每日执行）"""
     try:
         files = [(os.path.join(IMAGE_CACHE_DIR, f), os.path.getmtime(os.path.join(IMAGE_CACHE_DIR, f)))
-                 for f in os.listdir(IMAGE_CACHE_DIR)]
+                 for f in os.listdir(IMAGE_CACHE_DIR)
+                 if not os.path.isdir(os.path.join(IMAGE_CACHE_DIR, f))]
         cutoff = time.time() - max_age_days * 86400
         for path, mtime in list(files):
             if mtime < cutoff:
@@ -1192,6 +1194,172 @@ def warm_image_cache():
             logging.getLogger(__name__).warning(f"预热图片 {t} 失败: {e}")
     if warmed:
         logging.getLogger(__name__).info(f"图片预热完成，本次下载 {warmed} 张")
+    # 人脸检测补齐：仅对尚无 sidecar 的照片做检测（存量照片分多轮渐进补齐）
+    for t in tokens:
+        if not t:
+            continue
+        try:
+            with _image_warm_lock:
+                if _get_cached_image(t) and not os.path.exists(_face_sidecar_path(t)):
+                    ensure_face_center(t)
+        except Exception:
+            pass
+
+
+# ========== 人脸检测（卡片照片智能对准） ==========
+# YuNet（精度高、支持侧脸，模型约 350KB，首次从 opencv_zoo 下载缓存）；
+# 下载/加载失败时回退 OpenCV 自带 Haar 级联；两者都不可用则整体静默降级为居中显示。
+
+_FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_detection_yunet.onnx")
+_FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
+                   "face_detection_yunet/face_detection_yunet_2023mar.onnx")
+_FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
+
+_face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
+_face_cache_lock = threading.Lock()
+_face_detector_state = None  # (kind, detector) kind in {"yunet", "haar", "none"}
+
+
+def _load_face_detector():
+    """懒加载人脸检测器（单例）。返回 (kind, detector)，不可用时 ("none", None)"""
+    global _face_detector_state
+    if _face_detector_state is not None:
+        return _face_detector_state
+    try:
+        import cv2
+    except ImportError:
+        _face_detector_state = ("none", None)
+        return _face_detector_state
+    # YuNet 优先
+    if not os.path.exists(_FACE_MODEL_PATH):
+        try:
+            r = requests.get(_FACE_MODEL_URL, timeout=20)
+            if r.status_code == 200 and len(r.content) > 10000:
+                tmp = _FACE_MODEL_PATH + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(r.content)
+                os.replace(tmp, _FACE_MODEL_PATH)
+        except Exception:
+            pass
+    if os.path.exists(_FACE_MODEL_PATH):
+        try:
+            det = cv2.FaceDetectorYN.create(_FACE_MODEL_PATH, "", (320, 320), score_threshold=0.85)
+            _face_detector_state = ("yunet", det)
+            return _face_detector_state
+        except Exception:
+            pass
+    try:
+        haar = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if haar.empty():
+            _face_detector_state = ("none", None)
+        else:
+            _face_detector_state = ("haar", haar)
+    except Exception:
+        _face_detector_state = ("none", None)
+    return _face_detector_state
+
+
+def _face_sidecar_path(token):
+    return os.path.join(_FACE_DIR, token + ".json")
+
+
+def _detect_face_center(img_path):
+    """检测图片中最大「完整可信」人脸中心，返回 [cx, cy]（图宽/高比例）或 None。
+    完整性规则（宁缺毋滥）：框贴左右边缘（脸被纵向裁切）或贴下边缘（下巴被裁）→ 丢弃；
+    贴顶部可接受（头顶略出画常见）。多脸取面积最大者。"""
+    kind, det = _load_face_detector()
+    if kind == "none":
+        return None
+    try:
+        import cv2
+        import numpy as np
+        from PIL import Image
+        with Image.open(img_path) as im0:
+            im0 = im0.convert("RGB")
+            w0, h0 = im0.size
+            if w0 < 40 or h0 < 40:
+                return None
+            # 检测用缩略图（最长边 1080），坐标按比例映射回原图；旧缓存大图（3072+）避免全尺寸检测
+            scale = 1.0
+            if max(w0, h0) > 1080:
+                scale = 1080.0 / max(w0, h0)
+                im0 = im0.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))), Image.BILINEAR)
+            img = cv2.cvtColor(np.array(im0), cv2.COLOR_RGB2BGR)
+            h, w = img.shape[:2]
+        boxes = []
+        if kind == "yunet":
+            det.setInputSize((w, h))
+            _, faces = det.detect(img)
+            if faces is not None:
+                for f in faces:
+                    if len(f) >= 4:
+                        boxes.append([float(f[0]), float(f[1]), float(f[2]), float(f[3])])
+        else:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            for (x, y, bw, bh) in det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
+                                                       minSize=(40, 40)):
+                boxes.append([float(x), float(y), float(bw), float(bh)])
+        if not boxes:
+            return None
+        margin_lr = w * 0.01
+        margin_b = h * 0.02
+        valid = []
+        for b in boxes:
+            x, y, bw, bh = b
+            if x <= margin_lr or x + bw >= w - margin_lr:
+                continue  # 脸被左右裁切，不可信
+            if y + bh >= h - margin_b:
+                continue  # 下巴被裁，不可信
+            valid.append(b)
+        if not valid:
+            return None
+        b = max(valid, key=lambda b: b[2] * b[3])
+        cx = (b[0] + b[2] / 2) / w
+        cy = (b[1] + b[3] / 2) / h
+        return [round(cx, 4), round(cy, 4)]
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"人脸检测失败 {img_path}: {e}")
+        return None
+
+
+def ensure_face_center(token):
+    """检测并持久化人脸中心（仅后台路径调用，请求线程不实时检测）"""
+    with _face_cache_lock:
+        if token in _face_cache:
+            return _face_cache[token]
+    cached = _get_cached_image(token)
+    if not cached:
+        return None
+    center = _detect_face_center(cached[0])
+    try:
+        os.makedirs(_FACE_DIR, exist_ok=True)
+        tmp = _face_sidecar_path(token) + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"c": center}, f)
+        os.replace(tmp, _face_sidecar_path(token))
+    except Exception:
+        pass
+    with _face_cache_lock:
+        _face_cache[token] = center
+    return center
+
+
+def get_face_center(token):
+    """读人脸中心（内存 → sidecar → None）。不做实时检测，保证请求路径零开销"""
+    with _face_cache_lock:
+        if token in _face_cache:
+            return _face_cache[token]
+    center = None
+    try:
+        p = _face_sidecar_path(token)
+        if os.path.exists(p):
+            with open(p) as f:
+                center = json.load(f).get("c")
+    except Exception:
+        center = None
+    with _face_cache_lock:
+        _face_cache[token] = center
+    return center
 
 
 @app.route("/api/image/<file_token>")

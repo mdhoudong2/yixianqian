@@ -100,14 +100,14 @@ _snapshot = {
 _snapshot_lock = threading.RLock()
 
 _SNAPSHOT_FETCHERS = {
-    "users": lambda: bitable.search_records(USER_TABLE_ID),
-    "observers": (lambda: bitable.search_records(OBSERVER_TABLE_ID)) if OBSERVER_TABLE_ID else None,
-    "activities": lambda: bitable.search_records(ACTIVITY_TABLE_ID),
-    "signups": lambda: bitable.search_records(SIGNUP_TABLE_ID),
-    "likes": lambda: bitable.search_records(LIKE_TABLE_ID),
-    "group_selections": lambda: bitable.search_records(GROUP_SELECT_TABLE),
-    "group_results": lambda: bitable.search_records(GROUP_RESULT_TABLE),
-    "messages": lambda: bitable.search_records(MESSAGE_TABLE_ID),
+    "users": lambda: bitable.raw_search_records(USER_TABLE_ID),
+    "observers": (lambda: bitable.raw_search_records(OBSERVER_TABLE_ID)) if OBSERVER_TABLE_ID else None,
+    "activities": lambda: bitable.raw_search_records(ACTIVITY_TABLE_ID),
+    "signups": lambda: bitable.raw_search_records(SIGNUP_TABLE_ID),
+    "likes": lambda: bitable.raw_search_records(LIKE_TABLE_ID),
+    "group_selections": lambda: bitable.raw_search_records(GROUP_SELECT_TABLE),
+    "group_results": lambda: bitable.raw_search_records(GROUP_RESULT_TABLE),
+    "messages": lambda: bitable.raw_search_records(MESSAGE_TABLE_ID),
 }
 _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
 
@@ -119,6 +119,9 @@ def refresh_snapshot_table(key):
         return
     try:
         data = fetcher()
+        if data is None:
+            logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+            return
         with _snapshot_lock:
             _snapshot[key] = data
     except Exception as e:

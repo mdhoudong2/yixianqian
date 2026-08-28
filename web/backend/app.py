@@ -1331,6 +1331,11 @@ def home():
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
     is_observer = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
+    # 供前端全局门禁：任何链路进 app 即验
+    try:
+        g._id_valid = bitable.get_id_valid(user.get("fields", {}))
+    except Exception:
+        g._id_valid = True
 
     # 卡片（不含筛选，默认展示全部异性；观察员展示全部单身用户，男女均可浏览）
     # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
@@ -2561,21 +2566,71 @@ def _editable_value(fields, fname, ftype):
 
 def _editable_schema(fields):
     """可编辑字段 schema + 当前值，前端据此动态渲染「修改资料」表单"""
-    return [
+    base = [
         {"field": fname, "label": label, "type": ftype, "options": opts,
          "long": fname in LONG_TEXT_FIELDS,
          "value": _editable_value(fields, fname, ftype)}
         for fname, label, ftype, opts in EDITABLE_FIELDS
     ]
+    # 身份证缺/错时临时暴露，修后即消（任何链路门禁用）
+    try:
+        if not bitable.get_id_valid(fields):
+            # 脱敏回显：前3后4，中间*；空则空
+            _idc = bitable.get_field_text(fields, F_ID_CARD).strip()
+            _mask = (_idc[:3] + "****" + _idc[-4:]) if len(_idc) >= 7 else _idc
+            # 前端以 text 展示，value 仍为原文以便校验对比
+            base.insert(0, {"field": F_ID_CARD, "label": "身份证号", "type": "text", "options": None, "long": False, "value": _idc, "mask": _mask, "hint": "身份证号有误或缺失，请重新填写正确的18位身份证号"})
+    except Exception:
+        pass
+    return base
 
 
-def _normalize_editable_update(data):
-    """将前端提交的值按类型归一化为飞书写入格式；非法项静默忽略。"""
+def _normalize_editable_update(data, fields=None):
+    """将前端提交的值按类型归一化为飞书写入格式；非法项静默忽略。
+
+    身份证仅当原记录 id_valid==False 时放行，且强验格式与生日一致。
+    """
     by_name = {fname: ftype for fname, _lbl, ftype, _opts in EDITABLE_FIELDS}
+    # 临时放行身份证（缺/错时）
+    _allow_id = False
+    try:
+        if fields is not None and not bitable.get_id_valid(fields):
+            _allow_id = True
+            by_name[F_ID_CARD] = "text"
+    except Exception:
+        pass
     update_fields = {}
     for k, v in data.items():
         ftype = by_name.get(k)
         if ftype is None:
+            continue
+        if k == F_ID_CARD and not _allow_id:
+            continue
+        if k == F_ID_CARD and _allow_id:
+            val = str(v).strip().upper().replace(" ", "")
+            ok, msg = bitable.validate_id_card(val)
+            if not ok:
+                # 交由上层以 400 提示，前端展示 msg
+                raise ValueError("身份证有误")
+            # 联动校验生日：若前端同时提交了生日则以提交值为准，否则取原表生日
+            bday_val = data.get(F_BIRTHDAY)
+            # 生日字段在 EDITABLE_FIELDS 中不可编辑（系统字段），此处仅校验身份证内生日与表生日一致性
+            # 若表生日与证生日不一致，提示需同步修正（前端已提示）
+            try:
+                _id_birth = val[6:10] + "-" + val[10:12] + "-" + val[12:14] if len(val)==18 else ("19"+val[6:8]+"-"+val[8:10]+"-"+val[10:12] if len(val)==15 else "")
+                if _id_birth:
+                    # 对比现有生日（表内）
+                    _cur_bday = bitable.get_datetime_value(fields, F_BIRTHDAY) if fields is not None else ""
+                    if _cur_bday and _cur_bday != _id_birth:
+                        # 允许本次一并修正：自动带上生日更新（无需前端另传）
+                        # 生日为 Date 字段，需毫秒时间戳
+                        import calendar as _cal
+                        import datetime as _dt
+                        _bd = _dt.datetime.strptime(_id_birth, "%Y-%m-%d")
+                        update_fields[F_BIRTHDAY] = _cal.timegm(_bd.timetuple())*1000
+            except Exception:
+                pass
+            update_fields[k] = val
             continue
         if ftype in ("text", "phone"):
             val = str(v).strip() if v is not None else ""
@@ -2607,7 +2662,15 @@ def get_profile():
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     data = format_user_profile(user)
-    data["editable"] = _editable_schema(user.get("fields", {}))
+    fields = user.get("fields", {})
+    try:
+        _idc = bitable.get_field_text(fields, F_ID_CARD).strip()
+        data["id_valid"] = bitable.get_id_valid(fields)
+        data["id_card_mask"] = (_idc[:3] + "****" + _idc[-4:]) if len(_idc) >= 7 else _idc
+    except Exception:
+        data["id_valid"] = True
+        data["id_card_mask"] = ""
+    data["editable"] = _editable_schema(fields)
     return jsonify(data)
 
 
@@ -2624,7 +2687,10 @@ def update_profile():
     if _is_observer(user):
         return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
 
-    update_fields = _normalize_editable_update(data)
+    try:
+        update_fields = _normalize_editable_update(data, user.get("fields", {}))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if not update_fields:
         return jsonify({"error": "没有可更新的字段"}), 400
 

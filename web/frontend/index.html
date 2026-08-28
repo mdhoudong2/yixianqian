@@ -1002,6 +1002,13 @@
     </div>
   </div>
 </van-popup>
+<!-- 修改资料未保存提示 -->
+<van-dialog v-model:show="showUnsavedConfirm" title="提示" show-cancel-button
+  confirm-button-text="保存" cancel-button-text="不保存" confirm-button-color="#ff6b81"
+  :close-on-click-overlay="false"
+  @confirm="saveAndLeaveProfileEdit" @cancel="discardProfileEdit">
+  <div style="padding:12px 16px 4px; text-align:center; font-size:14px; color:#646566;">资料已修改，是否保存？</div>
+</van-dialog>
 <!-- 身份证有误全屏强制提示 -->
 <div v-if="showIdInvalidDialog" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
   <div style="width:100%; max-width:340px; background:#fff; border-radius:14px; overflow:hidden;">
@@ -1179,6 +1186,17 @@ createApp({
       try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
     }
     function handleBack(){
+      // 修改资料有未保存改动：弹保存提醒
+      if(page.value === 'profile_edit' && isProfileEditDirty()){
+        pendingProfileEditLeave = () => { history.back(); };
+        showUnsavedConfirm.value = true;
+        return;
+      }
+      if(showUnsavedConfirm.value){
+        showUnsavedConfirm.value = false;
+        pendingProfileEditLeave = null;
+        return;
+      }
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
       if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
         history.back();
@@ -1358,6 +1376,13 @@ createApp({
 
     // 修改资料
     const editableFields = ref([]);
+    const showUnsavedConfirm = ref(false);
+    let pendingProfileEditLeave = null;
+    let profileEditSnapshot = '';
+    function isProfileEditDirty(){
+      if(page.value !== 'profile_edit') return false;
+      try { return JSON.stringify(editableFields.value) !== profileEditSnapshot; } catch(e){ return false; }
+    }
     const showSelectPopup = ref(false);
     const showMultiPopup = ref(false);
     const pickerField = ref(null);
@@ -1375,7 +1400,35 @@ createApp({
       profilePhotos.value = (profileData.value.photos && profileData.value.photos.length)
         ? [...profileData.value.photos]
         : (profileData.value.photo ? [profileData.value.photo] : []);
+      try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){ profileEditSnapshot = ''; }
+      pendingProfileEditLeave = null;
       page.value = 'profile_edit';
+    }
+    function discardProfileEdit(){
+      showUnsavedConfirm.value = false;
+      const cb = pendingProfileEditLeave;
+      pendingProfileEditLeave = null;
+      try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
+      if(cb) cb(); else page.value = 'profile_detail';
+    }
+    async function saveAndLeaveProfileEdit(){
+      const cb = pendingProfileEditLeave;
+      pendingProfileEditLeave = null;
+      showUnsavedConfirm.value = false;
+      const payload = {};
+      editableFields.value.forEach(f => { payload[f.field] = f.value; });
+      savingProfile.value = true;
+      try {
+        await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
+        vant.showToast('保存成功');
+        try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
+        profileLoaded.value = false;
+        try { const d = await api('/api/profile'); profileData.value = d; profileLoaded.value = true; } catch(e){}
+        if(cb){ cb(); } else { page.value = 'profile_detail'; }
+      } catch(e) {
+        vant.showToast(e.message);
+      }
+      savingProfile.value = false;
     }
     function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
     async function onPhotoChange(e) {
@@ -1437,6 +1490,7 @@ createApp({
       try {
         await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
         vant.showToast('保存成功');
+        try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
         profileLoaded.value = false;
         await openProfileDetail();
       } catch(e) { vant.showToast(e.message); }
@@ -2215,6 +2269,12 @@ createApp({
         startIdInvalidOverlay();
         return false;
       }
+      // 修改资料有未保存改动：先弹保存提醒，不切页
+      if(page.value === 'profile_edit' && isProfileEditDirty()){
+        pendingProfileEditLeave = () => { page.value = name; };
+        showUnsavedConfirm.value = true;
+        return false;
+      }
       return true;
     }
     function goIdInvalidNow(){
@@ -2302,6 +2362,14 @@ createApp({
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
       if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
+      if(showUnsavedConfirm.value){ showUnsavedConfirm.value=false; pendingProfileEditLeave=null; isHandlingPopState=false; return; }
+      if(page.value === 'profile_edit' && isProfileEditDirty()){
+        pushHistory({page: 'profile_edit'});
+        pendingProfileEditLeave = () => { history.back(); };
+        showUnsavedConfirm.value = true;
+        isHandlingPopState = false;
+        return;
+      }
       // 子页回退：优先用 state.page，否则按 parent 映射
       const st = e.state;
       if(st && st.page && st.page !== page.value){
@@ -2355,6 +2423,7 @@ createApp({
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
     watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
+    watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
@@ -2496,6 +2565,7 @@ createApp({
       profileData, openProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
+      showUnsavedConfirm, discardProfileEdit, saveAndLeaveProfileEdit,
       photoInput, uploadingPhoto, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,

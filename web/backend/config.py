@@ -74,7 +74,7 @@ F_ACCOUNT_STATUS = "账号状态"
 STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身看热闹，仅浏览/留言/反馈/查看活动）
 F_REGISTER_TIME = "注册时间"
 F_UPDATE_TIME = "资料更新时间"
-F_LAST_LOGIN = "最近登录"
+F_LAST_ACTIVE = "最近活跃"
 F_REFERRAL_SOURCE = "你是怎么知道这个App的？"
 F_IS_FOR_CHILD = "您替子女注册吗？"
 

@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<script>try{if(localStorage.getItem('yxq_dark')==='1')document.documentElement.classList.add('van-theme-dark');}catch(e){}</script>
 <title>一线牵</title>
 <link rel="stylesheet" href="lib/vant.min.css">
 <style>
@@ -107,7 +108,10 @@
   .msg-count { color: #ff6b81; font-weight: 700; font-size: 18px; }
   .section-title { font-size: 15px; color: #969799; margin: 16px 4px 8px; }
   /* 个人中心 */
-  .profile-header { background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 28px 20px 32px; color: #fff; text-align: center; }
+  .profile-header { position: relative; background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 28px 20px 32px; color: #fff; text-align: center; }
+  .theme-toggle { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,0.28); display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); box-shadow: 0 2px 8px rgba(0,0,0,0.12); transition: transform 0.15s; }
+  .theme-toggle:active { transform: scale(0.9); }
+  .theme-icon { width: 18px; height: 18px; display: block; }
   .profile-header .avatar { width: 68px; height: 68px; border-radius: 50%; background: rgba(255,255,255,0.3); border: 2px solid rgba(255,255,255,0.6); display: flex; align-items: center; justify-content: center; font-size: 30px; overflow: hidden; margin: 0 auto 12px; }
   .profile-header .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .profile-name-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
@@ -288,6 +292,65 @@
   .msg-input { flex: 1; border: none; background: #f7f8fa; border-radius: 18px; padding: 8px 14px; font-size: 14px; outline: none; }
   .msg-send { border: none; background: #ff6b81; color: #fff; border-radius: 18px; padding: 0 18px; font-size: 14px; cursor: pointer; }
   .msg-send:disabled { background: #ffb3be; }
+  /* 通用小类（供内联样式替换用） */
+  .msg-sub-strong { color: #323233; }
+  .detail-meta { font-size: 14px; color: #646566; line-height: 2; }
+  .candidate-search-box { background: #fff; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; }
+  .candidate-search-input { width: 100%; padding: 8px 12px; border: 1px solid #ebedf0; border-radius: 16px; font-size: 14px; color: #323233; box-sizing: border-box; outline: none; background: #fff; }
+  .sheet-title { font-size: 16px; font-weight: 500; text-align: center; margin-bottom: 8px; color: #323233; }
+  .filter-title { font-size: 17px; font-weight: 600; color: #323233; }
+  .modal-card { width: 100%; background: #fff; border-radius: 14px; overflow: hidden; }
+  .modal-title { font-size: 16px; font-weight: 600; color: #323233; margin-bottom: 8px; }
+  .modal-body { font-size: 14px; color: #646566; }
+  .modal-divider { border-top: 1px solid #ebedf0; }
+  .modal-action { text-align: center; padding: 14px; font-size: 15px; cursor: pointer; color: #646566; }
+  .modal-action-muted { color: #969799; }
+  .modal-action-primary { color: #ff6b81; font-weight: 600; }
+  /* 夜间模式 */
+  .van-theme-dark { --van-background: #1a1a1c; --van-background-2: #222226; --van-background-3: #2c2c30; --van-border-color: #3a3a3e; --van-active-color: #3a3a3e; }
+  .van-theme-dark html, .van-theme-dark body, html.van-theme-dark, html.van-theme-dark body { background: #1a1a1c; color: #f5f5f5; }
+  .van-theme-dark .activity-card, .van-theme-dark .swipe-card, .van-theme-dark .msg-card,
+  .van-theme-dark .profile-card, .van-theme-dark .profile-section-card, .van-theme-dark .edit-card,
+  .van-theme-dark .like-item, .van-theme-dark .group-candidate, .van-theme-dark .selected-list,
+  .van-theme-dark .group-member, .van-theme-dark .back-nav, .van-theme-dark .card-tabs,
+  .van-theme-dark .feedback-btn, .van-theme-dark .back-btn, .van-theme-dark .edit-photo-add-btn,
+  .van-theme-dark .modal-card { background: #222226; }
+  .van-theme-dark .activity-poster, .van-theme-dark .card-photo-wrap { background: #2c2c30; }
+  .van-theme-dark .activity-card h3, .van-theme-dark .info-section-content, .van-theme-dark .info-grid-item,
+  .van-theme-dark .info-grid-item .df-value, .van-theme-dark .msg-name, .van-theme-dark .msg-content,
+  .van-theme-dark .profile-card-row, .van-theme-dark .invite-code-inline, .van-theme-dark .profile-section-title,
+  .van-theme-dark .selected-list h4, .van-theme-dark .choice-name, .van-theme-dark .group-member-name,
+  .van-theme-dark .like-item-name, .van-theme-dark .ud-name, .van-theme-dark .login-title,
+  .van-theme-dark .back-nav, .van-theme-dark .edit-picker, .van-theme-dark .picker-option,
+  .van-theme-dark .multi-option, .van-theme-dark .admin-help-title, .van-theme-dark .admin-help-item,
+  .van-theme-dark .signup-sheet-name, .van-theme-dark .filter-label, .van-theme-dark .invite-link-box,
+  .van-theme-dark .modal-title, .van-theme-dark .sheet-title, .van-theme-dark .msg-sub-strong,
+  .van-theme-dark .candidate-search-input, .van-theme-dark .filter-title { color: #f5f5f5; }
+  .van-theme-dark .activity-desc, .van-theme-dark .msg-message, .van-theme-dark .edit-label,
+  .van-theme-dark .round-tab, .van-theme-dark .invite-dialog-body p, .van-theme-dark .filter-tag,
+  .van-theme-dark .like-item-msg, .van-theme-dark .modal-body, .van-theme-dark .detail-meta,
+  .van-theme-dark .modal-action { color: #c8c9cc; }
+  .van-theme-dark .msg-message, .van-theme-dark .like-item-msg, .van-theme-dark .invite-link-box,
+  .van-theme-dark .msg-input, .van-theme-dark .filter-input, .van-theme-dark .like-textarea,
+  .van-theme-dark .admin-help-item, .van-theme-dark .multi-option, .van-theme-dark .filter-tag,
+  .van-theme-dark .round-tab, .van-theme-dark .candidate-search-box { background: #2c2c30; }
+  .van-theme-dark .info-tag, .van-theme-dark .msg-avatar, .van-theme-dark .msg-avatar-sm,
+  .van-theme-dark .profile-photo-placeholder, .van-theme-dark .group-member-avatar,
+  .van-theme-dark .like-item-avatar, .van-theme-dark .ud-photo, .van-theme-dark .signup-sheet-avatar,
+  .van-theme-dark .selected-item, .van-theme-dark .choice-item,
+  .van-theme-dark .multi-option.active { background: rgba(255,107,129,0.14); }
+  .van-theme-dark .profile-card-divider { background: #3a3a3e; }
+  .van-theme-dark .edit-row, .van-theme-dark .signup-bar,
+  .van-theme-dark .card-tabs, .van-theme-dark .picker-header, .van-theme-dark .msg-input-bar,
+  .van-theme-dark .back-nav, .van-theme-dark .msg-thread, .van-theme-dark .modal-divider { border-color: #3a3a3e; }
+  .van-theme-dark .msg-reply { border-left-color: rgba(255,107,129,0.35); }
+  .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
+  .van-theme-dark .profile-photo-section img { border-color: #3a3a3e; }
+  .van-theme-dark .msg-input { color: #f5f5f5; }
+  .van-theme-dark .candidate-search-input { background: #1a1a1c; border-color: #3a3a3e; }
+  .van-theme-dark .msg-input::placeholder, .van-theme-dark .candidate-search-input::placeholder { color: #8a8a8e; }
+  .van-theme-dark .edit-tip { background: #2b2413; color: #e8c97a; }
+  .van-theme-dark .like-realname-warn { background: #2b2413; color: #f0a25c; }
 </style>
 </head>
 <body>
@@ -449,7 +512,7 @@
   <div v-for="(n, i) in notifications" :key="i" class="msg-card">
     <div class="msg-avatar">🔔</div>
     <div class="msg-body">
-      <div class="msg-sub" style="color:#323233;">{{ n.text }}</div>
+      <div class="msg-sub msg-sub-strong">{{ n.text }}</div>
       <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
     </div>
     <div class="msg-right" v-if="n.activity_id">
@@ -524,6 +587,23 @@
 <!-- ========== 我的页 ========== -->
 <div v-else-if="page==='profile'" style="padding:0;">
   <div class="profile-header">
+    <div class="theme-toggle" @click="toggleTheme" :aria-label="isDark ? '切换日间模式' : '切换夜间模式'">
+      <svg v-if="!isDark" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="4.2"/>
+        <line x1="12" y1="1.8" x2="12" y2="4.2"/>
+        <line x1="12" y1="19.8" x2="12" y2="22.2"/>
+        <line x1="1.8" y1="12" x2="4.2" y2="12"/>
+        <line x1="19.8" y1="12" x2="22.2" y2="12"/>
+        <line x1="4.8" y1="4.8" x2="6.5" y2="6.5"/>
+        <line x1="17.5" y1="17.5" x2="19.2" y2="19.2"/>
+        <line x1="4.8" y1="19.2" x2="6.5" y2="17.5"/>
+        <line x1="17.5" y1="6.5" x2="19.2" y2="4.8"/>
+      </svg>
+      <svg v-else class="theme-icon" viewBox="0 0 24 24" fill="#fff">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        <path d="M18.2 5.1l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55z"/>
+      </svg>
+    </div>
     <div class="avatar">
       <img v-if="user.photo" :src="user.photo" alt="" @error="user.photo=''">
       <template v-else>{{ user.gender==='男性' ? '👨' : '👩' }}</template>
@@ -831,7 +911,7 @@
           <van-tag v-if="currentActivity.group_status" plain type="primary">{{ currentActivity.group_status }}</van-tag>
         </div>
         <div class="activity-desc">{{ currentActivity.description || '暂无描述' }}</div>
-        <div style="font-size:14px; color:#646566; line-height:2;">
+        <div class="detail-meta">
           <div>📍 {{ currentActivity.location || '待定' }}</div>
           <div>💰 费用：{{ currentActivity.fee > 0 ? currentActivity.fee + '元' : '免费' }}</div>
           <div>🍚 食宿：{{ currentActivity.food || '无' }}</div>
@@ -899,8 +979,8 @@
     </div>
     <div v-else>
       <!-- 搜索框（原生 input，替代 van-search，避免组件在飞书 webview 渲染异常） -->
-      <div style="background:#fff;padding:8px 12px;border-radius:8px;margin-bottom:8px;">
-        <input v-model="candidateQuery" placeholder="搜索 昵称/用户ID/圣名" style="width:100%;padding:8px 12px;border:1px solid #ebedf0;border-radius:16px;font-size:14px;color:#323233;box-sizing:border-box;outline:none;background:#fff;" />
+      <div class="candidate-search-box">
+        <input v-model="candidateQuery" placeholder="搜索 昵称/用户ID/圣名" class="candidate-search-input" />
       </div>
       <div v-for="c in visibleCandidates" :key="c.openid"
         class="group-candidate"
@@ -998,7 +1078,7 @@
 <!-- ========== 报名名单弹层 ========== -->
 <van-popup v-model:show="signupSheetShow" position="bottom" round style="max-height:70vh; overflow-y:auto;">
   <div style="padding:16px;">
-    <div style="font-size:16px; font-weight:500; text-align:center; margin-bottom:8px; color:#323233;">报名名单（{{ signupList.length }}）</div>
+    <div class="sheet-title">报名名单（{{ signupList.length }}）</div>
     <van-empty v-if="loadingSignups" description="加载中..." image-size="50"></van-empty>
     <van-empty v-else-if="!signupList.length" description="暂无报名" image-size="50"></van-empty>
     <div v-else v-for="s in signupList" :key="s.openid" class="signup-sheet-item" @click="openUserDetail(s.openid)">
@@ -1012,15 +1092,15 @@
 </van-popup>
 <!-- 修改资料未保存提示 -->
 <div v-if="showUnsavedConfirm" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9998; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
-  <div style="width:100%; max-width:320px; background:#fff; border-radius:14px; overflow:hidden;">
+  <div class="modal-card" style="max-width:320px;">
     <div style="padding:22px 16px 14px; text-align:center;">
-      <div style="font-size:16px; font-weight:600; color:#323233; margin-bottom:8px;">提示</div>
-      <div style="font-size:14px; color:#646566;">资料已修改，是否保存？</div>
+      <div class="modal-title">提示</div>
+      <div class="modal-body">资料已修改，是否保存？</div>
     </div>
-    <div style="border-top:1px solid #ebedf0;">
-      <div style="text-align:center; padding:14px; color:#ff6b81; font-weight:600; font-size:15px; cursor:pointer;" @click="saveAndLeaveProfileEdit">保存</div>
-      <div style="text-align:center; padding:14px; color:#646566; font-size:15px; cursor:pointer; border-top:1px solid #f2f3f5;" @click="discardProfileEdit">不保存</div>
-      <div style="text-align:center; padding:14px; color:#969799; font-size:15px; cursor:pointer; border-top:1px solid #f2f3f5;" @click="cancelProfileEditLeave">取消</div>
+    <div class="modal-divider">
+      <div class="modal-action modal-action-primary" @click="saveAndLeaveProfileEdit">保存</div>
+      <div class="modal-action modal-divider" @click="discardProfileEdit">不保存</div>
+      <div class="modal-action modal-action-muted modal-divider" @click="cancelProfileEditLeave">取消</div>
     </div>
   </div>
 </div>
@@ -1030,15 +1110,15 @@
 </div>
 <!-- 身份证有误全屏强制提示 -->
 <div v-if="showIdInvalidDialog" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
-  <div style="width:100%; max-width:340px; background:#fff; border-radius:14px; overflow:hidden;">
+  <div class="modal-card" style="max-width:340px;">
     <div style="padding:24px 18px 16px; text-align:center;">
       <div style="font-size:44px; margin-bottom:10px;">⚠️</div>
-      <div style="font-size:17px; font-weight:600; color:#323233; margin-bottom:8px;">身份证信息有误</div>
-      <div style="font-size:14px; color:#646566; line-height:1.7;">身份证信息缺失或填写有误，请先前往「修改资料」修正，否则无法继续使用</div>
+      <div class="modal-title" style="font-size:17px;">身份证信息有误</div>
+      <div class="modal-body" style="line-height:1.7;">身份证信息缺失或填写有误，请先前往「修改资料」修正，否则无法继续使用</div>
       <div style="font-size:14px; color:#ff6b81; margin-top:12px; font-weight:600;">{{ idInvalidCountdown }}秒后自动跳转</div>
     </div>
-    <div style="border-top:1px solid #ebedf0;">
-      <div style="text-align:center; padding:14px; color:#ff6b81; font-weight:600; font-size:15px; cursor:pointer;" @click="goIdInvalidNow">立即去修改</div>
+    <div class="modal-divider">
+      <div class="modal-action modal-action-primary" @click="goIdInvalidNow">立即去修改</div>
     </div>
   </div>
 </div>
@@ -1115,7 +1195,7 @@
 <van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-      <div style="font-size:17px; font-weight:600; color:#323233;">筛选</div>
+      <div class="filter-title">筛选</div>
       <div style="color:#ff6b81; font-size:14px; cursor:pointer;" @click="resetFilter">清除筛选</div>
     </div>
     <div style="overflow-y:auto; max-height:62vh; padding-top:8px;">
@@ -1225,6 +1305,15 @@ const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {
     const page = ref('cards');
+    // 夜间模式（默认日间）
+    const isDark = ref(false);
+    try { isDark.value = localStorage.getItem('yxq_dark') === '1'; } catch(e) {}
+    function toggleTheme(){
+      isDark.value = !isDark.value;
+      document.documentElement.classList.toggle('van-theme-dark', isDark.value);
+      try { localStorage.setItem('yxq_dark', isDark.value ? '1' : '0'); } catch(e) {}
+    }
+    document.documentElement.classList.toggle('van-theme-dark', isDark.value);
     // —— 返回拦截（飞书手势/物理返回）——
     let isHandlingPopState = false;
     let ignoreNextPop = false;
@@ -2713,6 +2802,7 @@ createApp({
 
     return {
       page, user, loggingIn, loginError,
+      isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,

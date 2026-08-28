@@ -1230,6 +1230,33 @@ def proxy_image(file_token):
 
 # ========== 认证接口 ==========
 
+# ========== 最近活跃回写（打开 App 首页/登录时触发，同一用户 10 分钟内只写一次） ==========
+_LAST_ACTIVE_TTL = 600
+_last_active_written = {}
+
+
+def touch_last_active(open_id, user, role):
+    """后台异步把「最近活跃」写入用户/观察员表（按角色选表）。节流防首页刷新刷爆飞书 API。"""
+    key = (open_id, role)
+    now = time.time()
+    if now - _last_active_written.get(key, 0) < _LAST_ACTIVE_TTL:
+        return
+    _last_active_written[key] = now
+    table = USER_TABLE_ID if role == "user" else OBSERVER_TABLE_ID
+    rid = (user or {}).get("record_id")
+    if not table or not rid:
+        return
+    ts = int(now * 1000)
+
+    def _w():
+        try:
+            bitable.update_record(table, rid, {F_LAST_ACTIVE: ts})
+        except Exception as e:
+            app.logger.warning(f"回写最近活跃失败: {e}")
+
+    threading.Thread(target=_w, daemon=True).start()
+
+
 @app.route("/api/auth/feishu", methods=["GET"])
 def feishu_auth():
     """飞书OAuth免登回调"""
@@ -1282,6 +1309,8 @@ def feishu_auth():
     roles = roles_of(open_id)
     default_role = "user" if "user" in roles else "observer"
 
+    touch_last_active(open_id, user, default_role)
+
     session_id = create_session(open_id, default_role)
     brief = format_user_brief(user)
     brief["available_roles"] = sorted(roles)
@@ -1331,6 +1360,7 @@ def home():
     user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
+    touch_last_active(open_id, user, g.yxq_role)
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
     is_observer = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER

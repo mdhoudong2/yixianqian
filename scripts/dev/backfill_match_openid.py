@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """回填数字红娘推荐表的 open_id 字段。
 
 背景：红娘推荐原先只用昵称关联（推荐给用户/被推荐用户），用户改名或删号后
@@ -24,8 +25,9 @@ _BOT = os.path.join(_REPO, "bot")
 sys.path.insert(0, _BOT)
 sys.path.insert(0, _REPO)
 
-import local_config
 import requests
+
+import local_config
 from constants import (
     BASE_TOKEN,
     FIELD_FEISHU_ID,
@@ -37,7 +39,6 @@ from constants import (
     MATCH_TABLE_ID,
     USER_TABLE_ID,
 )
-
 from lib.bitable_client import BitableClient, get_field_text
 
 _client = BitableClient(local_config.FEISHU_APP_ID, local_config.FEISHU_APP_SECRET, BASE_TOKEN)
@@ -69,8 +70,8 @@ def _batch_update(table_id, updates):
     done = 0
     for i in range(0, len(updates), 500):
         chunk = updates[i:i + 500]
-        result = requests.put(url, headers=headers,
-                              json={"records": chunk}, timeout=30).json()
+        result = requests.post(url, headers=headers,
+                               json={"records": chunk}, timeout=30).json()
         if result.get("code") == 0:
             done += len(chunk)
         else:

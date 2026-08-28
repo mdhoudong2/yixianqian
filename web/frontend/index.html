@@ -1370,6 +1370,7 @@ createApp({
     // 活动
     const activities = ref([]);
     const loadingActivities = ref(false);
+    const activitiesLoaded = ref(false);
     const currentActivity = ref(null);
     const currentActivityId = ref('');
     const actionLoading = ref(false);
@@ -1474,6 +1475,7 @@ createApp({
 
     // 喜欢我的
     const likesData = ref({ liked_me: [], mutual: [] });
+    const likesInitialized = ref(false);
     // 本会话内已成功喜欢（未取消）的目标：本地即时排除/置灰，覆盖后端快照刷新的时间窗
     const justLiked = new Set();
 
@@ -1823,9 +1825,9 @@ createApp({
 
     // 活动
     async function loadActivities() {
-      if (activities.value.length) return; // 缓存
+      if (activitiesLoaded.value) return; // 已加载过（含空列表），不反复请求
       loadingActivities.value = true;
-      try { const data = await api('/api/activities'); activities.value = data.activities; }
+      try { const data = await api('/api/activities'); activities.value = data.activities; activitiesLoaded.value = true; }
       catch(e) { vant.showToast(e.message); }
       loadingActivities.value = false;
     }
@@ -1841,7 +1843,7 @@ createApp({
       try {
         await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'POST' });
         vant.showToast('报名成功');
-        activities.value = []; // 刷新缓存
+        activities.value = []; activitiesLoaded.value = false; // 刷新缓存
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
@@ -1852,7 +1854,7 @@ createApp({
       try {
         await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'DELETE' });
         vant.showToast('已取消报名');
-        activities.value = [];
+        activities.value = []; activitiesLoaded.value = false;
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
@@ -2405,9 +2407,13 @@ createApp({
       } catch (e) {}
     }
     async function loadLikes() {
-      // 每次进入消息页都强制刷新（旧逻辑「有数据就跳过」导致喜欢数不实时）
-      loadingLikes.value = true;
-      try { const data = await api('/api/likes/me'); likesData.value = data; }
+      // 仅首次进入显示转圈；之后进入直接展示上次数据，后台静默刷新（接口已毫秒级）
+      if (!likesInitialized.value) loadingLikes.value = true;
+      try {
+        const data = await api('/api/likes/me');
+        likesData.value = data;
+        likesInitialized.value = true;
+      }
       catch(e) { vant.showToast(e.message); }
       await loadMyLikesCount();
       loadingLikes.value = false;
@@ -2654,7 +2660,7 @@ createApp({
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
-      if (p === 'likes') { loadingLikes.value = true; loadLikes(); loadNotifications(); }
+      if (p === 'likes') { loadLikes(); loadNotifications(); }
       if (p === 'profile') checkGroupEntry();
       // 任何页进入即验身份证，错则3秒后跳改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){

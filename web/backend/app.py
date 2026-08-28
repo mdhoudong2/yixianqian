@@ -98,6 +98,9 @@ _snapshot = {
     "messages": [],
 }
 _snapshot_lock = threading.RLock()
+# 已成功加载过的表：区分「未加载」与「加载后为空」。
+# 飞书表合法地没有记录时（如活动表空档期），空快照是权威结果，不应每次请求回退实时查询。
+_snapshot_loaded = set()
 
 _SNAPSHOT_FETCHERS = {
     "users": lambda: bitable.raw_search_records(USER_TABLE_ID),
@@ -124,6 +127,7 @@ def refresh_snapshot_table(key):
             return
         with _snapshot_lock:
             _snapshot[key] = data
+            _snapshot_loaded.add(key)
     except Exception as e:
         logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
 
@@ -159,6 +163,12 @@ def start_snapshot_loop():
 def _snap(key):
     with _snapshot_lock:
         return list(_snapshot.get(key, []))
+
+
+def _snap_ready(key):
+    """该表快照是否已成功加载过（空表也算就绪，无需回退实时查询）"""
+    with _snapshot_lock:
+        return key in _snapshot_loaded
 
 
 # ---- 快照读取辅助（镜像 bitable 常用查询；快照为空时回退到飞书，保证启动初期可用） ----
@@ -290,7 +300,7 @@ def snap_find_user_by_openid(open_id):
 
 def snap_active_users():
     users = _snap("users")
-    if not users:
+    if not users and not _snap_ready("users"):
         return bitable.get_all_users()
     return [u for u in users
             if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "单身"]
@@ -298,7 +308,7 @@ def snap_active_users():
 
 def snap_find_activity(act_id):
     activities = _snap("activities")
-    if not activities:
+    if not activities and not _snap_ready("activities"):
         return find_activity(act_id)
     for a in activities:
         if a.get("record_id") == act_id:
@@ -317,14 +327,14 @@ def snap_resolve_activity(act_id):
 
 def snap_all_activities():
     activities = _snap("activities")
-    if not activities:
+    if not activities and not _snap_ready("activities"):
         return bitable.get_activities()
     return activities
 
 
 def snap_likes_by_target(open_id):
     likes = _snap("likes")
-    if not likes:
+    if not likes and not _snap_ready("likes"):
         return bitable.search_records(LIKE_TABLE_ID, [
             {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]}])
     return [l for l in likes
@@ -333,7 +343,7 @@ def snap_likes_by_target(open_id):
 
 def snap_likes_by_initiator(open_id):
     likes = _snap("likes")
-    if not likes:
+    if not likes and not _snap_ready("likes"):
         return bitable.search_records(LIKE_TABLE_ID, [
             {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
     return [l for l in likes
@@ -342,7 +352,7 @@ def snap_likes_by_initiator(open_id):
 
 def snap_signups_by_openid(open_id):
     signups = _snap("signups")
-    if not signups:
+    if not signups and not _snap_ready("signups"):
         return bitable.search_records(SIGNUP_TABLE_ID, [
             {"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]}])
     return [s for s in signups
@@ -351,7 +361,7 @@ def snap_signups_by_openid(open_id):
 
 def snap_signups_by_activity(act_id):
     signups = _snap("signups")
-    if not signups:
+    if not signups and not _snap_ready("signups"):
         return bitable.get_signups(act_id)
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) == act_id
@@ -360,7 +370,7 @@ def snap_signups_by_activity(act_id):
 
 def snap_signup(act_id, open_id):
     signups = _snap("signups")
-    if not signups:
+    if not signups and not _snap_ready("signups"):
         return bitable.get_user_signup(act_id, open_id)
     for s in signups:
         f = s.get("fields", {})
@@ -373,7 +383,7 @@ def snap_signup(act_id, open_id):
 
 def snap_group_selections_by_selector(open_id):
     gs = _snap("group_selections")
-    if not gs:
+    if not gs and not _snap_ready("group_selections"):
         return bitable.search_records(GROUP_SELECT_TABLE, [
             {"field_name": F_GS_SELECTOR_OID, "operator": "is", "value": [open_id]}])
     return [g for g in gs
@@ -382,7 +392,7 @@ def snap_group_selections_by_selector(open_id):
 
 def snap_group_selection(act_id, open_id):
     gs = _snap("group_selections")
-    if not gs:
+    if not gs and not _snap_ready("group_selections"):
         return bitable.get_user_group_selection(act_id, open_id)
     for sg in gs:
         f = sg.get("fields", {})
@@ -393,7 +403,7 @@ def snap_group_selection(act_id, open_id):
 
 def snap_group_results(act_id):
     gr = _snap("group_results")
-    if not gr:
+    if not gr and not _snap_ready("group_results"):
         return bitable.get_group_results(act_id)
     return [r for r in gr
             if bitable.get_field_text(r.get("fields", {}), F_GR_ACTIVITY_ID) == act_id]
@@ -2153,12 +2163,10 @@ def my_likes():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    # 谁喜欢了我
-    liked_me = bitable.search_records(LIKE_TABLE_ID, [
-        {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]}])
+    # 谁喜欢了我（读快照，60s 循环 + 写操作后定向刷新保证新鲜度；快照未就绪时实时兜底）
+    liked_me = snap_likes_by_target(open_id)
     # 我喜欢的人
-    i_liked = bitable.search_records(LIKE_TABLE_ID, [
-        {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
+    i_liked = snap_likes_by_initiator(open_id)
 
     i_liked_targets = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
@@ -2891,12 +2899,10 @@ def my_liked_list():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    my_likes = bitable.search_records(LIKE_TABLE_ID, [
-        {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
+    my_likes = snap_likes_by_initiator(open_id)
 
     # 谁喜欢了我（用于判断相互喜欢；过滤已取消）
-    liked_me = bitable.search_records(LIKE_TABLE_ID, [
-        {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]}])
+    liked_me = snap_likes_by_target(open_id)
     liked_me_oids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in liked_me

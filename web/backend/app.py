@@ -2611,7 +2611,7 @@ def _normalize_editable_update(data, fields=None):
             ok, msg = bitable.validate_id_card(val)
             if not ok:
                 # 交由上层以 400 提示，前端展示 msg
-                raise ValueError(f"身份证{msg}")
+                raise ValueError("身份证有误")
             # 联动校验生日：若前端同时提交了生日则以提交值为准，否则取原表生日
             bday_val = data.get(F_BIRTHDAY)
             # 生日字段在 EDITABLE_FIELDS 中不可编辑（系统字段），此处仅校验身份证内生日与表生日一致性

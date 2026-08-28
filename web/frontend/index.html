@@ -2319,6 +2319,11 @@ createApp({
         checkIdValidForPage(p);
       }
     });
+    watch(profileData, (v)=>{
+      if(v && typeof v.id_valid === 'boolean' && v.id_valid === false && page.value !== 'profile_edit' && !showIdInvalidDialog.value){
+        checkIdValidForPage(page.value);
+      }
+    });
     // pushState for page forward navigation
     watch(page, (nv, ov) => {
       if(isHandlingPopState) return;
@@ -2447,6 +2452,7 @@ createApp({
           const hash = window.location.hash;
           if (hash === '#/likes') { page.value = 'likes'; }
           // cards / likes / activities 已在 doLogin → loadHome 中一次性加载
+          setTimeout(()=>{ checkIdValidForPage(page.value); }, 1000);
         }
       });
     });

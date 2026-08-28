@@ -1075,7 +1075,7 @@
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
       <div style="font-size:17px; font-weight:600; color:#323233;">筛选</div>
-      <div style="color:#ff6b81; font-size:14px; cursor:pointer;" @click="resetFilter">重置</div>
+      <div style="color:#ff6b81; font-size:14px; cursor:pointer;" @click="resetFilter">清除筛选</div>
     </div>
     <div style="overflow-y:auto; max-height:62vh; padding-top:8px;">
       <div class="filter-row" v-if="isObserver">
@@ -1120,15 +1120,15 @@
         </div>
       </div>
       <div class="filter-row">
-        <div class="filter-label">房产状况</div>
+        <div class="filter-label">房产状况（可多选）</div>
         <div class="filter-tags">
-          <span v-for="o in ['有','无']" :key="o" class="filter-tag" :class="{active: filter.house===o}" @click="filter.house = filter.house===o ? '' : o">{{ o }}</span>
+          <span v-for="o in ['有','无','未填']" :key="o" class="filter-tag" :class="{active: filter.house.includes(o)}" @click="toggleMultiTag('house', o)">{{ o }}</span>
         </div>
       </div>
       <div class="filter-row">
-        <div class="filter-label">汽车</div>
+        <div class="filter-label">汽车（可多选）</div>
         <div class="filter-tags">
-          <span v-for="o in ['有','无']" :key="o" class="filter-tag" :class="{active: filter.driving===o}" @click="filter.driving = filter.driving===o ? '' : o">{{ o }}</span>
+          <span v-for="o in ['有','无','未填']" :key="o" class="filter-tag" :class="{active: filter.driving.includes(o)}" @click="toggleMultiTag('driving', o)">{{ o }}</span>
         </div>
       </div>
     </div>
@@ -1645,15 +1645,15 @@ createApp({
       height_min: '', height_max: '',
       age_min: '', age_max: '',
       education: [], income: [],
-      house: '', driving: ''
+      house: [], driving: []
     });
     const educationOptions = ['大专以下', '大专', '本科', '硕士', '博士'];
-    const incomeOptions = ['10W以下', '10W - 20W', '20W - 30W', '30W - 50W', '50W以上'];
+    const incomeOptions = ['10W以下', '10W - 20W', '20W - 30W', '30W - 50W', '50W以上', '未填'];
     const showFilter = ref(false);
     const slideDir = ref('');
     const hasActiveFilter = computed(() => {
       const f = filter.value;
-      return !!(f.gender || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.house || f.driving);
+      return !!(f.gender || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.house.length || f.driving.length);
     });
     function buildFilterQuery() {
       const f = filter.value;
@@ -1663,8 +1663,8 @@ createApp({
       ['age_min','age_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
       f.education.forEach(e => parts.push('education=' + encodeURIComponent(e)));
       f.income.forEach(i => parts.push('income=' + encodeURIComponent(i)));
-      if (f.house) parts.push('house=' + encodeURIComponent(f.house));
-      if (f.driving) parts.push('driving=' + encodeURIComponent(f.driving));
+      f.house.forEach(h => parts.push('house=' + encodeURIComponent(h)));
+      f.driving.forEach(d => parts.push('driving=' + encodeURIComponent(d)));
       const uid = (f.user_id || '').trim();
       if (uid) parts.push('user_id=' + encodeURIComponent(uid.toUpperCase().startsWith('U-') ? uid.toUpperCase() : 'U-' + uid));
       return parts.length ? ('?' + parts.join('&')) : '';
@@ -1676,7 +1676,7 @@ createApp({
       else arr.push(val);
     }
     async function resetFilter() {
-      filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], house: '', driving: '' };
+      filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], house: [], driving: [] };
       showFilter.value = false;
       cards.value = [];
       cardIndex.value = 0;

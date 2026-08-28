@@ -894,13 +894,31 @@ def pass_card_filters(fields, f):
     # 多选匹配（列表为空则不过滤）
     if f.get("education") and bitable.get_select_value(fields, F_EDUCATION) not in f["education"]:
         return False
-    if f.get("income") and bitable.get_select_value(fields, F_INCOME) not in f["income"]:
-        return False
-    # 单选精确匹配（房产状况/是否有车）
-    if f.get("house") and bitable.get_select_value(fields, F_HOUSE) != f["house"]:
-        return False
-    if f.get("driving") and bitable.get_select_value(fields, F_DRIVING) != f["driving"]:
-        return False
+    if f.get("income"):
+        inc = f["income"]
+        if isinstance(inc, str):
+            inc = [inc] if inc else []
+        if inc:
+            iv = bitable.get_select_value(fields, F_INCOME) or "未填"
+            if iv not in inc:
+                return False
+    # 多选精确匹配（房产状况/是否有车），支持「未填」（空值），可叠加
+    if f.get("house"):
+        hf = f["house"]
+        if isinstance(hf, str):
+            hf = [hf] if hf else []
+        if hf:
+            hv = bitable.get_select_value(fields, F_HOUSE) or "未填"
+            if hv not in hf:
+                return False
+    if f.get("driving"):
+        df = f["driving"]
+        if isinstance(df, str):
+            df = [df] if df else []
+        if df:
+            dv = bitable.get_select_value(fields, F_DRIVING) or "未填"
+            if dv not in df:
+                return False
     # 文本包含匹配
     for key, fname in [
         ("user_id", F_USER_ID),
@@ -1647,8 +1665,8 @@ def get_cards():
         "native_place": (request.args.get("native_place") or "").strip(),
         "city": (request.args.get("city") or "").strip(),
         "industry": (request.args.get("industry") or "").strip(),
-        "house": (request.args.get("house") or "").strip(),
-        "driving": (request.args.get("driving") or "").strip(),
+        "house": [h.strip() for h in request.args.getlist("house") if h.strip()],
+        "driving": [d.strip() for d in request.args.getlist("driving") if d.strip()],
     }
 
     all_users = snap_active_users()

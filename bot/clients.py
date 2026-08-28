@@ -19,7 +19,12 @@ feishu = FeishuClient(APP_ID, APP_SECRET, logger=log)
 bitable = BitableClient(APP_ID, APP_SECRET, BASE_TOKEN, logger=log)
 
 get_tenant_access_token = feishu.get_tenant_access_token
-search_records = bitable.search_records
+
+def search_records(*args, **kwargs):
+    """失败返回 None 时对外转为 []，保持旧调用方兼容。"""
+    result = bitable.search_records(*args, **kwargs)
+    return result if result is not None else []
+
 update_record = bitable.update_record
 create_record = bitable.create_record
 delete_record = bitable.delete_record

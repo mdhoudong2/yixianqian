@@ -1364,9 +1364,9 @@ def home():
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
     is_observer = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
-    # 供前端全局门禁：任何链路进 app 即验
+    # 供前端全局门禁：任何链路进 app 即验（仅普通用户强验身份证，观察员免验）
     try:
-        g._id_valid = bitable.get_id_valid(user.get("fields", {}))
+        g._id_valid = True if is_observer else bitable.get_id_valid(user.get("fields", {}))
     except Exception:
         g._id_valid = True
 
@@ -2597,7 +2597,7 @@ def _editable_value(fields, fname, ftype):
     return ""
 
 
-def _editable_schema(fields):
+def _editable_schema(fields, skip_id_card=False):
     """可编辑字段 schema + 当前值，前端据此动态渲染「修改资料」表单"""
     base = [
         {"field": fname, "label": label, "type": ftype, "options": opts,
@@ -2605,9 +2605,9 @@ def _editable_schema(fields):
          "value": _editable_value(fields, fname, ftype)}
         for fname, label, ftype, opts in EDITABLE_FIELDS
     ]
-    # 身份证缺/错时临时暴露，修后即消（任何链路门禁用）
+    # 身份证缺/错时临时暴露，修后即消（任何链路门禁用；仅普通用户强验）
     try:
-        if not bitable.get_id_valid(fields):
+        if not skip_id_card and not bitable.get_id_valid(fields):
             # 脱敏回显：前3后4，中间*；空则空
             _idc = bitable.get_field_text(fields, F_ID_CARD).strip()
             _mask = (_idc[:3] + "****" + _idc[-4:]) if len(_idc) >= 7 else _idc
@@ -2696,14 +2696,19 @@ def get_profile():
         return jsonify({"error": "用户不存在"}), 404
     data = format_user_profile(user)
     fields = user.get("fields", {})
-    try:
-        _idc = bitable.get_field_text(fields, F_ID_CARD).strip()
-        data["id_valid"] = bitable.get_id_valid(fields)
-        data["id_card_mask"] = (_idc[:3] + "****" + _idc[-4:]) if len(_idc) >= 7 else _idc
-    except Exception:
+    is_observer = g.yxq_role == "observer"
+    if is_observer:
         data["id_valid"] = True
         data["id_card_mask"] = ""
-    data["editable"] = _editable_schema(fields)
+    else:
+        try:
+            _idc = bitable.get_field_text(fields, F_ID_CARD).strip()
+            data["id_valid"] = bitable.get_id_valid(fields)
+            data["id_card_mask"] = (_idc[:3] + "****" + _idc[-4:]) if len(_idc) >= 7 else _idc
+        except Exception:
+            data["id_valid"] = True
+            data["id_card_mask"] = ""
+    data["editable"] = _editable_schema(fields, skip_id_card=is_observer)
     return jsonify(data)
 
 

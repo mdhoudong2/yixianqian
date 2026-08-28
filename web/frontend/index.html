@@ -1415,8 +1415,9 @@ createApp({
         if (dh <= ch + 1) return; // 整图已完整可见，无需调整
         const cy = f.c[1];
         const fh = (f.box && f.box[1]) ? f.box[1] : 0;
-        const top = (cy - fh / 2) * dh;     // 人脸顶（显示坐标）
-        const bottom = (cy + fh / 2) * dh;  // 人脸底
+        const hair = fh * 0.45;                 // 头顶头发余量（检测框顶≈眉毛处）
+        const top = (cy - fh / 2 - hair) * dh;  // 头顶（显示坐标）
+        const bottom = (cy + fh / 2) * dh;      // 下巴
         const offDef = (ch - dh) / 2;       // 默认偏移（居中显示）
         // 默认下人脸已完整可见 → 不动
         if (offDef + top >= 0 && offDef + bottom <= ch) return;

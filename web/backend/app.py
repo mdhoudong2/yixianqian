@@ -896,21 +896,23 @@ def pass_card_filters(fields, f):
         return False
     if f.get("income") and bitable.get_select_value(fields, F_INCOME) not in f["income"]:
         return False
-    # 单选精确匹配（房产状况/是否有车），支持「未填」
+    # 多选精确匹配（房产状况/是否有车），支持「未填」（空值），可叠加
     if f.get("house"):
-        hv = bitable.get_select_value(fields, F_HOUSE)
-        if f["house"] == "未填":
-            if hv:
+        hf = f["house"]
+        if isinstance(hf, str):
+            hf = [hf] if hf else []
+        if hf:
+            hv = bitable.get_select_value(fields, F_HOUSE) or "未填"
+            if hv not in hf:
                 return False
-        elif hv != f["house"]:
-            return False
     if f.get("driving"):
-        dv = bitable.get_select_value(fields, F_DRIVING)
-        if f["driving"] == "未填":
-            if dv:
+        df = f["driving"]
+        if isinstance(df, str):
+            df = [df] if df else []
+        if df:
+            dv = bitable.get_select_value(fields, F_DRIVING) or "未填"
+            if dv not in df:
                 return False
-        elif dv != f["driving"]:
-            return False
     # 文本包含匹配
     for key, fname in [
         ("user_id", F_USER_ID),
@@ -1657,8 +1659,8 @@ def get_cards():
         "native_place": (request.args.get("native_place") or "").strip(),
         "city": (request.args.get("city") or "").strip(),
         "industry": (request.args.get("industry") or "").strip(),
-        "house": (request.args.get("house") or "").strip(),
-        "driving": (request.args.get("driving") or "").strip(),
+        "house": [h.strip() for h in request.args.getlist("house") if h.strip()],
+        "driving": [d.strip() for d in request.args.getlist("driving") if d.strip()],
     }
 
     all_users = snap_active_users()

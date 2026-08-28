@@ -1,5 +1,8 @@
 const { createApp, ref, computed, onMounted } = Vue;
 
+// 活跃用户展示开关（暂时关闭，等通知后改为 true 即可恢复）
+const SHOW_ACTIVE_USERS = false;
+
 const TEXT = {
   heroTitle: '\u4e00\u7ebf\u7275',
   heroSub: '\u4e3a\u6559\u4f1a\u5185\u672a\u5a5a\u9752\u5e74\u7275\u7ebf\u642d\u6865<br>\u613f\u4e3b\u5185\u7684\u5144\u5f1f\u59d0\u59b9\uff0c\u65e9\u65e5\u627e\u5230\u53e6\u4e00\u534a',
@@ -77,10 +80,12 @@ createApp({
 
     onMounted(() => {
       track('page_view');
-      loadUsers();
-      setInterval(loadUsers, 30000);
+      if (SHOW_ACTIVE_USERS) {
+        loadUsers();
+        setInterval(loadUsers, 30000);
+      }
     });
 
-    return { t: TEXT, showGuide, users, maleUsers, femaleUsers, simpleLine, cityOf, onJoin };
+    return { t: TEXT, showGuide, users, maleUsers, femaleUsers, simpleLine, cityOf, onJoin, showActiveUsers: SHOW_ACTIVE_USERS };
   }
 }).use(vant).mount('#app');

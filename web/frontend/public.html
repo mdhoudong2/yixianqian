@@ -43,6 +43,7 @@
       </div>
     </div>
 
+    <template v-if="showActiveUsers">
     <div class="section-title">💙 {{ t.maleTitle }}</div>
     <div class="user-grid">
       <div class="user-card" v-for="u in maleUsers" :key="'m' + u.nickname">
@@ -66,6 +67,7 @@
         </div>
       </div>
     </div>
+    </template>
   </div>
 
   <div class="cta-bar">
@@ -99,6 +101,6 @@
 </div>
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/vant.min.js"></script>
-<script src="public.js?v=1"></script>
+<script src="public.js?v=2"></script>
 </body>
 </html>

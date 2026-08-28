@@ -8,8 +8,10 @@
 <style>
   /* 统一主题色：Vant 默认主色（蓝）覆盖为品牌粉，保证按钮/标签/单选框/开关等一致 */
   :root { --van-primary-color: #ff6b81; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f7f8fa; -webkit-tap-highlight-color: transparent; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-touch-callout: none; }
+  html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f7f8fa; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  img { -webkit-touch-callout: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-user-drag: none; user-drag: none; }
+  input, textarea { -webkit-user-select: text; -moz-user-select: text; -ms-user-select: text; user-select: text; -webkit-touch-callout: default; }
   #app { min-height: 100vh; padding-bottom: 60px; }
   .page { padding: 12px; }
   .theme-color { color: #ff6b81; }
@@ -1185,6 +1187,34 @@
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/vant.min.js"></script>
 <script>
+// anti-copy: disable text selection and long-press save on images
+(function(){
+  try{
+    function isEditable(el){
+      try{
+        if(!el) return false;
+        if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable) return true;
+        if(el.closest && el.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')) return true;
+        var p=el.parentElement;
+        while(p){
+          if(p.tagName==='INPUT'||p.tagName==='TEXTAREA'||p.isContentEditable) return true;
+          p=p.parentElement;
+        }
+      }catch(e){}
+      return false;
+    }
+    document.addEventListener('contextmenu', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('selectstart', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('copy', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('cut', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('dragstart', function(e){ e.preventDefault(); });
+    function disableImgDrag(){
+      document.querySelectorAll('img').forEach(function(img){ img.setAttribute('draggable','false'); });
+    }
+    if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', disableImgDrag); } else { disableImgDrag(); }
+    new MutationObserver(disableImgDrag).observe(document.documentElement,{childList:true,subtree:true});
+  }catch(e){}
+})();
 const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {

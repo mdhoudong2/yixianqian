@@ -1,6 +1,35 @@
 const { createApp, ref, computed, onMounted } = Vue;
 
-// 活跃用户展示开关（暂时关闭，等通知后改为 true 即可恢复）
+// anti-copy: disable text selection and long-press save on images
+(function(){
+  try{
+    function isEditable(el){
+      try{
+        if(!el) return false;
+        if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable) return true;
+        if(el.closest && el.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')) return true;
+        var p=el.parentElement;
+        while(p){
+          if(p.tagName==='INPUT'||p.tagName==='TEXTAREA'||p.isContentEditable) return true;
+          p=p.parentElement;
+        }
+      }catch(e){}
+      return false;
+    }
+    document.addEventListener('contextmenu', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('selectstart', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('copy', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('cut', function(e){ if(isEditable(e.target)) return; e.preventDefault(); });
+    document.addEventListener('dragstart', function(e){ e.preventDefault(); });
+    function disableImgDrag(){
+      document.querySelectorAll('img').forEach(function(img){ img.setAttribute('draggable','false'); });
+    }
+    if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded', disableImgDrag); } else { disableImgDrag(); }
+    new MutationObserver(disableImgDrag).observe(document.documentElement,{childList:true,subtree:true});
+  }catch(e){}
+})();
+
+// toggle active users display (temporarily disabled, set true to restore)
 const SHOW_ACTIVE_USERS = false;
 
 const TEXT = {

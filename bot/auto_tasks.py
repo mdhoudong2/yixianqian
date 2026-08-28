@@ -1089,6 +1089,7 @@ def auto_generate_match_recommendations():
             continue
         users.append({
             "nickname": nickname, "record_id": item.get("record_id"),
+            "open_id": get_field_text(fields, FIELD_FEISHU_ID),
             FIELD_GENDER: get_field_text(fields, FIELD_GENDER),
             FIELD_EDUCATION: get_field_text(fields, FIELD_EDUCATION),
             "hobbies": get_multi_select_value(fields, FIELD_SELF_HOBBIES)
@@ -1097,17 +1098,25 @@ def auto_generate_match_recommendations():
     existing_pairs = set()
     for rec in existing_recommendations:
         rec_fields = rec.get("fields", {})
+        for_openid = get_field_text(rec_fields, FIELD_MATCH_FOR_OPENID)
+        target_openid = get_field_text(rec_fields, FIELD_MATCH_TARGET_OPENID)
+        if for_openid and target_openid:
+            existing_pairs.add((for_openid, target_openid))
         for_user = get_field_text(rec_fields, FIELD_MATCH_FOR_USER)
         target_user = get_field_text(rec_fields, FIELD_MATCH_TARGET_USER)
         if for_user and target_user:
             existing_pairs.add((for_user, target_user))
     generated_count = 0
     for user in users:
-        candidates = [u for u in users if u[FIELD_GENDER] != user[FIELD_GENDER] and u["nickname"] != user["nickname"]]
+        candidates = [u for u in users
+                      if u[FIELD_GENDER] != user[FIELD_GENDER]
+                      and (u["open_id"] or u["nickname"]) != (user["open_id"] or user["nickname"])]
         if not candidates:
             continue
         scored_candidates = []
         for candidate in candidates:
+            if (user["open_id"], candidate["open_id"]) in existing_pairs:
+                continue
             if (user["nickname"], candidate["nickname"]) in existing_pairs:
                 continue
             score, reasons = calculate_match_score(user, candidate)
@@ -1120,6 +1129,8 @@ def auto_generate_match_recommendations():
             create_record(MATCH_TABLE_ID, {
                 FIELD_MATCH_FOR_USER: user["nickname"],
                 FIELD_MATCH_TARGET_USER: candidate["nickname"],
+                FIELD_MATCH_FOR_OPENID: user["open_id"],
+                FIELD_MATCH_TARGET_OPENID: candidate["open_id"],
                 FIELD_MATCH_REASON: reason_text,
                 FIELD_MATCH_STATUS: "待查看"
             })

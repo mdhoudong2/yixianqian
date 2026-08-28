@@ -99,16 +99,22 @@ class BitableClient:
                     if attempt < 1:
                         time.sleep(2 ** attempt)
                         continue
-                    return all_items
+                    return None
                 if result.get("code") != 0:
                     self.log(f"搜索记录失败(table={table_id}): {result}")
                     # token 失效：清缓存重取后重试
-                    if attempt < 2 and result.get("code") in (99991661, 99991663, 99991672, 99991668):
+                    if attempt < 1 and result.get("code") in (99991661, 99991663, 99991672, 99991668):
                         self._token_cache = {"token": None, "expire_time": 0}
                         time.sleep(2 ** attempt)
                         continue
-                    return all_items
+                    # 飞书内部瞬时错误也重试一次，避免失败清空快照
+                    if attempt < 1 and result.get("code") in (1255002, 1254291, 2200):
+                        time.sleep(1)
+                        continue
+                    return None
                 break
+            if result is None:
+                return None
             d = result.get("data", {})
             all_items.extend(d.get("items", []))
             if not d.get("has_more"):

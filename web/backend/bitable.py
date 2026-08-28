@@ -31,7 +31,16 @@ _logger = logging.getLogger("bitable").warning
 _client = BitableClient(FEISHU_APP_ID, FEISHU_APP_SECRET, BASE_TOKEN, logger=_logger)
 
 get_token = _client.get_token
-search_records = _client.search_records
+
+def search_records(*args, **kwargs):
+    """包装 _client.search_records：失败返回 None 时对外转为 []，保持旧调用方兼容；快照需区分失败/空表，应直接调用 _client.search_records。"""
+    result = _client.search_records(*args, **kwargs)
+    return result if result is not None else []
+
+
+# 供快照使用的原始查询（失败返回 None，调用方需区分空表与失败）
+raw_search_records = _client.search_records
+
 get_record = _client.get_record
 create_record = _client.create_record
 update_record = _client.update_record

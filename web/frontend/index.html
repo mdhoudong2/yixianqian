@@ -1003,12 +1003,19 @@
   </div>
 </van-popup>
 <!-- 修改资料未保存提示 -->
-<van-dialog v-model:show="showUnsavedConfirm" title="提示" show-cancel-button
-  confirm-button-text="保存" cancel-button-text="不保存" confirm-button-color="#ff6b81"
-  :close-on-click-overlay="false"
-  @confirm="saveAndLeaveProfileEdit" @cancel="discardProfileEdit">
-  <div style="padding:12px 16px 4px; text-align:center; font-size:14px; color:#646566;">资料已修改，是否保存？</div>
-</van-dialog>
+<div v-if="showUnsavedConfirm" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9998; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
+  <div style="width:100%; max-width:320px; background:#fff; border-radius:14px; overflow:hidden;">
+    <div style="padding:22px 16px 14px; text-align:center;">
+      <div style="font-size:16px; font-weight:600; color:#323233; margin-bottom:8px;">提示</div>
+      <div style="font-size:14px; color:#646566;">资料已修改，是否保存？</div>
+    </div>
+    <div style="border-top:1px solid #ebedf0;">
+      <div style="text-align:center; padding:14px; color:#ff6b81; font-weight:600; font-size:15px; cursor:pointer;" @click="saveAndLeaveProfileEdit">保存</div>
+      <div style="text-align:center; padding:14px; color:#646566; font-size:15px; cursor:pointer; border-top:1px solid #f2f3f5;" @click="discardProfileEdit">不保存</div>
+      <div style="text-align:center; padding:14px; color:#969799; font-size:15px; cursor:pointer; border-top:1px solid #f2f3f5;" @click="cancelProfileEditLeave">取消</div>
+    </div>
+  </div>
+</div>
 <!-- 身份证有误全屏强制提示 -->
 <div v-if="showIdInvalidDialog" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
   <div style="width:100%; max-width:340px; background:#fff; border-radius:14px; overflow:hidden;">
@@ -1193,8 +1200,7 @@ createApp({
         return;
       }
       if(showUnsavedConfirm.value){
-        showUnsavedConfirm.value = false;
-        pendingProfileEditLeave = null;
+        cancelProfileEditLeave();
         return;
       }
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
@@ -1379,9 +1385,19 @@ createApp({
     const showUnsavedConfirm = ref(false);
     let pendingProfileEditLeave = null;
     let profileEditSnapshot = '';
+    function _editFingerprint(){
+      const cur = {};
+      editableFields.value.forEach(f => {
+        let v = f.value;
+        if (Array.isArray(v)) v = v.join('|');
+        if (v === null || v === undefined) v = '';
+        cur[f.field] = String(v);
+      });
+      return JSON.stringify(cur);
+    }
     function isProfileEditDirty(){
       if(page.value !== 'profile_edit') return false;
-      try { return JSON.stringify(editableFields.value) !== profileEditSnapshot; } catch(e){ return false; }
+      try { return _editFingerprint() !== profileEditSnapshot; } catch(e){ return false; }
     }
     const showSelectPopup = ref(false);
     const showMultiPopup = ref(false);
@@ -1400,15 +1416,19 @@ createApp({
       profilePhotos.value = (profileData.value.photos && profileData.value.photos.length)
         ? [...profileData.value.photos]
         : (profileData.value.photo ? [profileData.value.photo] : []);
-      try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){ profileEditSnapshot = ''; }
+      try { profileEditSnapshot = _editFingerprint(); } catch(e){ profileEditSnapshot = ''; }
       pendingProfileEditLeave = null;
       page.value = 'profile_edit';
+    }
+    function cancelProfileEditLeave(){
+      showUnsavedConfirm.value = false;
+      pendingProfileEditLeave = null;
     }
     function discardProfileEdit(){
       showUnsavedConfirm.value = false;
       const cb = pendingProfileEditLeave;
       pendingProfileEditLeave = null;
-      try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
+      try { profileEditSnapshot = _editFingerprint(); } catch(e){}
       if(cb) cb(); else page.value = 'profile_detail';
     }
     async function saveAndLeaveProfileEdit(){
@@ -1421,7 +1441,7 @@ createApp({
       try {
         await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
         vant.showToast('保存成功');
-        try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
+        try { profileEditSnapshot = _editFingerprint(); } catch(e){}
         profileLoaded.value = false;
         try { const d = await api('/api/profile'); profileData.value = d; profileLoaded.value = true; } catch(e){}
         if(cb){ cb(); } else { page.value = 'profile_detail'; }
@@ -1490,7 +1510,7 @@ createApp({
       try {
         await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
         vant.showToast('保存成功');
-        try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
+        try { profileEditSnapshot = _editFingerprint(); } catch(e){}
         profileLoaded.value = false;
         await openProfileDetail();
       } catch(e) { vant.showToast(e.message); }
@@ -2362,7 +2382,7 @@ createApp({
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
       if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
-      if(showUnsavedConfirm.value){ showUnsavedConfirm.value=false; pendingProfileEditLeave=null; isHandlingPopState=false; return; }
+      if(showUnsavedConfirm.value){ cancelProfileEditLeave(); isHandlingPopState=false; return; }
       if(page.value === 'profile_edit' && isProfileEditDirty()){
         pushHistory({page: 'profile_edit'});
         pendingProfileEditLeave = () => { history.back(); };
@@ -2565,7 +2585,7 @@ createApp({
       profileData, openProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
-      showUnsavedConfirm, discardProfileEdit, saveAndLeaveProfileEdit,
+      showUnsavedConfirm, discardProfileEdit, saveAndLeaveProfileEdit, cancelProfileEditLeave,
       photoInput, uploadingPhoto, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,

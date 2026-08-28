@@ -1858,14 +1858,16 @@ createApp({
     }
     function onCardTouchMove(e) {}
     function switchCard(dir) {
-      if (dir < 0 && cardIndex.value < cards.value.length - 1) {
+      const n = cards.value.length;
+      if (n <= 1) return;
+      if (dir < 0) {
         slideDir.value = 'right';
-        cardIndex.value++;
+        cardIndex.value = (cardIndex.value + 1) % n;
         photoIndex.value = 0;
         photoSlideDir.value = '';
-      } else if (dir > 0 && cardIndex.value > 0) {
+      } else if (dir > 0) {
         slideDir.value = 'left';
-        cardIndex.value--;
+        cardIndex.value = (cardIndex.value - 1 + n) % n;
         photoIndex.value = 0;
         photoSlideDir.value = '';
       }

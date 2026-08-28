@@ -19,9 +19,11 @@ from lib.bitable_client import (  # noqa: F401 — re-export for app.py via bita
     get_datetime_value,
     get_field_number,
     get_field_text,
+    get_id_valid,
     get_multi_select_value,
     get_phone_value,
     get_select_value,
+    validate_id_card,
 )
 
 _logger = logging.getLogger("bitable").warning

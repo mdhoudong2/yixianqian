@@ -413,3 +413,61 @@ def get_phone_value(fields, key, default=""):
             return first.get("number") or first.get("text") or str(first)
         return str(first)
     return str(val)
+
+def validate_id_card(idc):
+    """校验中国居民身份证 15/18位：长度+日期+地址前缀+18位校验位。
+
+    返回 (ok: bool, msg: str)，msg 为空表示合法，否则为原因；15位无校验位仅验日期/前缀。
+    轻量本地校验，无法验真伪/人证一致（需公安付费接口）。
+    """
+    import datetime as _dt
+    idc = (idc or "").strip().upper().replace(" ", "")
+    if not idc:
+        return False, "空"
+    _weights = [7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2]
+    _check_map = ['1','0','X','9','8','7','6','5','4','3','2']
+    _valid_prefixes = set([f"{i:02d}" for i in list(range(11,16))+list(range(21,24))+list(range(31,38))+list(range(41,47))+list(range(50,55))+list(range(61,66))+[71,81,82,91]])
+    if len(idc) == 15:
+        if not idc.isdigit():
+            return False, "15位含非数字"
+        y = "19" + idc[6:8]
+        m = idc[8:10]
+        d = idc[10:12]
+        try:
+            _dt.date(int(y), int(m), int(d))
+        except:
+            return False, f"15位日期非法 {y}-{m}-{d}"
+        if idc[:2] not in _valid_prefixes:
+            return False, f"15位地址前缀非法 {idc[:2]}"
+        return True, ""
+    if len(idc) == 18:
+        if not idc[:17].isdigit():
+            return False, "前17位含非数字"
+        if idc[17] not in "0123456789X":
+            return False, "末位非法"
+        y, m, d = idc[6:10], idc[10:12], idc[12:14]
+        try:
+            bd = _dt.date(int(y), int(m), int(d))
+            if bd > _dt.date.today():
+                return False, f"生日未来 {y}-{m}-{d}"
+            age = _dt.date.today().year - int(y) - ((_dt.date.today().month, _dt.date.today().day) < (int(m), int(d)))
+            if age < 0 or age > 120:
+                return False, f"年龄异常 {age}"
+        except:
+            return False, f"日期非法 {y}-{m}-{d}"
+        if idc[:2] not in _valid_prefixes:
+            return False, f"地址前缀非法 {idc[:2]}"
+        s = sum(int(idc[i]) * _weights[i] for i in range(17))
+        r = s % 11
+        expect = _check_map[r]
+        if idc[17] != expect:
+            return False, f"校验位错 期望 {expect} 实 {idc[17]}"
+        return True, ""
+    return False, f"长度非法 {len(idc)}"
+
+
+def get_id_valid(fields, id_key="身份证号"):
+    """从字段 dict 判断身份证是否格式合法，返回 bool"""
+    ok, _ = validate_id_card(get_field_text(fields, id_key))
+    return ok
+

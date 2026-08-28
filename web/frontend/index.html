@@ -692,6 +692,17 @@
     </div>
   </div>
 
+  <!-- 身份证有误强制提示 -->
+  <van-popup v-model:show="showIdInvalidDialog" round position="center" :close-on-click-overlay="false" :close-on-popstate="false" style="width:84%; max-width:320px; border-radius:12px; overflow:hidden;">
+    <div style="padding:22px 16px 12px; text-align:center;">
+      <div style="font-size:16px; font-weight:600; color:#323233; margin-bottom:8px;">提示</div>
+      <div style="font-size:14px; color:#646566; line-height:1.6;">身份证信息有误或缺失，请先前往“修改资料”修正<br><span style="color:#ff6b81;">{{ idInvalidCountdown }}秒后自动跳转</span></div>
+    </div>
+    <div style="display:flex; border-top:1px solid #ebedf0;">
+      <div style="flex:1; text-align:center; padding:14px; color:#ff6b81; font-weight:600; cursor:pointer;" @click="goIdInvalidNow">立即去改</div>
+    </div>
+  </van-popup>
+
   <!-- 单选弹窗 -->
   <van-popup v-model:show="showSelectPopup" position="bottom" round>
     <div class="picker-header">
@@ -1331,6 +1342,9 @@ createApp({
     // 我的资料
     const profileData = ref({});
     const profileLoaded = ref(false);
+    const showIdInvalidDialog = ref(false);
+    const idInvalidCountdown = ref(3);
+    let idInvalidTimer = null;
     // 我的资料-分组展示：各组是否有内容（无内容则不显示整卡）
     const hasProfileBasic = computed(() => !!(profileData.value.real_name || profileData.value.baptismal_name || profileData.value.birthday || profileData.value.height || profileData.value.education || profileData.value.city || profileData.value.native_place || profileData.value.church || profileData.value.group || profileData.value.church_location));
     const hasProfileWork = computed(() => !!(profileData.value.industry || profileData.value.position || profileData.value.income || profileData.value.house || profileData.value.driving));
@@ -2158,6 +2172,43 @@ createApp({
       try { const data = await api('/api/profile'); profileData.value = data; profileLoaded.value = true; page.value = 'profile_detail'; }
       catch(e) { vant.showToast(e.message); }
     }
+    async function checkIdValidForPage(targetPage){
+      if(targetPage === 'profile_edit') return;
+      // 已在编辑页不拦，避免循环
+      try{
+        // 优先用已加载的 profileData，若未加载或无 id_valid 则拉取
+        let valid = profileData.value && typeof profileData.value.id_valid === 'boolean' ? profileData.value.id_valid : null;
+        if(valid === null){
+          try{
+            const d = await api('/api/profile');
+            // 缓存但不切页
+            profileData.value = Object.assign({}, profileData.value, d);
+            profileLoaded.value = true;
+            valid = d.id_valid;
+          }catch(e){ return; }
+        }
+        if(valid === false){
+          if(showIdInvalidDialog.value) return;
+          showIdInvalidDialog.value = true;
+          idInvalidCountdown.value = 3;
+          if(idInvalidTimer) clearInterval(idInvalidTimer);
+          idInvalidTimer = setInterval(()=>{
+            idInvalidCountdown.value -= 1;
+            if(idInvalidCountdown.value <= 0){
+              clearInterval(idInvalidTimer);
+              idInvalidTimer = null;
+              showIdInvalidDialog.value = false;
+              openProfileEdit();
+            }
+          }, 1000);
+        }
+      }catch(e){}
+    }
+    function goIdInvalidNow(){
+      if(idInvalidTimer){ clearInterval(idInvalidTimer); idInvalidTimer=null; }
+      showIdInvalidDialog.value = false;
+      openProfileEdit();
+    }
     // 分组
     async function goGroupSelect(activityId) {
       groupSelectFrom.value = page.value; // 记录来路，用于返回
@@ -2263,6 +2314,10 @@ createApp({
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
       if (p === 'likes') { loadingLikes.value = true; loadLikes(); loadNotifications(); }
       if (p === 'profile') checkGroupEntry();
+      // 任何页进入即验身份证，错则3秒后跳改资料
+      if(p !== 'profile_edit' && !showIdInvalidDialog.value){
+        checkIdValidForPage(p);
+      }
     });
     // pushState for page forward navigation
     watch(page, (nv, ov) => {
@@ -2405,6 +2460,7 @@ createApp({
       openActivity, doSignup, cancelSignup,
       cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
+      showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
       onCardTouchStart, onCardTouchMove, onCardTouchEnd,

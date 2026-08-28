@@ -35,7 +35,8 @@
   .swipe-card.slide-in-left { animation: slideInLeft 0.28s ease; }
   @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
-  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: #f2f3f5; overflow: hidden; touch-action: pan-y; }
+  .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: #f2f3f5; overflow: hidden; touch-action: pan-y; cursor: grab; }
+  .card-photo-wrap:active { cursor: grabbing; }
   .card-photo-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; }
   .card-photo-item { flex: 0 0 100%; width: 100%; height: 100%; object-fit: cover; display: block; }
   .card-photo { width: 100%; height: 100%; object-fit: cover; display: block; will-change: opacity, transform; }
@@ -58,7 +59,8 @@
   .card-name { font-size: 20px; font-weight: bold; }
   .card-name .gender-icon { font-size: 16px; margin-left: 6px; }
   .card-subtitle { font-size: 13px; opacity: 0.9; margin-top: 2px; }
-  .card-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  .card-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; cursor: grab; }
+  .card-main:active { cursor: grabbing; }
   .card-main .card-tabs { flex-shrink: 0; }
   .card-main .card-info { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .photo-zoom-btn { flex-shrink: 0; width: 32px; height: 32px; color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0.95; }
@@ -198,7 +200,8 @@
   .like-item-msg { font-size: 13px; color: #646566; margin-top: 4px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
   /* 全屏图片预览 */
   .photo-viewer { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #000; z-index: 999; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  .photo-viewer-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; }
+  .photo-viewer-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; cursor: grab; }
+  .photo-viewer-track:active { cursor: grabbing; }
   .photo-viewer-item { flex: 0 0 100%; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
   .photo-viewer-item img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; will-change: opacity, transform; animation: viewerFadeIn 0.25s ease; }
@@ -326,7 +329,7 @@
     <template v-else>
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
       :class="slideDir === 'right' ? 'slide-in-right' : (slideDir === 'left' ? 'slide-in-left' : '')">
-      <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @click="onPhotoClick">
+      <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @mousedown="onPhotoMouseDown" @mousemove="onPhotoMouseMove" @mouseup="onPhotoMouseUp" @mouseleave="onPhotoMouseLeave" @click="onPhotoClick">
         <div v-if="photoLoading" class="photo-loading"></div>
         <div v-if="currentPhotoList.length" class="card-photo-track" :style="{ transform: 'translateX(-' + photoIndex * 100 + '%)' }">
           <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt="" @load="onPhotoLoad" @error="onPhotoError">
@@ -348,7 +351,7 @@
           </div>
         </div>
       </div>
-      <div class="card-main" @touchstart="onCardTouchStart" @touchmove="onCardTouchMove" @touchend="onCardTouchEnd">
+      <div class="card-main" @touchstart="onCardTouchStart" @touchmove="onCardTouchMove" @touchend="onCardTouchEnd" @mousedown="onCardMouseDown" @mousemove="onCardMouseMove" @mouseup="onCardMouseUp" @mouseleave="onCardMouseLeave">
       <div class="card-tabs">
         <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
         <div v-if="!currentCard.is_self" class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
@@ -1043,7 +1046,7 @@
 <div v-if="showPhotoViewer" class="photo-viewer" @click="closePhotoViewer">
   <div class="photo-viewer-close" @click.stop="closePhotoViewer">✕</div>
   <div class="photo-viewer-nav prev" v-if="viewerPhotos.length > 1" @click.stop="viewerPrev">‹</div>
-  <div class="photo-viewer-track" :style="{ transform: 'translateX(-' + viewerIndex * 100 + '%)' }" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd">
+  <div class="photo-viewer-track" :style="{ transform: 'translateX(-' + viewerIndex * 100 + '%)' }" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd" @mousedown="onViewerMouseDown" @mousemove="onViewerMouseMove" @mouseup="onViewerMouseUp" @mouseleave="onViewerMouseLeave">
     <div v-for="(p,i) in viewerPhotos" :key="i" class="photo-viewer-item" @click.stop="onViewerImageClick">
       <img :src="p" alt="">
     </div>
@@ -1874,6 +1877,38 @@ createApp({
         switchCard(dx < 0 ? -1 : 1);
       }
     }
+    // —— 卡片滑动（鼠标）——
+    let cardMouseDown = false;
+    let cardMouseStartX = 0, cardMouseStartY = 0;
+    function onCardMouseDown(e) {
+      if (e.button !== 0) return;
+      cardMouseDown = true;
+      cardMouseStartX = e.clientX;
+      cardMouseStartY = e.clientY;
+      // 防止拖拽时选中文本
+      e.preventDefault();
+    }
+    function onCardMouseMove(e) {
+      if (!cardMouseDown) return;
+      // 轻微移动时阻止文本选中
+      const dx = Math.abs(e.clientX - cardMouseStartX);
+      const dy = Math.abs(e.clientY - cardMouseStartY);
+      if (dx > 5 || dy > 5) e.preventDefault();
+    }
+    function onCardMouseUp(e) {
+      if (!cardMouseDown) return;
+      cardMouseDown = false;
+      const dx = e.clientX - cardMouseStartX;
+      const dy = e.clientY - cardMouseStartY;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+        switchCard(dx < 0 ? -1 : 1);
+      }
+    }
+    function onCardMouseLeave(e) {
+      if (!cardMouseDown) return;
+      // 鼠标移出时视为结束，不触发切换，避免卡死
+      cardMouseDown = false;
+    }
     // 兼容旧模板（如有残留调用）
     const onTouchStart = onCardTouchStart;
     const onTouchMove = onCardTouchMove;
@@ -1912,6 +1947,48 @@ createApp({
       if (photoDidSwipe) { photoDidSwipe = false; return; }
       const photos = currentCard.value ? (currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : [])) : [];
       if (photos.length) openPhotoViewerForCurrent();
+    }
+    // —— 图片区：鼠标拖动切换照片 ——
+    let photoMouseDown = false;
+    let photoMouseStartX = 0, photoMouseStartY = 0, photoMouseStartTime = 0;
+    function onPhotoMouseDown(e) {
+      if (e.button !== 0) return;
+      photoMouseDown = true;
+      photoMouseStartX = e.clientX;
+      photoMouseStartY = e.clientY;
+      photoMouseStartTime = Date.now();
+      photoDidSwipe = false;
+      e.preventDefault();
+    }
+    function onPhotoMouseMove(e) {
+      if (!photoMouseDown) return;
+      const dx = Math.abs(e.clientX - photoMouseStartX);
+      const dy = Math.abs(e.clientY - photoMouseStartY);
+      if (dx > 15 || dy > 15) photoDidSwipe = true;
+      if (photoDidSwipe) e.preventDefault();
+    }
+    function onPhotoMouseUp(e) {
+      if (!photoMouseDown) return;
+      photoMouseDown = false;
+      const dx = e.clientX - photoMouseStartX;
+      const dy = e.clientY - photoMouseStartY;
+      const dt = Date.now() - photoMouseStartTime;
+      const photos = currentCard.value ? (currentCard.value.photos || (currentCard.value.photo ? [currentCard.value.photo] : [])) : [];
+      if (Math.abs(dx) > 35 && Math.abs(dx) > Math.abs(dy)) {
+        photoDidSwipe = true;
+        if (photos.length > 1) {
+          photoSlideDir.value = dx < 0 ? 'left' : 'right';
+          if (dx < 0) photoIndex.value = (photoIndex.value + 1) % photos.length;
+          else photoIndex.value = (photoIndex.value - 1 + photos.length) % photos.length;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
+    function onPhotoMouseLeave(e) {
+      if (!photoMouseDown) return;
+      photoMouseDown = false;
     }
     function openPhotoViewer(idx) {
       openPhotoViewerForCurrent();
@@ -1959,6 +2036,42 @@ createApp({
     function onViewerImageClick(e) {
       if (viewerDidSwipe) { viewerDidSwipe = false; return; }
       closePhotoViewer();
+    }
+    // —— 全屏预览：鼠标拖动切换 ——
+    let viewerMouseDown = false;
+    let viewerMouseStartX = 0, viewerMouseStartY = 0, viewerMouseStartTime = 0;
+    function onViewerMouseDown(e) {
+      if (e.button !== 0) return;
+      viewerMouseDown = true;
+      viewerMouseStartX = e.clientX;
+      viewerMouseStartY = e.clientY;
+      viewerMouseStartTime = Date.now();
+      viewerDidSwipe = false;
+      e.preventDefault();
+    }
+    function onViewerMouseMove(e) {
+      if (!viewerMouseDown) return;
+      const dx = Math.abs(e.clientX - viewerMouseStartX);
+      const dy = Math.abs(e.clientY - viewerMouseStartY);
+      if (dx > 15 || dy > 15) viewerDidSwipe = true;
+      if (viewerDidSwipe) e.preventDefault();
+    }
+    function onViewerMouseUp(e) {
+      if (!viewerMouseDown) return;
+      viewerMouseDown = false;
+      const dx = e.clientX - viewerMouseStartX;
+      const dy = e.clientY - viewerMouseStartY;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+        viewerDidSwipe = true;
+        dx < 0 ? viewerNext() : viewerPrev();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
+    function onViewerMouseLeave(e) {
+      if (!viewerMouseDown) return;
+      viewerMouseDown = false;
     }
     function openPhotoViewerForUser(u) {
       const photos = u.photos || (u.photo ? [u.photo] : []);
@@ -2609,7 +2722,9 @@ createApp({
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
       onCardTouchStart, onCardTouchMove, onCardTouchEnd,
+      onCardMouseDown, onCardMouseMove, onCardMouseUp, onCardMouseLeave,
       onPhotoTouchStart, onPhotoTouchMove, onPhotoTouchEnd, onPhotoClick,
+      onPhotoMouseDown, onPhotoMouseMove, onPhotoMouseUp, onPhotoMouseLeave,
       openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage,
       showLikeDialog, likeDialogTitle, likeTarget, likeType,
       showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,
@@ -2632,6 +2747,7 @@ createApp({
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,
+      onViewerMouseDown, onViewerMouseMove, onViewerMouseUp, onViewerMouseLeave,
       handleBack, showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """回填数字红娘推荐表的 open_id 字段。
 
 背景：红娘推荐原先只用昵称关联（推荐给用户/被推荐用户），用户改名或删号后
@@ -25,21 +24,23 @@ _BOT = os.path.join(_REPO, "bot")
 sys.path.insert(0, _BOT)
 sys.path.insert(0, _REPO)
 
-import requests
-
 import local_config
+import requests
 from constants import (
     BASE_TOKEN,
     FIELD_FEISHU_ID,
-    FIELD_MATCH_FOR_OPENID,
     FIELD_MATCH_FOR_USER,
-    FIELD_MATCH_TARGET_OPENID,
     FIELD_MATCH_TARGET_USER,
     FIELD_NICKNAME,
     MATCH_TABLE_ID,
     USER_TABLE_ID,
 )
+
 from lib.bitable_client import BitableClient, get_field_text
+
+# 新字段名（main 分支的 constants 尚未定义，脚本内自持，兼容两分支运行）
+FIELD_MATCH_FOR_OPENID = "推荐给用户open_id"
+FIELD_MATCH_TARGET_OPENID = "被推荐用户open_id"
 
 _client = BitableClient(local_config.FEISHU_APP_ID, local_config.FEISHU_APP_SECRET, BASE_TOKEN)
 

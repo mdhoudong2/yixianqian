@@ -588,11 +588,7 @@
 <div v-else-if="page==='profile'" style="padding:0;">
   <div class="profile-header">
     <div class="theme-toggle" @click="toggleTheme" :aria-label="isDark ? '切换日间模式' : '切换夜间模式'">
-      <svg v-if="!isDark" class="theme-icon" viewBox="0 0 24 24" fill="#fff">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-        <path d="M18.2 5.1l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55z"/>
-      </svg>
-      <svg v-else class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+      <svg v-if="!isDark" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
         <circle cx="12" cy="12" r="4.2"/>
         <line x1="12" y1="1.8" x2="12" y2="4.2"/>
         <line x1="12" y1="19.8" x2="12" y2="22.2"/>
@@ -602,6 +598,10 @@
         <line x1="17.5" y1="17.5" x2="19.2" y2="19.2"/>
         <line x1="4.8" y1="19.2" x2="6.5" y2="17.5"/>
         <line x1="17.5" y1="6.5" x2="19.2" y2="4.8"/>
+      </svg>
+      <svg v-else class="theme-icon" viewBox="0 0 24 24" fill="#fff">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        <path d="M18.2 5.1l.55 1.25 1.25.55-1.25.55-.55 1.25-.55-1.25-1.25-.55 1.25-.55z"/>
       </svg>
     </div>
     <div class="avatar">

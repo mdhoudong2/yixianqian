@@ -1154,7 +1154,7 @@
   </div>
 </van-popup>
 <!-- 底部导航 -->
-<van-tabbar v-model="page" active-color="#ff6b81" inactive-color="#969799"
+<van-tabbar v-model="page" :before-change="guardTabChange" active-color="#ff6b81" inactive-color="#969799"
   v-if="!subPages.includes(page)">
   <van-tabbar-item name="cards" icon="like-o">牵线</van-tabbar-item>
   <van-tabbar-item name="likes" icon="chat-o">消息</van-tabbar-item>
@@ -1347,7 +1347,7 @@ createApp({
     const profileData = ref({});
     const profileLoaded = ref(false);
     const showIdInvalidDialog = ref(false);
-    const idInvalidCountdown = ref(3);
+    const idInvalidCountdown = ref(5);
     let idInvalidTimer = null;
     // 我的资料-分组展示：各组是否有内容（无内容则不显示整卡）
     const hasProfileBasic = computed(() => !!(profileData.value.real_name || profileData.value.baptismal_name || profileData.value.birthday || profileData.value.height || profileData.value.education || profileData.value.city || profileData.value.native_place || profileData.value.church || profileData.value.group || profileData.value.church_location));
@@ -2176,41 +2176,46 @@ createApp({
       try { const data = await api('/api/profile'); profileData.value = data; profileLoaded.value = true; page.value = 'profile_detail'; }
       catch(e) { vant.showToast(e.message); }
     }
+    function startIdInvalidOverlay(){
+      if(showIdInvalidDialog.value) return;
+      showIdInvalidDialog.value = true;
+      idInvalidCountdown.value = 5;
+      if(idInvalidTimer) clearInterval(idInvalidTimer);
+      idInvalidTimer = setInterval(()=>{
+        idInvalidCountdown.value -= 1;
+        if(idInvalidCountdown.value <= 0){
+          clearInterval(idInvalidTimer);
+          idInvalidTimer = null;
+          showIdInvalidDialog.value = false;
+          if(page.value !== 'profile_edit') openProfileEdit();
+        }
+      }, 1000);
+    }
     async function checkIdValidForPage(targetPage){
-      console.log('[id-check] check for page', targetPage, 'profileData.id_valid', profileData.value && profileData.value.id_valid);
       if(targetPage === 'profile_edit') return;
-      // 已在编辑页不拦，避免循环
       try{
         // 优先用已加载的 profileData，若未加载或无 id_valid 则拉取
         let valid = profileData.value && typeof profileData.value.id_valid === 'boolean' ? profileData.value.id_valid : null;
         if(valid === null){
           try{
             const d = await api('/api/profile');
-            console.log('[id-check] fetched id_valid', d.id_valid);
             // 缓存但不切页
             profileData.value = Object.assign({}, profileData.value, d);
             profileLoaded.value = true;
             valid = d.id_valid;
-          }catch(e){ console.log('[id-check] fetch failed', e); return; }
+          }catch(e){ return; }
         }
-        console.log('[id-check] final valid', valid);
-        if(valid === false){
-          console.log('[id-check] show dialog');
-          if(showIdInvalidDialog.value) return;
-          showIdInvalidDialog.value = true;
-          idInvalidCountdown.value = 3;
-          if(idInvalidTimer) clearInterval(idInvalidTimer);
-          idInvalidTimer = setInterval(()=>{
-            idInvalidCountdown.value -= 1;
-            if(idInvalidCountdown.value <= 0){
-              clearInterval(idInvalidTimer);
-              idInvalidTimer = null;
-              showIdInvalidDialog.value = false;
-              openProfileEdit();
-            }
-          }, 1000);
-        }
+        if(valid === false) startIdInvalidOverlay();
       }catch(e){}
+    }
+    function guardTabChange(name){
+      // 身份证有误时禁止 tab 跳离修改资料：弹全屏提醒，不切页
+      const invalid = profileData.value && profileData.value.id_valid === false;
+      if(invalid){
+        startIdInvalidOverlay();
+        return false;
+      }
+      return true;
     }
     function goIdInvalidNow(){
       if(idInvalidTimer){ clearInterval(idInvalidTimer); idInvalidTimer=null; }
@@ -2474,7 +2479,7 @@ createApp({
       openActivity, doSignup, cancelSignup,
       cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
-      showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow,
+      showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
       onCardTouchStart, onCardTouchMove, onCardTouchEnd,

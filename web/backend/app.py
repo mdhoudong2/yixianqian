@@ -2579,7 +2579,7 @@ def _editable_schema(fields):
             _idc = bitable.get_field_text(fields, F_ID_CARD).strip()
             _mask = (_idc[:3] + "****" + _idc[-4:]) if len(_idc) >= 7 else _idc
             # 前端以 text 展示，value 仍为原文以便校验对比
-            base.insert(0, {"field": F_ID_CARD, "label": "身份证号", "type": "text", "options": None, "long": False, "value": _idc, "mask": _mask, "hint": "身份证号有误或缺失，请重新填写正确的18位身份证号（保存后生日将同步校正）"})
+            base.insert(0, {"field": F_ID_CARD, "label": "身份证号", "type": "text", "options": None, "long": False, "value": _idc, "mask": _mask, "hint": "身份证号有误或缺失，请重新填写正确的18位身份证号"})
     except Exception:
         pass
     return base

@@ -896,11 +896,21 @@ def pass_card_filters(fields, f):
         return False
     if f.get("income") and bitable.get_select_value(fields, F_INCOME) not in f["income"]:
         return False
-    # 单选精确匹配（房产状况/是否有车）
-    if f.get("house") and bitable.get_select_value(fields, F_HOUSE) != f["house"]:
-        return False
-    if f.get("driving") and bitable.get_select_value(fields, F_DRIVING) != f["driving"]:
-        return False
+    # 单选精确匹配（房产状况/是否有车），支持「未填」
+    if f.get("house"):
+        hv = bitable.get_select_value(fields, F_HOUSE)
+        if f["house"] == "未填":
+            if hv:
+                return False
+        elif hv != f["house"]:
+            return False
+    if f.get("driving"):
+        dv = bitable.get_select_value(fields, F_DRIVING)
+        if f["driving"] == "未填":
+            if dv:
+                return False
+        elif dv != f["driving"]:
+            return False
     # 文本包含匹配
     for key, fname in [
         ("user_id", F_USER_ID),

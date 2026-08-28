@@ -692,6 +692,19 @@
     </div>
   </div>
 
+  <!-- 未保存提示 -->
+  <van-popup v-model:show="showUnsavedConfirm" round position="center" :close-on-click-overlay="false" style="width:84%; max-width:320px; border-radius:12px; overflow:hidden;">
+    <div style="padding:22px 16px 12px; text-align:center;">
+      <div style="font-size:16px; font-weight:600; color:#323233; margin-bottom:8px;">提示</div>
+      <div style="font-size:14px; color:#646566; line-height:1.6;">资料已修改，是否保存？</div>
+    </div>
+    <div style="display:flex; border-top:1px solid #ebedf0;">
+      <div style="flex:1; text-align:center; padding:14px; color:#646566; cursor:pointer; border-right:1px solid #ebedf0;" @click="discardProfileEdit">不保存</div>
+      <div style="flex:1; text-align:center; padding:14px; color:#ff6b81; font-weight:600; cursor:pointer;" @click="saveAndLeaveProfileEdit">保存</div>
+    </div>
+    <div style="text-align:center; padding:10px; color:#969799; font-size:13px; cursor:pointer; border-top:1px solid #f2f3f5;" @click="showUnsavedConfirm=false; pendingProfileEditLeave=null">取消</div>
+  </van-popup>
+
   <!-- 单选弹窗 -->
   <van-popup v-model:show="showSelectPopup" position="bottom" round>
     <div class="picker-header">
@@ -1122,13 +1135,13 @@
       <div class="filter-row">
         <div class="filter-label">房产状况</div>
         <div class="filter-tags">
-          <span v-for="o in ['有','无']" :key="o" class="filter-tag" :class="{active: filter.house===o}" @click="filter.house = filter.house===o ? '' : o">{{ o }}</span>
+          <span v-for="o in ['有','无','未填']" :key="o" class="filter-tag" :class="{active: filter.house===o}" @click="filter.house = filter.house===o ? '' : o">{{ o }}</span>
         </div>
       </div>
       <div class="filter-row">
         <div class="filter-label">汽车</div>
         <div class="filter-tags">
-          <span v-for="o in ['有','无']" :key="o" class="filter-tag" :class="{active: filter.driving===o}" @click="filter.driving = filter.driving===o ? '' : o">{{ o }}</span>
+          <span v-for="o in ['有','无','未填']" :key="o" class="filter-tag" :class="{active: filter.driving===o}" @click="filter.driving = filter.driving===o ? '' : o">{{ o }}</span>
         </div>
       </div>
     </div>
@@ -1164,6 +1177,16 @@ createApp({
       try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
     }
     function handleBack(){
+      if(page.value === 'profile_edit' && isProfileEditDirty()){
+        pendingProfileEditLeave = () => { history.back(); };
+        showUnsavedConfirm.value = true;
+        return;
+      }
+      if(showUnsavedConfirm.value){
+        showUnsavedConfirm.value = false;
+        pendingProfileEditLeave = null;
+        return;
+      }
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
       if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
         history.back();
@@ -1340,6 +1363,13 @@ createApp({
 
     // 修改资料
     const editableFields = ref([]);
+    const showUnsavedConfirm = ref(false);
+    let pendingProfileEditLeave = null;
+    let profileEditSnapshot = '';
+    function isProfileEditDirty(){
+      if (page.value !== 'profile_edit') return false;
+      try { return JSON.stringify(editableFields.value) !== profileEditSnapshot; } catch(e){ return false; }
+    }
     const showSelectPopup = ref(false);
     const showMultiPopup = ref(false);
     const pickerField = ref(null);
@@ -1357,7 +1387,27 @@ createApp({
       profilePhotos.value = (profileData.value.photos && profileData.value.photos.length)
         ? [...profileData.value.photos]
         : (profileData.value.photo ? [profileData.value.photo] : []);
+      try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){ profileEditSnapshot = ''; }
+      pendingProfileEditLeave = null;
       page.value = 'profile_edit';
+    }
+    function discardProfileEdit(){
+      showUnsavedConfirm.value = false;
+      const cb = pendingProfileEditLeave;
+      pendingProfileEditLeave = null;
+      try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
+      if(cb) cb(); else page.value = 'profile_detail';
+    }
+    async function saveAndLeaveProfileEdit(){
+      const cb = pendingProfileEditLeave;
+      pendingProfileEditLeave = null;
+      showUnsavedConfirm.value = false;
+      try {
+        await saveProfile();
+        if(page.value === 'profile_edit' && cb) cb();
+      } catch(e){
+        vant.showToast(e.message || '保存失败');
+      }
     }
     function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
     async function onPhotoChange(e) {
@@ -1419,6 +1469,7 @@ createApp({
       try {
         await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
         vant.showToast('保存成功');
+        try { profileEditSnapshot = JSON.stringify(editableFields.value); } catch(e){}
         profileLoaded.value = false;
         await openProfileDetail();
       } catch(e) { vant.showToast(e.message); }
@@ -2228,6 +2279,19 @@ createApp({
     function handlePopState(e){
       if(ignoreNextPop){ ignoreNextPop=false; return; }
       isHandlingPopState = true;
+      if(showUnsavedConfirm.value){ showUnsavedConfirm.value=false; pendingProfileEditLeave=null; isHandlingPopState=false; return; }
+      if(page.value === 'profile_edit' && isProfileEditDirty()){
+        pushHistory({page: 'profile_edit'});
+        pendingProfileEditLeave = () => {
+          isHandlingPopState = true;
+          page.value = 'profile_detail';
+          pushHistory({page: 'profile_detail'});
+          isHandlingPopState = false;
+        };
+        showUnsavedConfirm.value = true;
+        isHandlingPopState = false;
+        return;
+      }
       if(showPhotoViewer.value){ showPhotoViewer.value=false; isHandlingPopState=false; return; }
       if(showFilter.value){ showFilter.value=false; isHandlingPopState=false; return; }
       if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
@@ -2282,6 +2346,7 @@ createApp({
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
     watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
+    watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {

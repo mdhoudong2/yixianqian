@@ -1370,6 +1370,7 @@ createApp({
     // 活动
     const activities = ref([]);
     const loadingActivities = ref(false);
+    const activitiesLoaded = ref(false);
     const currentActivity = ref(null);
     const currentActivityId = ref('');
     const actionLoading = ref(false);
@@ -1823,9 +1824,9 @@ createApp({
 
     // 活动
     async function loadActivities() {
-      if (activities.value.length) return; // 缓存
+      if (activitiesLoaded.value) return; // 已加载过（含空列表），不反复请求
       loadingActivities.value = true;
-      try { const data = await api('/api/activities'); activities.value = data.activities; }
+      try { const data = await api('/api/activities'); activities.value = data.activities; activitiesLoaded.value = true; }
       catch(e) { vant.showToast(e.message); }
       loadingActivities.value = false;
     }
@@ -1841,7 +1842,7 @@ createApp({
       try {
         await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'POST' });
         vant.showToast('报名成功');
-        activities.value = []; // 刷新缓存
+        activities.value = []; activitiesLoaded.value = false; // 刷新缓存
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
@@ -1852,7 +1853,7 @@ createApp({
       try {
         await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'DELETE' });
         vant.showToast('已取消报名');
-        activities.value = [];
+        activities.value = []; activitiesLoaded.value = false;
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }

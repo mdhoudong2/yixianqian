@@ -1214,7 +1214,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 4  # 检测参数变更时递增，旧 sidecar 自动重检
+_FACE_SIDECAR_VERSION = 5  # 检测参数变更时递增，旧 sidecar 自动重检
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1264,8 +1264,42 @@ def _face_sidecar_path(token):
     return os.path.join(_FACE_DIR, token + ".json")
 
 
+def _detect_content_margins(gray):
+    """检测上下左右黑边比例（连续边缘行/列最大亮度 < 16 视为黑边）。
+    返回 (top, bottom, left, right) 比例；任一侧黑边超 45% 视为整体过暗，放弃该侧。"""
+    h, w = gray.shape[:2]
+
+    def dark_row(y):
+        return int(gray[y].max()) < 16
+
+    def dark_col(x):
+        return int(gray[:, x].max()) < 16
+    top = 0
+    while top < h and dark_row(top):
+        top += 1
+    bottom = 0
+    while bottom < h - top - 1 and dark_row(h - 1 - bottom):
+        bottom += 1
+    left = 0
+    while left < w and dark_col(left):
+        left += 1
+    right = 0
+    while right < w - left - 1 and dark_col(w - 1 - right):
+        right += 1
+    if top > h * 0.45:
+        top = 0
+    if bottom > h * 0.45:
+        bottom = 0
+    if left > w * 0.45:
+        left = 0
+    if right > w * 0.45:
+        right = 0
+    return (top / h, bottom / h, left / w, right / w)
+
+
 def _detect_face_center(img_path):
-    """检测图片中最大「完整可信」人脸中心，返回 {'c':[cx,cy], 'box':[bw,bh]} 或 None。
+    """检测图片中最大「完整可信」人脸中心与黑边，返回
+    {'c':[cx,cy], 'box':[bw,bh], 'tb':[top,bottom]} 或 None。
     完整性规则（宁缺毋滥）：框与图像交叠面积 < 70%（半张脸/大面积缺失）→ 丢弃；
     轻贴边可接受（YuNet 框常略微越界，脸本身完整）。多脸取面积最大者。"""
     kind, det = _load_face_detector()
@@ -1307,6 +1341,9 @@ def _detect_face_center(img_path):
                 boxes.append([float(x), float(y), float(bw), float(bh)])
         if not boxes:
             return None
+        # 黑边检测（对灰度缩略图扫描，与脸检测共用读图开销）
+        gray_full = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if kind == "yunet" else gray
+        tb, bb, lb, rb = _detect_content_margins(gray_full)
         valid = []
         for b in boxes:
             x, y, bw, bh = b
@@ -1322,8 +1359,16 @@ def _detect_face_center(img_path):
         b = max(valid, key=lambda b: b[2] * b[3])
         cx = (b[0] + b[2] / 2) / w
         cy = (b[1] + b[3] / 2) / h
+        # 黑边不得侵入人脸附近（黑色头发可能被边缘扫描误判为黑边）：
+        # 顶部黑边不超过 框顶-0.3框高，底部黑边不超过 1-(框底+0.3框高)
+        box_top = b[1] / h
+        box_bot = (b[1] + b[3]) / h
+        tb = min(tb, max(0.0, box_top - 0.3 * (b[3] / h)))
+        bb = min(bb, max(0.0, 1.0 - (box_bot + 0.3 * (b[3] / h))))
         return {"c": [round(cx, 4), round(cy, 4)],
-                "box": [round(b[2] / w, 4), round(b[3] / h, 4)]}
+                "box": [round(b[2] / w, 4), round(b[3] / h, 4)],
+                "tb": [round(tb, 4), round(bb, 4)],
+                "lr": [round(lb, 4), round(rb, 4)]}
     except Exception as e:
         logging.getLogger(__name__).warning(f"人脸检测失败 {img_path}: {e}")
         return None
@@ -1347,7 +1392,9 @@ def ensure_face_center(token):
             with open(p) as f:
                 d = json.load(f)
             if _face_sidecar_valid(d):
-                face = {"c": d["c"], "box": d["box"]} if d.get("c") else None
+                face = ({"c": d["c"], "box": d["box"],
+                         "tb": d.get("tb") or [0, 0], "lr": d.get("lr") or [0, 0]}
+                        if d.get("c") else None)
                 with _face_cache_lock:
                     _face_cache[token] = face
                 return face
@@ -1363,7 +1410,9 @@ def ensure_face_center(token):
         with open(tmp, "w") as f:
             json.dump({"v": _FACE_SIDECAR_VERSION,
                        "c": face["c"] if face else None,
-                       "box": face["box"] if face else None}, f)
+                       "box": face["box"] if face else None,
+                       "tb": face["tb"] if face else None,
+                       "lr": face["lr"] if face else None}, f)
         os.replace(tmp, _face_sidecar_path(token))
     except Exception:
         pass
@@ -1384,7 +1433,9 @@ def get_face_center(token):
             with open(p) as f:
                 d = json.load(f)
             if _face_sidecar_valid(d):
-                face = {"c": d["c"], "box": d["box"]} if d.get("c") else None
+                face = ({"c": d["c"], "box": d["box"],
+                         "tb": d.get("tb") or [0, 0], "lr": d.get("lr") or [0, 0]}
+                        if d.get("c") else None)
     except Exception:
         face = None
     with _face_cache_lock:

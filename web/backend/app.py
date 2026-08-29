@@ -1214,7 +1214,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 8  # 检测参数变更时递增，旧 sidecar 自动重检；v8 置信度优先选脸
+_FACE_SIDECAR_VERSION = 9  # 检测参数变更时递增，旧 sidecar 自动重检；v9 多脸主体权重（面积×中心）
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1355,14 +1355,22 @@ def _analyze_photo(img_path):
             valid.append(b)
         if not valid:
             return None, [tb, bb], [lb, rb]
-        # 选择目标脸：真人脸置信度通常明显高于卡通/画像（后者仅形状近似）。
-        # 置信度显著最高者优先；否则取面积最大（多人合照聚焦最近者）。
+        # 选择目标脸：
+        # 1) 置信度显著最高者优先（真人脸置信度通常明显高于卡通/画像，差>=0.12）
+        # 2) 置信度接近（都是真人）时，按「面积 × 靠近画面中心程度」选主体
+        #    （一图多脸本人/多人合照：主体通常在画面中心附近且较大）
+        import math
         best_score = max(valid, key=lambda b: b[4])
         best_area = max(valid, key=lambda b: b[2] * b[3])
         if best_score[4] - best_area[4] >= 0.12:
             b = best_score
         else:
-            b = best_area
+            def _subject_weight(box):
+                cx = (box[0] + box[2] / 2) / w
+                cy = (box[1] + box[3] / 2) / h
+                d2 = (cx - 0.5) ** 2 + (cy - 0.5) ** 2
+                return math.exp(-d2 / 0.16)  # σ≈0.28：越靠中心权重越大
+            b = max(valid, key=lambda b: b[2] * b[3] * _subject_weight(b))
         cx = (b[0] + b[2] / 2) / w
         cy = (b[1] + b[3] / 2) / h
         # 黑边不得侵入人脸附近（黑色头发可能被边缘扫描误判为黑边）：

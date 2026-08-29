@@ -760,6 +760,7 @@
         <span>{{ uploadingPhoto ? '上传中…' : '添加照片' }}</span>
       </div>
       <div v-else class="edit-photo-limit">最多上传 9 张</div>
+      <div v-if="profileData.has_face === false" style="color:#ee0a24; font-size:12px; padding:0 16px 10px; line-height:1.6;">你的照片未检测到清晰人脸，请上传至少一张含正脸的照片，否则无法使用</div>
       <input ref="photoInput" type="file" accept="image/*" style="display:none;" @change="onPhotoChange" />
       <div class="edit-photo-tip">第一张是头像，也是牵线首页的封面；点击「设为封面」可换第一张</div>
     </div>

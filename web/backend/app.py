@@ -1214,7 +1214,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 7  # 检测参数变更时递增，旧 sidecar 自动重检；v7 迭代裁切收敛黑边
+_FACE_SIDECAR_VERSION = 8  # 检测参数变更时递增，旧 sidecar 自动重检；v8 置信度优先选脸
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1335,16 +1335,17 @@ def _analyze_photo(img_path):
             if faces is not None:
                 for f in faces:
                     if len(f) >= 4:
-                        boxes.append([float(f[0]), float(f[1]), float(f[2]), float(f[3])])
+                        score = float(f[14]) if len(f) >= 15 else 1.0
+                        boxes.append([float(f[0]), float(f[1]), float(f[2]), float(f[3]), score])
         else:
             for (x, y, bw, bh) in det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
                                                        minSize=(40, 40)):
-                boxes.append([float(x), float(y), float(bw), float(bh)])
+                boxes.append([float(x), float(y), float(bw), float(bh), 1.0])
         if not boxes:
             return None, [tb, bb], [lb, rb]
         valid = []
         for b in boxes:
-            x, y, bw, bh = b
+            x, y, bw, bh = b[:4]
             # 框与图像的交叠比例：可见部分面积 / 框面积，低于 70% 视为严重裁切不可信
             vis_w = max(0.0, min(x + bw, w) - max(x, 0.0))
             vis_h = max(0.0, min(y + bh, h) - max(y, 0.0))
@@ -1354,7 +1355,14 @@ def _analyze_photo(img_path):
             valid.append(b)
         if not valid:
             return None, [tb, bb], [lb, rb]
-        b = max(valid, key=lambda b: b[2] * b[3])
+        # 选择目标脸：真人脸置信度通常明显高于卡通/画像（后者仅形状近似）。
+        # 置信度显著最高者优先；否则取面积最大（多人合照聚焦最近者）。
+        best_score = max(valid, key=lambda b: b[4])
+        best_area = max(valid, key=lambda b: b[2] * b[3])
+        if best_score[4] - best_area[4] >= 0.12:
+            b = best_score
+        else:
+            b = best_area
         cx = (b[0] + b[2] / 2) / w
         cy = (b[1] + b[3] / 2) / h
         # 黑边不得侵入人脸附近（黑色头发可能被边缘扫描误判为黑边）：

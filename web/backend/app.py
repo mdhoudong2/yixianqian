@@ -3007,6 +3007,7 @@ def update_profile_photo():
         except Exception:
             return jsonify({"error": "HEIC 图片处理失败，请转成 JPG 后重试"}), 400
     try:
+        from PIL import Image  # 函数内局部导入（HEIC 分支之外的 JPEG/PNG 路径也依赖）
         _prev = Image.MAX_IMAGE_PIXELS
         Image.MAX_IMAGE_PIXELS = None  # 高像素手机原图（>89M 像素）不应被误拒，展示端会压缩
         try:

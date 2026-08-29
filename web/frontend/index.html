@@ -1404,7 +1404,8 @@ createApp({
     const loadedPhotoSet = new Set();
     // 人脸对准：默认居中时人脸完整可见则不动；不完整才上下平移最小量（顶对齐/底对齐），不做居中
     const photoPositions = ref([]);
-    function recalcPhotoPosition(e, i) {
+    function recalcPhotoPosition(e, i, attempt) {
+      attempt = attempt || 0;
       try {
         const f = (currentCard.value.faces || [])[i];
         const img = e.target;
@@ -1413,7 +1414,12 @@ createApp({
         if (!wrap) return;
         const cw = wrap.clientWidth, ch = wrap.clientHeight;
         const iw = img.naturalWidth, ih = img.naturalHeight;
-        if (!cw || !ch || !iw || !ih) return;
+        if (!cw || !ch) {
+          // 真机缓存图 @load 可能早于首帧布局，容器尺寸未就绪 → 稍后重试
+          if (attempt < 8) setTimeout(() => recalcPhotoPosition(e, i, attempt + 1), 120);
+          return;
+        }
+        if (!iw || !ih) return;
         const scale = Math.max(cw / iw, ch / ih);
         const dh = ih * scale;
         // 黑边：上下无用区比例，等效到「内容区坐标系」内计算，显示时把黑边排除出可视区
@@ -2848,6 +2854,18 @@ createApp({
       replyTarget.value = null;
       msgText.value = '';
       photoPositions.value = [];
+    });
+    watch(photoIndex, () => {
+      // 切换照片时布局必已完成：补算当前照片位置（兜底 @load 早于布局的时序）
+      nextTick(() => {
+        try {
+          const imgs = document.querySelectorAll('.card-photo-item');
+          const img = imgs[photoIndex.value];
+          if (img && img.complete && img.naturalWidth) {
+            recalcPhotoPosition({ target: img }, photoIndex.value);
+          }
+        } catch (_) {}
+      });
     });
 
     onMounted(() => {

@@ -355,6 +355,35 @@
   .van-theme-dark .filter-tag.active, .van-theme-dark .round-tab.active { background: #ff6b81; color: #fff; }
   .van-theme-dark .picker-option.active, .van-theme-dark .multi-option.active { color: #ff6b81; }
   .van-theme-dark .multi-option.active { background: rgba(255,107,129,0.14); }
+  /* 四 Tab 间流畅过渡 */
+  .tab-main { position: relative; min-height: calc(100vh - 60px); }
+  .tab-transition-enter-active { transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
+  .tab-transition-leave-active { transition: opacity 0.16s ease, transform 0.16s ease; will-change: opacity, transform; }
+  .tab-transition-enter-from { opacity: 0; transform: translateY(8px); }
+  .tab-transition-leave-to { opacity: 0; transform: translateY(-4px); }
+  .tab-slide-left-enter-active { transition: opacity 0.26s ease, transform 0.26s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
+  .tab-slide-left-leave-active { transition: opacity 0.20s ease, transform 0.20s ease; will-change: opacity, transform; }
+  .tab-slide-left-enter-from { opacity: 0; transform: translateX(22px); }
+  .tab-slide-left-leave-to { opacity: 0; transform: translateX(-16px); }
+  .tab-slide-right-enter-active { transition: opacity 0.26s ease, transform 0.26s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
+  .tab-slide-right-leave-active { transition: opacity 0.20s ease, transform 0.20s ease; will-change: opacity, transform; }
+  .tab-slide-right-enter-from { opacity: 0; transform: translateX(-22px); }
+  .tab-slide-right-leave-to { opacity: 0; transform: translateX(16px); }
+  .page-slide-enter-active { transition: opacity 0.28s ease, transform 0.28s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
+  .page-slide-leave-active { transition: opacity 0.20s ease, transform 0.20s ease; will-change: opacity, transform; }
+  .page-slide-enter-from { opacity: 0; transform: translateX(28px); }
+  .page-slide-leave-to { opacity: 0; transform: translateX(-12px); }
+  .page-slide-back-enter-active { transition: opacity 0.26s ease, transform 0.26s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
+  .page-slide-back-leave-active { transition: opacity 0.20s ease, transform 0.20s ease; will-change: opacity, transform; }
+  .page-slide-back-enter-from { opacity: 0; transform: translateX(-18px); }
+  .page-slide-back-leave-to { opacity: 0; transform: translateX(22px); }
+  @media (prefers-reduced-motion: reduce) {
+    .tab-transition-enter-active, .tab-transition-leave-active,
+    .tab-slide-left-enter-active, .tab-slide-left-leave-active,
+    .tab-slide-right-enter-active, .tab-slide-right-leave-active,
+    .page-slide-enter-active, .page-slide-leave-active,
+    .page-slide-back-enter-active, .page-slide-back-leave-active { transition: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -381,8 +410,9 @@
 </div>
 <!-- 主界面 -->
 <template v-else>
+<Transition :name="pageTransition" mode="out-in">
 <!-- ========== 牵线页 ========== -->
-<div v-if="page==='cards'" class="cards-page">
+<div v-if="page==='cards'" key="cards" class="cards-page">
   <div v-if="loadingCards" style="display:flex; align-items:center; justify-content:center; height:100%;">
     <van-loading size="24px">加载中...</van-loading>
   </div>
@@ -489,7 +519,7 @@
   </template>
 </div>
 <!-- ========== 消息页 ========== -->
-<div v-else-if="page==='likes'" class="page">
+<div v-else-if="page==='likes'" key="likes" class="page">
   <div class="msg-card" @click="openMyLikes" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💕</div>
     <div class="msg-body">
@@ -527,7 +557,7 @@
   </div>
 </div>
 <!-- ========== 相互喜欢列表 ========== -->
-<div v-else-if="page==='mutual'">
+<div v-else-if="page==='mutual'" key="mutual">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -544,7 +574,7 @@
   </div>
 </div>
 <!-- ========== 谁喜欢了我列表 ========== -->
-<div v-else-if="page==='liked_me'">
+<div v-else-if="page==='liked_me'" key="liked_me">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -566,7 +596,7 @@
   </div>
 </div>
 <!-- ========== 活动页 ========== -->
-<div v-else-if="page==='home'" class="page">
+<div v-else-if="page==='home'" key="home" class="page">
   <div v-if="loadingActivities" style="text-align:center; padding:40px;">
     <van-loading size="24px">加载中...</van-loading>
   </div>
@@ -591,7 +621,7 @@
   </div>
 </div>
 <!-- ========== 我的页 ========== -->
-<div v-else-if="page==='profile'" style="padding:0;">
+<div v-else-if="page==='profile'" key="profile" style="padding:0;">
   <div class="profile-header">
     <div class="theme-toggle" @click="toggleTheme" :aria-label="isDark ? '切换日间模式' : '切换夜间模式'">
       <svg v-if="!isDark" class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
@@ -656,7 +686,7 @@
   </div>
 </div>
 <!-- ========== 我的资料详情 ========== -->
-<div v-else-if="page==='profile_detail'">
+<div v-else-if="page==='profile_detail'" key="profile_detail">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -740,7 +770,7 @@
   </div>
 </div>
 <!-- ========== 修改资料 ========== -->
-<div v-else-if="page==='profile_edit'">
+<div v-else-if="page==='profile_edit'" key="profile_edit">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -811,7 +841,7 @@
   </van-popup>
 </div>
 <!-- ========== 我的喜欢列表 ========== -->
-<div v-else-if="page==='my_likes'">
+<div v-else-if="page==='my_likes'" key="my_likes">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -837,7 +867,7 @@
   </div>
 </div>
 <!-- ========== 我的活动 ========== -->
-<div v-else-if="page==='my_activities'">
+<div v-else-if="page==='my_activities'" key="my_activities">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -869,7 +899,7 @@
   </div>
 </div>
 <!-- ========== 我的分组 ========== -->
-<div v-else-if="page==='my_groups'">
+<div v-else-if="page==='my_groups'" key="my_groups">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -902,7 +932,7 @@
   </div>
 </div>
 <!-- ========== 活动详情 ========== -->
-<div v-else-if="page==='activity_detail'">
+<div v-else-if="page==='activity_detail'" key="activity_detail">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -956,7 +986,7 @@
   </div>
 </div>
 <!-- ========== 分组选择 ========== -->
-<div v-else-if="page==='group_select'">
+<div v-else-if="page==='group_select'" key="group_select">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -1008,7 +1038,7 @@
   </div>
 </div>
 <!-- ========== 分组结果 ========== -->
-<div v-else-if="page==='group_result'">
+<div v-else-if="page==='group_result'" key="group_result">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -1034,7 +1064,7 @@
   </div>
 </div>
 <!-- ========== 他人资料页 ========== -->
-<div v-else-if="page==='user_detail'">
+<div v-else-if="page==='user_detail'" key="user_detail">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
@@ -1069,6 +1099,7 @@
   </div>
   <div v-else style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
 </div>
+</Transition>
 <!-- 管理员指令弹窗 -->
 <van-popup v-model:show="showAdminHelp" position="bottom" round style="max-height:75vh;">
   <div class="admin-help-panel">
@@ -1326,6 +1357,21 @@ const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {
     const page = ref('cards');
+    // 四 Tab / 子页流畅过渡：按 tab 顺序与子页层级自动选动画
+    const pageTransition = ref('tab-transition');
+    const TAB_ORDER = ['cards','likes','home','profile'];
+    function pickTransition(nv, ov){
+      if(!ov) return 'tab-transition';
+      const isTab = p => TAB_ORDER.includes(p);
+      const isSub = p => subPages.includes(p);
+      if(isTab(nv) && isTab(ov)){
+        return TAB_ORDER.indexOf(nv) > TAB_ORDER.indexOf(ov) ? 'tab-slide-left' : 'tab-slide-right';
+      }
+      if(isSub(nv) && !isSub(ov)) return 'page-slide';
+      if(!isSub(nv) && isSub(ov)) return 'page-slide-back';
+      if(isSub(nv) && isSub(ov)) return 'page-slide';
+      return 'tab-transition';
+    }
     // 夜间模式（默认日间）
     const isDark = ref(false);
     try { isDark.value = localStorage.getItem('yxq_dark') === '1'; } catch(e) {}
@@ -1387,6 +1433,8 @@ createApp({
     });
     function retryGate() { window.location.reload(); }
     const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me'];
+    // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
+    watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
     // 活动
     const activities = ref([]);
@@ -2951,7 +2999,7 @@ createApp({
     });
 
     return {
-      page, user, loggingIn, loginError,
+      page, pageTransition, user, loggingIn, loginError,
       isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,

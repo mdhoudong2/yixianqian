@@ -3007,8 +3007,16 @@ def update_profile_photo():
         except Exception:
             return jsonify({"error": "HEIC 图片处理失败，请转成 JPG 后重试"}), 400
     try:
-        Image.open(io.BytesIO(data)).verify()
-    except Exception:
+        _prev = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = None  # 高像素手机原图（>89M 像素）不应被误拒，展示端会压缩
+        try:
+            Image.open(io.BytesIO(data)).verify()
+        finally:
+            Image.MAX_IMAGE_PIXELS = _prev
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "图片上传校验失败 mimetype=%s filename=%s size=%s err=%s",
+            f.mimetype, f.filename, len(data), e)
         return jsonify({"error": "文件不是有效图片"}), 400
 
     filename = (f.filename or "photo.jpg").rsplit("/", 1)[-1] or "photo.jpg"

@@ -1214,6 +1214,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
+_FACE_SIDECAR_VERSION = 3  # 检测参数变更时递增，旧 sidecar 自动重检
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1243,7 +1244,7 @@ def _load_face_detector():
             pass
     if os.path.exists(_FACE_MODEL_PATH):
         try:
-            det = cv2.FaceDetectorYN.create(_FACE_MODEL_PATH, "", (320, 320), score_threshold=0.85)
+            det = cv2.FaceDetectorYN.create(_FACE_MODEL_PATH, "", (320, 320), score_threshold=0.6)
             _face_detector_state = ("yunet", det)
             return _face_detector_state
         except Exception:
@@ -1324,8 +1325,9 @@ def _detect_face_center(img_path):
 
 
 def _face_sidecar_valid(d):
-    """sidecar 数据是否完整可用（v2：同时含中心与框尺寸）"""
-    return isinstance(d, dict) and d.get("c") and d.get("box")
+    """sidecar 数据是否完整且为当前版本（版本升级后旧数据自动重检；c/box 可为 None 表示已检测无脸）"""
+    return (isinstance(d, dict) and "c" in d and "box" in d
+            and d.get("v") == _FACE_SIDECAR_VERSION)
 
 
 def ensure_face_center(token):
@@ -1340,7 +1342,7 @@ def ensure_face_center(token):
             with open(p) as f:
                 d = json.load(f)
             if _face_sidecar_valid(d):
-                face = {"c": d["c"], "box": d["box"]}
+                face = {"c": d["c"], "box": d["box"]} if d.get("c") else None
                 with _face_cache_lock:
                     _face_cache[token] = face
                 return face
@@ -1354,7 +1356,8 @@ def ensure_face_center(token):
         os.makedirs(_FACE_DIR, exist_ok=True)
         tmp = _face_sidecar_path(token) + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"c": face["c"] if face else None,
+            json.dump({"v": _FACE_SIDECAR_VERSION,
+                       "c": face["c"] if face else None,
                        "box": face["box"] if face else None}, f)
         os.replace(tmp, _face_sidecar_path(token))
     except Exception:
@@ -1376,7 +1379,7 @@ def get_face_center(token):
             with open(p) as f:
                 d = json.load(f)
             if _face_sidecar_valid(d):
-                face = {"c": d["c"], "box": d["box"]}
+                face = {"c": d["c"], "box": d["box"]} if d.get("c") else None
     except Exception:
         face = None
     with _face_cache_lock:
@@ -3028,6 +3031,14 @@ def update_profile_photo():
     tokens.append(file_token)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+    # 新照片后台立即下载并做人脸检测（不等 60s warm 循环）
+    def _warm_new_photo(t):
+        try:
+            if _download_and_cache_image(t):
+                ensure_face_center(t)
+        except Exception:
+            pass
+    threading.Thread(target=_warm_new_photo, args=(file_token,), daemon=True).start()
     return jsonify({"ok": True, "photos": _photo_urls(tokens)})
 
 

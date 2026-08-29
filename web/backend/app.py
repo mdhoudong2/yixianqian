@@ -1507,7 +1507,11 @@ def user_has_face(user_record, is_observer=False):
     仅读内存/sidecar 缓存，无实时检测开销；新上传照片由后台秒级检测补齐。"""
     if is_observer:
         return True
-    tokens = bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO)
+    return _tokens_has_face(bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO))
+
+
+def _tokens_has_face(tokens):
+    """token 列表是否含至少一张已检出人脸的照片（读缓存，零检测开销）"""
     if not tokens:
         return False
     return any(get_face_center(t) is not None for t in tokens)
@@ -3165,8 +3169,13 @@ def update_profile_photo():
         ensure_face_center(file_token)
     except Exception:
         pass
+    # 同步刷新用户快照，保证 /api/profile、/api/home 的 has_face 与本响应一致
+    try:
+        refresh_snapshot_table("users")
+    except Exception:
+        pass
     return jsonify({"ok": True, "photos": _photo_urls(tokens),
-                    "has_face": user_has_face(user, _is_observer(user))})
+                    "has_face": _tokens_has_face(tokens)})
 
 
 @app.route("/api/profile/photo", methods=["DELETE"])
@@ -3193,8 +3202,12 @@ def delete_profile_photo():
     tokens.pop(idx)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+    try:
+        refresh_snapshot_table("users")
+    except Exception:
+        pass
     return jsonify({"ok": True, "photos": _photo_urls(tokens),
-                    "has_face": user_has_face(user, _is_observer(user))})
+                    "has_face": _tokens_has_face(tokens)})
 
 
 @app.route("/api/profile/photo/cover", methods=["POST"])

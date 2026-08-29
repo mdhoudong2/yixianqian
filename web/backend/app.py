@@ -1214,7 +1214,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 3  # 检测参数变更时递增，旧 sidecar 自动重检
+_FACE_SIDECAR_VERSION = 4  # 检测参数变更时递增，旧 sidecar 自动重检
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1265,9 +1265,9 @@ def _face_sidecar_path(token):
 
 
 def _detect_face_center(img_path):
-    """检测图片中最大「完整可信」人脸中心，返回 [cx, cy]（图宽/高比例）或 None。
-    完整性规则（宁缺毋滥）：框贴左右边缘（脸被纵向裁切）或贴下边缘（下巴被裁）→ 丢弃；
-    贴顶部可接受（头顶略出画常见）。多脸取面积最大者。"""
+    """检测图片中最大「完整可信」人脸中心，返回 {'c':[cx,cy], 'box':[bw,bh]} 或 None。
+    完整性规则（宁缺毋滥）：框与图像交叠面积 < 70%（半张脸/大面积缺失）→ 丢弃；
+    轻贴边可接受（YuNet 框常略微越界，脸本身完整）。多脸取面积最大者。"""
     kind, det = _load_face_detector()
     if kind == "none":
         return None
@@ -1275,6 +1275,11 @@ def _detect_face_center(img_path):
         import cv2
         import numpy as np
         from PIL import Image
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass
         with Image.open(img_path) as im0:
             im0 = im0.convert("RGB")
             w0, h0 = im0.size
@@ -1302,15 +1307,15 @@ def _detect_face_center(img_path):
                 boxes.append([float(x), float(y), float(bw), float(bh)])
         if not boxes:
             return None
-        margin_lr = w * 0.01
-        margin_b = h * 0.02
         valid = []
         for b in boxes:
             x, y, bw, bh = b
-            if x <= margin_lr or x + bw >= w - margin_lr:
-                continue  # 脸被左右裁切，不可信
-            if y + bh >= h - margin_b:
-                continue  # 下巴被裁，不可信
+            # 框与图像的交叠比例：可见部分面积 / 框面积，低于 70% 视为严重裁切不可信
+            vis_w = max(0.0, min(x + bw, w) - max(x, 0.0))
+            vis_h = max(0.0, min(y + bh, h) - max(y, 0.0))
+            ratio = (vis_w * vis_h) / (bw * bh) if bw > 0 and bh > 0 else 0.0
+            if ratio < 0.7:
+                continue  # 脸被大面积裁切，不可信
             valid.append(b)
         if not valid:
             return None

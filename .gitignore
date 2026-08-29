@@ -45,3 +45,4 @@ venv_broken_bak/
 bot/venv
 web/backend/venv
 web/backend/image_cache
+web/backend/face_detection_yunet.onnx

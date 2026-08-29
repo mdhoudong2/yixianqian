@@ -395,7 +395,9 @@
       <div class="card-photo-wrap" @touchstart="onPhotoTouchStart" @touchmove="onPhotoTouchMove" @touchend="onPhotoTouchEnd" @mousedown="onPhotoMouseDown" @mousemove="onPhotoMouseMove" @mouseup="onPhotoMouseUp" @mouseleave="onPhotoMouseLeave" @click="onPhotoClick">
         <div v-if="photoLoading" class="photo-loading"></div>
         <div v-if="currentPhotoList.length" class="card-photo-track" :style="{ transform: 'translateX(-' + photoIndex * 100 + '%)' }">
-          <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt="" @load="onPhotoLoad" @error="onPhotoError">
+          <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt=""
+            :style="photoPositions[i] ? { objectPosition: photoPositions[i] } : null"
+            @load="onPhotoLoad($event); recalcPhotoPosition($event, i)" @error="onPhotoError">
         </div>
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
@@ -1396,6 +1398,40 @@ createApp({
     const photoLoading = ref(false);
     let photoLoadingTimer = null;
     const loadedPhotoSet = new Set();
+    // 人脸对准：默认居中时人脸完整可见则不动；不完整才上下平移最小量（顶对齐/底对齐），不做居中
+    const photoPositions = ref([]);
+    function recalcPhotoPosition(e, i) {
+      try {
+        const f = (currentCard.value.faces || [])[i];
+        const img = e.target;
+        if (!f || !f.c || !img || !img.naturalWidth) return;
+        const wrap = img.closest('.card-photo-wrap');
+        if (!wrap) return;
+        const cw = wrap.clientWidth, ch = wrap.clientHeight;
+        const iw = img.naturalWidth, ih = img.naturalHeight;
+        if (!cw || !ch || !iw || !ih) return;
+        const scale = Math.max(cw / iw, ch / ih);
+        const dh = ih * scale;
+        if (dh <= ch + 1) return; // 整图已完整可见，无需调整
+        const cy = f.c[1];
+        const fh = (f.box && f.box[1]) ? f.box[1] : 0;
+        const top = (cy - fh / 2) * dh;      // 人脸框顶（显示坐标）
+        const bottom = (cy + fh / 2) * dh;   // 人脸框底
+        const hair = fh * 0.25 * dh;         // 头顶余量（移动时尽量带上一点头发，不含在可见性判断内）
+        const offDef = (ch - dh) / 2;        // 默认偏移（居中显示）
+        // 默认下人脸框已完整可见 → 不动（不要求头发完美）
+        if (offDef + top >= 0 && offDef + bottom <= ch) return;
+        let off;
+        if (offDef + top < 0) off = -(top - hair);          // 头顶被裁 → 上移，头顶上方留少量头发
+        else if (offDef + bottom > ch) off = ch - bottom;   // 下巴被裁 → 下移
+        else return;
+        off = Math.max(ch - dh, Math.min(0, off)); // 限制在合法偏移范围
+        if (Math.abs(off - offDef) < 1) return;    // 几乎没动，保持默认
+        const arr = photoPositions.value.slice();
+        arr[i] = '50% ' + Math.round(off) + 'px';
+        photoPositions.value = arr;
+      } catch (_) {}
+    }
     function onPhotoLoad(e) {
       try {
         const raw = e && e.target && e.target.getAttribute ? e.target.getAttribute('src') : '';
@@ -2785,12 +2821,16 @@ createApp({
       msgText.value = '';
     }
     // 换卡片时重置留言面板
+    watch(cards, () => {
+      photoPositions.value = [];
+    });
     watch(cardIndex, () => {
       cardTab.value = 'profile';
       messages.value = [];
       msgLoadedFor = null;
       replyTarget.value = null;
       msgText.value = '';
+      photoPositions.value = [];
     });
 
     onMounted(() => {
@@ -2840,7 +2880,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
-      onPhotoError, onPhotoLoad,
+      onPhotoError, onPhotoLoad, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,

@@ -1404,7 +1404,8 @@ createApp({
     const loadedPhotoSet = new Set();
     // 人脸对准：默认居中时人脸完整可见则不动；不完整才上下平移最小量（顶对齐/底对齐），不做居中
     const photoPositions = ref([]);
-    function recalcPhotoPosition(e, i) {
+    function recalcPhotoPosition(e, i, attempt) {
+      attempt = attempt || 0;
       try {
         const f = (currentCard.value.faces || [])[i];
         const img = e.target;
@@ -1413,24 +1414,42 @@ createApp({
         if (!wrap) return;
         const cw = wrap.clientWidth, ch = wrap.clientHeight;
         const iw = img.naturalWidth, ih = img.naturalHeight;
-        if (!cw || !ch || !iw || !ih) return;
+        if (!cw || !ch) {
+          // 真机缓存图 @load 可能早于首帧布局，容器尺寸未就绪 → 稍后重试
+          if (attempt < 8) setTimeout(() => recalcPhotoPosition(e, i, attempt + 1), 120);
+          return;
+        }
+        if (!iw || !ih) return;
         const scale = Math.max(cw / iw, ch / ih);
         const dh = ih * scale;
-        if (dh <= ch + 1) return; // 整图已完整可见，无需调整
-        const cy = f.c[1];
+        // 黑边：上下无用区比例，等效到「内容区坐标系」内计算，显示时把黑边排除出可视区
+        const tb = (f.tb && f.tb.length === 2) ? f.tb : [0, 0];
+        const ct = tb[0], cb = tb[1];
+        const cr = 1 - ct - cb;             // 内容区占原图高比例
+        if (cr < 0.55) return;              // 有效内容过少（异常），放弃
+        const eh = dh * cr;                 // 内容区显示高度
+        const cy_e = (f.c[1] - ct) / cr;    // 脸中心在内容区坐标
         const fh = (f.box && f.box[1]) ? f.box[1] : 0;
-        const top = (cy - fh / 2) * dh;      // 人脸框顶（显示坐标）
-        const bottom = (cy + fh / 2) * dh;   // 人脸框底
-        const headTop = top - fh * 0.35 * dh; // 头顶（框顶上方留 35% 框高=头发+留白）
-        const offDef = (ch - dh) / 2;        // 默认偏移（居中显示）
-        // 默认下「头顶~下巴」完整可见才不动（框顶≈发际线，框完整但头顶被裁也需上移）
-        if (offDef + headTop >= 0 && offDef + bottom <= ch) return;
-        let off;
-        if (offDef + headTop < 0) off = -headTop;       // 头顶被裁 → 上移使头顶贴容器顶
-        else if (offDef + bottom > ch) off = ch - bottom; // 下巴被裁 → 下移
-        else return;
-        off = Math.max(ch - dh, Math.min(0, off)); // 限制在合法偏移范围
-        if (Math.abs(off - offDef) < 1) return;    // 几乎没动，保持默认
+        const fh_e = fh / cr;
+        let off_e;                          // 内容区顶相对容器顶的偏移
+        if (eh <= ch + 1) {
+          off_e = (ch - eh) / 2;            // 内容区完整可见：内容区居中（黑边照片必须调整，否则露黑边）
+        } else {
+          const top_e = (cy_e - fh_e / 2) * eh;
+          const bottom_e = (cy_e + fh_e / 2) * eh;
+          const headTop_e = top_e - fh_e * 0.35 * eh; // 头顶（框顶上方留 35% 框高=头发+留白）
+          const offDef_e = (ch - eh) / 2;
+          // 内容区内「头顶~下巴」完整可见 → 内容区居中即可
+          if (offDef_e + headTop_e >= 0 && offDef_e + bottom_e <= ch) off_e = offDef_e;
+          else if (offDef_e + headTop_e < 0) off_e = -headTop_e;       // 头顶被裁 → 上移
+          else if (offDef_e + bottom_e > ch) off_e = ch - bottom_e;    // 下巴被裁 → 下移
+          else off_e = offDef_e;
+          off_e = Math.max(ch - eh, Math.min(0, off_e));
+        }
+        let off = off_e - ct * dh;          // 换算回原图偏移
+        off = Math.max(ch - dh, Math.min(0, off));
+        const offDef = (ch - dh) / 2;
+        if (Math.abs(off - offDef) < 1) return; // 几乎没动，保持默认
         const arr = photoPositions.value.slice();
         arr[i] = '50% ' + Math.round(off) + 'px';
         photoPositions.value = arr;
@@ -2835,6 +2854,18 @@ createApp({
       replyTarget.value = null;
       msgText.value = '';
       photoPositions.value = [];
+    });
+    watch(photoIndex, () => {
+      // 切换照片时布局必已完成：补算当前照片位置（兜底 @load 早于布局的时序）
+      nextTick(() => {
+        try {
+          const imgs = document.querySelectorAll('.card-photo-item');
+          const img = imgs[photoIndex.value];
+          if (img && img.complete && img.naturalWidth) {
+            recalcPhotoPosition({ target: img }, photoIndex.value);
+          }
+        } catch (_) {}
+      });
     });
 
     onMounted(() => {

@@ -669,7 +669,7 @@ def format_user_brief(record, include_openid=False, full=False):
     """格式化用户信息（卡片展示用，不含敏感信息）"""
     fields = record.get("fields", {})
     photos = bitable.get_attachment_tokens(fields, F_PHOTO)
-    photo_url = "/api/image/" + photos[0] if photos else ""
+    photo_url = ("/api/image/" + photos[0] + "?fv6") if photos else ""
     data = {
         "user_id": bitable.get_field_text(fields, F_USER_ID),
         "nickname": bitable.get_field_text(fields, F_NICKNAME),
@@ -708,7 +708,7 @@ def format_user_brief(record, include_openid=False, full=False):
             "family": bitable.get_field_text(fields, F_FAMILY),
             "live_with_parents": bitable.get_select_value(fields, F_LIVE_WITH_PARENTS),
             "birthday": format_birthday(fields),
-            "photos": ["/api/image/" + t for t in photos],
+            "photos": ["/api/image/" + t + "?fv6" for t in photos],
             "faces": [get_face_center(t) for t in photos],
         })
     if include_openid:
@@ -743,7 +743,7 @@ def format_activity(record):
     """格式化活动信息"""
     fields = record.get("fields", {})
     posters = bitable.get_attachment_tokens(fields, F_ACTIVITY_POSTER)
-    poster_url = "/api/image/" + posters[0] if posters else ""
+    poster_url = ("/api/image/" + posters[0] + "?fv6") if posters else ""
     return {
         "activity_id": bitable.get_field_text(fields, F_ACTIVITY_ID),
         "name": bitable.get_field_text(fields, F_ACTIVITY_NAME),
@@ -1214,7 +1214,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 4  # 检测参数变更时递增，旧 sidecar 自动重检
+_FACE_SIDECAR_VERSION = 7  # 检测参数变更时递增，旧 sidecar 自动重检；v7 迭代裁切收敛黑边
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1264,13 +1264,48 @@ def _face_sidecar_path(token):
     return os.path.join(_FACE_DIR, token + ".json")
 
 
-def _detect_face_center(img_path):
-    """检测图片中最大「完整可信」人脸中心，返回 {'c':[cx,cy], 'box':[bw,bh]} 或 None。
-    完整性规则（宁缺毋滥）：框与图像交叠面积 < 70%（半张脸/大面积缺失）→ 丢弃；
-    轻贴边可接受（YuNet 框常略微越界，脸本身完整）。多脸取面积最大者。"""
+def _detect_content_margins(gray):
+    """检测上下左右黑边比例（连续边缘行/列最大亮度 < 16 视为黑边）。
+    返回 (top, bottom, left, right) 比例；任一侧黑边超 45% 视为整体过暗，放弃该侧。"""
+    h, w = gray.shape[:2]
+
+    def dark_row(y):
+        return int(gray[y].max()) < 16
+
+    def dark_col(x):
+        return int(gray[:, x].max()) < 16
+    top = 0
+    while top < h and dark_row(top):
+        top += 1
+    bottom = 0
+    while bottom < h - top - 1 and dark_row(h - 1 - bottom):
+        bottom += 1
+    left = 0
+    while left < w and dark_col(left):
+        left += 1
+    right = 0
+    while right < w - left - 1 and dark_col(w - 1 - right):
+        right += 1
+    if top > h * 0.45:
+        top = 0
+    if bottom > h * 0.45:
+        bottom = 0
+    if left > w * 0.45:
+        left = 0
+    if right > w * 0.45:
+        right = 0
+    return (top / h, bottom / h, left / w, right / w)
+
+
+def _analyze_photo(img_path):
+    """分析照片：检测最大「完整可信」人脸 + 上下左右黑边比例。
+    返回 (face, tb, lr)：face 为 {'c':[cx,cy], 'box':[bw,bh]} 或 None（无脸）；
+    tb=[top,bottom]、lr=[left,right] 黑边比例（无脸时也检测黑边）。
+    完整性规则（宁缺毋滥）：框与图像交叠面积 < 70% → 丢弃；轻贴边可接受。
+    黑边不得侵入人脸附近（框顶-0.3框高约束，避免黑色头发被误判为黑边）。"""
     kind, det = _load_face_detector()
     if kind == "none":
-        return None
+        return None, [0.0, 0.0], [0.0, 0.0]
     try:
         import cv2
         import numpy as np
@@ -1284,14 +1319,15 @@ def _detect_face_center(img_path):
             im0 = im0.convert("RGB")
             w0, h0 = im0.size
             if w0 < 40 or h0 < 40:
-                return None
+                return None, [0.0, 0.0], [0.0, 0.0]
             # 检测用缩略图（最长边 1080），坐标按比例映射回原图；旧缓存大图（3072+）避免全尺寸检测
-            scale = 1.0
             if max(w0, h0) > 1080:
-                scale = 1080.0 / max(w0, h0)
-                im0 = im0.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))), Image.BILINEAR)
+                r = 1080.0 / max(w0, h0)
+                im0 = im0.resize((max(1, int(w0 * r)), max(1, int(h0 * r))), Image.BILINEAR)
             img = cv2.cvtColor(np.array(im0), cv2.COLOR_RGB2BGR)
             h, w = img.shape[:2]
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        tb, bb, lb, rb = _detect_content_margins(gray)
         boxes = []
         if kind == "yunet":
             det.setInputSize((w, h))
@@ -1301,12 +1337,11 @@ def _detect_face_center(img_path):
                     if len(f) >= 4:
                         boxes.append([float(f[0]), float(f[1]), float(f[2]), float(f[3])])
         else:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             for (x, y, bw, bh) in det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
                                                        minSize=(40, 40)):
                 boxes.append([float(x), float(y), float(bw), float(bh)])
         if not boxes:
-            return None
+            return None, [tb, bb], [lb, rb]
         valid = []
         for b in boxes:
             x, y, bw, bh = b
@@ -1318,15 +1353,48 @@ def _detect_face_center(img_path):
                 continue  # 脸被大面积裁切，不可信
             valid.append(b)
         if not valid:
-            return None
+            return None, [tb, bb], [lb, rb]
         b = max(valid, key=lambda b: b[2] * b[3])
         cx = (b[0] + b[2] / 2) / w
         cy = (b[1] + b[3] / 2) / h
-        return {"c": [round(cx, 4), round(cy, 4)],
-                "box": [round(b[2] / w, 4), round(b[3] / h, 4)]}
+        # 黑边不得侵入人脸附近（黑色头发可能被边缘扫描误判为黑边）：
+        # 顶部黑边不超过 框顶-0.15框高，底部黑边不超过 1-(框底+0.15框高)
+        box_top = b[1] / h
+        box_bot = (b[1] + b[3]) / h
+        tb = min(tb, max(0.0, box_top - 0.15 * (b[3] / h)))
+        bb = min(bb, max(0.0, 1.0 - (box_bot + 0.15 * (b[3] / h))))
+        return ({"c": [round(cx, 4), round(cy, 4)],
+                 "box": [round(b[2] / w, 4), round(b[3] / h, 4)]},
+                [round(tb, 4), round(bb, 4)], [round(lb, 4), round(rb, 4)])
     except Exception as e:
-        logging.getLogger(__name__).warning(f"人脸检测失败 {img_path}: {e}")
-        return None
+        logging.getLogger(__name__).warning(f"照片分析失败 {img_path}: {e}")
+        return None, [0.0, 0.0], [0.0, 0.0]
+
+
+def _crop_photo_margins(img_path, tb, lr):
+    """按黑边比例裁切缓存图片（原子替换）。任一方向裁后剩余 < 40px 则放弃。"""
+    t, b = tb
+    l, r = lr
+    if t + b + l + r <= 0.004:
+        return False
+    try:
+        from PIL import Image
+        with Image.open(img_path) as im:
+            im = im.convert("RGB")
+            w, h = im.size
+            box = (int(l * w), int(t * h), int((1 - r) * w), int((1 - b) * h))
+            if box[2] - box[0] < 40 or box[3] - box[1] < 40:
+                return False
+            crop = im.crop(box)
+            ext = img_path.rsplit(".", 1)[-1].lower()
+            fmt = {"jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP"}.get(ext, "JPEG")
+            tmp = img_path + ".tmp"
+            crop.save(tmp, format=fmt, quality=85, optimize=True)
+            os.replace(tmp, img_path)
+            return True
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"裁切黑边失败 {img_path}: {e}")
+    return False
 
 
 def _face_sidecar_valid(d):
@@ -1336,8 +1404,8 @@ def _face_sidecar_valid(d):
 
 
 def ensure_face_center(token):
-    """确保人脸数据（中心+框）就绪：内存 → 完整 sidecar → 实时检测。
-    仅后台路径调用；旧版 sidecar（缺 box）自动重新检测"""
+    """确保照片处理完毕（人脸数据 + 黑边已裁切）：内存 → 完整 sidecar → 分析并裁切。
+    仅后台路径调用；旧版 sidecar 自动重新处理；裁切后缓存文件即无黑边版。"""
     with _face_cache_lock:
         if token in _face_cache:
             return _face_cache[token]
@@ -1347,7 +1415,8 @@ def ensure_face_center(token):
             with open(p) as f:
                 d = json.load(f)
             if _face_sidecar_valid(d):
-                face = {"c": d["c"], "box": d["box"]} if d.get("c") else None
+                face = ({"c": d["c"], "box": d["box"], "tb": [0.0, 0.0], "lr": [0.0, 0.0]}
+                        if d.get("c") else None)
                 with _face_cache_lock:
                     _face_cache[token] = face
                 return face
@@ -1356,20 +1425,44 @@ def ensure_face_center(token):
     cached = _get_cached_image(token)
     if not cached:
         return None
-    face = _detect_face_center(cached[0])
+    fpath = cached[0]
+    face, tb, lr = _analyze_photo(fpath)
+    cropped = False
+    # 最多两轮裁切：首轮按检测值裁，裁后重检（黑边可能因脸约束/检测粒度残留），再裁一次收敛
+    for _round in range(2):
+        if tb[0] + tb[1] + lr[0] + lr[1] <= 0.004:
+            break
+        if not _crop_photo_margins(fpath, tb, lr):
+            break
+        cropped = True
+        if face:
+            # 人脸坐标换算到裁切后坐标系
+            t, b = tb
+            l, r = lr
+            cw = 1.0 - l - r
+            chh = 1.0 - t - b
+            face["c"] = [round((face["c"][0] - l) / cw, 4),
+                         round((face["c"][1] - t) / chh, 4)]
+            face["box"] = [round(face["box"][0] / cw, 4),
+                           round(face["box"][1] / chh, 4)]
+        face2, tb, lr = _analyze_photo(fpath)
+        if face2:
+            face = face2
+    out = face if face else None
     try:
         os.makedirs(_FACE_DIR, exist_ok=True)
         tmp = _face_sidecar_path(token) + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"v": _FACE_SIDECAR_VERSION,
                        "c": face["c"] if face else None,
-                       "box": face["box"] if face else None}, f)
+                       "box": face["box"] if face else None,
+                       "cropped": cropped}, f)
         os.replace(tmp, _face_sidecar_path(token))
     except Exception:
         pass
     with _face_cache_lock:
-        _face_cache[token] = face
-    return face
+        _face_cache[token] = out
+    return out
 
 
 def get_face_center(token):
@@ -1384,7 +1477,8 @@ def get_face_center(token):
             with open(p) as f:
                 d = json.load(f)
             if _face_sidecar_valid(d):
-                face = {"c": d["c"], "box": d["box"]} if d.get("c") else None
+                face = ({"c": d["c"], "box": d["box"], "tb": [0.0, 0.0], "lr": [0.0, 0.0]}
+                        if d.get("c") else None)
     except Exception:
         face = None
     with _face_cache_lock:
@@ -2425,7 +2519,7 @@ def list_messages():
         # keep-first：同号多档时取最早建档（=主档案规则的最小用户ID），与「我的」页一致
         if oid and oid not in avatar_map:
             toks = bitable.get_attachment_tokens(uf, F_PHOTO)
-            avatar_map[oid] = "/api/image/" + toks[0] if toks else ""
+            avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
     msgs = []
     for it in items:
         fields = it.get("fields", {})
@@ -2584,7 +2678,7 @@ def group_candidates(activity_id):
             if u_gender == target_gender:
                 uf = u.get("fields", {})
                 tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
-                photo = "/api/image/" + tokens[0] if tokens else ""
+                photo = ("/api/image/" + tokens[0] + "?fv6") if tokens else ""
                 candidates.append({
                     "openid": s_openid,
                     "nickname": bitable.get_field_text(uf, F_NICKNAME),
@@ -2955,7 +3049,7 @@ def _photo_tokens(user):
 
 
 def _photo_urls(tokens):
-    return ["/api/image/" + t for t in tokens]
+    return ["/api/image/" + t + "?fv6" for t in tokens]
 
 
 def _write_photos(user, tokens):
@@ -3357,7 +3451,7 @@ def activity_signups(activity_id):
         if u:
             uf = u.get("fields", {})
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
-            photo = "/api/image/" + tokens[0] if tokens else ""
+            photo = ("/api/image/" + tokens[0] + "?fv6") if tokens else ""
             user_id = bitable.get_field_text(uf, F_USER_ID)
             gender = bitable.get_select_value(uf, F_GENDER)
         result.append({"openid": s_openid, "nickname": nick, "user_id": user_id, "photo": photo, "gender": gender})
@@ -3380,7 +3474,7 @@ def get_user_public(openid):
         "openid": bitable.get_field_text(fields, F_FEISHU_ID),
         "nickname": bitable.get_field_text(fields, F_NICKNAME),
         "gender": bitable.get_select_value(fields, F_GENDER),
-        "photos": ["/api/image/" + t for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
+        "photos": ["/api/image/" + t + "?fv6" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
         "display_fields": build_display_fields(fields),
     }
     return jsonify(data)
@@ -3459,7 +3553,7 @@ def public_users():
         result.append({
             "nickname": bitable.get_field_text(fields, F_NICKNAME),
             "gender": bitable.get_select_value(fields, F_GENDER),
-            "photos": ["/api/image/" + t for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
+            "photos": ["/api/image/" + t + "?fv6" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
             "display_fields": build_display_fields(fields),
         })
     return jsonify({"users": result})

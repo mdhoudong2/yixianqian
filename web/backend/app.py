@@ -1502,6 +1502,21 @@ def get_face_center(token):
     return face
 
 
+def user_has_face(user_record, is_observer=False):
+    """本人是否至少有 1 张可检出真人脸的照片（观察员免验；无照片/全无脸为 False）。
+    仅读内存/sidecar 缓存，无实时检测开销；新上传照片由后台秒级检测补齐。"""
+    if is_observer:
+        return True
+    return _tokens_has_face(bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO))
+
+
+def _tokens_has_face(tokens):
+    """token 列表是否含至少一张已检出人脸的照片（读缓存，零检测开销）"""
+    if not tokens:
+        return False
+    return any(get_face_center(t) is not None for t in tokens)
+
+
 @app.route("/api/image/<file_token>")
 def proxy_image(file_token):
     """代理飞书多维表格附件图片（带磁盘缓存，首次下载后直接读本地）"""
@@ -1771,6 +1786,7 @@ def home():
     user_brief["available_roles"] = sorted(roles_of(open_id))
     user_brief["hearts"] = computed_hearts(open_id)
     user_brief["hearts_total"] = hearts_total(open_id)
+    user_brief["has_face"] = user_has_face(user, is_observer)
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -3025,6 +3041,7 @@ def get_profile():
             data["id_valid"] = True
             data["id_card_mask"] = ""
     data["editable"] = _editable_schema(fields, skip_id_card=is_observer)
+    data["has_face"] = user_has_face(user, is_observer)
     return jsonify(data)
 
 
@@ -3146,15 +3163,19 @@ def update_profile_photo():
     tokens.append(file_token)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    # 新照片后台立即下载并做人脸检测（不等 60s warm 循环）
-    def _warm_new_photo(t):
-        try:
-            if _download_and_cache_image(t):
-                ensure_face_center(t)
-        except Exception:
-            pass
-    threading.Thread(target=_warm_new_photo, args=(file_token,), daemon=True).start()
-    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+    # 同步下载+检测（2~4 秒）：保证响应里的 has_face 即时准确，用户保存/返回时不被旧值误拦
+    try:
+        _download_and_cache_image(file_token)
+        ensure_face_center(file_token)
+    except Exception:
+        pass
+    # 同步刷新用户快照，保证 /api/profile、/api/home 的 has_face 与本响应一致
+    try:
+        refresh_snapshot_table("users")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "photos": _photo_urls(tokens),
+                    "has_face": _tokens_has_face(tokens)})
 
 
 @app.route("/api/profile/photo", methods=["DELETE"])
@@ -3181,7 +3202,12 @@ def delete_profile_photo():
     tokens.pop(idx)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+    try:
+        refresh_snapshot_table("users")
+    except Exception:
+        pass
+    return jsonify({"ok": True, "photos": _photo_urls(tokens),
+                    "has_face": _tokens_has_face(tokens)})
 
 
 @app.route("/api/profile/photo/cover", methods=["POST"])

@@ -760,6 +760,7 @@
         <span>{{ uploadingPhoto ? '上传中…' : '添加照片' }}</span>
       </div>
       <div v-else class="edit-photo-limit">最多上传 9 张</div>
+      <div v-if="profileData.has_face === false" style="color:#ee0a24; font-size:12px; padding:0 16px 10px; line-height:1.6;">你的照片未检测到清晰人脸，请上传至少一张含正脸的照片，否则无法使用</div>
       <input ref="photoInput" type="file" accept="image/*" style="display:none;" @change="onPhotoChange" />
       <div class="edit-photo-tip">第一张是头像，也是牵线首页的封面；点击「设为封面」可换第一张</div>
     </div>
@@ -1125,6 +1126,20 @@
     </div>
     <div class="modal-divider">
       <div class="modal-action modal-action-primary" @click="goIdInvalidNow">立即去修改</div>
+    </div>
+  </div>
+</div>
+<!-- 无含人脸照片全屏强制提示 -->
+<div v-if="showFaceInvalidDialog" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9998; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
+  <div class="modal-card" style="max-width:340px;">
+    <div style="padding:24px 18px 16px; text-align:center;">
+      <div style="font-size:44px; margin-bottom:10px;">📷</div>
+      <div class="modal-title" style="font-size:17px;">未检测到含人脸的照片</div>
+      <div class="modal-body" style="line-height:1.7;">你的照片中没有检测到清晰的人脸，请上传至少一张能看清正脸的照片，否则无法继续使用</div>
+      <div style="font-size:14px; color:#ff6b81; margin-top:12px; font-weight:600;">{{ faceInvalidCountdown }}秒后自动跳转</div>
+    </div>
+    <div class="modal-divider">
+      <div class="modal-action modal-action-primary" @click="goFaceInvalidNow">立即去修改</div>
     </div>
   </div>
 </div>
@@ -1563,6 +1578,9 @@ createApp({
     const showIdInvalidDialog = ref(false);
     const idInvalidCountdown = ref(5);
     let idInvalidTimer = null;
+    const showFaceInvalidDialog = ref(false);
+    const faceInvalidCountdown = ref(5);
+    let faceInvalidTimer = null;
     // 我的资料-分组展示：各组是否有内容（无内容则不显示整卡）
     const hasProfileBasic = computed(() => !!(profileData.value.real_name || profileData.value.baptismal_name || profileData.value.birthday || profileData.value.height || profileData.value.education || profileData.value.city || profileData.value.native_place || profileData.value.church || profileData.value.group || profileData.value.church_location));
     const hasProfileWork = computed(() => !!(profileData.value.industry || profileData.value.position || profileData.value.income || profileData.value.house || profileData.value.driving));
@@ -1656,6 +1674,7 @@ createApp({
         if (!resp.ok) throw new Error(data.error || '上传失败，请稍后重试');
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
+        if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
         vant.showToast('照片已添加');
       } catch (err) { vant.showToast(err.message || '上传失败'); }
@@ -1668,6 +1687,7 @@ createApp({
         const data = await api('/api/profile/photo', { method: 'DELETE', body: JSON.stringify({ index: i }) });
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
+        if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
         vant.showToast('已删除');
       } catch (err) { vant.showToast(err.message || '删除失败'); }
@@ -2595,6 +2615,12 @@ createApp({
         startIdInvalidOverlay();
         return false;
       }
+      // 无含人脸照片时禁止 tab 跳离修改资料
+      const noFace = profileData.value && profileData.value.has_face === false;
+      if(noFace){
+        startFaceInvalidOverlay();
+        return false;
+      }
       // 修改资料有未保存改动：先弹保存提醒，不切页
       if(page.value === 'profile_edit' && isProfileEditDirty()){
         pendingProfileEditLeave = () => { page.value = name; };
@@ -2606,6 +2632,42 @@ createApp({
     function goIdInvalidNow(){
       if(idInvalidTimer){ clearInterval(idInvalidTimer); idInvalidTimer=null; }
       showIdInvalidDialog.value = false;
+      openProfileEdit();
+    }
+    // —— 人脸照片门禁（本人照片需至少 1 张可检出人脸，否则仅可进修改资料）——
+    function startFaceInvalidOverlay(){
+      if(showFaceInvalidDialog.value) return;
+      showFaceInvalidDialog.value = true;
+      faceInvalidCountdown.value = 5;
+      if(faceInvalidTimer) clearInterval(faceInvalidTimer);
+      faceInvalidTimer = setInterval(()=>{
+        faceInvalidCountdown.value -= 1;
+        if(faceInvalidCountdown.value <= 0){
+          clearInterval(faceInvalidTimer);
+          faceInvalidTimer = null;
+          showFaceInvalidDialog.value = false;
+          if(page.value !== 'profile_edit') openProfileEdit();
+        }
+      }, 1000);
+    }
+    async function checkFaceValidForPage(targetPage){
+      if(targetPage === 'profile_edit') return;
+      try{
+        let valid = profileData.value && typeof profileData.value.has_face === 'boolean' ? profileData.value.has_face : null;
+        if(valid === null){
+          try{
+            const d = await api('/api/profile');
+            profileData.value = Object.assign({}, profileData.value, d);
+            profileLoaded.value = true;
+            valid = d.has_face;
+          }catch(e){ return; }
+        }
+        if(valid === false) startFaceInvalidOverlay();
+      }catch(e){}
+    }
+    function goFaceInvalidNow(){
+      if(faceInvalidTimer){ clearInterval(faceInvalidTimer); faceInvalidTimer=null; }
+      showFaceInvalidDialog.value = false;
       openProfileEdit();
     }
     // 分组
@@ -2721,14 +2783,20 @@ createApp({
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); }
       if (p === 'profile') checkGroupEntry();
-      // 任何页进入即验身份证，错则3秒后跳改资料
+      // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
+      }
+      if(p !== 'profile_edit' && !showFaceInvalidDialog.value){
+        checkFaceValidForPage(p);
       }
     });
     watch(profileData, (v)=>{
       if(v && typeof v.id_valid === 'boolean' && v.id_valid === false && page.value !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(page.value);
+      }
+      if(v && typeof v.has_face === 'boolean' && v.has_face === false && page.value !== 'profile_edit' && !showFaceInvalidDialog.value){
+        checkFaceValidForPage(page.value);
       }
     });
     // pushState for page forward navigation
@@ -2877,6 +2945,7 @@ createApp({
           if (hash === '#/likes') { page.value = 'likes'; }
           // cards / likes / activities 已在 doLogin → loadHome 中一次性加载
           setTimeout(()=>{ checkIdValidForPage(page.value); }, 1000);
+          setTimeout(()=>{ checkFaceValidForPage(page.value); }, 1200);
         }
       });
     });
@@ -2892,6 +2961,7 @@ createApp({
       cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
+      showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,
       slideDir,
       onTouchStart, onTouchMove, onTouchEnd,
       onCardTouchStart, onCardTouchMove, onCardTouchEnd,

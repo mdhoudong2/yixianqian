@@ -1338,6 +1338,10 @@ createApp({
     // —— 返回拦截（飞书手势/物理返回）——
     let isHandlingPopState = false;
     let ignoreNextPop = false;
+    let exitToastTimer = null;
+    let isExitPending = false;
+    const ROOT_PAGES = ['cards','home','likes','profile'];
+    function isRootPage(p){ return ROOT_PAGES.includes(p); }
     function pushHistory(state){
       if(isHandlingPopState) return;
       try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
@@ -2764,6 +2768,38 @@ createApp({
         page.value = st.page;
         isHandlingPopState=false; return;
       }
+      // 主Tab二次确认退出（飞书手势/物理返回误触）：仅拦截首页 cards 的退出意图
+      // likes/home/profile 的 null 回退交给 parentMap 统一回到 cards，避免在非首页误弹
+      if(page.value === 'cards'){
+        const isExitAttempt = !st || (!st.page && !st.overlay) || st.page === page.value;
+        if(isExitAttempt){
+          if(!isExitPending){
+            try{ vant.showToast('再按一次返回退出'); }catch(e){}
+            isExitPending = true;
+            clearTimeout(exitToastTimer);
+            exitToastTimer = setTimeout(()=>{ isExitPending=false; }, 2000);
+            // 回补 guard 防止直接退出
+            try{ history.pushState({page: page.value}, '', location.pathname + '#h5'); }catch(e){}
+            isHandlingPopState=false;
+            return;
+          } else {
+            // 第二次在 2s 内：放行，真正退出
+            isExitPending = false;
+            clearTimeout(exitToastTimer);
+            // 若当前是同页 guard（st.page === page.value），需再回退一次才能出栈
+            if(st && st.page === page.value){
+              setTimeout(()=>{ try{ history.back(); }catch(e){} }, 30);
+              // 飞书容器兜底：部分容器 history 不含外层，用 SDK 关窗
+              try{
+                if(window.tt && window.tt.closeWindow) setTimeout(()=>{ try{ window.tt.closeWindow(); }catch(e){} }, 300);
+                if(window.h5sdk && window.h5sdk.biz && window.h5sdk.biz.navigation && window.h5sdk.biz.navigation.close) setTimeout(()=>{ try{ window.h5sdk.biz.navigation.close({}); }catch(e){} }, 300);
+              }catch(e){}
+            }
+            isHandlingPopState=false;
+            return;
+          }
+        }
+      }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes',
         'my_activities': 'profile', 'my_groups': 'profile',
@@ -2778,6 +2814,8 @@ createApp({
       isHandlingPopState=false;
     }
     watch(page, (p, old) => {
+      // 根页切换或离开根页时清除退出待确认态
+      if(isExitPending){ isExitPending=false; clearTimeout(exitToastTimer); }
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
@@ -2937,7 +2975,7 @@ createApp({
     });
 
     onMounted(() => {
-      try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
+      try{ history.replaceState({page: page.value}, '', location.pathname); history.pushState({page: page.value}, '', location.pathname + '#h5'); }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {
         if (user.value) {

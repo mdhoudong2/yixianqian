@@ -3159,15 +3159,14 @@ def update_profile_photo():
     tokens.append(file_token)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    # 新照片后台立即下载并做人脸检测（不等 60s warm 循环）
-    def _warm_new_photo(t):
-        try:
-            if _download_and_cache_image(t):
-                ensure_face_center(t)
-        except Exception:
-            pass
-    threading.Thread(target=_warm_new_photo, args=(file_token,), daemon=True).start()
-    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+    # 同步下载+检测（2~4 秒）：保证响应里的 has_face 即时准确，用户保存/返回时不被旧值误拦
+    try:
+        _download_and_cache_image(file_token)
+        ensure_face_center(file_token)
+    except Exception:
+        pass
+    return jsonify({"ok": True, "photos": _photo_urls(tokens),
+                    "has_face": user_has_face(user, _is_observer(user))})
 
 
 @app.route("/api/profile/photo", methods=["DELETE"])
@@ -3194,7 +3193,8 @@ def delete_profile_photo():
     tokens.pop(idx)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+    return jsonify({"ok": True, "photos": _photo_urls(tokens),
+                    "has_face": user_has_face(user, _is_observer(user))})
 
 
 @app.route("/api/profile/photo/cover", methods=["POST"])

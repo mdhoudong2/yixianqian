@@ -1674,9 +1674,9 @@ createApp({
         if (!resp.ok) throw new Error(data.error || '上传失败，请稍后重试');
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
+        if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
         vant.showToast('照片已添加');
-        refreshFaceCheckDelayed(4000); // 后台人脸检测需数秒，完成后静默重查
       } catch (err) { vant.showToast(err.message || '上传失败'); }
       uploadingPhoto.value = false;
       e.target.value = '';
@@ -1687,9 +1687,9 @@ createApp({
         const data = await api('/api/profile/photo', { method: 'DELETE', body: JSON.stringify({ index: i }) });
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
+        if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
         vant.showToast('已删除');
-        refreshFaceCheckDelayed(2000); // 可能删掉了唯一含人脸的照片
       } catch (err) { vant.showToast(err.message || '删除失败'); }
     }
     async function setCover(i) {
@@ -2669,16 +2669,6 @@ createApp({
       if(faceInvalidTimer){ clearInterval(faceInvalidTimer); faceInvalidTimer=null; }
       showFaceInvalidDialog.value = false;
       openProfileEdit();
-    }
-    function refreshFaceCheckDelayed(delayMs){
-      // 延迟静默重查 has_face（上传/删除照片后，后台检测需要数秒）
-      setTimeout(async () => {
-        try {
-          const d = await api('/api/profile');
-          profileData.value = Object.assign({}, profileData.value, d);
-          profileLoaded.value = true;
-        } catch(e) {}
-      }, delayMs);
     }
     // 分组
     async function goGroupSelect(activityId) {

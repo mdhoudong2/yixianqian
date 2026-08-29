@@ -1415,15 +1415,15 @@ createApp({
         if (dh <= ch + 1) return; // 整图已完整可见，无需调整
         const cy = f.c[1];
         const fh = (f.box && f.box[1]) ? f.box[1] : 0;
-        const hair = fh * 0.45;                 // 头顶头发余量（检测框顶≈眉毛处）
-        const top = (cy - fh / 2 - hair) * dh;  // 头顶（显示坐标）
-        const bottom = (cy + fh / 2) * dh;      // 下巴
-        const offDef = (ch - dh) / 2;       // 默认偏移（居中显示）
-        // 默认下人脸已完整可见 → 不动
+        const top = (cy - fh / 2) * dh;      // 人脸框顶（显示坐标）
+        const bottom = (cy + fh / 2) * dh;   // 人脸框底
+        const hair = fh * 0.25 * dh;         // 头顶余量（移动时尽量带上一点头发，不含在可见性判断内）
+        const offDef = (ch - dh) / 2;        // 默认偏移（居中显示）
+        // 默认下人脸框已完整可见 → 不动（不要求头发完美）
         if (offDef + top >= 0 && offDef + bottom <= ch) return;
         let off;
-        if (offDef + top < 0) off = -top;               // 头顶被裁 → 上移使脸顶贴容器顶
-        else if (offDef + bottom > ch) off = ch - bottom; // 下巴被裁 → 下移使脸底贴容器底
+        if (offDef + top < 0) off = -(top - hair);          // 头顶被裁 → 上移，头顶上方留少量头发
+        else if (offDef + bottom > ch) off = ch - bottom;   // 下巴被裁 → 下移
         else return;
         off = Math.max(ch - dh, Math.min(0, off)); // 限制在合法偏移范围
         if (Math.abs(off - offDef) < 1) return;    // 几乎没动，保持默认

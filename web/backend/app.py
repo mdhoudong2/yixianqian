@@ -1502,6 +1502,17 @@ def get_face_center(token):
     return face
 
 
+def user_has_face(user_record, is_observer=False):
+    """本人是否至少有 1 张可检出真人脸的照片（观察员免验；无照片/全无脸为 False）。
+    仅读内存/sidecar 缓存，无实时检测开销；新上传照片由后台秒级检测补齐。"""
+    if is_observer:
+        return True
+    tokens = bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO)
+    if not tokens:
+        return False
+    return any(get_face_center(t) is not None for t in tokens)
+
+
 @app.route("/api/image/<file_token>")
 def proxy_image(file_token):
     """代理飞书多维表格附件图片（带磁盘缓存，首次下载后直接读本地）"""
@@ -1771,6 +1782,7 @@ def home():
     user_brief["available_roles"] = sorted(roles_of(open_id))
     user_brief["hearts"] = computed_hearts(open_id)
     user_brief["hearts_total"] = hearts_total(open_id)
+    user_brief["has_face"] = user_has_face(user, is_observer)
     return jsonify({
         "user": user_brief,
         "cards": cards,
@@ -3025,6 +3037,7 @@ def get_profile():
             data["id_valid"] = True
             data["id_card_mask"] = ""
     data["editable"] = _editable_schema(fields, skip_id_card=is_observer)
+    data["has_face"] = user_has_face(user, is_observer)
     return jsonify(data)
 
 

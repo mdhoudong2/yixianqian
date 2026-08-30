@@ -470,7 +470,7 @@
             </div>
           </template>
         </template>
-        <div v-else class="message-panel">
+        <div v-else class="message-panel" @touchstart.stop @touchend.stop @mousedown.stop @mouseup.stop @click.stop>
           <div v-if="msgLoading" class="msg-tip">加载中…</div>
           <div v-else-if="!threadedMessages.length" class="msg-tip">还没有留言，快来抢沙发～</div>
           <div v-else class="msg-list">
@@ -2102,6 +2102,10 @@ createApp({
     let cardMouseStartX = 0, cardMouseStartY = 0;
     function onCardMouseDown(e) {
       if (e.button !== 0) return;
+      // 输入框/按钮等交互元素放行，否则 preventDefault 会导致无法聚焦输入、无法点击
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA' ||
+                (t.closest && t.closest('.message-panel')))) return;
       cardMouseDown = true;
       cardMouseStartX = e.clientX;
       cardMouseStartY = e.clientY;
@@ -2926,7 +2930,8 @@ createApp({
       if (msgSending.value) return;
       const c = currentCard.value;
       const text = msgText.value.trim();
-      if (!c || !c.openid || !text) return;
+      if (!text) { vant.showToast('请先输入留言内容'); return; }
+      if (!c || !c.openid) { vant.showToast('卡片信息异常，请左右切换到其他用户后重试'); return; }
       msgSending.value = true;
       try {
         await api('/api/messages', {

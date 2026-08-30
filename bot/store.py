@@ -125,3 +125,19 @@ def consume_observer_code(code, nickname):
 
     storage.update_json(OBSERVER_CODES_FILE, {}, _m)
     return consumed[0]
+
+
+def release_observer_code(code):
+    """回滚邀请码：已使用→未使用（搬移失败时调用，避免邀请码被浪费）。返回 True/False。"""
+    released = [False]
+
+    def _m(data):
+        entry = data.get(code)
+        if not entry or not entry.get("used"):
+            return None  # 不存在或未使用，无需回滚
+        data[code] = {"used": False, "used_by": "", "used_at": ""}
+        released[0] = True
+        return data
+
+    storage.update_json(OBSERVER_CODES_FILE, {}, _m)
+    return released[0]

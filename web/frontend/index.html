@@ -3028,7 +3028,7 @@ createApp({
     }
     async function deleteMessage(m) {
       try {
-        await vant.Dialog.confirm({ title: '删除留言', message: '确定删除这条留言吗？' });
+        await vant.showConfirmDialog({ title: '删除留言', message: '确定删除这条留言吗？', confirmButtonColor: '#ee0a24' });
       } catch (e) { return; }
       try {
         await api('/api/messages/' + m.id, { method: 'DELETE' });
@@ -3064,7 +3064,7 @@ createApp({
     }
     async function deleteMyMessage(m) {
       try {
-        await vant.Dialog.confirm({ title: '删除留言', message: '确定删除这条留言吗？' });
+        await vant.showConfirmDialog({ title: '删除留言', message: '确定删除这条留言吗？', confirmButtonColor: '#ee0a24' });
       } catch (e) { return; }
       try {
         await api('/api/messages/' + m.id, { method: 'DELETE' });

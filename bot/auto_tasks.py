@@ -116,7 +116,7 @@ def auto_bind_from_creator():
             continue
 
         # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→删除记录，空→普通注册
-        invite_code = (get_field_text(fields, FIELD_INVITE_CODE) or "").strip()
+        invite_code = "".join((get_field_text(fields, FIELD_INVITE_CODE) or "").split()).upper()
         is_observer = False
         is_wrong_code = False
         codes = {}
@@ -201,7 +201,10 @@ def auto_bind_from_creator():
             # 邀请码错误或已被使用：直接删除记录，不在用户表堆积无效用户
             msg = "邀请码已被使用" if invite_code in codes else "邀请码错误"
             delete_record(USER_TABLE_ID, record_id)
-            log(f"观察员注册邀请码无效: {nickname} (open_id={open_id})")
+            log(f"观察员注册邀请码无效: {nickname} (open_id={open_id}) "
+                f"收到的码='{invite_code}' 码库共{len(codes)}个 "
+                f"码存在={invite_code in codes} "
+                f"已使用={codes.get(invite_code, {}).get('used', 'N/A')}")
             send_text_message(open_id, f"{msg}，注册未通过。如有疑问请联系管理员。")
             continue
 

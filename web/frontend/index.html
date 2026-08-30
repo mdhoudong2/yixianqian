@@ -471,7 +471,7 @@
             </div>
           </template>
         </template>
-        <div v-else class="message-panel" @touchstart.stop @touchend.stop @mousedown.stop @mouseup.stop @click.stop>
+        <div v-else class="message-panel">
           <div v-if="msgLoading" class="msg-tip">加载中…</div>
           <div v-else-if="!threadedMessages.length" class="msg-tip">还没有留言，快来抢沙发～</div>
           <div v-else class="msg-list">
@@ -2142,8 +2142,15 @@ createApp({
     }
     function onPhotoError() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
     // —— 卡片滑动（仅下半区） ——
-    let cardTouchStartX = 0, cardTouchStartY = 0;
+    let cardTouchStartX = 0, cardTouchStartY = 0, cardTouchIgnore = false;
     function onCardTouchStart(e) {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA' ||
+                (t.closest && t.closest('input, textarea, button')))) {
+        cardTouchIgnore = true;
+        return;
+      }
+      cardTouchIgnore = false;
       cardTouchStartX = e.touches[0].clientX; cardTouchStartY = e.touches[0].clientY;
     }
     function onCardTouchMove(e) {}
@@ -2163,6 +2170,7 @@ createApp({
       }
     }
     function onCardTouchEnd(e) {
+      if (cardTouchIgnore) { cardTouchIgnore = false; return; }
       const dx = e.changedTouches[0].clientX - cardTouchStartX;
       const dy = e.changedTouches[0].clientY - cardTouchStartY;
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
@@ -2177,7 +2185,7 @@ createApp({
       // 输入框/按钮等交互元素放行，否则 preventDefault 会导致无法聚焦输入、无法点击
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'BUTTON' || t.tagName === 'TEXTAREA' ||
-                (t.closest && t.closest('.message-panel')))) return;
+                (t.closest && t.closest('input, textarea, button')))) return;
       cardMouseDown = true;
       cardMouseStartX = e.clientX;
       cardMouseStartY = e.clientY;

@@ -528,6 +528,14 @@
     </div>
     <div class="msg-right"><span class="msg-count">{{ myMessagesList.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
+  <div class="msg-card" @click="openReceivedMessages" style="cursor:pointer;">
+    <div class="msg-avatar">📨</div>
+    <div class="msg-body">
+      <div class="msg-name">收到的留言</div>
+      <div class="msg-sub">查看别人发给我的留言</div>
+    </div>
+    <div class="msg-right"><span class="msg-count">{{ receivedMessagesList.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+  </div>
   <div class="msg-card" @click="openMyLikes" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💕</div>
     <div class="msg-body">
@@ -897,6 +905,31 @@
         </div>
         <div class="msg-right">
           <van-button size="mini" plain type="danger" @click="deleteMyMessage(m)">删除</van-button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 收到的留言 ========== -->
+<div v-else-if="page==='received_messages'" key="received_messages">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingReceivedMessages" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!receivedMessagesList.length" description="还没有人给你留言"></van-empty>
+    <div v-else style="display:flex;flex-direction:column;gap:10px;">
+      <div v-for="m in receivedMessagesList" :key="m.id" class="msg-card" style="align-items:flex-start;">
+        <div class="msg-avatar">
+          <img v-if="m.author_avatar" :src="m.author_avatar" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">
+          <span v-else>📨</span>
+        </div>
+        <div class="msg-body">
+          <div class="msg-name" style="font-size:13px;">来自：{{ m.author_nickname }}</div>
+          <div class="msg-sub msg-sub-strong" style="white-space:normal;">{{ m.content }}</div>
+          <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }}</div>
         </div>
       </div>
     </div>
@@ -2855,7 +2888,7 @@ createApp({
         isHandlingPopState=false; return;
       }
       const parentMap = {
-        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes',
+        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
         'my_activities': 'profile', 'my_groups': 'profile',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
@@ -2871,7 +2904,7 @@ createApp({
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
-      if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); }
+      if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
       if (p === 'profile') checkGroupEntry();
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
@@ -2920,6 +2953,8 @@ createApp({
     const messages = ref([]);
     const myMessagesList = ref([]);
     const loadingMyMessages = ref(false);
+    const receivedMessagesList = ref([]);
+    const loadingReceivedMessages = ref(false);
     const msgLoading = ref(false);
     const msgSending = ref(false);
     const msgText = ref('');
@@ -3026,6 +3061,24 @@ createApp({
         vant.showToast(e.message || '删除失败');
       }
     }
+    async function refreshReceivedCount() {
+      try {
+        const data = await api('/api/messages/received');
+        receivedMessagesList.value = data.messages || [];
+      } catch (e) {}
+    }
+    async function openReceivedMessages() {
+      page.value = 'received_messages';
+      loadingReceivedMessages.value = true;
+      try {
+        const data = await api('/api/messages/received');
+        receivedMessagesList.value = data.messages || [];
+      } catch (e) {
+        vant.showToast(e.message || '加载失败');
+      } finally {
+        loadingReceivedMessages.value = false;
+      }
+    }
     function replyTo(m) {
       replyTarget.value = m;
       msgText.value = '';
@@ -3111,6 +3164,7 @@ createApp({
       onPhotoError, onPhotoLoad, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       myMessagesList, loadingMyMessages, openMyMessages, deleteMyMessage, refreshMyMessagesCount,
+      receivedMessagesList, loadingReceivedMessages, openReceivedMessages, refreshReceivedCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,

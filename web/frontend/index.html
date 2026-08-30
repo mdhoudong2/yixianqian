@@ -1872,6 +1872,8 @@ createApp({
 
     // 登录（app_id 由后端注入：生产/测试服各自不同）
     const FEISHU_APP_ID = '__FEISHU_APP_ID__';
+    // 当前前端版本（后端按 index.html mtime 注入），用于发现新版本后自动刷新
+    const APP_VERSION = '__APP_VERSION__';
     function isInFeishu() {
       const ua = navigator.userAgent.toLowerCase();
       return ua.includes('lark') || ua.includes('feishu');
@@ -3122,6 +3124,31 @@ createApp({
     };
   }
 }).use(vant).mount('#app');
+
+    // ===== 前端新版本自动刷新（解决飞书 WebView 驻留旧 JS / 缓存问题）=====
+    (function setupVersionWatch(){
+      const RELOAD_COOLDOWN = 5 * 60 * 1000; // 两次自动刷新至少间隔5分钟，防止异常循环
+      async function checkVersion(){
+        try{
+          const r = await fetch('/api/version', {cache:'no-store'});
+          if(!r.ok) return;
+          const d = await r.json();
+          const server = String(d.version || '');
+          // 占位符未被替换（本地file打开等）或版本相同则不处理
+          if(!server || server === APP_VERSION || server === '__APP_VERSION__') return;
+          // 用户正在输入时不打断，延后到下一次检测
+          const ae = document.activeElement;
+          if(ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
+          const last = Number(sessionStorage.getItem('yxq_last_reload')||0);
+          if(Date.now() - last < RELOAD_COOLDOWN) return;
+          sessionStorage.setItem('yxq_last_reload', String(Date.now()));
+          location.reload();
+        }catch(e){ /* 静默：网络抖动不影响使用 */ }
+      }
+      setInterval(checkVersion, 45000);                 // 每45秒轮询一次
+      document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkVersion(); });
+      window.addEventListener('focus', checkVersion);
+    })();
 </script>
 </body>
 </html>

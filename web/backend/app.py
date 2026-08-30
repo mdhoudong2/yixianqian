@@ -962,15 +962,32 @@ def _has_active_filter(filters):
 _INDEX_HTML_CACHE = None
 
 
+def _app_version():
+    """前端版本号：取 index.html 的 mtime（整数秒）。每次 git pull 部署后 mtime 变化，
+    前端据此检测到新版本并自动刷新，规避飞书 WebView 长期驻留旧 JS 的缓存问题。"""
+    try:
+        return str(int(os.path.getmtime(os.path.join(app.static_folder, "index.html"))))
+    except OSError:
+        return "0"
+
+
 def _render_index():
-    """读取单文件前端并注入飞书 app_id，返回不缓存的 HTML 响应。"""
+    """读取单文件前端并注入飞书 app_id 与前端版本号，返回不缓存的 HTML 响应。"""
     global _INDEX_HTML_CACHE
     if _INDEX_HTML_CACHE is None:
         with open(os.path.join(app.static_folder, "index.html"), "r", encoding="utf-8") as f:
             _INDEX_HTML_CACHE = f.read()
-    resp = make_response(_INDEX_HTML_CACHE.replace("__FEISHU_APP_ID__", FEISHU_APP_ID))
+    html = _INDEX_HTML_CACHE.replace("__FEISHU_APP_ID__", FEISHU_APP_ID)
+    html = html.replace("__APP_VERSION__", _app_version())
+    resp = make_response(html)
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
+
+
+@app.route("/api/version", methods=["GET"])
+def api_version():
+    """当前前端版本号，供前端轮询比对、发现新版本后自动刷新。"""
+    return jsonify({"version": _app_version()})
 
 
 @app.route("/")

@@ -3050,6 +3050,13 @@ createApp({
       if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
       msgText.value = '';
       replyTarget.value = null;
+      // scroll to bottom so user sees own message
+      nextTick(() => {
+        try {
+          const el = document.querySelector('.msg-list');
+          if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        } catch (_) {}
+      });
       msgSending.value = true;
       let realId = null;
       try {
@@ -3065,6 +3072,12 @@ createApp({
         // keep msg_count in sync (no reload)
         if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
         vant.showToast('留言成功');
+        nextTick(() => {
+          try {
+            const el = document.querySelector('.msg-list');
+            if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+          } catch (_) {}
+        });
         // invalidate myMessages cache so next entry sees new message; also patch if already loaded
         if (myMessagesLoaded.value) {
           // optimistic append to my list if we can guess target info

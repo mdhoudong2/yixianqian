@@ -2573,6 +2573,47 @@ def list_messages():
     return jsonify({"messages": msgs})
 
 
+@app.route("/api/messages/mine", methods=["GET"])
+def list_my_messages():
+    """列出当前用户发出的全部留言（跨卡片），按时间倒序，附带所在卡片主人昵称。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+    items = bitable.search_records(MESSAGE_TABLE_ID, [
+        {"field_name": F_MSG_AUTHOR_OID, "operator": "is", "value": [open_id]}
+    ])
+    # open_id -> 昵称/头像（用户表+观察员表合并）
+    nick_map, avatar_map = {}, {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in nick_map:
+                nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
+                toks = bitable.get_attachment_tokens(uf, F_PHOTO)
+                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+    msgs = []
+    for it in items:
+        fields = it.get("fields", {})
+        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+            continue
+        target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        msgs.append({
+            "id": it.get("record_id"),
+            "target_openid": target_oid,
+            "target_nickname": nick_map.get(target_oid, "未知用户"),
+            "target_avatar": avatar_map.get(target_oid, ""),
+            "content": bitable.get_field_text(fields, F_MSG_CONTENT),
+            "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
+        })
+    msgs.sort(key=lambda m: m["created_at"], reverse=True)
+    return jsonify({"messages": msgs})
+
+
 @app.route("/api/messages", methods=["POST"])
 def create_message():
     """发留言/回帖（固定显示昵称+用户ID，无匿名）"""

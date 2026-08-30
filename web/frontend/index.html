@@ -527,7 +527,7 @@
       <div class="msg-name">我的留言</div>
       <div class="msg-sub">查看我在所有卡片下发出的留言</div>
     </div>
-    <div class="msg-right"><span class="msg-count">{{ myMessagesList.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span class="msg-count-wrap"><span v-if="!loadingMyMessages" class="msg-count">{{ myMessagesList.length }}</span><van-loading v-else size="14px" /></span><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
   <div class="msg-card" @click="openReceivedMessages" style="cursor:pointer;">
     <div class="msg-avatar">📨</div>
@@ -535,7 +535,7 @@
       <div class="msg-name">收到的留言</div>
       <div class="msg-sub">查看别人发给我的留言</div>
     </div>
-    <div class="msg-right"><span class="msg-count">{{ receivedMessagesList.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+    <div class="msg-right"><span class="msg-count-wrap"><span v-if="!loadingReceivedMessages" class="msg-count">{{ receivedMessagesList.length }}</span><van-loading v-else size="14px" /></span><van-icon name="arrow" color="#c8c9cc" /></div>
   </div>
   <div class="msg-card" @click="openMyLikes" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💕</div>
@@ -2954,8 +2954,10 @@ createApp({
     const messages = ref([]);
     const myMessagesList = ref([]);
     const loadingMyMessages = ref(false);
+    const myMessagesLoaded = ref(false);
     const receivedMessagesList = ref([]);
     const loadingReceivedMessages = ref(false);
+    const receivedMessagesLoaded = ref(false);
     const msgLoading = ref(false);
     const msgSending = ref(false);
     const msgText = ref('');
@@ -3033,17 +3035,23 @@ createApp({
       }
     }
     async function refreshMyMessagesCount() {
+      const isFirst = !myMessagesLoaded.value;
+      if (isFirst) loadingMyMessages.value = true;
       try {
         const data = await api('/api/messages/mine');
         myMessagesList.value = data.messages || [];
+        myMessagesLoaded.value = true;
       } catch (e) {}
+      if (isFirst) loadingMyMessages.value = false;
     }
     async function openMyMessages() {
       page.value = 'my_messages';
+      if (myMessagesLoaded.value) return;
       loadingMyMessages.value = true;
       try {
         const data = await api('/api/messages/mine');
         myMessagesList.value = data.messages || [];
+        myMessagesLoaded.value = true;
       } catch (e) {
         vant.showToast(e.message || '加载失败');
       } finally {
@@ -3063,17 +3071,23 @@ createApp({
       }
     }
     async function refreshReceivedCount() {
+      const isFirst = !receivedMessagesLoaded.value;
+      if (isFirst) loadingReceivedMessages.value = true;
       try {
         const data = await api('/api/messages/received');
         receivedMessagesList.value = data.messages || [];
+        receivedMessagesLoaded.value = true;
       } catch (e) {}
+      if (isFirst) loadingReceivedMessages.value = false;
     }
     async function openReceivedMessages() {
       page.value = 'received_messages';
+      if (receivedMessagesLoaded.value) return;
       loadingReceivedMessages.value = true;
       try {
         const data = await api('/api/messages/received');
         receivedMessagesList.value = data.messages || [];
+        receivedMessagesLoaded.value = true;
       } catch (e) {
         vant.showToast(e.message || '加载失败');
       } finally {

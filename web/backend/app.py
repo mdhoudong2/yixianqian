@@ -2578,9 +2578,11 @@ def create_message():
     """发留言/回帖（固定显示昵称+用户ID，无匿名）"""
     open_id = require_login()
     if not open_id:
+        app.logger.warning("留言拒绝: 未登录")
         return jsonify({"error": "未登录"}), 401
     # 留言属于互动行为：「单身」与「观察员」可发（已脱单/待审核/审核不通过/已退出均拦截）
     _status, _u = _account_status(open_id)
+    app.logger.info(f"留言请求: role={g.yxq_role} status={_status} open_id={open_id[:20]}")
     if _status == "已脱单":
         return jsonify({"error": "你当前处于已脱单状态，不能留言；请先在「我的」页恢复单身"}), 403
     if _status in ("待审核", "审核不通过", "已退出"):
@@ -2595,6 +2597,7 @@ def create_message():
         return jsonify({"error": "留言最多500字"}), 400
     author = snap_self_user()
     if not author:
+        app.logger.error(f"留言拒绝: snap_self_user返回None role={g.yxq_role} open_id={open_id[:20]}")
         return jsonify({"error": "用户不存在"}), 404
     now_ms = int(time.time() * 1000)
     dup_rows = bitable.search_records(MESSAGE_TABLE_ID, {
@@ -2622,7 +2625,9 @@ def create_message():
         F_MSG_STATUS: "正常",
     })
     if not rec:
+        app.logger.error(f"留言写入失败: role={g.yxq_role} open_id={open_id[:20]} target={target[:20]}")
         return jsonify({"error": "留言失败"}), 500
+    app.logger.info(f"留言成功: role={g.yxq_role} id={rec.get('record_id')}")
     return jsonify({"ok": True, "id": rec.get("record_id")})
 
 

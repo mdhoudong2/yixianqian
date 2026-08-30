@@ -393,10 +393,11 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         elif text.startswith("开启分组功能"):
             keyword = text[len("开启分组功能"):].strip()
             reply = handle_admin_toggle_group_flag(keyword)
-        elif text.startswith("生成村情六处邀请码"):
-            keyword = text[len("生成村情六处邀请码"):].strip()
+        elif text.startswith("生成村情六处邀请码") or text.startswith("生成吃瓜群众邀请码"):
+            prefix = "生成村情六处邀请码" if text.startswith("生成村情六处邀请码") else "生成吃瓜群众邀请码"
+            keyword = text[len(prefix):].strip()
             reply = handle_admin_generate_observer_codes(keyword)
-        elif text_lower in ["查看村情六处邀请码", "村情六处邀请码"]:
+        elif text_lower in ["查看村情六处邀请码", "村情六处邀请码", "查看吃瓜群众邀请码", "吃瓜群众邀请码"]:
             reply = handle_admin_list_observer_codes()
         elif text_lower in ["分组帮助", "group help"]:
             reply = handle_group_help()

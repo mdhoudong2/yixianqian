@@ -19,6 +19,7 @@ from store import (
     consume_observer_code,
     load_invite_rewarded,
     load_observer_codes,
+    release_observer_code,
     reserve_notified,
     save_invite_rewarded,
     unreserve_notified,
@@ -31,12 +32,29 @@ from lib import storage
 _AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
 
 
+def _normalize_text_fields(fields):
+    """将文本字段值从API返回的富文本数组转为纯字符串。
+
+    用户表的单行文本读取时是 [{"text":"...","type":"text"}]，
+    但观察员表的多行文本写入时要求纯字符串，否则报 TextFieldConvFail。
+    单选/多选/数字/日期等非文本字段保持原样。
+    """
+    normalized = {}
+    for k, v in (fields or {}).items():
+        if isinstance(v, list) and v and all(isinstance(item, dict) and "text" in item for item in v):
+            normalized[k] = "".join(item.get("text", "") for item in v)
+        else:
+            normalized[k] = v
+    return normalized
+
+
 def _move_record_to_observer_table(record_id, fields, open_id):
     """把观察员记录从用户表搬进村情六处独立表：复制可写字段 → 建新记录 → 删旧记录。
     返回新 record_id；失败返回 None（保留旧记录，下轮重试）。"""
     if not OBSERVER_TABLE_ID:
         return None
     move_fields = {k: v for k, v in (fields or {}).items() if k not in _AUTO_FIELD_NAMES}
+    move_fields = _normalize_text_fields(move_fields)
     move_fields[FIELD_ACCOUNT_STATUS] = STATUS_OBSERVER
     move_fields[FIELD_HEART_REMAIN] = 0
     move_fields[FIELD_FEISHU_ID] = open_id
@@ -170,6 +188,13 @@ def auto_bind_from_creator():
                     "点下方按钮进入一线牵App看看吧："
                 )
                 send_main_menu_card(open_id)
+            else:
+                # 搬移失败：回滚邀请码（避免浪费），通知用户，保留记录下轮重试
+                release_observer_code(invite_code)
+                log(f"观察员搬移失败已回滚邀请码: {nickname} (open_id={open_id}) code={invite_code}")
+                send_text_message(open_id,
+                    "注册处理遇到临时问题，邀请码已退回，系统将自动重试。\n"
+                    "如长时间未收到欢迎消息，请联系管理员。")
             continue
 
         if is_wrong_code:

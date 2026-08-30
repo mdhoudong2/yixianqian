@@ -520,6 +520,14 @@
 </div>
 <!-- ========== 消息页 ========== -->
 <div v-else-if="page==='likes'" key="likes" class="page">
+  <div class="msg-card" @click="openMyMessages" style="cursor:pointer;">
+    <div class="msg-avatar">💬</div>
+    <div class="msg-body">
+      <div class="msg-name">我的留言</div>
+      <div class="msg-sub">查看我在所有卡片下发出的留言</div>
+    </div>
+    <div class="msg-right"><span class="msg-count">{{ myMessagesList.length }}</span><van-icon name="arrow" color="#c8c9cc" /></div>
+  </div>
   <div class="msg-card" @click="openMyLikes" style="cursor:pointer;" v-if="!isObserver">
     <div class="msg-avatar">💕</div>
     <div class="msg-body">
@@ -862,6 +870,34 @@
           <div class="like-item-msg" v-if="l.mutual && l.message">附言：{{ l.message }}</div>
         </div>
         <van-button v-if="!l.mutual && l.like_type !== '实名'" size="mini" plain type="danger" @click="cancelLike(l)">取消喜欢</van-button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 我的留言 ========== -->
+<div v-else-if="page==='my_messages'" key="my_messages">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingMyMessages" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!myMessagesList.length" description="你还没有发出过留言"></van-empty>
+    <div v-else style="display:flex;flex-direction:column;gap:10px;">
+      <div v-for="m in myMessagesList" :key="m.id" class="msg-card" style="align-items:flex-start;">
+        <div class="msg-avatar">
+          <img v-if="m.target_avatar" :src="m.target_avatar" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">
+          <span v-else>💬</span>
+        </div>
+        <div class="msg-body">
+          <div class="msg-name" style="font-size:13px;">留言给：{{ m.target_nickname }}</div>
+          <div class="msg-sub msg-sub-strong" style="white-space:normal;">{{ m.content }}</div>
+          <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }}</div>
+        </div>
+        <div class="msg-right">
+          <van-button size="mini" plain type="danger" @click="deleteMyMessage(m)">删除</van-button>
+        </div>
       </div>
     </div>
   </div>
@@ -2817,7 +2853,7 @@ createApp({
         isHandlingPopState=false; return;
       }
       const parentMap = {
-        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes',
+        'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes',
         'my_activities': 'profile', 'my_groups': 'profile',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
@@ -2833,7 +2869,7 @@ createApp({
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
-      if (p === 'likes') { loadLikes(); loadNotifications(); }
+      if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); }
       if (p === 'profile') checkGroupEntry();
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
@@ -2880,6 +2916,8 @@ createApp({
     // ===== 留言 =====
     const cardTab = ref('profile');
     const messages = ref([]);
+    const myMessagesList = ref([]);
+    const loadingMyMessages = ref(false);
     const msgLoading = ref(false);
     const msgSending = ref(false);
     const msgText = ref('');
@@ -2954,6 +2992,36 @@ createApp({
         await loadMessages(true);
       } catch (e) {
         console.error(e);
+      }
+    }
+    async function refreshMyMessagesCount() {
+      try {
+        const data = await api('/api/messages/mine');
+        myMessagesList.value = data.messages || [];
+      } catch (e) {}
+    }
+    async function openMyMessages() {
+      page.value = 'my_messages';
+      loadingMyMessages.value = true;
+      try {
+        const data = await api('/api/messages/mine');
+        myMessagesList.value = data.messages || [];
+      } catch (e) {
+        vant.showToast(e.message || '加载失败');
+      } finally {
+        loadingMyMessages.value = false;
+      }
+    }
+    async function deleteMyMessage(m) {
+      try {
+        await vant.Dialog.confirm({ title: '删除留言', message: '确定删除这条留言吗？' });
+      } catch (e) { return; }
+      try {
+        await api('/api/messages/' + m.id, { method: 'DELETE' });
+        myMessagesList.value = myMessagesList.value.filter(x => x.id !== m.id);
+        vant.showToast('已删除');
+      } catch (e) {
+        vant.showToast(e.message || '删除失败');
       }
     }
     function replyTo(m) {
@@ -3040,6 +3108,7 @@ createApp({
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
       onPhotoError, onPhotoLoad, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
+      myMessagesList, loadingMyMessages, openMyMessages, deleteMyMessage, refreshMyMessagesCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,

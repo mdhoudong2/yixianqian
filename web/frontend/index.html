@@ -3028,10 +3028,14 @@ createApp({
     }
     async function deleteMessage(m) {
       try {
+        await vant.Dialog.confirm({ title: '删除留言', message: '确定删除这条留言吗？' });
+      } catch (e) { return; }
+      try {
         await api('/api/messages/' + m.id, { method: 'DELETE' });
         await loadMessages(true);
+        vant.showToast('已删除');
       } catch (e) {
-        console.error(e);
+        vant.showToast(e.message || '删除失败');
       }
     }
     async function refreshMyMessagesCount() {

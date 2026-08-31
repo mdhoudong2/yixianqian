@@ -1053,7 +1053,7 @@ IMAGE_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "imag
 os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
 
 
-def cleanup_image_cache(max_age_days=7, max_files=1000):
+def cleanup_image_cache(max_age_days=3, max_files=500):
     """过期与超量清理：删 7 天前文件，超 1000 个时删最旧的（后台线程每日执行）"""
     try:
         files = [(os.path.join(IMAGE_CACHE_DIR, f), os.path.getmtime(os.path.join(IMAGE_CACHE_DIR, f)))
@@ -1072,8 +1072,27 @@ def cleanup_image_cache(max_age_days=7, max_files=1000):
             for path, _ in files[:len(files) - max_files]:
                 try:
                     os.remove(path)
+                    # 同步清理对应人脸 sidecar，避免孤儿
+                    token = os.path.basename(path).split(".")[0]
+                    sidecar = os.path.join(_FACE_DIR, token + ".json")
+                    if os.path.exists(sidecar):
+                        os.remove(sidecar)
                 except Exception:
                     pass
+        # 額外：清理孤儿 sidecar（图已删但 sidecar 仍在）
+        try:
+            if os.path.exists(_FACE_DIR):
+                for sf in os.listdir(_FACE_DIR):
+                    if not sf.endswith(".json"):
+                        continue
+                    tok = sf[:-5]
+                    if not _get_cached_image(tok):
+                        try:
+                            os.remove(os.path.join(_FACE_DIR, sf))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -1146,7 +1165,13 @@ def _compress_image(image_bytes, ext):
         if fmt == "JPEG":
             if img.mode in ("RGBA", "P", "LA"):
                 img = img.convert("RGB")
-            save_params = {"quality": 85, "optimize": True}
+            # 大图二次压：超过 1M 或宽度仍>720 的用更低质量
+            is_large = len(image_bytes) > 1024*1024
+            if is_large and img.width > 720:
+                ratio = 720.0 / img.width
+                new_h = int(img.height * ratio)
+                img = img.resize((720, new_h), Image.LANCZOS)
+            save_params = {"quality": 75 if is_large else 85, "optimize": True}
         elif fmt == "PNG":
             save_params = {"optimize": True}
         out = io.BytesIO()
@@ -3676,9 +3701,44 @@ def get_notifications():
 
 # ========== 引流埋点统计 ==========
 
-def _load_track():
-    return storage.load_json(TRACK_FILE, {"events": []})
+def _track_daily_file(date_str=None):
+    """按天切分埋点文件，避免单文件无限增长导致解析变慢"""
+    ds = date_str or time.strftime("%Y-%m-%d")
+    return os.path.join(SHARED_DATA_DIR, f"yixianqian_track-{ds}.json")
 
+def _load_track(days=7):
+    """聚合最近 days 天的埋点，兼容旧单文件 yixianqian_track.json"""
+    events = []
+    # 兼容旧文件：若存在则一次性读入（后续逐步由按天文件替代）
+    old = storage.load_json(TRACK_FILE, None)
+    if old and isinstance(old.get("events"), list):
+        events.extend(old["events"][-5000:])
+    # 按天文件聚合
+    import datetime as _dt
+    for i in range(days):
+        ds = (_dt.date.today() - _dt.timedelta(days=i)).strftime("%Y-%m-%d")
+        d = storage.load_json(_track_daily_file(ds), None)
+        if d and isinstance(d.get("events"), list):
+            events.extend(d["events"])
+    return {"events": events}
+
+def _cleanup_old_tracks(keep_days=7):
+    """清理超过 keep_days 的旧按天文件"""
+    try:
+        import datetime as _dt
+        cutoff = _dt.date.today() - _dt.timedelta(days=keep_days)
+        for fname in os.listdir(SHARED_DATA_DIR):
+            if not fname.startswith("yixianqian_track-") or not fname.endswith(".json"):
+                continue
+            try:
+                ds = fname[len("yixianqian_track-"):-5]
+                d = _dt.datetime.strptime(ds, "%Y-%m-%d").date()
+                if d < cutoff:
+                    os.remove(os.path.join(SHARED_DATA_DIR, fname))
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 @app.route("/api/track", methods=["POST"])
 def track_event():
@@ -3696,13 +3756,20 @@ def track_event():
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "ip": request.headers.get("X-Forwarded-For", request.remote_addr or ""),
         })
-        # 磁盘恒定：超 20000 条时截断至最新 15000 条
-        if len(track["events"]) > 20000:
-            track["events"] = track["events"][-15000:]
+        # 单天文件也做截断，避免单天被刷爆
+        if len(track["events"]) > 5000:
+            track["events"] = track["events"][-3000:]
         return track
 
-    # update_json 跨进程 flock + 原子写，避免 gunicorn 多 worker 并发丢事件
-    storage.update_json(TRACK_FILE, {"events": []}, _add)
+    # 按天文件原子写，旧单文件不再写入，仅保留读取兼容
+    daily = _track_daily_file()
+    storage.update_json(daily, {"events": []}, _add)
+    # 概率性清理旧文件（1/100 概率，避免每次请求都扫目录）
+    if random.random() < 0.01:
+        try:
+            threading.Thread(target=_cleanup_old_tracks, daemon=True).start()
+        except Exception:
+            pass
     return jsonify({"ok": True})
 
 
@@ -3712,7 +3779,7 @@ def track_stats():
     open_id = require_login()
     if not open_id or open_id not in ADMIN_OPEN_IDS:
         return jsonify({"error": "未授权"}), 403
-    track = _load_track()
+    track = _load_track(days=14)
     events = track.get("events", [])
     by_day = {}
     by_event = {}

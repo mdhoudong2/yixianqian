@@ -1192,17 +1192,18 @@ def _download_and_cache_image(file_token):
         return False
 
 
-def warm_image_cache():
-    """后台预热：把快照中所有用户照片、活动海报下载到磁盘缓存（已缓存自动跳过）"""
+def warm_image_cache(max_per_run=30):
+    """后台预热：增量下载 + 人脸异步补齐，避免长时间持有锁阻塞快照"""
     tokens = set()
     for u in _snap("users"):
         tokens.update(bitable.get_attachment_tokens(u.get("fields", {}), F_PHOTO))
     for a in _snap("activities"):
         tokens.update(bitable.get_attachment_tokens(a.get("fields", {}), F_ACTIVITY_POSTER))
+    # 仅处理未缓存的，限制每轮数量，避免一次性下载数百张阻塞快照循环
+    pending = [tok for tok in tokens if tok and not _get_cached_image(tok)]
+    to_download = pending[:max_per_run]
     warmed = 0
-    for t in tokens:
-        if not t:
-            continue
+    for t in to_download:
         try:
             with _image_warm_lock:
                 if _download_and_cache_image(t):
@@ -1210,17 +1211,31 @@ def warm_image_cache():
         except Exception as e:
             logging.getLogger(__name__).warning(f"预热图片 {t} 失败: {e}")
     if warmed:
-        logging.getLogger(__name__).info(f"图片预热完成，本次下载 {warmed} 张")
-    # 人脸检测补齐：仅对尚无完整 sidecar 的照片做检测（存量照片分多轮渐进补齐）
-    for t in tokens:
-        if not t:
-            continue
-        try:
-            with _image_warm_lock:
-                if _get_cached_image(t):
-                    ensure_face_center(t)
-        except Exception:
-            pass
+        logging.getLogger(__name__).info(f"图片预热完成，本次下载 {warmed} 张，待下载 {len(pending)-warmed} 张")
+    # 人脸检测异步批量，不阻塞快照循环；有效 sidecar 已存在则跳过
+    def _bg_face_batch():
+        for tok in list(tokens)[:max_per_run]:
+            if not tok:
+                continue
+            try:
+                if not _get_cached_image(tok):
+                    continue
+                p = _face_sidecar_path(tok)
+                if os.path.exists(p):
+                    try:
+                        with open(p) as f:
+                            d = json.load(f)
+                        if _face_sidecar_valid(d):
+                            continue
+                    except Exception:
+                        pass
+                ensure_face_center(tok)
+            except Exception:
+                pass
+    try:
+        threading.Thread(target=_bg_face_batch, daemon=True).start()
+    except Exception:
+        pass
 
 
 # ========== 人脸检测（卡片照片智能对准） ==========
@@ -3284,13 +3299,16 @@ def update_profile_photo():
     tokens.append(file_token)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    # 同步下载+检测（2~4 秒）：保证响应里的 has_face 即时准确，用户保存/返回时不被旧值误拦
+    # 异步预热：先快速缓存图片，人脸后台计算，避免接口阻塞 2-4s；has_face 稍后通过快照刷新补齐
     try:
         _download_and_cache_image(file_token)
-        ensure_face_center(file_token)
     except Exception:
         pass
-    # 同步刷新用户快照，保证 /api/profile、/api/home 的 has_face 与本响应一致
+    try:
+        threading.Thread(target=ensure_face_center, args=(file_token,), daemon=True).start()
+    except Exception:
+        pass
+    # 同步刷新用户快照，保证 /api/profile、/api/home 的基础信息与本响应一致（人脸异步）
     try:
         refresh_snapshot_table("users")
     except Exception:

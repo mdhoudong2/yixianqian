@@ -2679,8 +2679,7 @@ createApp({
         });
         vant.showToast('已举报，等待管理员处理');
         showReportDialog.value = false;
-        messages.value = messages.value.filter(x => x.id !== reportTarget.value.id && x.parent_id !== reportTarget.value.id);
-        if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
+        // 举报后保持可见，待管理员处理（不从列表移除）
         reportTarget.value = null;
       } catch(e) { vant.showToast(e.message || '举报失败'); }
       reportSubmitting.value = false;

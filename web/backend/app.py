@@ -1772,11 +1772,11 @@ def home():
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
                      for l in snap_likes_by_initiator(open_id)
                      if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"}
-    # 留言数：一次性按目标 open_id 计数（排除已删除/已举报），供前端「留言」tab 显示数量
+    # 留言数：一次性按目标 open_id 计数（排除已删除，举报后仍计数待管理员处理）
     msg_counts = {}
     for m in _snap("messages"):
         mf = m.get("fields", {})
-        if bitable.get_select_value(mf, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(mf, F_MSG_STATUS) == "已删除":
             continue
         t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
         if t:
@@ -2115,11 +2115,11 @@ def get_cards():
         if bitable.get_select_value(like.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
 
-    # 留言数：一次性按目标 open_id 计数（排除已删除/已举报），供前端「留言」tab 显示数量
+    # 留言数：一次性按目标 open_id 计数（排除已删除，举报后仍计数待管理员处理）
     msg_counts = {}
     for m in _snap("messages"):
         mf = m.get("fields", {})
-        if bitable.get_select_value(mf, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(mf, F_MSG_STATUS) == "已删除":
             continue
         t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
         if t:
@@ -2594,7 +2594,7 @@ def my_likes():
 
 @app.route("/api/messages", methods=["GET"])
 def list_messages():
-    """列出某卡片下的留言（target=目标用户 open_id），排除已删除/已举报"""
+    """列出某卡片下的留言（target=目标用户 open_id），排除已删除，举报后仍可见待管理员处理"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -2619,7 +2619,7 @@ def list_messages():
     msgs = []
     for it in items:
         fields = it.get("fields", {})
-        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(fields, F_MSG_STATUS) == "已删除":
             continue
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         msgs.append({
@@ -2662,7 +2662,7 @@ def list_my_messages():
     msgs = []
     for it in items:
         fields = it.get("fields", {})
-        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(fields, F_MSG_STATUS) == "已删除":
             continue
         target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
         msgs.append({
@@ -2702,7 +2702,7 @@ def list_received_messages():
     msgs = []
     for it in items:
         fields = it.get("fields", {})
-        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(fields, F_MSG_STATUS) == "已删除":
             continue
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         msgs.append({

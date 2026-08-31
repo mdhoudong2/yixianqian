@@ -966,8 +966,8 @@
           </div>
         </div>
         <div v-if="m.status==='待处理' || !m.status" style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
-          <van-button size="small" plain type="default" @click="handleReported(m,'approve')">驳回</van-button>
           <van-button size="small" type="danger" color="#ee0a24" @click="handleReported(m,'delete')">同意</van-button>
+          <van-button size="small" plain type="default" @click="handleReported(m,'approve')">驳回</van-button>
         </div>
         <div v-else style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
           <van-tag :type="m.status==='已同意' ? 'danger' : 'default'">{{ m.status }}</van-tag>
@@ -2717,25 +2717,49 @@ createApp({
       try {
         await vant.showConfirmDialog({ title, message, confirmButtonColor: isDelete ? '#ee0a24' : '#1989fa' });
       } catch(e) { return; }
+      // 乐观更新：立即在界面上标记为已处理
+      const backup = JSON.parse(JSON.stringify(reportedMessages.value));
+      const backupCount = reportedCount.value;
+      const backupMessages = JSON.parse(JSON.stringify(messages.value));
+      const backupMsgCount = cards.value[cardIndex.value] ? cards.value[cardIndex.value].msg_count : null;
+      const now = Date.now();
+      // 更新举报管理列表中该条状态
+      const idx = reportedMessages.value.findIndex(x => x.id === m.id);
+      if (idx !== -1) {
+        reportedMessages.value[idx] = { ...reportedMessages.value[idx], status: isDelete ? '已同意' : '已驳回', handled_at: now, action };
+        // 保持举报时间倒序：已处理的按原 report_time 排序，不重排即可；徽标仅计待处理
+        reportedCount.value = reportedMessages.value.filter(x=>x.status==='待处理').length;
+      }
+      // 同步更新当前卡片留言列表（乐观）
+      if (isDelete) {
+        messages.value = messages.value.filter(x => x.id !== m.id && x.parent_id !== m.id);
+        if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
+      } else {
+        // 驳回：若在当前卡片，尝试乐观恢复（若之前因举报隐藏，重新拉取更准，但先乐观）
+        if (cards.value[cardIndex.value] && cards.value[cardIndex.value].openid === m.target_openid) {
+          // 标记需要刷新，待接口成功后静默刷新
+        }
+      }
       try {
         await api('/api/messages/' + m.id + '/handle', {
           method: 'POST',
           body: JSON.stringify({ action: isDelete ? 'delete' : 'approve' })
         });
         vant.showToast(isDelete ? '已删除' : '已驳回');
-        // 重新拉取以保留历史并保持最新在前
-        await loadReportedMessages(true);
-        if (isDelete) {
-          messages.value = messages.value.filter(x => x.id !== m.id && x.parent_id !== m.id);
-          if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
-        } else {
-          // 驳回后，若当前卡片即原留言所在卡片，可尝试刷新留言列表以显示恢复的留言
-          if (cards.value[cardIndex.value] && cards.value[cardIndex.value].openid === m.target_openid) {
-            msgLoadedFor = null;
-            await loadMessages(true);
-          }
+        // 驳回成功后若在当前卡片，刷新以显示恢复的留言（不整页重载，仅刷新留言列表）
+        if (!isDelete && cards.value[cardIndex.value] && cards.value[cardIndex.value].openid === m.target_openid) {
+          msgLoadedFor = null;
+          try { await loadMessages(true); } catch(e){}
         }
-      } catch(e) { vant.showToast(e.message || '操作失败'); }
+        // 后台静默对账：不强制重拉举报列表，保持乐观结果（历史已在本地）
+      } catch(e) {
+        // 失败回滚
+        reportedMessages.value = backup;
+        reportedCount.value = backupCount;
+        messages.value = backupMessages;
+        if (cards.value[cardIndex.value] && backupMsgCount !== null) cards.value[cardIndex.value].msg_count = backupMsgCount;
+        vant.showToast(e.message || '操作失败');
+      }
     }
 
     // 意见反馈

@@ -2825,24 +2825,107 @@ def report_message(record_id):
         return jsonify({"error": "举报原因最多500字"}), 400
     if not bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"}):
         return jsonify({"error": "举报失败，请稍后重试"}), 500
-    # 异步通知管理员
+    # 记录举报时间到历史文件（用于按举报时间排序，最新在前）
+    report_time = int(time.time()*1000)
+    try:
+        def _mut_pending(data):
+            if not isinstance(data, dict):
+                data = {"items": []}
+            items = data.get("items", [])
+            # 去重：同一 record_id 仅保留最新
+            items = [x for x in items if x.get("id") != record_id]
+            # 收集信息用于历史展示（即使尚未处理也保留）
+            author_oid_p = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+            target_oid_p = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+            content_p = bitable.get_field_text(fields, F_MSG_CONTENT)
+            parent_id_p = bitable.get_field_text(fields, F_MSG_PARENT_ID)
+            created_at_p = bitable.get_field_number(fields, F_MSG_CREATED_AT)
+            author_nick_p = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+            author_uid_p = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+            # 真名回退
+            target_nick_p = ""
+            for key in ("users", "observers"):
+                for u in _snap(key):
+                    uf = u.get("fields", {})
+                    if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid_p:
+                        target_nick_p = bitable.get_field_text(uf, F_NICKNAME)
+                        break
+                if target_nick_p:
+                    break
+            items.append({
+                "id": record_id,
+                "author_openid": author_oid_p,
+                "author_nickname": author_nick_p,
+                "author_uid": author_uid_p,
+                "author_avatar": "",
+                "target_openid": target_oid_p,
+                "target_nickname": target_nick_p or target_oid_p[:8] if target_oid_p else "",
+                "content": content_p,
+                "parent_id": parent_id_p,
+                "created_at": created_at_p,
+                "report_time": report_time,
+                "handled_at": None,
+                "status": "待处理",
+                "action": None,
+                "handler": None,
+                "reason": reason,
+            })
+            items.sort(key=lambda x: x.get("report_time",0), reverse=True)
+            data["items"] = items[:500]
+            return data
+        storage.update_json(_REPORTED_HISTORY_FILE, {"items": []}, _mut_pending)
+    except Exception:
+        pass
+    # 异步通知管理员（真名+编号，去掉记录ID）
     try:
         reporter = snap_self_user()
         reporter_fields = reporter.get("fields", {}) if reporter else {}
-        reporter_name = bitable.get_field_text(reporter_fields, F_NICKNAME) if reporter else ""
+        # 真名优先，回退昵称
+        reporter_real = bitable.get_field_text(reporter_fields, F_REAL_NAME) if reporter else ""
+        if not reporter_real:
+            reporter_real = bitable.get_field_text(reporter_fields, F_NICKNAME) if reporter else ""
         reporter_uid = bitable.get_field_text(reporter_fields, F_USER_ID) if reporter else ""
-        reporter_label = f"{reporter_name}（{reporter_uid}）" if reporter_uid else (reporter_name or open_id[:8])
-        author_name = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
-        author_uid = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
-        author_label = f"{author_name}（{author_uid}）" if author_uid else author_name
-        target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
-        content = bitable.get_field_text(fields, F_MSG_CONTENT)
-        if len(content) > 200:
-            content = content[:200] + "…"
-        admin_msg = f"📮 收到留言举报\n举报人：{reporter_label}\n被举报人：{author_label}\n所在卡片：{target_oid[:8]}…\n内容：{content}"
+        reporter_label = f"{reporter_real}（{reporter_uid}）" if reporter_uid else (reporter_real or open_id[:8])
+        # 被举报人真名
+        author_oid_n = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+        author_real = ""
+        author_uid_n = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+        # 从快照查被举报人真名
+        for key in ("users", "observers"):
+            for u in _snap(key):
+                uf = u.get("fields", {})
+                if bitable.get_field_text(uf, F_FEISHU_ID) == author_oid_n:
+                    author_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                    if not author_uid_n:
+                        author_uid_n = bitable.get_field_text(uf, F_USER_ID)
+                    break
+            if author_real:
+                break
+        if not author_real:
+            author_real = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+        author_label = f"{author_real}（{author_uid_n}）" if author_uid_n else author_real
+        # 所在卡片真名
+        target_oid_n = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        target_real = ""
+        target_uid_n = ""
+        for key in ("users", "observers"):
+            for u in _snap(key):
+                uf = u.get("fields", {})
+                if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid_n:
+                    target_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                    target_uid_n = bitable.get_field_text(uf, F_USER_ID)
+                    break
+            if target_real:
+                break
+        if not target_real:
+            target_real = target_oid_n[:8] if target_oid_n else "未知"
+        target_label = f"{target_real}（{target_uid_n}）" if target_uid_n else target_real
+        content_n = bitable.get_field_text(fields, F_MSG_CONTENT)
+        if len(content_n) > 200:
+            content_n = content_n[:200] + "…"
+        admin_msg = f"📮 收到留言举报\n举报人：{reporter_label}\n被举报人：{author_label}\n所在卡片：{target_label}\n内容：{content_n}"
         if reason:
             admin_msg += f"\n原因：{reason[:200]}"
-        admin_msg += f"\n记录ID：{record_id}"
 
         def _notify():
             for admin_oid in ADMIN_OPEN_IDS:
@@ -2903,23 +2986,42 @@ def list_reported_messages():
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
             "status": "待处理",
         })
-    # 已处理历史（文件持久化，保留回溯）
+    # 已处理历史（文件持久化，保留回溯）+ 报告时间映射
+    hist_items = []
     try:
         hist_data = storage.load_json(_REPORTED_HISTORY_FILE, {"items": []})
         hist_items = hist_data.get("items", []) if isinstance(hist_data, dict) else []
+    except Exception:
+        hist_items = []
+    # 建立 report_time 映射（用于待处理的排序）
+    hist_map = {}
+    try:
         for h in hist_items:
-            # 补头像/昵称（若文件缺则用保存的值）
-            if not h.get("author_avatar"):
-                h["author_avatar"] = avatar_map.get(h.get("author_openid",""), "")
-            if not h.get("target_nickname"):
-                h["target_nickname"] = nick_map.get(h.get("target_openid",""), h.get("target_openid","")[:8] if h.get("target_openid") else "")
-            msgs.append(h)
+            if h.get("id") and h.get("report_time"):
+                hist_map[h["id"]] = h["report_time"]
     except Exception:
         pass
-    # 最新在前：按 created_at 倒序，历史则按 handled_at 倒序（若有）
-    def _sort_key(m):
-        return m.get("handled_at") or m.get("created_at") or 0
-    msgs.sort(key=_sort_key, reverse=True)
+    # 待处理追加 report_time
+    for m in msgs:
+        if m.get("id") in hist_map:
+            m["report_time"] = hist_map[m["id"]]
+        elif not m.get("report_time"):
+            m["report_time"] = m.get("created_at", 0)
+    # 历史追加（去重：已在待处理中的不重复追加，保留历史状态）
+    pending_ids = {m.get("id") for m in msgs}
+    for h in hist_items:
+        if h.get("id") in pending_ids:
+            continue
+        # 补头像/昵称
+        if not h.get("author_avatar"):
+            h["author_avatar"] = avatar_map.get(h.get("author_openid",""), "")
+        if not h.get("target_nickname"):
+            h["target_nickname"] = nick_map.get(h.get("target_openid",""), h.get("target_openid","")[:8] if h.get("target_openid") else "")
+        # 确保有 report_time
+        if not h.get("report_time"):
+            h["report_time"] = h.get("created_at", 0)
+        msgs.append(h)
+    msgs.sort(key=lambda x: x.get("report_time") or x.get("handled_at") or x.get("created_at") or 0, reverse=True)
     return jsonify({"messages": msgs})
 
 
@@ -2981,8 +3083,18 @@ def handle_reported_message(record_id):
                 if not isinstance(data, dict):
                     data = {"items": []}
                 items = data.get("items", [])
-                # 去重：同一 record_id 仅保留最新一条
+                # 找到原有待处理记录以保留 report_time
+                old_report_time = None
+                old_reason = ""
+                for it in items:
+                    if it.get("id") == record_id:
+                        old_report_time = it.get("report_time")
+                        old_reason = it.get("reason", "")
+                        break
+                # 去重
                 items = [x for x in items if x.get("id") != record_id]
+                # 若原有 report_time 则沿用，否则用当前时间
+                rt = old_report_time or int(time.time()*1000)
                 items.append({
                     "id": record_id,
                     "author_openid": author_oid,
@@ -2994,14 +3106,16 @@ def handle_reported_message(record_id):
                     "content": content,
                     "parent_id": parent_id,
                     "created_at": created_at,
+                    "report_time": rt,
                     "handled_at": int(time.time()*1000),
                     "status": handle_status,
                     "action": action,
                     "handler": open_id,
+                    "reason": old_reason,
                 })
-                # 保留最近 200 条
-                items.sort(key=lambda x: x.get("handled_at",0), reverse=True)
-                data["items"] = items[:200]
+                # 按举报时间倒序保留
+                items.sort(key=lambda x: x.get("report_time",0), reverse=True)
+                data["items"] = items[:500]
                 return data
             storage.update_json(_REPORTED_HISTORY_FILE, {"items": []}, _mut)
         except Exception:

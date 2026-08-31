@@ -2778,7 +2778,7 @@ def create_message():
 
 @app.route("/api/messages/<record_id>", methods=["DELETE"])
 def delete_message(record_id):
-    """删除留言（本人或卡片主人）"""
+    """删除留言（本人或卡片主人，管理员可删任意）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -2788,7 +2788,7 @@ def delete_message(record_id):
     fields = rec.get("fields", {})
     author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
     target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
-    if open_id != author_oid and open_id != target_oid:
+    if open_id != author_oid and open_id != target_oid and open_id not in ADMIN_OPEN_IDS:
         return jsonify({"error": "无权删除"}), 403
     bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
     # 级联删除该留言下的回复，避免产生「父留言已删、回复仍挂 parent_id」的孤儿，导致角标比可见条数多
@@ -2802,15 +2802,143 @@ def delete_message(record_id):
 
 @app.route("/api/messages/<record_id>/report", methods=["POST"])
 def report_message(record_id):
-    """举报留言（置为已举报，待管理员处理）"""
+    """举报留言（置为已举报，待管理员处理，飞书通知管理员）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
     rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
     if not rec:
         return jsonify({"error": "留言不存在"}), 404
-    bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"})
+    fields = rec.get("fields", {})
+    status = bitable.get_select_value(fields, F_MSG_STATUS)
+    if status == "已举报":
+        return jsonify({"ok": True, "already": True})
+    if status == "已删除":
+        return jsonify({"error": "该留言已删除"}), 400
+    author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+    if author_oid == open_id:
+        return jsonify({"error": "不能举报自己的留言"}), 400
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()
+    if reason and len(reason) > 500:
+        return jsonify({"error": "举报原因最多500字"}), 400
+    if not bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"}):
+        return jsonify({"error": "举报失败，请稍后重试"}), 500
+    # 异步通知管理员
+    try:
+        reporter = snap_self_user()
+        reporter_fields = reporter.get("fields", {}) if reporter else {}
+        reporter_name = bitable.get_field_text(reporter_fields, F_NICKNAME) if reporter else ""
+        reporter_uid = bitable.get_field_text(reporter_fields, F_USER_ID) if reporter else ""
+        reporter_label = f"{reporter_name}（{reporter_uid}）" if reporter_uid else (reporter_name or open_id[:8])
+        author_name = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+        author_uid = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+        author_label = f"{author_name}（{author_uid}）" if author_uid else author_name
+        target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        content = bitable.get_field_text(fields, F_MSG_CONTENT)
+        if len(content) > 200:
+            content = content[:200] + "…"
+        admin_msg = f"📮 收到留言举报\n举报人：{reporter_label}\n被举报人：{author_label}\n所在卡片：{target_oid[:8]}…\n内容：{content}"
+        if reason:
+            admin_msg += f"\n原因：{reason[:200]}"
+        admin_msg += f"\n记录ID：{record_id}"
+
+        def _notify():
+            for admin_oid in ADMIN_OPEN_IDS:
+                try:
+                    send_text_message(admin_oid, admin_msg)
+                except Exception:
+                    pass
+        threading.Thread(target=_notify, daemon=True).start()
+    except Exception:
+        pass
     return jsonify({"ok": True})
+
+
+
+@app.route("/api/messages/reported", methods=["GET"])
+def list_reported_messages():
+    """管理员：列出已举报留言（待处理）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    if open_id not in ADMIN_OPEN_IDS:
+        return jsonify({"error": "未授权"}), 403
+    items = bitable.search_records(MESSAGE_TABLE_ID, [
+        {"field_name": F_MSG_STATUS, "operator": "is", "value": ["已举报"]}
+    ])
+    # 头像映射
+    avatar_map = {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in avatar_map:
+                toks = bitable.get_attachment_tokens(uf, F_PHOTO)
+                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+    # 昵称映射（用于 target 展示）
+    nick_map = {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in nick_map:
+                nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
+    msgs = []
+    for it in items:
+        fields = it.get("fields", {})
+        author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+        target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        msgs.append({
+            "id": it.get("record_id"),
+            "author_openid": author_oid,
+            "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
+            "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
+            "author_avatar": avatar_map.get(author_oid, ""),
+            "target_openid": target_oid,
+            "target_nickname": nick_map.get(target_oid, target_oid[:8] if target_oid else ""),
+            "content": bitable.get_field_text(fields, F_MSG_CONTENT),
+            "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
+        })
+    msgs.sort(key=lambda m: m["created_at"])
+    return jsonify({"messages": msgs})
+
+
+@app.route("/api/messages/<record_id>/handle", methods=["POST"])
+def handle_reported_message(record_id):
+    """管理员：处理已举报留言 同意=删除 驳回=恢复"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    if open_id not in ADMIN_OPEN_IDS:
+        return jsonify({"error": "未授权"}), 403
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+    if action not in ("approve", "delete"):
+        return jsonify({"error": "action 需为 approve(驳回) 或 delete(同意)"}), 400
+    rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
+    if not rec:
+        return jsonify({"error": "留言不存在"}), 404
+    fields = rec.get("fields", {})
+    if bitable.get_select_value(fields, F_MSG_STATUS) != "已举报":
+        return jsonify({"error": "该留言不是已举报状态"}), 400
+    if action == "approve":
+        ok = bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "正常"})
+        return jsonify({"ok": bool(ok)})
+    else:
+        ok = bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
+        if ok:
+            # 级联删除回复
+            try:
+                replies = bitable.search_records(MESSAGE_TABLE_ID, [
+                    {"field_name": F_MSG_PARENT_ID, "operator": "is", "value": [record_id]}
+                ])
+                for r in replies:
+                    bitable.update_record(MESSAGE_TABLE_ID, r.get("record_id"), {F_MSG_STATUS: "已删除"})
+            except Exception:
+                pass
+        return jsonify({"ok": bool(ok)})
 
 
 # ========== 分组接口 ==========

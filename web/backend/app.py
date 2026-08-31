@@ -3107,7 +3107,18 @@ def _normalize_editable_update(data, fields=None):
                 pass
             update_fields[k] = val
             continue
-        if ftype in ("text", "phone"):
+        if ftype == "phone":
+            raw = str(v).strip() if v is not None else ""
+            if not raw:
+                update_fields[k] = ""
+                continue
+            sanitized = re.sub(r"[^0-9+]", "", raw)
+            if sanitized.count("+") > 1 or ("+" in sanitized and not sanitized.startswith("+")):
+                raise ValueError("手机号格式有误")
+            if not re.match(r"^\+?\d{7,15}$", sanitized):
+                raise ValueError("手机号格式有误")
+            update_fields[k] = sanitized
+        elif ftype in ("text",):
             val = str(v).strip() if v is not None else ""
             if k == F_NICKNAME and not val:
                 continue  # 昵称不可清空：bot 按昵称查找/展示，清空会导致功能失效

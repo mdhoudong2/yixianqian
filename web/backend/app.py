@@ -196,6 +196,7 @@ _spool_queue = []
 _SPOOL_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_spool.jsonl")
 _SPOOL_DEAD = os.path.join(SHARED_DATA_DIR, "yixianqian_spool_failed.log")
 _BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")
+_REPORTED_HISTORY_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_reported_history.json")
 
 # 在途意图（进程级，页面重载不丢失）：
 #   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
@@ -2858,7 +2859,7 @@ def report_message(record_id):
 
 @app.route("/api/messages/reported", methods=["GET"])
 def list_reported_messages():
-    """管理员：列出已举报留言（待处理）"""
+    """管理员：列出已举报留言（待处理 + 已处理历史，最新在前）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -2885,7 +2886,7 @@ def list_reported_messages():
             if oid and oid not in nick_map:
                 nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
     msgs = []
-    for it in items:
+    for it in (items or []):
         fields = it.get("fields", {})
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
@@ -2900,8 +2901,25 @@ def list_reported_messages():
             "content": bitable.get_field_text(fields, F_MSG_CONTENT),
             "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
+            "status": "待处理",
         })
-    msgs.sort(key=lambda m: m["created_at"])
+    # 已处理历史（文件持久化，保留回溯）
+    try:
+        hist_data = storage.load_json(_REPORTED_HISTORY_FILE, {"items": []})
+        hist_items = hist_data.get("items", []) if isinstance(hist_data, dict) else []
+        for h in hist_items:
+            # 补头像/昵称（若文件缺则用保存的值）
+            if not h.get("author_avatar"):
+                h["author_avatar"] = avatar_map.get(h.get("author_openid",""), "")
+            if not h.get("target_nickname"):
+                h["target_nickname"] = nick_map.get(h.get("target_openid",""), h.get("target_openid","")[:8] if h.get("target_openid") else "")
+            msgs.append(h)
+    except Exception:
+        pass
+    # 最新在前：按 created_at 倒序，历史则按 handled_at 倒序（若有）
+    def _sort_key(m):
+        return m.get("handled_at") or m.get("created_at") or 0
+    msgs.sort(key=_sort_key, reverse=True)
     return jsonify({"messages": msgs})
 
 
@@ -2923,11 +2941,30 @@ def handle_reported_message(record_id):
     fields = rec.get("fields", {})
     if bitable.get_select_value(fields, F_MSG_STATUS) != "已举报":
         return jsonify({"error": "该留言不是已举报状态"}), 400
+    # 取原记录信息用于历史存档
+    author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+    target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+    content = bitable.get_field_text(fields, F_MSG_CONTENT)
+    parent_id = bitable.get_field_text(fields, F_MSG_PARENT_ID)
+    created_at = bitable.get_field_number(fields, F_MSG_CREATED_AT)
+    author_nick = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+    author_uid = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+    target_nick = ""
+    # 尝试从快照补 target 昵称
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid:
+                target_nick = bitable.get_field_text(uf, F_NICKNAME)
+                break
+        if target_nick:
+            break
     if action == "approve":
         ok = bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "正常"})
-        return jsonify({"ok": bool(ok)})
+        handle_status = "已驳回"
     else:
         ok = bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
+        handle_status = "已同意"
         if ok:
             # 级联删除回复
             try:
@@ -2938,7 +2975,38 @@ def handle_reported_message(record_id):
                     bitable.update_record(MESSAGE_TABLE_ID, r.get("record_id"), {F_MSG_STATUS: "已删除"})
             except Exception:
                 pass
-        return jsonify({"ok": bool(ok)})
+    if ok:
+        try:
+            def _mut(data):
+                if not isinstance(data, dict):
+                    data = {"items": []}
+                items = data.get("items", [])
+                # 去重：同一 record_id 仅保留最新一条
+                items = [x for x in items if x.get("id") != record_id]
+                items.append({
+                    "id": record_id,
+                    "author_openid": author_oid,
+                    "author_nickname": author_nick,
+                    "author_uid": author_uid,
+                    "author_avatar": "",
+                    "target_openid": target_oid,
+                    "target_nickname": target_nick or target_oid[:8] if target_oid else "",
+                    "content": content,
+                    "parent_id": parent_id,
+                    "created_at": created_at,
+                    "handled_at": int(time.time()*1000),
+                    "status": handle_status,
+                    "action": action,
+                    "handler": open_id,
+                })
+                # 保留最近 200 条
+                items.sort(key=lambda x: x.get("handled_at",0), reverse=True)
+                data["items"] = items[:200]
+                return data
+            storage.update_json(_REPORTED_HISTORY_FILE, {"items": []}, _mut)
+        except Exception:
+            pass
+    return jsonify({"ok": bool(ok)})
 
 
 # ========== 分组接口 ==========

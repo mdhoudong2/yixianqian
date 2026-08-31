@@ -287,6 +287,10 @@
   .msg-del { font-size: 12px; color: #969799; cursor: pointer; }
   .msg-report { font-size: 12px; color: #ee0a24; cursor: pointer; margin-left: 6px; }
   .msg-report:active { opacity: 0.7; }
+  .reported-msg-content { background:#fff0f3; color:#323233; padding:6px 10px; border-radius:8px; margin-top:6px; white-space:normal; word-break:break-word; }
+  .van-theme-dark .reported-msg-content { background: rgba(255,107,129,0.18); color:#f5f5f5; }
+  .reported-status-pending { color:#ff6b81; font-size:12px; }
+  .reported-status-done { color:#969799; font-size:12px; }
   .msg-content { font-size: 14px; color: #323233; margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
   .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; }
   .msg-reply-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px 0; font-size: 12px; color: #ff6b81; }
@@ -955,13 +959,18 @@
           <div class="msg-body">
             <div class="msg-name" style="font-size:13px;">{{ m.author_nickname }} · {{ m.author_uid }}</div>
             <div class="msg-sub">所在卡片：{{ m.target_nickname }} ({{ m.target_openid ? m.target_openid.slice(0,8) : '' }})</div>
-            <div class="msg-sub msg-sub-strong" style="white-space:normal; margin-top:6px; background:#fff0f3; padding:6px 10px; border-radius:8px;">{{ m.content }}</div>
+            <div class="reported-msg-content">{{ m.content }}</div>
+            <div v-if="m.status && m.status!=='待处理'" class="reported-status-done">{{ m.status }} · {{ m.handled_at ? fmtTimeAgo(m.handled_at) : '' }}<span v-if="m.handler"> · 处理人</span></div>
+            <div v-else class="reported-status-pending">待处理</div>
             <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }}<span v-if="m.parent_id" style="color:#ee0a24;"> · 回复</span></div>
           </div>
         </div>
-        <div style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
+        <div v-if="m.status==='待处理' || !m.status" style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
           <van-button size="small" plain type="default" @click="handleReported(m,'approve')">驳回</van-button>
           <van-button size="small" type="danger" color="#ee0a24" @click="handleReported(m,'delete')">同意</van-button>
+        </div>
+        <div v-else style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
+          <van-tag :type="m.status==='已同意' ? 'danger' : 'default'">{{ m.status }}</van-tag>
         </div>
       </div>
     </div>
@@ -2683,7 +2692,7 @@ createApp({
         const data = await api('/api/messages/reported');
         reportedMessages.value = data.messages || [];
         reportedLoaded.value = true;
-        reportedCount.value = reportedMessages.value.length;
+        reportedCount.value = reportedMessages.value.filter(x=>x.status==='待处理').length;
       } catch(e) { vant.showToast(e.message || '加载失败'); }
       loadingReported.value = false;
     }
@@ -2695,8 +2704,10 @@ createApp({
       if (!user.value || !user.value.is_admin) return;
       try {
         const data = await api('/api/messages/reported');
-        reportedCount.value = (data.messages || []).length;
-        if (reportedLoaded.value) reportedMessages.value = data.messages || [];
+        const all = data.messages || [];
+        reportedCount.value = all.filter(x=>x.status==='待处理').length;
+        if (reportedLoaded.value) reportedMessages.value = all;
+        else reportedMessages.value = all;
       } catch(e) {}
     }
     async function handleReported(m, action) {
@@ -2712,11 +2723,17 @@ createApp({
           body: JSON.stringify({ action: isDelete ? 'delete' : 'approve' })
         });
         vant.showToast(isDelete ? '已删除' : '已驳回');
-        reportedMessages.value = reportedMessages.value.filter(x => x.id !== m.id);
-        reportedCount.value = reportedMessages.value.length;
+        // 重新拉取以保留历史并保持最新在前
+        await loadReportedMessages(true);
         if (isDelete) {
           messages.value = messages.value.filter(x => x.id !== m.id && x.parent_id !== m.id);
           if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
+        } else {
+          // 驳回后，若当前卡片即原留言所在卡片，可尝试刷新留言列表以显示恢复的留言
+          if (cards.value[cardIndex.value] && cards.value[cardIndex.value].openid === m.target_openid) {
+            msgLoadedFor = null;
+            await loadMessages(true);
+          }
         }
       } catch(e) { vant.showToast(e.message || '操作失败'); }
     }

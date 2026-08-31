@@ -196,6 +196,7 @@ _spool_queue = []
 _SPOOL_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_spool.jsonl")
 _SPOOL_DEAD = os.path.join(SHARED_DATA_DIR, "yixianqian_spool_failed.log")
 _BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")
+_REPORTED_HISTORY_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_reported_history.json")
 
 # 在途意图（进程级，页面重载不丢失）：
 #   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
@@ -1771,11 +1772,11 @@ def home():
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
                      for l in snap_likes_by_initiator(open_id)
                      if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"}
-    # 留言数：一次性按目标 open_id 计数（排除已删除/已举报），供前端「留言」tab 显示数量
+    # 留言数：一次性按目标 open_id 计数（排除已删除，举报后仍计数待管理员处理）
     msg_counts = {}
     for m in _snap("messages"):
         mf = m.get("fields", {})
-        if bitable.get_select_value(mf, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(mf, F_MSG_STATUS) == "已删除":
             continue
         t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
         if t:
@@ -2114,11 +2115,11 @@ def get_cards():
         if bitable.get_select_value(like.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
 
-    # 留言数：一次性按目标 open_id 计数（排除已删除/已举报），供前端「留言」tab 显示数量
+    # 留言数：一次性按目标 open_id 计数（排除已删除，举报后仍计数待管理员处理）
     msg_counts = {}
     for m in _snap("messages"):
         mf = m.get("fields", {})
-        if bitable.get_select_value(mf, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(mf, F_MSG_STATUS) == "已删除":
             continue
         t = bitable.get_field_text(mf, F_MSG_TARGET_OID)
         if t:
@@ -2593,7 +2594,7 @@ def my_likes():
 
 @app.route("/api/messages", methods=["GET"])
 def list_messages():
-    """列出某卡片下的留言（target=目标用户 open_id），排除已删除/已举报"""
+    """列出某卡片下的留言（target=目标用户 open_id），排除已删除，举报后仍可见待管理员处理"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -2618,7 +2619,7 @@ def list_messages():
     msgs = []
     for it in items:
         fields = it.get("fields", {})
-        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(fields, F_MSG_STATUS) == "已删除":
             continue
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         msgs.append({
@@ -2661,7 +2662,7 @@ def list_my_messages():
     msgs = []
     for it in items:
         fields = it.get("fields", {})
-        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(fields, F_MSG_STATUS) == "已删除":
             continue
         target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
         msgs.append({
@@ -2701,7 +2702,7 @@ def list_received_messages():
     msgs = []
     for it in items:
         fields = it.get("fields", {})
-        if bitable.get_select_value(fields, F_MSG_STATUS) != "正常":
+        if bitable.get_select_value(fields, F_MSG_STATUS) == "已删除":
             continue
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         msgs.append({
@@ -2778,7 +2779,7 @@ def create_message():
 
 @app.route("/api/messages/<record_id>", methods=["DELETE"])
 def delete_message(record_id):
-    """删除留言（本人或卡片主人）"""
+    """删除留言（本人或卡片主人，管理员可删任意）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -2788,7 +2789,7 @@ def delete_message(record_id):
     fields = rec.get("fields", {})
     author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
     target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
-    if open_id != author_oid and open_id != target_oid:
+    if open_id != author_oid and open_id != target_oid and open_id not in ADMIN_OPEN_IDS:
         return jsonify({"error": "无权删除"}), 403
     bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
     # 级联删除该留言下的回复，避免产生「父留言已删、回复仍挂 parent_id」的孤儿，导致角标比可见条数多
@@ -2802,15 +2803,428 @@ def delete_message(record_id):
 
 @app.route("/api/messages/<record_id>/report", methods=["POST"])
 def report_message(record_id):
-    """举报留言（置为已举报，待管理员处理）"""
+    """举报留言（置为已举报，待管理员处理，飞书通知管理员）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
     rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
     if not rec:
         return jsonify({"error": "留言不存在"}), 404
-    bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"})
+    fields = rec.get("fields", {})
+    status = bitable.get_select_value(fields, F_MSG_STATUS)
+    if status == "已举报":
+        return jsonify({"ok": True, "already": True})
+    if status == "已删除":
+        return jsonify({"error": "该留言已删除"}), 400
+    author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+    if author_oid == open_id:
+        return jsonify({"error": "不能举报自己的留言"}), 400
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()
+    if reason and len(reason) > 500:
+        return jsonify({"error": "举报原因最多500字"}), 400
+    if not bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已举报"}):
+        return jsonify({"error": "举报失败，请稍后重试"}), 500
+    # 记录举报时间到历史文件（用于按举报时间排序，最新在前）
+    report_time = int(time.time()*1000)
+    try:
+        def _mut_pending(data):
+            if not isinstance(data, dict):
+                data = {"items": []}
+            items = data.get("items", [])
+            # 去重：同一 record_id 仅保留最新
+            items = [x for x in items if x.get("id") != record_id]
+            # 收集信息用于历史展示（即使尚未处理也保留）
+            author_oid_p = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+            target_oid_p = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+            content_p = bitable.get_field_text(fields, F_MSG_CONTENT)
+            parent_id_p = bitable.get_field_text(fields, F_MSG_PARENT_ID)
+            created_at_p = bitable.get_field_number(fields, F_MSG_CREATED_AT)
+            author_nick_p = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+            author_uid_p = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+            author_real_p = ""
+            target_real_p = ""
+            target_uid_p = ""
+            # 查被举报人真名
+            for key in ("users", "observers"):
+                for u in _snap(key):
+                    uf = u.get("fields", {})
+                    if bitable.get_field_text(uf, F_FEISHU_ID) == author_oid_p:
+                        author_real_p = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                        if not author_uid_p:
+                            author_uid_p = bitable.get_field_text(uf, F_USER_ID)
+                        break
+                if author_real_p:
+                    break
+            for key in ("users", "observers"):
+                for u in _snap(key):
+                    uf = u.get("fields", {})
+                    if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid_p:
+                        target_real_p = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                        target_uid_p = bitable.get_field_text(uf, F_USER_ID)
+                        break
+                if target_real_p:
+                    break
+            if not author_real_p:
+                author_real_p = author_nick_p
+            if not target_real_p:
+                target_real_p = target_oid_p[:8] if target_oid_p else "未知"
+            items.append({
+                "id": record_id,
+                "author_openid": author_oid_p,
+                "author_nickname": author_nick_p,
+                "author_realname": author_real_p,
+                "author_uid": author_uid_p,
+                "author_avatar": "",
+                "target_openid": target_oid_p,
+                "target_nickname": target_real_p,
+                "target_realname": target_real_p,
+                "target_uid": target_uid_p,
+                "content": content_p,
+                "parent_id": parent_id_p,
+                "created_at": created_at_p,
+                "report_time": report_time,
+                "handled_at": None,
+                "status": "待处理",
+                "action": None,
+                "handler": None,
+                "handler_name": "",
+                "handler_uid": "",
+                "reason": reason,
+            })
+            items.sort(key=lambda x: x.get("report_time",0), reverse=True)
+            data["items"] = items[:500]
+            return data
+        storage.update_json(_REPORTED_HISTORY_FILE, {"items": []}, _mut_pending)
+    except Exception:
+        pass
+    # 异步通知管理员（真名+编号，去掉记录ID）
+    try:
+        reporter = snap_self_user()
+        reporter_fields = reporter.get("fields", {}) if reporter else {}
+        # 真名优先，回退昵称
+        reporter_real = bitable.get_field_text(reporter_fields, F_REAL_NAME) if reporter else ""
+        if not reporter_real:
+            reporter_real = bitable.get_field_text(reporter_fields, F_NICKNAME) if reporter else ""
+        reporter_uid = bitable.get_field_text(reporter_fields, F_USER_ID) if reporter else ""
+        reporter_label = f"{reporter_real}（{reporter_uid}）" if reporter_uid else (reporter_real or open_id[:8])
+        # 被举报人真名
+        author_oid_n = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+        author_real = ""
+        author_uid_n = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+        # 从快照查被举报人真名
+        for key in ("users", "observers"):
+            for u in _snap(key):
+                uf = u.get("fields", {})
+                if bitable.get_field_text(uf, F_FEISHU_ID) == author_oid_n:
+                    author_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                    if not author_uid_n:
+                        author_uid_n = bitable.get_field_text(uf, F_USER_ID)
+                    break
+            if author_real:
+                break
+        if not author_real:
+            author_real = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+        author_label = f"{author_real}（{author_uid_n}）" if author_uid_n else author_real
+        # 所在卡片真名
+        target_oid_n = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        target_real = ""
+        target_uid_n = ""
+        for key in ("users", "observers"):
+            for u in _snap(key):
+                uf = u.get("fields", {})
+                if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid_n:
+                    target_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                    target_uid_n = bitable.get_field_text(uf, F_USER_ID)
+                    break
+            if target_real:
+                break
+        if not target_real:
+            target_real = target_oid_n[:8] if target_oid_n else "未知"
+        target_label = f"{target_real}（{target_uid_n}）" if target_uid_n else target_real
+        content_n = bitable.get_field_text(fields, F_MSG_CONTENT)
+        if len(content_n) > 200:
+            content_n = content_n[:200] + "…"
+        admin_msg = f"📮 收到留言举报\n举报人：{reporter_label}\n被举报人：{author_label}\n所在卡片：{target_label}\n内容：{content_n}"
+        if reason:
+            admin_msg += f"\n原因：{reason[:200]}"
+
+        def _notify():
+            for admin_oid in ADMIN_OPEN_IDS:
+                try:
+                    send_text_message(admin_oid, admin_msg)
+                except Exception:
+                    pass
+        threading.Thread(target=_notify, daemon=True).start()
+    except Exception:
+        pass
     return jsonify({"ok": True})
+
+
+
+@app.route("/api/messages/reported", methods=["GET"])
+def list_reported_messages():
+    """管理员：列出已举报留言（待处理 + 已处理历史，最新在前）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    if open_id not in ADMIN_OPEN_IDS:
+        return jsonify({"error": "未授权"}), 403
+    items = bitable.search_records(MESSAGE_TABLE_ID, [
+        {"field_name": F_MSG_STATUS, "operator": "is", "value": ["已举报"]}
+    ])
+    # 头像映射
+    avatar_map = {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in avatar_map:
+                toks = bitable.get_attachment_tokens(uf, F_PHOTO)
+                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+    # 昵称映射（用于 target 展示）
+    nick_map = {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in nick_map:
+                nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
+    # 构建真实姓名映射
+    real_map = {}
+    uid_map = {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in real_map:
+                real_map[oid] = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                uid_map[oid] = bitable.get_field_text(uf, F_USER_ID)
+    msgs = []
+    for it in (items or []):
+        fields = it.get("fields", {})
+        author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+        target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        author_real = real_map.get(author_oid, bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME))
+        target_real = real_map.get(target_oid, nick_map.get(target_oid, target_oid[:8] if target_oid else ""))
+        msgs.append({
+            "id": it.get("record_id"),
+            "author_openid": author_oid,
+            "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
+            "author_realname": author_real,
+            "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID) or uid_map.get(author_oid, ""),
+            "author_avatar": avatar_map.get(author_oid, ""),
+            "target_openid": target_oid,
+            "target_nickname": target_real,
+            "target_realname": target_real,
+            "target_uid": uid_map.get(target_oid, ""),
+            "content": bitable.get_field_text(fields, F_MSG_CONTENT),
+            "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
+            "status": "待处理",
+            "reason": "",  # 待处理原因从历史文件补充
+        })
+    # 已处理历史（文件持久化，保留回溯）+ 报告时间映射
+    hist_items = []
+    try:
+        hist_data = storage.load_json(_REPORTED_HISTORY_FILE, {"items": []})
+        hist_items = hist_data.get("items", []) if isinstance(hist_data, dict) else []
+    except Exception:
+        hist_items = []
+    # 建立 report_time 映射（用于待处理的排序）
+    hist_map = {}
+    try:
+        for h in hist_items:
+            if h.get("id") and h.get("report_time"):
+                hist_map[h["id"]] = h["report_time"]
+    except Exception:
+        pass
+    # 待处理追加 report_time
+    for m in msgs:
+        if m.get("id") in hist_map:
+            m["report_time"] = hist_map[m["id"]]
+        elif not m.get("report_time"):
+            m["report_time"] = m.get("created_at", 0)
+    # 历史追加（去重：已在待处理中的不重复追加，保留历史状态）
+    pending_ids = {m.get("id") for m in msgs}
+    for h in hist_items:
+        if h.get("id") in pending_ids:
+            continue
+        # 补头像/昵称/真名
+        if not h.get("author_avatar"):
+            h["author_avatar"] = avatar_map.get(h.get("author_openid",""), "")
+        if not h.get("author_realname"):
+            h["author_realname"] = real_map.get(h.get("author_openid",""), h.get("author_nickname",""))
+        if not h.get("author_uid"):
+            h["author_uid"] = uid_map.get(h.get("author_openid",""), h.get("author_uid",""))
+        if not h.get("target_nickname"):
+            h["target_nickname"] = real_map.get(h.get("target_openid",""), nick_map.get(h.get("target_openid",""), h.get("target_openid","")[:8] if h.get("target_openid") else ""))
+        if not h.get("target_realname"):
+            h["target_realname"] = h.get("target_nickname","")
+        if not h.get("target_uid"):
+            h["target_uid"] = uid_map.get(h.get("target_openid",""), h.get("target_uid",""))
+        # 补处理人真名
+        if h.get("handler") and not h.get("handler_name"):
+            h["handler_name"] = real_map.get(h["handler"], h["handler"][:8] if h["handler"] else "")
+            h["handler_uid"] = uid_map.get(h["handler"], "")
+        # 确保有 report_time
+        if not h.get("report_time"):
+            h["report_time"] = h.get("created_at", 0)
+        msgs.append(h)
+    # 为待处理补充 reason/report_time 来自历史
+    hist_reason_map = {h["id"]: h.get("reason","") for h in hist_items if h.get("id")}
+    hist_handler_map = {h["id"]: (h.get("handler_name",""), h.get("handler_uid",""), h.get("handled_at")) for h in hist_items}
+    for m in msgs:
+        if m.get("status")=="待处理" and m.get("id") in hist_reason_map:
+            if not m.get("reason"):
+                m["reason"] = hist_reason_map[m["id"]]
+        # 已处理的 handler 补全
+        if m.get("status") in ("已同意","已驳回") and m.get("handler") and not m.get("handler_name"):
+            hn, hu, _ = hist_handler_map.get(m["id"], ("","",""))
+            m["handler_name"] = hn
+            m["handler_uid"] = hu
+    msgs.sort(key=lambda x: x.get("report_time") or x.get("handled_at") or x.get("created_at") or 0, reverse=True)
+    return jsonify({"messages": msgs})
+
+
+@app.route("/api/messages/<record_id>/handle", methods=["POST"])
+def handle_reported_message(record_id):
+    """管理员：处理已举报留言 同意=删除 驳回=恢复"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    if open_id not in ADMIN_OPEN_IDS:
+        return jsonify({"error": "未授权"}), 403
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+    if action not in ("approve", "delete"):
+        return jsonify({"error": "action 需为 approve(驳回) 或 delete(同意)"}), 400
+    rec = bitable.get_record(MESSAGE_TABLE_ID, record_id)
+    if not rec:
+        return jsonify({"error": "留言不存在"}), 404
+    fields = rec.get("fields", {})
+    if bitable.get_select_value(fields, F_MSG_STATUS) != "已举报":
+        return jsonify({"error": "该留言不是已举报状态"}), 400
+    # 取原记录信息用于历史存档
+    author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
+    target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+    content = bitable.get_field_text(fields, F_MSG_CONTENT)
+    parent_id = bitable.get_field_text(fields, F_MSG_PARENT_ID)
+    created_at = bitable.get_field_number(fields, F_MSG_CREATED_AT)
+    author_nick = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
+    author_uid = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
+    target_nick = ""
+    # 尝试从快照补 target 昵称
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid:
+                target_nick = bitable.get_field_text(uf, F_NICKNAME)
+                break
+        if target_nick:
+            break
+    if action == "approve":
+        ok = bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "正常"})
+        handle_status = "已驳回"
+    else:
+        ok = bitable.update_record(MESSAGE_TABLE_ID, record_id, {F_MSG_STATUS: "已删除"})
+        handle_status = "已同意"
+        if ok:
+            # 级联删除回复
+            try:
+                replies = bitable.search_records(MESSAGE_TABLE_ID, [
+                    {"field_name": F_MSG_PARENT_ID, "operator": "is", "value": [record_id]}
+                ])
+                for r in replies:
+                    bitable.update_record(MESSAGE_TABLE_ID, r.get("record_id"), {F_MSG_STATUS: "已删除"})
+            except Exception:
+                pass
+    if ok:
+        try:
+            def _mut(data):
+                if not isinstance(data, dict):
+                    data = {"items": []}
+                items = data.get("items", [])
+                # 找到原有待处理记录以保留 report_time
+                old_report_time = None
+                old_reason = ""
+                for it in items:
+                    if it.get("id") == record_id:
+                        old_report_time = it.get("report_time")
+                        old_reason = it.get("reason", "")
+                        break
+                # 去重
+                items = [x for x in items if x.get("id") != record_id]
+                # 若原有 report_time 则沿用，否则用当前时间
+                rt = old_report_time or int(time.time()*1000)
+                # 查真实姓名
+                handler_real = ""
+                handler_uid = ""
+                for key in ("users", "observers"):
+                    for u in _snap(key):
+                        uf = u.get("fields", {})
+                        if bitable.get_field_text(uf, F_FEISHU_ID) == open_id:
+                            handler_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                            handler_uid = bitable.get_field_text(uf, F_USER_ID)
+                            break
+                    if handler_real:
+                        break
+                # 被举报人/卡片真实姓名
+                author_real = ""
+                target_real = ""
+                target_uid2 = ""
+                for key in ("users", "observers"):
+                    for u in _snap(key):
+                        uf = u.get("fields", {})
+                        if bitable.get_field_text(uf, F_FEISHU_ID) == author_oid:
+                            author_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                            break
+                    if author_real:
+                        break
+                for key in ("users", "observers"):
+                    for u in _snap(key):
+                        uf = u.get("fields", {})
+                        if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid:
+                            target_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                            target_uid2 = bitable.get_field_text(uf, F_USER_ID)
+                            break
+                    if target_real:
+                        break
+                if not author_real:
+                    author_real = author_nick
+                if not target_real:
+                    target_real = target_nick or target_oid[:8] if target_oid else ""
+                items.append({
+                    "id": record_id,
+                    "author_openid": author_oid,
+                    "author_nickname": author_nick,
+                    "author_realname": author_real,
+                    "author_uid": author_uid,
+                    "author_avatar": "",
+                    "target_openid": target_oid,
+                    "target_nickname": target_real,
+                    "target_realname": target_real,
+                    "target_uid": target_uid2,
+                    "content": content,
+                    "parent_id": parent_id,
+                    "created_at": created_at,
+                    "report_time": rt,
+                    "handled_at": int(time.time()*1000),
+                    "status": handle_status,
+                    "action": action,
+                    "handler": open_id,
+                    "handler_name": handler_real,
+                    "handler_uid": handler_uid,
+                    "reason": old_reason,
+                })
+                # 按举报时间倒序保留
+                items.sort(key=lambda x: x.get("report_time",0), reverse=True)
+                data["items"] = items[:500]
+                return data
+            storage.update_json(_REPORTED_HISTORY_FILE, {"items": []}, _mut)
+        except Exception:
+            pass
+    return jsonify({"ok": bool(ok)})
 
 
 # ========== 分组接口 ==========

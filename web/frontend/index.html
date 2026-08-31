@@ -285,6 +285,12 @@
   .msg-author { font-size: 13px; font-weight: 600; color: #ff6b81; }
   .msg-time { font-size: 11px; color: #c8c9cc; flex: 1; }
   .msg-del { font-size: 12px; color: #969799; cursor: pointer; }
+  .msg-report { font-size: 12px; color: #ee0a24; cursor: pointer; margin-left: 6px; }
+  .msg-report:active { opacity: 0.7; }
+  .reported-msg-content { background:#fff0f3; color:#323233; padding:6px 10px; border-radius:8px; margin-top:6px; white-space:normal; word-break:break-word; }
+  .van-theme-dark .reported-msg-content { background: rgba(255,107,129,0.18); color:#f5f5f5; }
+  .reported-status-pending { color:#ff6b81; font-size:12px; }
+  .reported-status-done { color:#969799; font-size:12px; }
   .msg-content { font-size: 14px; color: #323233; margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
   .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; }
   .msg-reply-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px 0; font-size: 12px; color: #ff6b81; }
@@ -483,6 +489,7 @@
                   <span class="msg-author">{{ m.author_nickname }} · {{ m.author_uid }}</span>
                   <span class="msg-time">{{ fmtTimeAgo(m.created_at) }}</span>
                   <span v-if="m.can_delete" class="msg-del" @click="deleteMessage(m)">删除</span>
+                  <span v-else-if="!m.is_mine" class="msg-report" @click="openReportDialog(m)">举报</span>
                 </div>
                 <div class="msg-content">{{ m.content }}</div>
                 <div class="msg-reply-btn" @click="replyTo(m)">回复</div>
@@ -494,6 +501,7 @@
                   <span class="msg-author">{{ r.author_nickname }} · {{ r.author_uid }}</span>
                   <span class="msg-time">{{ fmtTimeAgo(r.created_at) }}</span>
                   <span v-if="r.can_delete" class="msg-del" @click="deleteMessage(r)">删除</span>
+                  <span v-else-if="!r.is_mine" class="msg-report" @click="openReportDialog(r)">举报</span>
                 </div>
                 <div class="msg-content">{{ r.content }}</div>
                 <div class="msg-reply-btn" @click="replyTo(m)">回复</div>
@@ -694,6 +702,7 @@
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+      <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
     </van-cell-group>
   </div>
   <div style="padding:12px 12px 24px;">
@@ -931,6 +940,38 @@
           <div class="msg-name" style="font-size:13px;">来自：{{ m.author_nickname }}</div>
           <div class="msg-sub msg-sub-strong" style="white-space:normal;">{{ m.content }}</div>
           <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div v-else-if="page==='reported_messages'" key="reported_messages">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingReported" style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+    <van-empty v-else-if="!reportedMessages.length" description="暂无待处理的举报"></van-empty>
+    <div v-else style="display:flex;flex-direction:column;gap:10px;">
+      <div v-for="m in reportedMessages" :key="m.id" class="msg-card" style="align-items:flex-start; flex-direction:column;">
+        <div style="width:100%; display:flex; gap:10px;">
+          <div class="msg-avatar"><img v-if="m.author_avatar" :src="m.author_avatar" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"><span v-else>{{ (m.author_nickname||'?')[0] }}</span></div>
+          <div class="msg-body">
+            <div class="msg-name" style="font-size:13px;">{{ m.author_realname || m.author_nickname }} · {{ m.author_uid }}</div>
+            <div class="msg-sub">所在卡片：{{ m.target_realname || m.target_nickname }}<span v-if="m.target_uid"> · {{ m.target_uid }}</span><span v-else-if="m.target_openid"> · {{ m.target_openid.slice(0,8) }}</span></div>
+            <div class="reported-msg-content">{{ m.content }}</div>
+            <div v-if="m.reason" class="msg-sub" style="color:#ee0a24; margin-top:4px; white-space:normal; word-break:break-word;">举报原因：{{ m.reason }}</div>
+            <div v-if="m.status && m.status!=='待处理'" class="reported-status-done">{{ m.status }} · {{ m.handled_at ? fmtTimeAgo(m.handled_at) : '' }}<span v-if="m.handler_name"> · 处理人 {{ m.handler_name }}<span v-if="m.handler_uid">·{{ m.handler_uid }}</span></span></div>
+            <div v-else class="reported-status-pending">待处理 · 举报于 {{ m.report_time ? fmtTimeAgo(m.report_time) : fmtTimeAgo(m.created_at) }}</div>
+            <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }} 留言<span v-if="m.parent_id" style="color:#ee0a24;"> · 回复</span></div>
+          </div>
+        </div>
+        <div v-if="m.status==='待处理' || !m.status" style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
+          <van-button size="small" type="danger" color="#ee0a24" @click="handleReported(m,'delete')">同意</van-button>
+          <van-button size="small" plain type="default" @click="handleReported(m,'approve')">驳回</van-button>
+        </div>
+        <div v-else style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">
+          <van-tag :type="m.status==='已同意' ? 'danger' : 'default'">{{ m.status }}</van-tag>
         </div>
       </div>
     </div>
@@ -1290,6 +1331,21 @@
       placeholder="补充说明（选填）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
+<!-- 举报留言弹窗 -->
+<van-dialog v-model:show="showReportDialog" title="举报留言" show-cancel-button
+  confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ee0a24"
+  :before-close="onReportBeforeClose">
+  <div class="like-dialog-body">
+    <van-radio-group v-model="reportReason" class="feedback-radio-group" style="padding-bottom: 8px;">
+      <van-radio name="骚扰/引战">骚扰/引战</van-radio>
+      <van-radio name="广告/推销">广告/推销</van-radio>
+      <van-radio name="不适内容">不适内容</van-radio>
+      <van-radio name="其他">其他</van-radio>
+    </van-radio-group>
+    <van-field v-model="reportReasonText" type="textarea" rows="2" autosize
+      placeholder="补充说明（选填，最多200字）" class="like-textarea" maxlength="200"></van-field>
+  </div>
+</van-dialog>
 <!-- 意见反馈弹窗 -->
 <van-dialog v-model:show="showSuggestionDialog" title="意见反馈" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
@@ -1470,7 +1526,7 @@ createApp({
         return;
       }
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
-      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
+      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showReportDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
         history.back();
         return;
       }
@@ -1627,6 +1683,15 @@ createApp({
     const suggestionSubmitting = ref(false);
     const showInviteDialog = ref(false);
     const showAdminHelp = ref(false);
+    const showReportDialog = ref(false);
+    const reportTarget = ref(null);
+    const reportReason = ref('骚扰/引战');
+    const reportReasonText = ref('');
+    const reportSubmitting = ref(false);
+    const reportedMessages = ref([]);
+    const loadingReported = ref(false);
+    const reportedLoaded = ref(false);
+    const reportedCount = ref(0);
     const adminCommands = [
       { title: "审核管理", items: [
         "【待审核】查看待审核用户",
@@ -2014,6 +2079,7 @@ createApp({
         throw e;
       }
       user.value = data.user;
+      if (data.user && data.user.is_admin) setTimeout(()=>{ try{ refreshReportedCount(); }catch(e){} }, 600);
       if (data.register_form_url) registerFormUrl.value = data.register_form_url;
       cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
       likesData.value = data.likes || { liked_me: [], mutual: [] };
@@ -2581,6 +2647,121 @@ createApp({
       actionLoading.value = false;
     }
 
+    // 举报留言
+    function openReportDialog(m) {
+      reportTarget.value = m;
+      reportReason.value = '骚扰/引战';
+      reportReasonText.value = '';
+      showReportDialog.value = true;
+    }
+    async function onReportBeforeClose(action) {
+      if (action === 'confirm') {
+        if (reportSubmitting.value) return false;
+        if (reportReason.value === '其他' && !reportReasonText.value.trim()) {
+          vant.showToast('请填写补充说明');
+          return false;
+        }
+        await doReport();
+        return false;
+      }
+      return true;
+    }
+    async function doReport() {
+      if (!reportTarget.value || !reportTarget.value.id) return;
+      let reason = reportReason.value;
+      if (reportReasonText.value.trim()) reason = reason + '：' + reportReasonText.value.trim();
+      if (reportSubmitting.value) return;
+      reportSubmitting.value = true;
+      try {
+        await api('/api/messages/' + reportTarget.value.id + '/report', {
+          method: 'POST',
+          body: JSON.stringify({ reason })
+        });
+        vant.showToast('已举报，等待管理员处理');
+        showReportDialog.value = false;
+        // 举报后保持可见，待管理员处理（不从列表移除）
+        reportTarget.value = null;
+      } catch(e) { vant.showToast(e.message || '举报失败'); }
+      reportSubmitting.value = false;
+    }
+    async function loadReportedMessages(force) {
+      if (!user.value || !user.value.is_admin) return;
+      if (!force && reportedLoaded.value) return;
+      loadingReported.value = true;
+      try {
+        const data = await api('/api/messages/reported');
+        reportedMessages.value = data.messages || [];
+        reportedLoaded.value = true;
+        reportedCount.value = reportedMessages.value.filter(x=>x.status==='待处理').length;
+      } catch(e) { vant.showToast(e.message || '加载失败'); }
+      loadingReported.value = false;
+    }
+    async function openReportedMessages() {
+      page.value = 'reported_messages';
+      await loadReportedMessages(true);
+    }
+    async function refreshReportedCount() {
+      if (!user.value || !user.value.is_admin) return;
+      try {
+        const data = await api('/api/messages/reported');
+        const all = data.messages || [];
+        reportedCount.value = all.filter(x=>x.status==='待处理').length;
+        if (reportedLoaded.value) reportedMessages.value = all;
+        else reportedMessages.value = all;
+      } catch(e) {}
+    }
+    async function handleReported(m, action) {
+      const isDelete = action === 'delete';
+      const title = isDelete ? '确认同意举报' : '确认驳回举报';
+      const message = isDelete ? '确定删除该留言？一级留言将连带删除其下回复。' : '确定驳回举报并恢复该留言？';
+      try {
+        await vant.showConfirmDialog({ title, message, confirmButtonColor: isDelete ? '#ee0a24' : '#1989fa' });
+      } catch(e) { return; }
+      // 乐观更新：立即在界面上标记为已处理
+      const backup = JSON.parse(JSON.stringify(reportedMessages.value));
+      const backupCount = reportedCount.value;
+      const backupMessages = JSON.parse(JSON.stringify(messages.value));
+      const backupMsgCount = cards.value[cardIndex.value] ? cards.value[cardIndex.value].msg_count : null;
+      const now = Date.now();
+      // 更新举报管理列表中该条状态
+      const idx = reportedMessages.value.findIndex(x => x.id === m.id);
+      if (idx !== -1) {
+        reportedMessages.value[idx] = { ...reportedMessages.value[idx], status: isDelete ? '已同意' : '已驳回', handled_at: now, action };
+        // 保持举报时间倒序：已处理的按原 report_time 排序，不重排即可；徽标仅计待处理
+        reportedCount.value = reportedMessages.value.filter(x=>x.status==='待处理').length;
+      }
+      // 同步更新当前卡片留言列表（乐观）
+      if (isDelete) {
+        messages.value = messages.value.filter(x => x.id !== m.id && x.parent_id !== m.id);
+        if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
+      } else {
+        // 驳回：若在当前卡片，尝试乐观恢复（若之前因举报隐藏，重新拉取更准，但先乐观）
+        if (cards.value[cardIndex.value] && cards.value[cardIndex.value].openid === m.target_openid) {
+          // 标记需要刷新，待接口成功后静默刷新
+        }
+      }
+      try {
+        await api('/api/messages/' + m.id + '/handle', {
+          method: 'POST',
+          body: JSON.stringify({ action: isDelete ? 'delete' : 'approve' })
+        });
+        vant.showToast(isDelete ? '已删除' : '已驳回');
+        // 驳回成功后若在当前卡片，刷新以显示恢复的留言（不整页重载，仅刷新留言列表）
+        if (!isDelete && cards.value[cardIndex.value] && cards.value[cardIndex.value].openid === m.target_openid) {
+          msgLoadedFor = null;
+          try { await loadMessages(true); } catch(e){}
+        }
+        // 后台静默对账：不强制重拉举报列表，保持乐观结果（历史已在本地）
+      } catch(e) {
+        // 失败回滚
+        reportedMessages.value = backup;
+        reportedCount.value = backupCount;
+        messages.value = backupMessages;
+        if (cards.value[cardIndex.value] && backupMsgCount !== null) cards.value[cardIndex.value].msg_count = backupMsgCount;
+        vant.showToast(e.message || '操作失败');
+      }
+    }
+
     // 意见反馈
     function openSuggestionDialog() {
       suggestionType.value = '功能建议';
@@ -2885,6 +3066,7 @@ createApp({
       if(showPhotoViewer.value){ showPhotoViewer.value=false; isHandlingPopState=false; return; }
       if(showFilter.value){ showFilter.value=false; isHandlingPopState=false; return; }
       if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
+      if(showReportDialog.value){ showReportDialog.value=false; isHandlingPopState=false; return; }
       if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
       if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
@@ -2924,7 +3106,7 @@ createApp({
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
-      if (p === 'profile') checkGroupEntry();
+      if (p === 'profile') { checkGroupEntry(); if (user.value && user.value.is_admin) refreshReportedCount(); }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
@@ -2953,6 +3135,7 @@ createApp({
     watch(showFilter, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'filter'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='filter'){ ignoreNextPop=true; history.back(); } });
     watch(showLikeDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'likeDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='likeDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showFeedbackDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'feedbackDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='feedbackDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showReportDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'reportDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='reportDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showSuggestionDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'suggestionDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='suggestionDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showInviteDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'inviteDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='inviteDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
@@ -3289,6 +3472,8 @@ createApp({
       showLikeDialog, likeDialogTitle, likeTarget, likeType,
       showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,
       openFeedbackDialog, onFeedbackBeforeClose, doFeedback,
+      showReportDialog, reportReason, reportReasonText, reportTarget, openReportDialog, onReportBeforeClose, doReport,
+      reportedMessages, loadingReported, reportedCount, openReportedMessages, loadReportedMessages, handleReported,
       showSuggestionDialog, suggestionType, suggestionText, openSuggestionDialog, onSuggestionBeforeClose,
       likesData, loadingLikes, loadMyLikesCount, notifications,
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe, cancelLike,

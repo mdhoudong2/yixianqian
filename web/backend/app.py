@@ -2842,24 +2842,44 @@ def report_message(record_id):
             created_at_p = bitable.get_field_number(fields, F_MSG_CREATED_AT)
             author_nick_p = bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME)
             author_uid_p = bitable.get_field_text(fields, F_MSG_AUTHOR_UID)
-            # 真名回退
-            target_nick_p = ""
+            author_real_p = ""
+            target_real_p = ""
+            target_uid_p = ""
+            # 查被举报人真名
+            for key in ("users", "observers"):
+                for u in _snap(key):
+                    uf = u.get("fields", {})
+                    if bitable.get_field_text(uf, F_FEISHU_ID) == author_oid_p:
+                        author_real_p = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                        if not author_uid_p:
+                            author_uid_p = bitable.get_field_text(uf, F_USER_ID)
+                        break
+                if author_real_p:
+                    break
             for key in ("users", "observers"):
                 for u in _snap(key):
                     uf = u.get("fields", {})
                     if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid_p:
-                        target_nick_p = bitable.get_field_text(uf, F_NICKNAME)
+                        target_real_p = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                        target_uid_p = bitable.get_field_text(uf, F_USER_ID)
                         break
-                if target_nick_p:
+                if target_real_p:
                     break
+            if not author_real_p:
+                author_real_p = author_nick_p
+            if not target_real_p:
+                target_real_p = target_oid_p[:8] if target_oid_p else "未知"
             items.append({
                 "id": record_id,
                 "author_openid": author_oid_p,
                 "author_nickname": author_nick_p,
+                "author_realname": author_real_p,
                 "author_uid": author_uid_p,
                 "author_avatar": "",
                 "target_openid": target_oid_p,
-                "target_nickname": target_nick_p or target_oid_p[:8] if target_oid_p else "",
+                "target_nickname": target_real_p,
+                "target_realname": target_real_p,
+                "target_uid": target_uid_p,
                 "content": content_p,
                 "parent_id": parent_id_p,
                 "created_at": created_at_p,
@@ -2868,6 +2888,8 @@ def report_message(record_id):
                 "status": "待处理",
                 "action": None,
                 "handler": None,
+                "handler_name": "",
+                "handler_uid": "",
                 "reason": reason,
             })
             items.sort(key=lambda x: x.get("report_time",0), reverse=True)
@@ -2968,23 +2990,39 @@ def list_reported_messages():
             oid = bitable.get_field_text(uf, F_FEISHU_ID)
             if oid and oid not in nick_map:
                 nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
+    # 构建真实姓名映射
+    real_map = {}
+    uid_map = {}
+    for key in ("users", "observers"):
+        for u in _snap(key):
+            uf = u.get("fields", {})
+            oid = bitable.get_field_text(uf, F_FEISHU_ID)
+            if oid and oid not in real_map:
+                real_map[oid] = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                uid_map[oid] = bitable.get_field_text(uf, F_USER_ID)
     msgs = []
     for it in (items or []):
         fields = it.get("fields", {})
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         target_oid = bitable.get_field_text(fields, F_MSG_TARGET_OID)
+        author_real = real_map.get(author_oid, bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME))
+        target_real = real_map.get(target_oid, nick_map.get(target_oid, target_oid[:8] if target_oid else ""))
         msgs.append({
             "id": it.get("record_id"),
             "author_openid": author_oid,
             "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
-            "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
+            "author_realname": author_real,
+            "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID) or uid_map.get(author_oid, ""),
             "author_avatar": avatar_map.get(author_oid, ""),
             "target_openid": target_oid,
-            "target_nickname": nick_map.get(target_oid, target_oid[:8] if target_oid else ""),
+            "target_nickname": target_real,
+            "target_realname": target_real,
+            "target_uid": uid_map.get(target_oid, ""),
             "content": bitable.get_field_text(fields, F_MSG_CONTENT),
             "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
             "status": "待处理",
+            "reason": "",  # 待处理原因从历史文件补充
         })
     # 已处理历史（文件持久化，保留回溯）+ 报告时间映射
     hist_items = []
@@ -3012,15 +3050,39 @@ def list_reported_messages():
     for h in hist_items:
         if h.get("id") in pending_ids:
             continue
-        # 补头像/昵称
+        # 补头像/昵称/真名
         if not h.get("author_avatar"):
             h["author_avatar"] = avatar_map.get(h.get("author_openid",""), "")
+        if not h.get("author_realname"):
+            h["author_realname"] = real_map.get(h.get("author_openid",""), h.get("author_nickname",""))
+        if not h.get("author_uid"):
+            h["author_uid"] = uid_map.get(h.get("author_openid",""), h.get("author_uid",""))
         if not h.get("target_nickname"):
-            h["target_nickname"] = nick_map.get(h.get("target_openid",""), h.get("target_openid","")[:8] if h.get("target_openid") else "")
+            h["target_nickname"] = real_map.get(h.get("target_openid",""), nick_map.get(h.get("target_openid",""), h.get("target_openid","")[:8] if h.get("target_openid") else ""))
+        if not h.get("target_realname"):
+            h["target_realname"] = h.get("target_nickname","")
+        if not h.get("target_uid"):
+            h["target_uid"] = uid_map.get(h.get("target_openid",""), h.get("target_uid",""))
+        # 补处理人真名
+        if h.get("handler") and not h.get("handler_name"):
+            h["handler_name"] = real_map.get(h["handler"], h["handler"][:8] if h["handler"] else "")
+            h["handler_uid"] = uid_map.get(h["handler"], "")
         # 确保有 report_time
         if not h.get("report_time"):
             h["report_time"] = h.get("created_at", 0)
         msgs.append(h)
+    # 为待处理补充 reason/report_time 来自历史
+    hist_reason_map = {h["id"]: h.get("reason","") for h in hist_items if h.get("id")}
+    hist_handler_map = {h["id"]: (h.get("handler_name",""), h.get("handler_uid",""), h.get("handled_at")) for h in hist_items}
+    for m in msgs:
+        if m.get("status")=="待处理" and m.get("id") in hist_reason_map:
+            if not m.get("reason"):
+                m["reason"] = hist_reason_map[m["id"]]
+        # 已处理的 handler 补全
+        if m.get("status") in ("已同意","已驳回") and m.get("handler") and not m.get("handler_name"):
+            hn, hu, _ = hist_handler_map.get(m["id"], ("","",""))
+            m["handler_name"] = hn
+            m["handler_uid"] = hu
     msgs.sort(key=lambda x: x.get("report_time") or x.get("handled_at") or x.get("created_at") or 0, reverse=True)
     return jsonify({"messages": msgs})
 
@@ -3095,14 +3157,54 @@ def handle_reported_message(record_id):
                 items = [x for x in items if x.get("id") != record_id]
                 # 若原有 report_time 则沿用，否则用当前时间
                 rt = old_report_time or int(time.time()*1000)
+                # 查真实姓名
+                handler_real = ""
+                handler_uid = ""
+                for key in ("users", "observers"):
+                    for u in _snap(key):
+                        uf = u.get("fields", {})
+                        if bitable.get_field_text(uf, F_FEISHU_ID) == open_id:
+                            handler_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                            handler_uid = bitable.get_field_text(uf, F_USER_ID)
+                            break
+                    if handler_real:
+                        break
+                # 被举报人/卡片真实姓名
+                author_real = ""
+                target_real = ""
+                target_uid2 = ""
+                for key in ("users", "observers"):
+                    for u in _snap(key):
+                        uf = u.get("fields", {})
+                        if bitable.get_field_text(uf, F_FEISHU_ID) == author_oid:
+                            author_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                            break
+                    if author_real:
+                        break
+                for key in ("users", "observers"):
+                    for u in _snap(key):
+                        uf = u.get("fields", {})
+                        if bitable.get_field_text(uf, F_FEISHU_ID) == target_oid:
+                            target_real = bitable.get_field_text(uf, F_REAL_NAME) or bitable.get_field_text(uf, F_NICKNAME)
+                            target_uid2 = bitable.get_field_text(uf, F_USER_ID)
+                            break
+                    if target_real:
+                        break
+                if not author_real:
+                    author_real = author_nick
+                if not target_real:
+                    target_real = target_nick or target_oid[:8] if target_oid else ""
                 items.append({
                     "id": record_id,
                     "author_openid": author_oid,
                     "author_nickname": author_nick,
+                    "author_realname": author_real,
                     "author_uid": author_uid,
                     "author_avatar": "",
                     "target_openid": target_oid,
-                    "target_nickname": target_nick or target_oid[:8] if target_oid else "",
+                    "target_nickname": target_real,
+                    "target_realname": target_real,
+                    "target_uid": target_uid2,
                     "content": content,
                     "parent_id": parent_id,
                     "created_at": created_at,
@@ -3111,6 +3213,8 @@ def handle_reported_message(record_id):
                     "status": handle_status,
                     "action": action,
                     "handler": open_id,
+                    "handler_name": handler_real,
+                    "handler_uid": handler_uid,
                     "reason": old_reason,
                 })
                 # 按举报时间倒序保留

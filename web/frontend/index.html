@@ -957,12 +957,13 @@
         <div style="width:100%; display:flex; gap:10px;">
           <div class="msg-avatar"><img v-if="m.author_avatar" :src="m.author_avatar" style="width:100%;height:100%;border-radius:50%;object-fit:cover;"><span v-else>{{ (m.author_nickname||'?')[0] }}</span></div>
           <div class="msg-body">
-            <div class="msg-name" style="font-size:13px;">{{ m.author_nickname }} · {{ m.author_uid }}</div>
-            <div class="msg-sub">所在卡片：{{ m.target_nickname }} ({{ m.target_openid ? m.target_openid.slice(0,8) : '' }})</div>
+            <div class="msg-name" style="font-size:13px;">{{ m.author_realname || m.author_nickname }} · {{ m.author_uid }}</div>
+            <div class="msg-sub">所在卡片：{{ m.target_realname || m.target_nickname }}<span v-if="m.target_uid"> · {{ m.target_uid }}</span><span v-else-if="m.target_openid"> · {{ m.target_openid.slice(0,8) }}</span></div>
             <div class="reported-msg-content">{{ m.content }}</div>
-            <div v-if="m.status && m.status!=='待处理'" class="reported-status-done">{{ m.status }} · {{ m.handled_at ? fmtTimeAgo(m.handled_at) : '' }}<span v-if="m.handler"> · 处理人</span></div>
-            <div v-else class="reported-status-pending">待处理</div>
-            <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }}<span v-if="m.parent_id" style="color:#ee0a24;"> · 回复</span></div>
+            <div v-if="m.reason" class="msg-sub" style="color:#ee0a24; margin-top:4px; white-space:normal; word-break:break-word;">举报原因：{{ m.reason }}</div>
+            <div v-if="m.status && m.status!=='待处理'" class="reported-status-done">{{ m.status }} · {{ m.handled_at ? fmtTimeAgo(m.handled_at) : '' }}<span v-if="m.handler_name"> · 处理人 {{ m.handler_name }}<span v-if="m.handler_uid">·{{ m.handler_uid }}</span></span></div>
+            <div v-else class="reported-status-pending">待处理 · 举报于 {{ m.report_time ? fmtTimeAgo(m.report_time) : fmtTimeAgo(m.created_at) }}</div>
+            <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }} 留言<span v-if="m.parent_id" style="color:#ee0a24;"> · 回复</span></div>
           </div>
         </div>
         <div v-if="m.status==='待处理' || !m.status" style="display:flex; gap:8px; width:100%; justify-content:flex-end; margin-top:10px;">

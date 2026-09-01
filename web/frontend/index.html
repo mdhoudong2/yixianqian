@@ -2630,7 +2630,14 @@ createApp({
           if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
           else user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
         }
-        myLikesLoaded.value = false; // 我喜欢的人变了，下次进入重新拉取
+        // 乐观更新消息页计数与列表，配合后端在途意图，避免 60s 快照滞后
+        myLikesCount.value = (myLikesCount.value || 0) + 1;
+        if (myLikesLoaded.value && deckCard) {
+          const exists = myLikesList.value.some(x => x.openid === target.openid);
+          if (!exists) myLikesList.value.push({ ...deckCard, mutual: false, like_type: likeType.value, message: '' });
+        } else {
+          myLikesLoaded.value = false; // 未加载过则标记下次重拉
+        }
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
     }

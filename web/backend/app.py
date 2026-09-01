@@ -3887,7 +3887,34 @@ def my_liked_list():
     if gate:
         return jsonify(gate[0]), gate[1]
 
+    _intent_prune()
     my_likes = snap_likes_by_initiator(open_id)
+    # 在途意图补齐：快照尚未见的新 like 应立即出现在“我喜欢”列表，否则消息页计数与列表均滞后 60s
+    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
+    # 过滤已取消的快照
+    my_likes = [l for l in my_likes if bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) not in cancel_targets]
+    # 合并在途
+    existing_targets = {bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) for l in my_likes if bitable.get_select_value(l.get("fields",{}), F_LIKE_STATUS) != "已取消"}
+    for it in list(_intent_likes.values()):
+        if it.get("oid") != open_id:
+            continue
+        tgt = it.get("target")
+        if not tgt or tgt in existing_targets or tgt in cancel_targets:
+            continue
+        # 合成一条 like 供展示（复用真实目标用户信息）
+        tgt_user = snap_find_user_by_openid(tgt)
+        # 用意图的 like_type
+        fields = {
+            F_LIKE_TARGET_OPENID: tgt,
+            F_LIKE_INITIATOR_OPENID: open_id,
+            F_LIKE_STATUS: "单向喜欢",
+            F_LIKE_TYPE: it.get("type","匿名"),
+        }
+        # 若能解析到目标昵称则带上，否则用占位
+        if tgt_user:
+            tf = tgt_user.get("fields",{})
+            fields[F_LIKE_TARGET] = bitable.get_field_text(tf, F_NICKNAME)
+        my_likes.append({"record_id": it.get("rid") or f"intent_{tgt}", "fields": fields})
 
     # 谁喜欢了我（用于判断相互喜欢；过滤已取消）
     liked_me = snap_likes_by_target(open_id)

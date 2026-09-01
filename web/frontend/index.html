@@ -93,10 +93,6 @@
   .back-btn:disabled { opacity: 0.3; }
   .card-top-left { position: absolute; top: 12px; left: 16px; display: flex; align-items: center; gap: 8px; z-index: 5; }
   .hearts-badge { background: rgba(0,0,0,0.4); color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 13px; }
-  /* 刷新原因探针 */
-  .nav-probe { position: fixed; right: 6px; bottom: 60px; z-index: 9998;
-    background: rgba(0,0,0,0.55); color: #fff; font-size: 10px; padding: 3px 8px; border-radius: 8px;
-    max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card-counter { background: rgba(0,0,0,0.3); color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
   /* 消息 */
   .msg-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: flex-start; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
@@ -405,7 +401,6 @@
 </head>
 <body>
 <div id="app">
-<div v-if="probeInfo" class="nav-probe" @click="probeInfo=''">{{ probeInfo }}</div>
 <!-- 登录中 -->
 <div v-if="loggingIn" class="login-page">
   <div class="login-logo">💕</div>
@@ -1504,7 +1499,6 @@ const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {
     const page = ref('cards');
-    const probeInfo = ref('');             // 刷新原因探针（导航类型+版本）
     // 四 Tab / 子页流畅过渡：按 tab 顺序与子页层级自动选动画
     const pageTransition = ref('tab-transition');
     const TAB_ORDER = ['cards','likes','home','profile'];
@@ -3705,24 +3699,6 @@ createApp({
       });
     });
 
-    // ===== 刷新原因探针（验证页面刷新来源）=====
-    function initNavProbe(){
-      try{
-        let ntype = '?';
-        try{
-          const nav = performance.getEntriesByType('navigation')[0];
-          if(nav) ntype = nav.type;  // navigate/reload/back_forward
-        }catch(e){}
-        const reason = sessionStorage.getItem('yxq_reload_reason') || '';
-        const list = JSON.parse(sessionStorage.getItem('yxq_nav_probe') || '[]');
-        list.push({type: ntype, v: APP_VERSION, t: Date.now()});
-        sessionStorage.setItem('yxq_nav_probe', JSON.stringify(list.slice(-10)));
-        probeInfo.value = 'nav:' + ntype + ' v:' + APP_VERSION + (reason ? ' r:' + reason : '');
-        sessionStorage.removeItem('yxq_reload_reason');
-      }catch(e){}
-    }
-    initNavProbe();
-
     // ===== 牌堆位置存档/恢复（刷新后回到原卡片）=====
     function saveDeckState(){
       try{
@@ -3813,7 +3789,6 @@ createApp({
     window.addEventListener('keydown', onKeydown);
 
     return {
-      probeInfo,
       page, pageTransition, user, loggingIn, loginError,
       isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,

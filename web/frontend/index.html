@@ -431,7 +431,7 @@
   </div>
   <template v-else>
     <div class="card-top-left">
-      <div class="card-counter">{{ cards.length ? (cardIndex + 1) + ' / ' + (cardsTotal || cards.length) : '0 / 0' }}</div>
+      <div class="card-counter">{{ cards.length ? (cardsStart + cardIndex + 1) + ' / ' + (cardsTotal || cards.length) : '0 / 0' }}</div>
       <div class="hearts-badge" v-if="!isObserver">💕 {{ user.hearts }}</div>
     </div>
     <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
@@ -1594,6 +1594,7 @@ createApp({
     const cardsTotal = ref(0);
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
+    const cardsStart = ref(0);        // 已载窗口在全序中的起始偏移（循环翻页窗口游标）
     const photoIndex = ref(0);
     const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
@@ -2233,6 +2234,7 @@ createApp({
         cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cards.value.length);
         cardsVersion.value = (data.version != null ? data.version : null);
+        cardsStart.value = 0;
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
@@ -2241,10 +2243,10 @@ createApp({
       loadingCards.value = false;
     }
     async function loadMoreCards() {
-      if (cardsLoadingMore.value || cards.value.length >= cardsTotal.value) return;
+      if (cardsLoadingMore.value || cardsStart.value + cards.value.length >= cardsTotal.value) return;
       cardsLoadingMore.value = true;
       try {
-        const data = await api('/api/cards' + cardsQuery() + 'offset=' + cards.value.length + '&limit=50');
+        const data = await api('/api/cards' + cardsQuery() + 'offset=' + (cardsStart.value + cards.value.length) + '&limit=50');
         // 快照版本变化：顺序已变，重头拉取避免重复/漏卡
         if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
           cardsVersion.value = data.version;
@@ -2275,22 +2277,98 @@ createApp({
       cardTouchStartX = e.touches[0].clientX; cardTouchStartY = e.touches[0].clientY;
     }
     function onCardTouchMove(e) {}
-    function switchCard(dir) {
-      const n = cards.value.length;
-      if (n <= 1) return;
-      if (dir < 0) {
-        slideDir.value = 'right';
-        cardIndex.value = (cardIndex.value + 1) % n;
-        photoIndex.value = 0;
-        photoSlideDir.value = '';
-      } else if (dir > 0) {
-        slideDir.value = 'left';
-        cardIndex.value = (cardIndex.value - 1 + n) % n;
-        photoIndex.value = 0;
-        photoSlideDir.value = '';
+    async function loadPageAt(offset) {
+      // 整窗替换：拉取指定偏移的一页，cardsStart 对齐 offset
+      const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
+      if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
+        cardsVersion.value = data.version;
+        await loadCards(true);
+        return false;
       }
-      // 千人级翻页：快翻到牌尾时后台拉下一页
-      if (cardIndex.value >= cards.value.length - 5 && cards.value.length < cardsTotal.value) {
+      if (data.version != null) cardsVersion.value = data.version;
+      cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      cardsTotal.value = (typeof data.total === 'number' ? data.total : cards.value.length);
+      cardsStart.value = offset;
+      return true;
+    }
+    async function loadPrevPage() {
+      // 前置一页（往回连续翻）：prepend 前一页，返回 prepend 条数供 cardIndex 对齐
+      const offset = Math.max(0, cardsStart.value - 50);
+      const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
+      if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
+        cardsVersion.value = data.version;
+        await loadCards(true);
+        return 0;
+      }
+      if (data.version != null) cardsVersion.value = data.version;
+      const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      const existing = new Set(cards.value.map(c => c.openid));
+      const prepend = page.filter(c => !existing.has(c.openid));
+      cards.value = prepend.concat(cards.value);
+      cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
+      cardsStart.value = offset;
+      return prepend.length;
+    }
+    function switchCard(dir) {
+      const total = cardsTotal.value;
+      if (total <= 1) return;
+      const n = cards.value.length;
+      if (dir < 0) {
+        // 下一张
+        if (cardIndex.value < n - 1) {
+          slideDir.value = 'right';
+          cardIndex.value += 1;
+        } else if (cardsStart.value + n < total) {
+          // 窗口尾且后面还有：加载下一页后前进
+          loadMoreCards().then(() => {
+            if (cardIndex.value < cards.value.length - 1) {
+              cardIndex.value += 1;
+              slideDir.value = 'right';
+            }
+          });
+          photoIndex.value = 0;
+          photoSlideDir.value = '';
+          return;
+        } else {
+          // 已是全序最后一张：循环回第一页
+          loadPageAt(0).then(() => { cardIndex.value = 0; slideDir.value = 'right'; });
+          photoIndex.value = 0;
+          photoSlideDir.value = '';
+          return;
+        }
+      } else if (dir > 0) {
+        // 上一张
+        if (cardIndex.value > 0) {
+          slideDir.value = 'left';
+          cardIndex.value -= 1;
+        } else if (cardsStart.value > 0) {
+          // 窗口头且前面还有：前置上一页
+          loadPrevPage().then((prep) => {
+            if (prep > 0) {
+              cardIndex.value = prep;
+              slideDir.value = 'left';
+            }
+          });
+          photoIndex.value = 0;
+          photoSlideDir.value = '';
+          return;
+        } else {
+          // 已是第一张：循环到最后一张
+          const pageSize = 50;
+          const lastOffset = Math.max(0, Math.floor((total - 1) / pageSize) * pageSize);
+          loadPageAt(lastOffset).then(() => {
+            cardIndex.value = cards.value.length - 1;
+            slideDir.value = 'left';
+          });
+          photoIndex.value = 0;
+          photoSlideDir.value = '';
+          return;
+        }
+      }
+      photoIndex.value = 0;
+      photoSlideDir.value = '';
+      // 千人级翻页：快翻到窗口尾时后台拉下一页
+      if (cardIndex.value >= cards.value.length - 5 && cardsStart.value + cards.value.length < cardsTotal.value) {
         loadMoreCards();
       }
     }

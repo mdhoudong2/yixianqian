@@ -1601,8 +1601,7 @@ createApp({
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
     const cardsStart = ref(0);        // 已载窗口在全序中的起始偏移（循环翻页窗口游标）
-    const cardsPageCache = new Map(); // offset -> {cards,total,version}：首尾循环即时切换
-    let cardsNavBusy = false;         // 循环翻页取页在途：防止快速连滑造成跨窗错位
+    const cardsPageCache = new Map(); // offset -> {cards,total,version}：翻页回退时避免重复请求
     const photoIndex = ref(0);
     const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
@@ -2307,7 +2306,8 @@ createApp({
     }
     function onCardTouchMove(e) {}
     async function loadPageAt(offset) {
-      // 整窗替换：拉取指定偏移的一页，cardsStart 对齐 offset；命中页面缓存则同步切换
+      // 整窗替换：版本变化时按全序位置重建窗口；失败返回 false 不抛异常
+      try {
       const cached = cardsPageCache.get(offset);
       if (cached && (cached.version == null || cardsVersion.value == null || cached.version === cardsVersion.value)) {
         cards.value = cached.cards;
@@ -2329,9 +2329,14 @@ createApp({
       cardsTotal.value = total;
       cardsStart.value = offset;
       return true;
+      } catch (e) { return false; }
     }
+    let cardsLoadingPrev = false;
     async function loadPrevPage() {
       // 前置一页（往回连续翻）：prepend 前一页，返回 prepend 条数供 cardIndex 对齐
+      if (cardsLoadingPrev) return 0;
+      cardsLoadingPrev = true;
+      try {
       const offset = Math.max(0, cardsStart.value - 50);
       const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
       if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
@@ -2361,9 +2366,9 @@ createApp({
         return (landSeq - start) + 1;  // 落地卡在新窗口中的索引 +1 = 原 prep 语义
       }
       return prepend.length;
+      } finally { cardsLoadingPrev = false; }
     }
     function switchCard(dir) {
-      if (cardsNavBusy) return;
       const total = cardsTotal.value;
       if (total <= 1) return;
       const n = cards.value.length;
@@ -2374,25 +2379,18 @@ createApp({
           cardIndex.value += 1;
         } else if (cardsStart.value + n < total) {
           // 窗口尾且后面还有：加载下一页后前进
-          cardsNavBusy = true;
           loadMoreCards().then(() => {
             if (cardIndex.value < cards.value.length - 1) {
               cardIndex.value += 1;
               slideDir.value = 'right';
             }
-            cardsNavBusy = false;
-          });
-          photoIndex.value = 0;
-          photoSlideDir.value = '';
-          return;
-        } else {
-          // 已是全序最后一张：循环回第一页
-          cardsNavBusy = true;
-          loadPageAt(0).then((ok) => { if (ok) { cardIndex.value = 0; slideDir.value = 'right'; } cardsNavBusy = false; });
+          }).catch(() => {});
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
         }
+        // 已是最后一张：不支持循环，原地不动
+        return;
       } else if (dir > 0) {
         // 上一张
         if (cardIndex.value > 0) {
@@ -2400,33 +2398,18 @@ createApp({
           cardIndex.value -= 1;
         } else if (cardsStart.value > 0) {
           // 窗口头且前面还有：前置上一页
-          cardsNavBusy = true;
           loadPrevPage().then((prep) => {
             if (prep > 1) {
               cardIndex.value = prep - 1;
               slideDir.value = 'left';
             }
-            cardsNavBusy = false;
-          });
-          photoIndex.value = 0;
-          photoSlideDir.value = '';
-          return;
-        } else {
-          // 已是第一张：循环到最后一张
-          const pageSize = 50;
-          const lastOffset = Math.max(0, Math.floor((total - 1) / pageSize) * pageSize);
-          cardsNavBusy = true;
-          loadPageAt(lastOffset).then((ok) => {
-            if (ok) {
-              cardIndex.value = cards.value.length - 1;
-              slideDir.value = 'left';
-            }
-            cardsNavBusy = false;
-          });
+          }).catch(() => {});
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
         }
+        // 已是第一张：不支持循环，原地不动
+        return;
       }
       photoIndex.value = 0;
       photoSlideDir.value = '';
@@ -3789,7 +3772,7 @@ createApp({
       if(e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
       e.preventDefault();
       const now = Date.now();
-      if(now - lastKeyNavTs < 120) return;
+      if(now - lastKeyNavTs < 60) return;
       lastKeyNavTs = now;
       if(e.key === 'ArrowRight'){ switchCard(-1); }
       else { switchCard(1); }

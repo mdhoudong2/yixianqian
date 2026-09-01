@@ -2629,6 +2629,10 @@ def list_messages():
             "author_avatar": avatar_map.get(author_oid, ""),
             "content": bitable.get_field_text(fields, F_MSG_CONTENT),
             "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "reply_to_id": bitable.get_field_text(fields, F_MSG_REPLY_TO_ID),
+            "reply_to_nickname": bitable.get_field_text(fields, F_MSG_REPLY_TO_NICKNAME),
+            "reply_to_uid": bitable.get_field_text(fields, F_MSG_REPLY_TO_UID),
+            "reply_to_openid": bitable.get_field_text(fields, F_MSG_REPLY_TO_OID),
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
             "is_mine": author_oid == open_id,
             "can_delete": author_oid == open_id or target == open_id,
@@ -2672,6 +2676,9 @@ def list_my_messages():
             "target_avatar": avatar_map.get(target_oid, ""),
             "content": bitable.get_field_text(fields, F_MSG_CONTENT),
             "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "reply_to_id": bitable.get_field_text(fields, F_MSG_REPLY_TO_ID),
+            "reply_to_nickname": bitable.get_field_text(fields, F_MSG_REPLY_TO_NICKNAME),
+            "reply_to_uid": bitable.get_field_text(fields, F_MSG_REPLY_TO_UID),
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
         })
     msgs.sort(key=lambda m: m["created_at"], reverse=True)
@@ -2713,6 +2720,9 @@ def list_received_messages():
             "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
             "content": bitable.get_field_text(fields, F_MSG_CONTENT),
             "parent_id": bitable.get_field_text(fields, F_MSG_PARENT_ID),
+            "reply_to_id": bitable.get_field_text(fields, F_MSG_REPLY_TO_ID),
+            "reply_to_nickname": bitable.get_field_text(fields, F_MSG_REPLY_TO_NICKNAME),
+            "reply_to_uid": bitable.get_field_text(fields, F_MSG_REPLY_TO_UID),
             "created_at": bitable.get_field_number(fields, F_MSG_CREATED_AT),
         })
     msgs.sort(key=lambda m: m["created_at"], reverse=True)
@@ -2737,6 +2747,7 @@ def create_message():
     target = (data.get("target_openid") or "").strip()
     content = (data.get("content") or "").strip()
     parent_id = (data.get("parent_id") or "").strip()
+    reply_to_id = (data.get("reply_to_id") or "").strip()
     if not target or not content:
         return jsonify({"error": "内容不能为空"}), 400
     if len(content) > 500:
@@ -2746,6 +2757,36 @@ def create_message():
         app.logger.error(f"留言拒绝: snap_self_user返回None role={g.yxq_role} open_id={open_id[:20]}")
         return jsonify({"error": "用户不存在"}), 404
     now_ms = int(time.time() * 1000)
+    # 解析被回复人（权威来源：通过 reply_to_id 反查原留言作者），同时兼容 parent_id 自动推导
+    reply_to_oid = ""
+    reply_to_nickname = ""
+    reply_to_uid = ""
+    if reply_to_id:
+        try:
+            target_msg = bitable.get_record(MESSAGE_TABLE_ID, reply_to_id)
+            if target_msg:
+                tf = target_msg.get("fields", {})
+                reply_to_oid = bitable.get_field_text(tf, F_MSG_AUTHOR_OID)
+                reply_to_nickname = bitable.get_field_text(tf, F_MSG_AUTHOR_NICKNAME)
+                reply_to_uid = bitable.get_field_text(tf, F_MSG_AUTHOR_UID)
+                if not parent_id:
+                    pid = bitable.get_field_text(tf, F_MSG_PARENT_ID)
+                    parent_id = pid if pid else reply_to_id
+                # 若 reply 指向二级（有 parent），确保 parent 归一到顶级，避免产生三级孤链
+                else:
+                    pid = bitable.get_field_text(tf, F_MSG_PARENT_ID)
+                    if pid and parent_id != pid and pid != reply_to_id:
+                        # 若前端传的 parent 与原留言的 parent 不一致但原留言是二级，则以原留言的 parent 为准（同线程）
+                        # 仅当原留言本身是二级时校正
+                        if bitable.get_field_text(tf, F_MSG_PARENT_ID):
+                            parent_id = pid
+            else:
+                reply_to_id = ""
+        except Exception:
+            reply_to_id = ""
+            reply_to_oid = ""
+            reply_to_nickname = ""
+            reply_to_uid = ""
     dup_rows = bitable.search_records(MESSAGE_TABLE_ID, {
         "conjunction": "and",
         "conditions": [
@@ -2756,11 +2797,11 @@ def create_message():
         ]})
     for row in dup_rows:
         f = row.get("fields", {})
-        if bitable.get_field_text(f, F_MSG_PARENT_ID) == parent_id and \
+        if bitable.get_field_text(f, F_MSG_PARENT_ID) == parent_id and bitable.get_field_text(f, F_MSG_REPLY_TO_ID) == reply_to_id and \
                 now_ms - bitable.get_field_number(f, F_MSG_CREATED_AT) <= 5000:
             return jsonify({"ok": True, "id": row.get("record_id")})
     af = author.get("fields", {})
-    rec = bitable.create_record(MESSAGE_TABLE_ID, {
+    rec_fields = {
         F_MSG_TARGET_OID: target,
         F_MSG_AUTHOR_OID: open_id,
         F_MSG_AUTHOR_NICKNAME: bitable.get_field_text(af, F_NICKNAME),
@@ -2769,7 +2810,16 @@ def create_message():
         F_MSG_CONTENT: content,
         F_MSG_CREATED_AT: now_ms,
         F_MSG_STATUS: "正常",
-    })
+    }
+    if reply_to_id:
+        rec_fields[F_MSG_REPLY_TO_ID] = reply_to_id
+        if reply_to_oid:
+            rec_fields[F_MSG_REPLY_TO_OID] = reply_to_oid
+        if reply_to_nickname:
+            rec_fields[F_MSG_REPLY_TO_NICKNAME] = reply_to_nickname
+        if reply_to_uid:
+            rec_fields[F_MSG_REPLY_TO_UID] = reply_to_uid
+    rec = bitable.create_record(MESSAGE_TABLE_ID, rec_fields)
     if not rec:
         app.logger.error(f"留言写入失败: role={g.yxq_role} open_id={open_id[:20]} target={target[:20]}")
         return jsonify({"error": "留言失败"}), 500

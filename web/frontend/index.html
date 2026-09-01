@@ -292,7 +292,7 @@
   .reported-status-pending { color:#ff6b81; font-size:12px; }
   .reported-status-done { color:#969799; font-size:12px; }
   .msg-content { font-size: 14px; color: #323233; margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
-  .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; }
+  .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; text-align: right; display: block; }
   .msg-reply-tag { color: #969799; font-size: 13px; }
   .msg-reply-target { color: #ff6b81; font-weight: 600; }
   .msg-reply-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px 0; font-size: 12px; color: #ff6b81; }
@@ -506,7 +506,7 @@
                   <span v-if="r.can_delete" class="msg-del" @click="deleteMessage(r)">删除</span>
                   <span v-else-if="!r.is_mine" class="msg-report" @click="openReportDialog(r)">举报</span>
                 </div>
-                <div class="msg-content"><span v-if="r.reply_to_nickname && r.reply_to_id && r.reply_to_id !== m.id" class="msg-reply-tag">回复 <span class="msg-reply-target">@{{ r.reply_to_nickname }}</span><span v-if="r.reply_to_uid"> · {{ r.reply_to_uid }}</span>：</span>{{ r.content }}</div>
+                <div class="msg-content"><span v-if="r.reply_to_nickname && r.reply_to_id && r.reply_to_id !== m.id" class="msg-reply-tag">回复 <span class="msg-reply-target">@{{ r.reply_to_nickname }}<span v-if="r.reply_to_uid"> · {{ r.reply_to_uid }}</span></span>：</span>{{ r.content }}</div>
                 <div class="msg-reply-btn" @click="replyTo(r, m)">回复</div>
               </div>
             </div>

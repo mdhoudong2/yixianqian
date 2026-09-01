@@ -93,6 +93,16 @@
   .back-btn:disabled { opacity: 0.3; }
   .card-top-left { position: absolute; top: 12px; left: 16px; display: flex; align-items: center; gap: 8px; z-index: 5; }
   .hearts-badge { background: rgba(0,0,0,0.4); color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 13px; }
+  /* 防 WebView 下拉刷新 */
+  html, body { overscroll-behavior: none; }
+  /* 新版本软提示 */
+  .update-banner { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); z-index: 9999;
+    background: #ff6b81; color: #fff; padding: 8px 18px; border-radius: 20px; font-size: 14px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2); cursor: pointer; }
+  /* 刷新原因探针 */
+  .nav-probe { position: fixed; right: 6px; bottom: 60px; z-index: 9998;
+    background: rgba(0,0,0,0.55); color: #fff; font-size: 10px; padding: 3px 8px; border-radius: 8px;
+    max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card-counter { background: rgba(0,0,0,0.3); color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
   /* 消息 */
   .msg-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: flex-start; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
@@ -401,6 +411,8 @@
 </head>
 <body>
 <div id="app">
+<div v-if="showUpdateBanner" class="update-banner" @click="doVersionReload('banner')">发现新版本 · 点此更新</div>
+<div v-if="probeInfo" class="nav-probe" @click="probeInfo=''">{{ probeInfo }}</div>
 <!-- 登录中 -->
 <div v-if="loggingIn" class="login-page">
   <div class="login-logo">💕</div>
@@ -1499,6 +1511,8 @@ const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 createApp({
   setup() {
     const page = ref('cards');
+    const showUpdateBanner = ref(false);   // 新版本软提示浮层
+    const probeInfo = ref('');             // 刷新原因探针（导航类型+版本）
     // 四 Tab / 子页流畅过渡：按 tab 顺序与子页层级自动选动画
     const pageTransition = ref('tab-transition');
     const TAB_ORDER = ['cards','likes','home','profile'];
@@ -2054,6 +2068,7 @@ createApp({
         user.value.hearts = data.user.hearts || 0;
         window.history.replaceState({}, '', window.location.pathname);
         await loadHome();
+        restoreDeck();
         return 'ok';
       } catch (e) {
         if (e.message.includes('尚未注册')) {
@@ -2069,7 +2084,9 @@ createApp({
       // 1. 已有会话（cookie 有效则直接进）
       try {
         await loadHome();
-        loggingIn.value = false; return;
+        loggingIn.value = false;
+        restoreDeck();
+        return;
       } catch (e) {}
 
       // 2. 飞书内：网页免登（静默，不弹授权页）
@@ -3651,7 +3668,111 @@ createApp({
       });
     });
 
+    // ===== 刷新原因探针（验证页面刷新来源）=====
+    function initNavProbe(){
+      try{
+        let ntype = '?';
+        try{
+          const nav = performance.getEntriesByType('navigation')[0];
+          if(nav) ntype = nav.type;  // navigate/reload/back_forward
+        }catch(e){}
+        const reason = sessionStorage.getItem('yxq_reload_reason') || '';
+        const list = JSON.parse(sessionStorage.getItem('yxq_nav_probe') || '[]');
+        list.push({type: ntype, v: APP_VERSION, t: Date.now()});
+        sessionStorage.setItem('yxq_nav_probe', JSON.stringify(list.slice(-10)));
+        probeInfo.value = 'nav:' + ntype + ' v:' + APP_VERSION + (reason ? ' r:' + reason : '');
+        sessionStorage.removeItem('yxq_reload_reason');
+      }catch(e){}
+    }
+    initNavProbe();
+
+    // ===== 牌堆位置存档/恢复（刷新后回到原卡片）=====
+    function saveDeckState(){
+      try{
+        if(page.value !== 'cards') return;
+        sessionStorage.setItem('yxq_deck_restore', JSON.stringify({
+          pos: cardsStart.value + cardIndex.value,
+          filters: JSON.parse(JSON.stringify(filter.value)),
+          ts: Date.now()
+        }));
+      }catch(e){}
+    }
+    let deckRestored = false;
+    async function restoreDeck(){
+      if(deckRestored) return;
+      deckRestored = true;
+      try{
+        const raw = sessionStorage.getItem('yxq_deck_restore');
+        if(!raw) return;
+        sessionStorage.removeItem('yxq_deck_restore');
+        const st = JSON.parse(raw);
+        if(!st || Date.now() - (st.ts || 0) > 10 * 60 * 1000) return;
+        if(typeof st.pos !== 'number' || st.pos < 0) return;
+        if(st.filters) filter.value = st.filters;
+        page.value = 'cards';
+        await loadCards(true);
+        const pos = st.pos;
+        if(pos >= cardsTotal.value) return;
+        if(pos < cards.value.length){
+          cardIndex.value = pos;
+        } else {
+          const offset = Math.floor(pos / 50) * 50;
+          const ok = await loadPageAt(offset);
+          if(ok && pos - offset < cards.value.length){
+            cardIndex.value = pos - offset;
+          }
+        }
+        preloadAround();
+      }catch(e){}
+    }
+
+    // ===== 新版本软提示：可见时只弹浮层，隐藏时才自动刷新 =====
+    const VERSION_RELOAD_COOLDOWN = 30 * 60 * 1000;
+    function versionChanged(server){
+      return !!server && server !== APP_VERSION && server !== '__APP_VERSION__';
+    }
+    function doVersionReload(reason){
+      saveDeckState();
+      try{
+        sessionStorage.setItem('yxq_last_reload', String(Date.now()));
+        sessionStorage.setItem('yxq_reload_reason', reason || 'version');
+      }catch(e){}
+      location.reload();
+    }
+    async function checkVersion(){
+      try{
+        const r = await fetch('/api/version', {cache:'no-store'});
+        if(!r.ok) return;
+        const d = await r.json();
+        const server = String(d.version || '');
+        if(!versionChanged(server)) return;
+        const ae = document.activeElement;
+        if(ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
+        const last = Number(sessionStorage.getItem('yxq_last_reload') || 0);
+        if(Date.now() - last < VERSION_RELOAD_COOLDOWN) return;
+        if(document.hidden){
+          doVersionReload('version-hidden');
+        } else if(!showUpdateBanner.value){
+          showUpdateBanner.value = true;
+        }
+      }catch(e){}
+    }
+    setInterval(checkVersion, 45000);
+    document.addEventListener('visibilitychange', () => { if(document.hidden) checkVersion(); });
+    window.addEventListener('focus', checkVersion);
+
+    // ===== 左右方向键滑动卡片 =====
+    function onKeydown(e){
+      if(page.value !== 'cards' || !cards.value.length) return;
+      const ae = document.activeElement;
+      if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+      if(e.key === 'ArrowRight'){ e.preventDefault(); switchCard(-1); }
+      else if(e.key === 'ArrowLeft'){ e.preventDefault(); switchCard(1); }
+    }
+    window.addEventListener('keydown', onKeydown);
+
     return {
+      showUpdateBanner, doVersionReload, probeInfo,
       page, pageTransition, user, loggingIn, loginError,
       isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
@@ -3706,30 +3827,6 @@ createApp({
   }
 }).use(vant).mount('#app');
 
-    // ===== 前端新版本自动刷新（解决飞书 WebView 驻留旧 JS / 缓存问题）=====
-    (function setupVersionWatch(){
-      const RELOAD_COOLDOWN = 5 * 60 * 1000; // 两次自动刷新至少间隔5分钟，防止异常循环
-      async function checkVersion(){
-        try{
-          const r = await fetch('/api/version', {cache:'no-store'});
-          if(!r.ok) return;
-          const d = await r.json();
-          const server = String(d.version || '');
-          // 占位符未被替换（本地file打开等）或版本相同则不处理
-          if(!server || server === APP_VERSION || server === '__APP_VERSION__') return;
-          // 用户正在输入时不打断，延后到下一次检测
-          const ae = document.activeElement;
-          if(ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
-          const last = Number(sessionStorage.getItem('yxq_last_reload')||0);
-          if(Date.now() - last < RELOAD_COOLDOWN) return;
-          sessionStorage.setItem('yxq_last_reload', String(Date.now()));
-          location.reload();
-        }catch(e){ /* 静默：网络抖动不影响使用 */ }
-      }
-      setInterval(checkVersion, 45000);                 // 每45秒轮询一次
-      document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkVersion(); });
-      window.addEventListener('focus', checkVersion);
-    })();
 </script>
 </body>
 </html>

@@ -1751,6 +1751,7 @@ createApp({
     const likesInitialized = ref(false);
     // 本会话内已成功喜欢（未取消）的目标：本地即时排除/置灰，覆盖后端快照刷新的时间窗
     const justLiked = new Set();
+    const lastLikeAt = ref(0);
 
     const loadingLikes = ref(false);
 
@@ -2621,6 +2622,7 @@ createApp({
           vant.showDialog({ title: '💕 相互喜欢', message: '恭喜！你和' + target.nickname + '相互喜欢了！名片已推送，快去加飞书好友吧～', confirmButtonColor: '#ff6b81' });
         } else { vant.showToast('喜欢成功'); }
         justLiked.add(target.openid);
+        lastLikeAt.value = Date.now();
         // 原地置灰：卡片保留在牌堆，♥ 变灰不可点击（产品语义：喜欢≠消失）
         const deckCard = cards.value.find(c => c.openid === target.openid);
         if (deckCard) deckCard.liked = true;
@@ -2842,7 +2844,13 @@ createApp({
     async function loadMyLikesCount() {
       try {
         const data = await api('/api/likes/mine');
-        myLikesCount.value = (data.likes || []).length;
+        const serverCount = (data.likes || []).length;
+        // 喜欢后 120s 内不回退计数，避免在途意图过期与快照间隙导致 -1
+        if (Date.now() - lastLikeAt.value < 120000 && serverCount < myLikesCount.value) {
+          // keep optimistic
+        } else {
+          myLikesCount.value = serverCount;
+        }
       } catch(e) {}
     }
 
@@ -2853,8 +2861,20 @@ createApp({
       loadingMyLikes.value = true;
       try {
         const data = await api('/api/likes/mine');
-        myLikesList.value = data.likes;
-        myLikesCount.value = data.likes.length;
+        const serverList = data.likes || [];
+        // 喜欢后 120s 内不回退：若本地乐观列表更长则保留并合并
+        if (Date.now() - lastLikeAt.value < 120000 && myLikesList.value.length > serverList.length) {
+          const serverIds = new Set(serverList.map(x => x.openid));
+          const merged = [...serverList];
+          for (const it of myLikesList.value) {
+            if (!serverIds.has(it.openid)) merged.push(it);
+          }
+          myLikesList.value = merged;
+          myLikesCount.value = merged.length;
+        } else {
+          myLikesList.value = serverList;
+          myLikesCount.value = serverList.length;
+        }
         myLikesLoaded.value = true;
       } catch(e) { vant.showToast(e.message); }
       loadingMyLikes.value = false;

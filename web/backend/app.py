@@ -206,10 +206,11 @@ _intent_cancels = {}  # oid -> [(target_openid, ts)]
 def _intent_prune():
     now = time.time()
     for k in list(_intent_likes):
-        if now - _intent_likes[k]["ts"] > 60:
+        # 保留 120s，覆盖快照最长 90s 过期窗口，避免 60-90s 间隙计数回退
+        if now - _intent_likes[k]["ts"] > 120:
             _intent_likes.pop(k, None)
     for k in list(_intent_cancels):
-        _intent_cancels[k] = [(a, b) for a, b in _intent_cancels[k] if now - b < 60]
+        _intent_cancels[k] = [(a, b) for a, b in _intent_cancels[k] if now - b < 90]
 
 def _intent_complete(temp_key):
     """worker 落库成功后消费该意图，避免与快照计数双算"""

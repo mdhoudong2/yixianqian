@@ -2387,8 +2387,14 @@ createApp({
         if (cardIndex.value < n - 1) {
           slideDir.value = 'right';
           cardIndex.value += 1;
+          photoIndex.value = 0;
+          photoSlideDir.value = '';
+          if (cardIndex.value >= cards.value.length - 10 && cardsStart.value + cards.value.length < cardsTotal.value) {
+            loadMoreCards();
+          }
+          return;
         } else if (seq < total - 1) {
-          // 后面还有卡（按绝对位置判断）：触发加载下一页并等待
+          // 窗口尾且后面还有：加载下一页后前进
           if (!cardsLoadingMore.value) {
             loadMoreCards().then(() => {
               if (cardIndex.value < cards.value.length - 1) {
@@ -2409,8 +2415,11 @@ createApp({
         if (cardIndex.value > 0) {
           slideDir.value = 'left';
           cardIndex.value -= 1;
+          photoIndex.value = 0;
+          photoSlideDir.value = '';
+          return;
         } else if (seq > 0) {
-          // 前面还有卡（按绝对位置判断）：前置上一页并等待
+          // 窗口头且前面还有：前置上一页
           if (!cardsLoadingPrev) {
             loadPrevPage().then((prep) => {
               if (prep > 1) {
@@ -2429,10 +2438,6 @@ createApp({
       }
       photoIndex.value = 0;
       photoSlideDir.value = '';
-      // 千人级翻页：提前预载下一页，减少滑到窗口尾时的等待
-      if (cardIndex.value >= cards.value.length - 10 && cardsStart.value + cards.value.length < cardsTotal.value) {
-        loadMoreCards();
-      }
     }
     function onCardTouchEnd(e) {
       if (cardTouchIgnore) { cardTouchIgnore = false; return; }

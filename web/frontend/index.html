@@ -1595,6 +1595,8 @@ createApp({
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
     const cardsStart = ref(0);        // 已载窗口在全序中的起始偏移（循环翻页窗口游标）
+    const cardsPageCache = new Map(); // offset -> {cards,total,version}：首尾循环即时切换
+    let cardsNavBusy = false;         // 循环翻页取页在途：防止快速连滑造成跨窗错位
     const photoIndex = ref(0);
     const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
@@ -2227,6 +2229,7 @@ createApp({
     }
     async function loadCards(force) {
       if (cards.value.length && !force) return; // 缓存
+      if (force) cardsPageCache.clear();
       loadingCards.value = true;
       try {
         const data = await api('/api/cards' + cardsQuery() + 'offset=0&limit=50');
@@ -2256,6 +2259,7 @@ createApp({
         }
         if (data.version != null) cardsVersion.value = data.version;
         const more = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+        cardsPageCache.set(cardsStart.value + cards.value.length, { cards: more, total: data.total, version: data.version });
         const existing = new Set(cards.value.map(c => c.openid));
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
@@ -2278,7 +2282,14 @@ createApp({
     }
     function onCardTouchMove(e) {}
     async function loadPageAt(offset) {
-      // 整窗替换：拉取指定偏移的一页，cardsStart 对齐 offset
+      // 整窗替换：拉取指定偏移的一页，cardsStart 对齐 offset；命中页面缓存则同步切换
+      const cached = cardsPageCache.get(offset);
+      if (cached && (cached.version == null || cardsVersion.value == null || cached.version === cardsVersion.value)) {
+        cards.value = cached.cards;
+        cardsTotal.value = cached.total;
+        cardsStart.value = offset;
+        return true;
+      }
       const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
       if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
         cardsVersion.value = data.version;
@@ -2286,8 +2297,11 @@ createApp({
         return false;
       }
       if (data.version != null) cardsVersion.value = data.version;
-      cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
-      cardsTotal.value = (typeof data.total === 'number' ? data.total : cards.value.length);
+      const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      const total = (typeof data.total === 'number' ? data.total : page.length);
+      cardsPageCache.set(offset, { cards: page, total, version: data.version });
+      cards.value = page;
+      cardsTotal.value = total;
       cardsStart.value = offset;
       return true;
     }
@@ -2302,6 +2316,7 @@ createApp({
       }
       if (data.version != null) cardsVersion.value = data.version;
       const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      cardsPageCache.set(offset, { cards: page, total: data.total, version: data.version });
       const existing = new Set(cards.value.map(c => c.openid));
       const prepend = page.filter(c => !existing.has(c.openid));
       cards.value = prepend.concat(cards.value);
@@ -2310,6 +2325,7 @@ createApp({
       return prepend.length;
     }
     function switchCard(dir) {
+      if (cardsNavBusy) return;
       const total = cardsTotal.value;
       if (total <= 1) return;
       const n = cards.value.length;
@@ -2320,18 +2336,21 @@ createApp({
           cardIndex.value += 1;
         } else if (cardsStart.value + n < total) {
           // 窗口尾且后面还有：加载下一页后前进
+          cardsNavBusy = true;
           loadMoreCards().then(() => {
             if (cardIndex.value < cards.value.length - 1) {
               cardIndex.value += 1;
               slideDir.value = 'right';
             }
+            cardsNavBusy = false;
           });
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
         } else {
           // 已是全序最后一张：循环回第一页
-          loadPageAt(0).then(() => { cardIndex.value = 0; slideDir.value = 'right'; });
+          cardsNavBusy = true;
+          loadPageAt(0).then((ok) => { if (ok) { cardIndex.value = 0; slideDir.value = 'right'; } cardsNavBusy = false; });
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
@@ -2343,11 +2362,13 @@ createApp({
           cardIndex.value -= 1;
         } else if (cardsStart.value > 0) {
           // 窗口头且前面还有：前置上一页
+          cardsNavBusy = true;
           loadPrevPage().then((prep) => {
             if (prep > 1) {
               cardIndex.value = prep - 1;
               slideDir.value = 'left';
             }
+            cardsNavBusy = false;
           });
           photoIndex.value = 0;
           photoSlideDir.value = '';
@@ -2356,9 +2377,13 @@ createApp({
           // 已是第一张：循环到最后一张
           const pageSize = 50;
           const lastOffset = Math.max(0, Math.floor((total - 1) / pageSize) * pageSize);
-          loadPageAt(lastOffset).then(() => {
-            cardIndex.value = cards.value.length - 1;
-            slideDir.value = 'left';
+          cardsNavBusy = true;
+          loadPageAt(lastOffset).then((ok) => {
+            if (ok) {
+              cardIndex.value = cards.value.length - 1;
+              slideDir.value = 'left';
+            }
+            cardsNavBusy = false;
           });
           photoIndex.value = 0;
           photoSlideDir.value = '';
@@ -2367,8 +2392,8 @@ createApp({
       }
       photoIndex.value = 0;
       photoSlideDir.value = '';
-      // 千人级翻页：快翻到窗口尾时后台拉下一页
-      if (cardIndex.value >= cards.value.length - 5 && cardsStart.value + cards.value.length < cardsTotal.value) {
+      // 千人级翻页：提前预载下一页，减少滑到窗口尾时的等待
+      if (cardIndex.value >= cards.value.length - 10 && cardsStart.value + cards.value.length < cardsTotal.value) {
         loadMoreCards();
       }
     }

@@ -17,14 +17,21 @@ API_BASE = "https://open.feishu.cn/open-apis"
 
 # 模块级连接池：复用 TCP/TLS 连接（跨海握手一次 ~1s，复用后每次调用省掉）
 _http = requests.Session()
-_adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16)
+# 传输层自动重试：飞书网关会静默断开 keep-alive 连接（SSL EOF/RemoteDisconnected），
+# urllib3 默认不重试已发出的 POST，导致复用死连接挂起；显式放开 POST 重试并限制次数。
+_retry = requests.adapters.Retry(
+    total=2, connect=2, read=2, backoff_factor=0.3,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET", "POST", "PUT", "DELETE"],
+)
+_adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=32, max_retries=_retry)
 _http.mount("https://", _adapter)
 
 # 全局请求节流（令牌桶，20 req/s）：bot 多轮询线程 + H5 快照/写请求共用，
 # 防止并发洪峰触发飞书限流 1255002 / 连接被重置（RemoteDisconnected）。
 _rate_lock = threading.Lock()
 _rate_next = [0.0]
-_RATE_INTERVAL = 0.05  # 20 req/s
+_RATE_INTERVAL = 0.1  # 10 req/s（飞书 bitable 读 QPS 上限）
 
 def _throttle():
     with _rate_lock:
@@ -90,7 +97,7 @@ class BitableClient:
 
     # ---------- 记录 CRUD ----------
 
-    def search_records(self, table_id, filter_conditions=None, page_size=100, field_names=None, timeout=30):
+    def search_records(self, table_id, filter_conditions=None, page_size=100, field_names=None, timeout=15):
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/records/search"
         all_items = []
         page_token = None
@@ -101,16 +108,15 @@ class BitableClient:
         if field_names:
             body["field_names"] = field_names
         while True:
-            # page_token 属于 body 参数（放 query param 会拿不到翻页数据）
+            # page_token 必须放 query param：实测放 body 会被忽略，导致每页重复返回
+            # 前 500 条 -> 死循环 -> 内存无限膨胀
             _throttle()
-            if page_token:
-                body["page_token"] = page_token
-            else:
-                body.pop("page_token", None)
+            params = {"page_token": page_token} if page_token else None
             result = None
             for attempt in range(2):
                 try:
-                    resp = _http.post(url, headers=self._headers(), json=body, timeout=timeout)
+                    resp = _http.post(url, headers=self._headers(), json=body,
+                                      params=params, timeout=timeout)
                     result = resp.json()
                 except Exception as e:
                     self.log(f"搜索记录异常(table={table_id},第{attempt + 1}次): {e}")

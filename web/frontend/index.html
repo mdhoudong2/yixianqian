@@ -2698,7 +2698,7 @@ createApp({
     }
     async function openReportedMessages() {
       page.value = 'reported_messages';
-      await loadReportedMessages(true);
+      await loadReportedMessages();
     }
     async function refreshReportedCount() {
       if (!user.value || !user.value.is_admin) return;

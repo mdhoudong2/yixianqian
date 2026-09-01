@@ -2254,15 +2254,30 @@ createApp({
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
     }
+    function trimCardsWindow() {
+      // 内存上限：窗口最多 150 张，防 Vue 深层代理放大导致 WebView 内存压力重载
+      const MAX = 150;
+      if (cards.value.length <= MAX) return;
+      const seqCur = cardsStart.value + cardIndex.value;
+      const start = Math.max(0, seqCur - 50);
+      const end = Math.min(cardsTotal.value, start + MAX);
+      cards.value = cards.value.slice(start - cardsStart.value, end - cardsStart.value);
+      cardsStart.value = start;
+      cardIndex.value = seqCur - start;
+    }
     async function loadMoreCards() {
       if (cardsLoadingMore.value || cardsStart.value + cards.value.length >= cardsTotal.value) return;
       cardsLoadingMore.value = true;
       try {
         const data = await api('/api/cards' + cardsQuery() + 'offset=' + (cardsStart.value + cards.value.length) + '&limit=50');
-        // 快照版本变化：顺序已变，重头拉取避免重复/漏卡
+        // users 快照版本变化：顺序已变，按当前全序位置重建窗口（不跳回第一张）
         if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
           cardsVersion.value = data.version;
-          await loadCards(true);
+          cardsPageCache.clear();
+          const seqCur = cardsStart.value + cardIndex.value;
+          const off = Math.floor(seqCur / 50) * 50;
+          const ok = await loadPageAt(off);
+          if (ok) cardIndex.value = Math.min(seqCur - off, cards.value.length - 1);
           cardsLoadingMore.value = false;
           return;
         }
@@ -2272,6 +2287,7 @@ createApp({
         const existing = new Set(cards.value.map(c => c.openid));
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
+        trimCardsWindow();
       }
       catch(e) { vant.showToast(e.message); }
       cardsLoadingMore.value = false;
@@ -2302,8 +2318,8 @@ createApp({
       const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
       if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
         cardsVersion.value = data.version;
-        await loadCards(true);
-        return false;
+        cardsPageCache.clear();
+        return loadPageAt(offset);
       }
       if (data.version != null) cardsVersion.value = data.version;
       const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
@@ -2320,7 +2336,11 @@ createApp({
       const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
       if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
         cardsVersion.value = data.version;
-        await loadCards(true);
+        cardsPageCache.clear();
+        const seqCur = cardsStart.value + cardIndex.value;
+        const off = Math.floor(seqCur / 50) * 50;
+        const ok = await loadPageAt(off);
+        if (ok) cardIndex.value = Math.min(seqCur - off, cards.value.length - 1);
         return 0;
       }
       if (data.version != null) cardsVersion.value = data.version;
@@ -2331,6 +2351,15 @@ createApp({
       cards.value = prepend.concat(cards.value);
       cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
       cardsStart.value = offset;
+      // 以落地卡（上一张）为中心裁窗，避免 caller 再调 cardIndex 后错位
+      if (cards.value.length > 150) {
+        const landSeq = cardsStart.value + prepend.length - 1;
+        const start = Math.max(0, landSeq - 50);
+        const end = Math.min(cardsTotal.value, start + 150);
+        cards.value = cards.value.slice(start - cardsStart.value, end - cardsStart.value);
+        cardsStart.value = start;
+        return (landSeq - start) + 1;  // 落地卡在新窗口中的索引 +1 = 原 prep 语义
+      }
       return prepend.length;
     }
     function switchCard(dir) {

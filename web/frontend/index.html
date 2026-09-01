@@ -1867,7 +1867,7 @@ createApp({
       try {
         const fd = new FormData();
         fd.append('file', file);
-        const resp = await fetch('/api/profile/photo', { method: 'POST', credentials: 'same-origin', body: fd });
+        const resp = await fetch('/api/profile/photo', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || '' }, body: fd });
         const contentType = resp.headers.get('Content-Type') || '';
         const data = contentType.includes('application/json') ? await resp.json() : {};
         if (!resp.ok) throw new Error(data.error || '上传失败，请稍后重试');
@@ -1971,9 +1971,12 @@ createApp({
 
     const BASE_PATH = '';
     async function api(url, options = {}) {
+      const csrf = (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || '';
+      const baseHeaders = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+      if (csrf) baseHeaders['X-CSRF-Token'] = csrf;
       const resp = await fetch(BASE_PATH + url, {
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...baseHeaders, ...(options.headers||{}) },
         ...options
       });
       const contentType = resp.headers.get('Content-Type') || '';

@@ -5,29 +5,44 @@ import os
 # 仓库根目录（web/backend 的上两级）
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 飞书应用配置（生产版，密钥见 local_config.py）
+# 飞书应用配置（生产版，密钥见 local_config.py 或 ENV）
 import local_config as _lc
 
-FEISHU_APP_ID = _lc.FEISHU_APP_ID
-FEISHU_APP_SECRET = _lc.FEISHU_APP_SECRET
-BASE_TOKEN = _lc.BASE_TOKEN
+
+def _lc_get(name, default=None):
+    v = os.environ.get(name)
+    if v not in (None, ""):
+        return v
+    return getattr(_lc, name, default)
+
+
+def _lc_list(name, default=None):
+    v = os.environ.get(name)
+    if v not in (None, ""):
+        return [x.strip() for x in v.split(",") if x.strip()]
+    return getattr(_lc, name, default)
+
+
+FEISHU_APP_ID = _lc_get("FEISHU_APP_ID", getattr(_lc, "FEISHU_APP_ID", ""))
+FEISHU_APP_SECRET = _lc_get("FEISHU_APP_SECRET", getattr(_lc, "FEISHU_APP_SECRET", ""))
+BASE_TOKEN = _lc_get("BASE_TOKEN", getattr(_lc, "BASE_TOKEN", ""))
 # bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认取仓库下 data/）
-SHARED_DATA_DIR = getattr(_lc, "SHARED_DATA_DIR", None) or os.path.join(REPO_ROOT, "data")
+SHARED_DATA_DIR = _lc_get("SHARED_DATA_DIR", getattr(_lc, "SHARED_DATA_DIR", None)) or os.path.join(REPO_ROOT, "data")
 os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 
 # 多维表格配置
 # 表 ID 默认值 = 生产环境；测试服可在 local_config.py 覆盖同名变量（getattr 回退默认值）。
 # 复制多维表格到新 base 后表 ID 会变，需在 local_config.py 里按新值填。
-USER_TABLE_ID = getattr(_lc, "USER_TABLE_ID", "tblsecbZZv0thaPe")
-OBSERVER_TABLE_ID = getattr(_lc, "OBSERVER_TABLE_ID", "")  # 村情六处独立表（观察员，非普通用户）
-LIKE_TABLE_ID = getattr(_lc, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
-ACTIVITY_TABLE_ID = getattr(_lc, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
-SIGNUP_TABLE_ID = getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
-GROUP_SELECT_TABLE = getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
-GROUP_RESULT_TABLE = getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
-REPORT_TABLE_ID = getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T")
-MESSAGE_TABLE_ID = getattr(_lc, "MESSAGE_TABLE_ID", "")  # 留言表（生产表ID待建，测试服在 local_config 覆盖）
-SUGGESTION_TABLE_ID = getattr(_lc, "SUGGESTION_TABLE_ID", "tbldZ7aWtCA5V3Cg")  # 意见反馈表
+USER_TABLE_ID = _lc_get("USER_TABLE_ID", getattr(_lc, "USER_TABLE_ID", "tblsecbZZv0thaPe"))
+OBSERVER_TABLE_ID = _lc_get("OBSERVER_TABLE_ID", getattr(_lc, "OBSERVER_TABLE_ID", ""))  # 村情六处独立表（观察员，非普通用户）
+LIKE_TABLE_ID = _lc_get("LIKE_TABLE_ID", getattr(_lc, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA"))
+ACTIVITY_TABLE_ID = _lc_get("ACTIVITY_TABLE_ID", getattr(_lc, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu"))
+SIGNUP_TABLE_ID = _lc_get("SIGNUP_TABLE_ID", getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t"))
+GROUP_SELECT_TABLE = _lc_get("GROUP_SELECT_TABLE", getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ"))
+GROUP_RESULT_TABLE = _lc_get("GROUP_RESULT_TABLE", getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB"))
+REPORT_TABLE_ID = _lc_get("REPORT_TABLE_ID", getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T"))
+MESSAGE_TABLE_ID = _lc_get("MESSAGE_TABLE_ID", getattr(_lc, "MESSAGE_TABLE_ID", ""))  # 留言表（生产表ID待建，测试服在 local_config 覆盖）
+SUGGESTION_TABLE_ID = _lc_get("SUGGESTION_TABLE_ID", getattr(_lc, "SUGGESTION_TABLE_ID", "tbldZ7aWtCA5V3Cg"))  # 意见反馈表
 
 # 用户表字段
 F_USER_ID = "用户ID"
@@ -258,7 +273,7 @@ F_SG_CONTENT = "内容"
 F_SG_CREATED_AT = "提交时间"
 
 # 管理员open_id（敏感，配置于 local_config.py；此处留空回退）
-ADMIN_OPEN_IDS = getattr(_lc, "ADMIN_OPEN_IDS", [])
+ADMIN_OPEN_IDS = _lc_list("ADMIN_OPEN_IDS", getattr(_lc, "ADMIN_OPEN_IDS", []))
 
 # 爱心配置
 INITIAL_HEARTS = 3
@@ -266,11 +281,11 @@ MAX_HEARTS = 30
 
 # 服务配置
 SERVER_HOST = "0.0.0.0"
-SERVER_PORT = getattr(_lc, "SERVER_PORT", 8091)
+SERVER_PORT = int(_lc_get("SERVER_PORT", getattr(_lc, "SERVER_PORT", 8091)))
 SESSION_EXPIRE_DAYS = 30
 
 # H5基础URL（测试服在 local_config.py 覆盖为 https://testapp.nantou.love）
-H5_BASE_URL = getattr(_lc, "H5_BASE_URL", "https://app.nantou.love")
+H5_BASE_URL = _lc_get("H5_BASE_URL", getattr(_lc, "H5_BASE_URL", "https://app.nantou.love"))
 
 # 通知存储（机器人与 H5 共享，机器人写入、H5 读取）
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")
@@ -282,7 +297,7 @@ TRACK_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_track.json")
 PUBLIC_SOURCE_ID = "PUBLIC"
 
 # public.html「如何注册」弹窗展示的二维码文件名（测试服在 local_config.py 覆盖为 qrcode_test.png）
-PUBLIC_QR_CODE = getattr(_lc, "PUBLIC_QR_CODE", "qrcode.png")
+PUBLIC_QR_CODE = _lc_get("PUBLIC_QR_CODE", getattr(_lc, "PUBLIC_QR_CODE", "qrcode.png"))
 
 # 注册表单链接（H5「邀请好友得爱心」邀请链接，测试服在 local_config.py 覆盖为测试表单）
-REGISTER_FORM_URL = getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")
+REGISTER_FORM_URL = _lc_get("REGISTER_FORM_URL", getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf"))

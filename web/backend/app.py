@@ -362,7 +362,6 @@ def _rebuild_cards_cache():
         _cards_cache.update(cache)
         global _cards_cache_version
         _cards_cache_version += 1
-    _clear_card_order_cache()
 
 
 def _cached_brief(oid):
@@ -370,28 +369,33 @@ def _cached_brief(oid):
         b = _cards_cache.get(oid)
         return dict(b) if b else {}
 
-# 卡片全序缓存：(open_id, users_ver, filters_key) -> [openid 顺序列表]
-# 订单只在 users 快照变化时重建；likes 变化不影响顺序（否则 likes 20s 一轮
-# 导致翻页顺序漂移、页面重复/漏卡、前端频繁重拉）。
+# 会话级卡片全序缓存：(open_id, filters_key) -> {"order":[openid...], "created":ts}
+# 顺序在会话内（30分钟）完全稳定：users 快照刷新不重排——否则用户滑到后段时
+# 顺序突变，出现「跳回看过的卡片」的错觉。新增用户追加到尾部，删除用户原地剔除。
+_SESSION_ORDER_TTL = 1800
 _card_order_cache = {}
 _card_order_lock = threading.Lock()
 
 
-def _get_card_order(key, cards, liked_me_openids, seed_str):
+def _get_session_order(key, cards, liked_me_openids, open_id):
+    now = time.time()
     with _card_order_lock:
         hit = _card_order_cache.get(key)
-    if hit is not None:
-        return hit
+    if hit and now - hit.get("created", 0) < _SESSION_ORDER_TTL:
+        order = hit["order"]
+        current_oids = {c.get("openid", "") for c in cards}
+        order = [o for o in order if o in current_oids]
+        new_oids = [c.get("openid", "") for c in cards if c.get("openid", "") not in order]
+        order = order + new_oids
+        with _card_order_lock:
+            _card_order_cache[key] = {"order": order, "created": hit["created"]}
+        return order, hit["created"]
+    seed_str = f"{open_id}|{_uuid.uuid4().hex}"
     ordered = order_cards_seeded(cards, liked_me_openids, seed_str)
     oids = [c.get("openid", "") for c in ordered]
     with _card_order_lock:
-        _card_order_cache[key] = oids
-    return oids
-
-
-def _clear_card_order_cache():
-    with _card_order_lock:
-        _card_order_cache.clear()
+        _card_order_cache[key] = {"order": oids, "created": now}
+    return oids, now
 
 
 def snap_find_activity(act_id):
@@ -2256,12 +2260,10 @@ def get_cards():
         for l in snap_likes_by_target(open_id)
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
-    users_ver = _snapshot_version.get("users", 0)
     self_flag = is_observer and not gender_filter and not _has_active_filter(filters)
     filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
-    seed_str = f"{open_id}|{users_ver}|{filters_key}"
-    key = (open_id, users_ver, filters_key)
-    order = _get_card_order(key, cards, liked_me_openids, seed_str)
+    key = (open_id, filters_key)
+    order, order_ts = _get_session_order(key, cards, liked_me_openids, open_id)
     by_oid = {c.get("openid"): c for c in cards}
     self_card = None
     if self_flag:
@@ -2286,7 +2288,7 @@ def get_cards():
         if c is not None:
             page.append(c)
 
-    return jsonify({"cards": page, "total": total, "offset": offset, "limit": limit, "version": users_ver})
+    return jsonify({"cards": page, "total": total, "offset": offset, "limit": limit, "version": int(order_ts)})
 
 # 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零

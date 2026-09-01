@@ -20,6 +20,8 @@ threads = 8
 bind = os.environ.get("BIND", "127.0.0.1:8091")
 timeout = 120
 graceful_timeout = 30
+max_requests = 1000
+max_requests_jitter = 50
 
 
 def post_fork(server, worker):

@@ -19,6 +19,8 @@
 - 所有数据存在多维表格，机器人长连接服务处理业务逻辑和通知
 """
 
+import asyncio
+import inspect
 import json
 import os
 import sys
@@ -87,6 +89,42 @@ from store import load_bindings, load_welcomed
 _last_ws_event_time = time.time()
 _ws_client_ref = None
 
+def _safe_disconnect(client):
+    """安全断开 ws：兼容 async/sync，避免 RuntimeWarning 协程未 await 导致泄漏"""
+    try:
+        coro = client._disconnect()
+        if inspect.isawaitable(coro):
+            try:
+                asyncio.run(coro)
+            except RuntimeError:
+                # 已在事件循环中（如单测），新建 loop
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(coro)
+                finally:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+    except Exception as e:
+        # 向上抛由调用方处理（看门狗会 os._exit 重启）
+        raise
+
+def _log_memory():
+    """可选：记录当前 RSS 供排查泄漏"""
+    try:
+        import os
+
+        import psutil
+        p = psutil.Process(os.getpid())
+        rss = p.memory_info().rss // 1024 // 1024
+        if rss > 800:
+            from lib.util import log as _log
+            _log(f"⚠️ 内存告警 RSS={rss}MB，阈值800M")
+    except Exception:
+        pass
+
+
 # 管理后台重任务线程池：把「开始填志愿/执行分组/分组状态」等耗时操作放到后台线程，
 # 让单线程消息处理器不被阻塞，管理员指令能秒回、期间其它消息也能正常响应。
 ADMIN_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="admin-task")
@@ -131,7 +169,7 @@ def ws_watchdog_loop():
                 log(f"⚠️ WebSocket健康检查：{int(elapsed)}秒未收到任何事件，强制断开重连...")
                 if _ws_client_ref:
                     try:
-                        _ws_client_ref._disconnect()
+                        _safe_disconnect(_ws_client_ref)
                     except Exception as e:
                         log(f"强制断开失败: {e}，退出进程让systemd重启")
                         os._exit(1)
@@ -379,7 +417,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             log("管理员触发手动重连")
             if _ws_client_ref:
                 try:
-                    _ws_client_ref._disconnect()
+                    _safe_disconnect(_ws_client_ref)
                 except Exception as e:
                     log(f"手动重连断开失败: {e}")
         elif text.startswith("执行分组"):

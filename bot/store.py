@@ -1,5 +1,5 @@
 """共享运行时 JSON 的读写封装（加锁 + 原子写，见 lib/storage.py）。"""
-import random
+import secrets
 import time
 
 from constants import *
@@ -99,7 +99,7 @@ def generate_observer_codes(n):
     def _m(data):
         for _ in range(n):
             while True:
-                code = "".join(random.choices(alphabet, k=8))
+                code = "".join(secrets.choice(alphabet) for _ in range(8))
                 if code not in data:
                     break
             data[code] = {"used": False, "used_by": "", "used_at": ""}

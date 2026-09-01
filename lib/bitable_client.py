@@ -8,6 +8,7 @@ get_field_text 等字段解析函数，此处统一实现：
     - web 传入条件列表（自动包装为 conjunction=and）
 - 字段解析以 web 版（列表全部拼接）为准，bot 场景均为单值字段，行为一致。
 """
+import threading
 import time
 
 import requests
@@ -16,8 +17,30 @@ API_BASE = "https://open.feishu.cn/open-apis"
 
 # 模块级连接池：复用 TCP/TLS 连接（跨海握手一次 ~1s，复用后每次调用省掉）
 _http = requests.Session()
-_adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16)
+# 传输层自动重试：飞书网关会静默断开 keep-alive 连接（SSL EOF/RemoteDisconnected），
+# urllib3 默认不重试已发出的 POST，导致复用死连接挂起；显式放开 POST 重试并限制次数。
+_retry = requests.adapters.Retry(
+    total=2, connect=2, read=2, backoff_factor=0.3,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET", "POST", "PUT", "DELETE"],
+)
+_adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=32, max_retries=_retry)
 _http.mount("https://", _adapter)
+
+# 全局请求节流（令牌桶，20 req/s）：bot 多轮询线程 + H5 快照/写请求共用，
+# 防止并发洪峰触发飞书限流 1255002 / 连接被重置（RemoteDisconnected）。
+_rate_lock = threading.Lock()
+_rate_next = [0.0]
+_RATE_INTERVAL = 0.1  # 10 req/s（飞书 bitable 读 QPS 上限）
+
+def _throttle():
+    with _rate_lock:
+        now = time.time()
+        due = _rate_next[0]
+        if now < due:
+            time.sleep(due - now)
+            now = time.time()
+        _rate_next[0] = now + _RATE_INTERVAL
 
 
 class BitableClient:
@@ -44,6 +67,7 @@ class BitableClient:
             return self._token_cache["token"]
         url = API_BASE + "/auth/v3/tenant_access_token/internal"
         for attempt in range(3):
+            _throttle()
             try:
                 resp = _http.post(
                     url, json={"app_id": self.app_id, "app_secret": self.app_secret}, timeout=15)
@@ -73,7 +97,7 @@ class BitableClient:
 
     # ---------- 记录 CRUD ----------
 
-    def search_records(self, table_id, filter_conditions=None, page_size=100, field_names=None):
+    def search_records(self, table_id, filter_conditions=None, page_size=100, field_names=None, timeout=15):
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/records/search"
         all_items = []
         page_token = None
@@ -84,15 +108,15 @@ class BitableClient:
         if field_names:
             body["field_names"] = field_names
         while True:
-            # page_token 属于 body 参数（放 query param 会拿不到翻页数据）
-            if page_token:
-                body["page_token"] = page_token
-            else:
-                body.pop("page_token", None)
+            # page_token 必须放 query param：实测放 body 会被忽略，导致每页重复返回
+            # 前 500 条 -> 死循环 -> 内存无限膨胀
+            _throttle()
+            params = {"page_token": page_token} if page_token else None
             result = None
             for attempt in range(2):
                 try:
-                    resp = _http.post(url, headers=self._headers(), json=body, timeout=self.timeout)
+                    resp = _http.post(url, headers=self._headers(), json=body,
+                                      params=params, timeout=timeout)
                     result = resp.json()
                 except Exception as e:
                     self.log(f"搜索记录异常(table={table_id},第{attempt + 1}次): {e}")
@@ -119,6 +143,7 @@ class BitableClient:
             all_items.extend(d.get("items", []))
             if not d.get("has_more"):
                 break
+            time.sleep(0.15)
             page_token = d.get("page_token")
             if not page_token:
                 break
@@ -187,6 +212,7 @@ class BitableClient:
         created = 0
         for i in range(0, len(records), batch_size):
             chunk = records[i:i + batch_size]
+            _throttle()
             try:
                 resp = _http.post(url, headers=self._headers(), json={"records": chunk},
                                      timeout=30)
@@ -208,6 +234,7 @@ class BitableClient:
         deleted = 0
         for i in range(0, len(ids), batch_size):
             chunk = ids[i:i + batch_size]
+            _throttle()
             try:
                 resp = _http.post(url, headers=self._headers(), json={"records": chunk},
                                      timeout=30)

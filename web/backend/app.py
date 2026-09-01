@@ -34,6 +34,7 @@ import bitable
 from config import *
 
 from lib import storage
+from lib.util import order_cards_seeded
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 
@@ -90,7 +91,6 @@ def resolve_activity(act_id):
     text_id = bitable.get_field_text(rec.get('fields', {}), F_ACTIVITY_ID)
     return rec, text_id
 
-
 # ========== 本地快照缓存（后台定时把飞书数据刷进内存，读操作走内存，写操作后定向刷新） ==========
 SNAPSHOT_REFRESH_INTERVAL = 60  # 秒（曾为15s，高频轮询易触发飞书限流/超时，导致登录卡顿）
 
@@ -103,6 +103,32 @@ _snapshot_lock = threading.RLock()
 # 已成功加载过的表：区分「未加载」与「加载后为空」。
 # 飞书表合法地没有记录时（如活动表空档期），空快照是权威结果，不应每次请求回退实时查询。
 _snapshot_loaded = set()
+_snapshot_last_ok = {}  # key -> timestamp of last successful fetch
+_snapshot_version = {}  # key -> int 版本号：每次成功交换 +1，供卡片缓存/分页种子使用
+_next_due = {}  # key -> 下次刷新到期时间（分表调度）
+
+# 分表刷新间隔（秒）：users 变化最频繁最重要；活动/观察员/分组低频
+_SNAPSHOT_INTERVALS = {
+    "users": 60,
+    "likes": 20,
+    "messages": 20,
+    "signups": 45,
+    "activities": 180,
+    "observers": 300,
+    "group_selections": 300,
+    "group_results": 300,
+}
+# 每表过期阈值（秒）：超过则读接口回退实时查询；低频表阈值放宽避免每次请求打飞书
+_SNAPSHOT_STALE = {
+    "users": 120,
+    "likes": 60,
+    "messages": 60,
+    "signups": 90,
+    "activities": 600,
+    "observers": 600,
+    "group_selections": 600,
+    "group_results": 600,
+}
 
 _SNAPSHOT_FETCHERS = {
     "users": lambda: bitable.raw_search_records(USER_TABLE_ID),
@@ -115,7 +141,6 @@ _SNAPSHOT_FETCHERS = {
     "messages": lambda: bitable.raw_search_records(MESSAGE_TABLE_ID),
 }
 _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
-
 
 def refresh_snapshot_table(key):
     """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）"""
@@ -130,9 +155,12 @@ def refresh_snapshot_table(key):
         with _snapshot_lock:
             _snapshot[key] = data
             _snapshot_loaded.add(key)
+            _snapshot_last_ok[key] = time.time()
+            _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
     except Exception as e:
         logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
-
+    if key == "users":
+        _rebuild_cards_cache()
 
 def refresh_snapshot_table_async(key):
     """后台线程异步刷新单个快照表（写接口回包后调用，避免同步刷新拖慢写请求）"""
@@ -141,37 +169,56 @@ def refresh_snapshot_table_async(key):
     except Exception as e:
         logging.getLogger(__name__).warning(f"异步刷新快照表 {key} 失败: {e}")
 
-
 def refresh_snapshot():
     """一次性把飞书各表全量刷入内存快照"""
     for key in _SNAPSHOT_FETCHERS:
         refresh_snapshot_table(key)
 
+def _group_collecting():
+    """是否有活动正在「收集中」分组志愿（分组表仅在此时高频刷新）"""
+    for a in _snapshot.get("activities", []):
+        if bitable.get_select_value(a.get("fields", {}), F_ACTIVITY_GROUP_STATUS) == "收集中":
+            return True
+    return False
+
+_IMAGE_WARM_DUE = [0.0]
 
 def _snapshot_loop():
+    """分表调度：每 5s tick，到期的表才刷新，避免 8 表全量轮询打爆飞书。"""
     while True:
         try:
-            refresh_snapshot()
-            warm_image_cache()
+            now = time.time()
+            for key in _SNAPSHOT_FETCHERS:
+                interval = _SNAPSHOT_INTERVALS.get(key, 60)
+                # 分组表仅在收集中才高频；否则低频
+                if key.startswith("group_") and not _group_collecting():
+                    interval = 600
+                if now >= _next_due.get(key, 0):
+                    refresh_snapshot_table(key)
+                    _next_due[key] = time.time() + interval
+            if now >= _IMAGE_WARM_DUE[0]:
+                warm_image_cache()
+                _IMAGE_WARM_DUE[0] = time.time() + 300
         except Exception as e:
             logging.getLogger(__name__).warning(f"刷新本地快照失败: {e}")
-        time.sleep(SNAPSHOT_REFRESH_INTERVAL)
-
+        time.sleep(5)
 
 def start_snapshot_loop():
     threading.Thread(target=_snapshot_loop, daemon=True, name="snapshot-refresh").start()
-
 
 def _snap(key):
     with _snapshot_lock:
         return list(_snapshot.get(key, []))
 
-
 def _snap_ready(key):
-    """该表快照是否已成功加载过（空表也算就绪，无需回退实时查询）"""
+    """该表快照是否已成功加载过（空表也算就绪，无需回退实时查询）；超过阈值未刷新视为过期需回退实时。"""
     with _snapshot_lock:
-        return key in _snapshot_loaded
-
+        if key not in _snapshot_loaded:
+            return False
+        ts = _snapshot_last_ok.get(key)
+        if ts and time.time() - ts > _SNAPSHOT_STALE.get(key, 90):
+            return False
+        return True
 
 # ---- 快照读取辅助（镜像 bitable 常用查询；快照为空时回退到飞书，保证启动初期可用） ----
 
@@ -189,7 +236,6 @@ def _pick_primary_user(records):
 
     return sorted(records, key=rank)[0]
 
-
 # ========== v6：事件溯源爱心态 + 提交管线（spool 幂等异步写入） ==========
 import uuid as _uuid
 
@@ -206,20 +252,18 @@ _REPORTED_HISTORY_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_reported_hist
 _intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…}
 _intent_cancels = {}  # oid -> [(target_openid, ts)]
 
-
 def _intent_prune():
     now = time.time()
     for k in list(_intent_likes):
-        if now - _intent_likes[k]["ts"] > 60:
+        # 保留 120s，覆盖快照最长 90s 过期窗口，避免 60-90s 间隙计数回退
+        if now - _intent_likes[k]["ts"] > 120:
             _intent_likes.pop(k, None)
     for k in list(_intent_cancels):
-        _intent_cancels[k] = [(a, b) for a, b in _intent_cancels[k] if now - b < 60]
-
+        _intent_cancels[k] = [(a, b) for a, b in _intent_cancels[k] if now - b < 90]
 
 def _intent_complete(temp_key):
     """worker 落库成功后消费该意图，避免与快照计数双算"""
     _intent_likes.pop(temp_key, None)
-
 
 def _balances_file():
     """机器人对账循环写入的邀请奖励汇总（事件溯源中邀请是外部事件，由机器人发布）"""
@@ -227,7 +271,6 @@ def _balances_file():
         return storage.load_json(_BALANCE_FILE, {"invites": {}}) or {"invites": {}}
     except Exception:
         return {"invites": {}}
-
 
 def computed_hearts(open_id):
     """爱心数 = 初始 + 邀请奖励 − 有效喜欢数（快照 + 在途意图修正）。
@@ -258,27 +301,10 @@ def computed_hearts(open_id):
     invites = _balances_file().get("invites", {}).get(open_id, 0)
     return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - extra))
 
-
 def hearts_total(open_id):
     """爱心总额 = 初始 + 邀请奖励（上限 MAX_HEARTS），不含已使用"""
     invites = _balances_file().get("invites", {}).get(open_id, 0)
     return min(MAX_HEARTS, INITIAL_HEARTS + invites)
-
-
-def _pick_primary_user(records):
-    """同一 open_id 多条记录时取主档案：单身优先，其次用户ID最小（与 bot/queries 同规则）"""
-    if not records:
-        return None
-
-    def rank(u):
-        uf = u.get("fields", {})
-        st = bitable.get_select_value(uf, F_ACCOUNT_STATUS)
-        m = re.match(r"[Uu]-?(\d+)", bitable.get_field_text(uf, F_USER_ID))
-        uid_num = int(m.group(1)) if m else 10 ** 9
-        return (0 if st == "单身" else 1, uid_num)
-
-    return sorted(records, key=rank)[0]
-
 
 def snap_find_user_by_openid(open_id):
     """快照优先、实时兜底；同号多档统一解析到主档案（用户表 + 村情六处独立表）。
@@ -300,13 +326,76 @@ def snap_find_user_by_openid(open_id):
             {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
     return _pick_primary_user(recs)
 
-
 def snap_active_users():
     users = _snap("users")
     if not users and not _snap_ready("users"):
         return bitable.get_all_users()
     return [u for u in users
             if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "单身"]
+
+# ========== 卡片预计算缓存 ==========
+# 千人级优化：users 快照刷新时一次性格式化全部卡片 brief（纯文本），
+# /api/cards /api/home 只做过滤+排序+切片，不再现场拼 1000+ 张。
+_cards_cache = {}
+_cards_cache_version = 0
+_cards_cache_lock = threading.Lock()
+
+
+def _rebuild_cards_cache():
+    """按 users 快照重建卡片 brief 缓存（open_id -> brief dict）。"""
+    users = _snap("users")
+    cache = {}
+    for u in users:
+        fields = u.get("fields", {})
+        oid = bitable.get_field_text(fields, F_FEISHU_ID)
+        if not oid:
+            continue
+        try:
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
+            cache[oid] = brief
+        except Exception:
+            continue
+    with _cards_cache_lock:
+        _cards_cache.clear()
+        _cards_cache.update(cache)
+        global _cards_cache_version
+        _cards_cache_version += 1
+
+
+def _cached_brief(oid):
+    with _cards_cache_lock:
+        b = _cards_cache.get(oid)
+        return dict(b) if b else {}
+
+# 会话级卡片全序缓存：(open_id, filters_key) -> {"order":[openid...], "created":ts}
+# 顺序在会话内（30分钟）完全稳定：users 快照刷新不重排——否则用户滑到后段时
+# 顺序突变，出现「跳回看过的卡片」的错觉。新增用户追加到尾部，删除用户原地剔除。
+_SESSION_ORDER_TTL = 1800
+_card_order_cache = {}
+_card_order_lock = threading.Lock()
+
+
+def _get_session_order(key, cards, liked_me_openids, open_id):
+    now = time.time()
+    with _card_order_lock:
+        hit = _card_order_cache.get(key)
+    if hit and now - hit.get("created", 0) < _SESSION_ORDER_TTL:
+        order = hit["order"]
+        current_oids = {c.get("openid", "") for c in cards}
+        order = [o for o in order if o in current_oids]
+        new_oids = [c.get("openid", "") for c in cards if c.get("openid", "") not in order]
+        order = order + new_oids
+        with _card_order_lock:
+            _card_order_cache[key] = {"order": order, "created": hit["created"]}
+        return order, hit["created"]
+    seed_str = f"{open_id}|{_uuid.uuid4().hex}"
+    ordered = order_cards_seeded(cards, liked_me_openids, seed_str)
+    oids = [c.get("openid", "") for c in ordered]
+    with _card_order_lock:
+        _card_order_cache[key] = {"order": oids, "created": now}
+    return oids, now
 
 
 def snap_find_activity(act_id):
@@ -320,20 +409,17 @@ def snap_find_activity(act_id):
             return a
     return None
 
-
 def snap_resolve_activity(act_id):
     rec = snap_find_activity(act_id)
     if not rec:
         return None, None
     return rec, bitable.get_field_text(rec.get("fields", {}), F_ACTIVITY_ID)
 
-
 def snap_all_activities():
     activities = _snap("activities")
     if not activities and not _snap_ready("activities"):
         return bitable.get_activities()
     return activities
-
 
 def snap_likes_by_target(open_id):
     likes = _snap("likes")
@@ -343,7 +429,6 @@ def snap_likes_by_target(open_id):
     return [l for l in likes
             if bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID) == open_id]
 
-
 def snap_likes_by_initiator(open_id):
     likes = _snap("likes")
     if not likes and not _snap_ready("likes"):
@@ -351,7 +436,6 @@ def snap_likes_by_initiator(open_id):
             {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
     return [l for l in likes
             if bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID) == open_id]
-
 
 def snap_signups_by_openid(open_id):
     signups = _snap("signups")
@@ -361,7 +445,6 @@ def snap_signups_by_openid(open_id):
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) == open_id]
 
-
 def snap_signups_by_activity(act_id):
     signups = _snap("signups")
     if not signups and not _snap_ready("signups"):
@@ -369,7 +452,6 @@ def snap_signups_by_activity(act_id):
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) == act_id
             and bitable.get_select_value(s.get("fields", {}), F_SIGNUP_STATUS) != "已取消"]
-
 
 def snap_signup(act_id, open_id):
     signups = _snap("signups")
@@ -383,7 +465,6 @@ def snap_signup(act_id, open_id):
             return s
     return None
 
-
 def snap_group_selections_by_selector(open_id):
     gs = _snap("group_selections")
     if not gs and not _snap_ready("group_selections"):
@@ -391,7 +472,6 @@ def snap_group_selections_by_selector(open_id):
             {"field_name": F_GS_SELECTOR_OID, "operator": "is", "value": [open_id]}])
     return [g for g in gs
             if bitable.get_field_text(g.get("fields", {}), F_GS_SELECTOR_OID) == open_id]
-
 
 def snap_group_selection(act_id, open_id):
     gs = _snap("group_selections")
@@ -403,14 +483,12 @@ def snap_group_selection(act_id, open_id):
             return sg
     return None
 
-
 def snap_group_results(act_id):
     gr = _snap("group_results")
     if not gr and not _snap_ready("group_results"):
         return bitable.get_group_results(act_id)
     return [r for r in gr
             if bitable.get_field_text(r.get("fields", {}), F_GR_ACTIVITY_ID) == act_id]
-
 
 # ========== Session 管理 ==========
 # 跨进程文件锁（替代 threading.Lock，gunicorn 多 worker 下有效）
@@ -447,11 +525,9 @@ class _AppLock:
             self._tl.release()
 file_lock = _AppLock()
 
-
 def create_session(open_id, role="user"):
     """创建会话：{open_id, role} 签名后写入 cookie（无服务端状态，重启不丢失）"""
     return _session_signer.dumps({"open_id": open_id, "role": role})
-
 
 def get_session():
     """从cookie读取并校验当前会话。返回 {"open_id","role"} 或 None。
@@ -469,14 +545,12 @@ def get_session():
         return {"open_id": data.get("open_id"), "role": data.get("role", "user")}
     return None
 
-
 @app.before_request
 def _load_session_into_g():
     """每个请求先把会话解到 g，供 require_login/snap_self_user 统一取用"""
     sess = get_session()
     g.yxq_open_id = sess["open_id"] if sess else None
     g.yxq_role = sess["role"] if sess else "user"
-
 
 # ========== 轻量限流与 CSRF 基础（P0） ==========
 
@@ -520,7 +594,6 @@ def _csrf_guard():
             if not (csrf_cookie and csrf_header and _hmac.compare_digest(csrf_cookie, csrf_header)):
                 return jsonify({"error": "CSRF校验失败，请刷新页面重试"}), 403
 
-
 def _ensure_csrf_cookie(resp):
     if not request.cookies.get("yxq_csrf"):
         resp.set_cookie("yxq_csrf", _secrets.token_urlsafe(32), httponly=False, secure=True, samesite="Lax", max_age=30*86400)
@@ -530,7 +603,6 @@ app.after_request(_ensure_csrf_cookie)
 def require_login():
     """要求登录，返回open_id或None"""
     return g.yxq_open_id
-
 
 def roles_of(open_id):
     """返回该 open_id 拥有的角色集合 {"user","observer"}（快照优先、实时兜底）。
@@ -561,7 +633,6 @@ def roles_of(open_id):
         if obs_matches:
             roles.add("observer")
     return roles
-
 
 def snap_self_user():
     """按当前会话 role 解析「本人」档案：
@@ -595,12 +666,12 @@ def snap_self_user():
             rec = _pick_primary_user(live)
     return rec
 
-
 # ========== 账号状态门禁 ==========
-# 三级权限：
+# 统一门禁（P1 已按句级场景对齐）：
 #   单身        → 全功能
-#   已脱单(自隐) → 可浏览、可取消喜欢/取消报名；不可点爱心、不可报名、不可提交志愿
-#   待审核/审核不通过/已退出 → 仅可登录与查看「我的资料」，内容与操作全拦
+#   已脱单      → 可浏览/改资料/反馈/切回单身；不可点/取消喜欢、不可报名、不可留言、不可填志愿
+#   村情六处    → 可浏览/留言/反馈；不可点/取消喜欢、不可报名、不可改资料
+#   待审核/审核不通过/已退出 → 仅可登录，浏览与操作全拦
 GATE_MESSAGES = {
     "待审核": {"error": "资料审核中，通过后即可使用一线牵App", "gate": "待审核"},
     "审核不通过": {"error": "很抱歉，你的资料未通过审核，如有疑问请联系管理员", "gate": "审核不通过"},
@@ -609,13 +680,11 @@ GATE_MESSAGES = {
 LIKE_BLOCKED_MESSAGE = {"error": "你当前处于已脱单状态（他人看不到你），请先在「我的」页恢复单身后再操作", "gate": "已脱单"}
 OBSERVER_BLOCKED_MESSAGE = {"error": "你是村情六处账号，无此操作权限", "gate": "观察员"}
 
-
 def _account_status(open_id):
     user = snap_self_user()
     if not user:
         return None, None
     return bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS), user
-
 
 def account_gate(open_id):
     """浏览级门禁：待审核/审核不通过/已退出 全拦。返回 None 放行；否则 (body, status)"""
@@ -626,7 +695,6 @@ def account_gate(open_id):
     if body:
         return body, 403
     return None
-
 
 def active_gate(open_id):
     """操作级门禁：仅「单身」可用（点爱心/报名/提交志愿）。"""
@@ -642,11 +710,24 @@ def active_gate(open_id):
         return body, 403
     return None
 
+def message_gate(open_id):
+    """留言门禁：单身+村情六处可发；已脱单/待审核/不通过/已退出 均拦。"""
+    status, _ = _account_status(open_id)
+    if status is None:
+        return {"error": "用户不存在"}, 404
+    if status == "已脱单":
+        return {"error": "你当前处于已脱单状态，不能留言；请先在「我的」页恢复单身"}, 403
+    if status in GATE_MESSAGES:
+        return GATE_MESSAGES[status], 403
+    if status == STATUS_OBSERVER:
+        return None
+    if status == "单身":
+        return None
+    return {"error": "无权操作"}, 403
 
 def _is_observer(user):
     """判断用户是否为观察员（非单身看热闹，限权）"""
     return bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
-
 
 # ========== 飞书消息 ==========
 
@@ -663,7 +744,6 @@ def send_text_message(receive_id, text):
         return resp.json().get("code") == 0
     except Exception:
         return False
-
 
 def send_card_message(receive_id, card_content):
     """发送飞书卡片消息"""
@@ -682,7 +762,6 @@ def send_card_message(receive_id, card_content):
         pass
     return False
 
-
 def send_user_card(receive_id, share_open_id):
     """发送个人名片"""
     token = bitable.get_token()
@@ -697,7 +776,6 @@ def send_user_card(receive_id, share_open_id):
         return resp.json().get("code") == 0
     except Exception:
         return False
-
 
 # ========== 用户信息格式化 ==========
 
@@ -715,7 +793,6 @@ def format_birthday(fields):
         return raw
     year, month = int(m.group(1)), int(m.group(2))
     return f"{year % 100:02d}-{month}"
-
 
 def format_user_brief(record, include_openid=False, full=False):
     """格式化用户信息（卡片展示用，不含敏感信息）"""
@@ -767,7 +844,6 @@ def format_user_brief(record, include_openid=False, full=False):
         data["openid"] = bitable.get_field_text(fields, F_FEISHU_ID)
     return data
 
-
 def _select_with_note(fields, select_key, note_have_key, note_none_key):
     """单选值 + 对应补充内容：如「有 · 补充内容」，补充内容为空则只返回「有」/「无」"""
     val = bitable.get_select_value(fields, select_key)
@@ -776,7 +852,6 @@ def _select_with_note(fields, select_key, note_have_key, note_none_key):
     note_key = note_have_key if val == "有" else note_none_key
     note = bitable.get_field_text(fields, note_key).strip()
     return f"{val} · {note}" if note else val
-
 
 def format_user_profile(record):
     """格式化用户完整资料（本人查看，含敏感信息）"""
@@ -789,7 +864,6 @@ def format_user_profile(record):
         "register_time": bitable.get_date_value(fields, F_REGISTER_TIME),
     })
     return data
-
 
 def format_activity(record):
     """格式化活动信息"""
@@ -816,7 +890,6 @@ def format_activity(record):
         "record_id": record.get("record_id")
     }
 
-
 # ========== 卡片动态字段 ==========
 def _field_value(fields, fname, ftype):
     """按类型读取字段值，返回字符串（空则返回 ''）"""
@@ -838,7 +911,6 @@ def _field_value(fields, fname, ftype):
         return format_birthday(fields)
     return ""
 
-
 def build_display_fields(fields):
     """生成展示字段：简洁行（圣名·生日·身高·学历）+ 分组字段（基本信息/工作与经济/关于我/理想中的TA）"""
     # 简洁行：圣名 · 生日 · 身高 · 学历（不标注字段名）
@@ -858,7 +930,6 @@ def build_display_fields(fields):
             sections.append({"title": title, "icon": icon, "fields": section_fields})
     return {"simple": simple, "sections": sections}
 
-
 def build_subtitle(fields):
     """卡片照片叠层副标题：生日 · 城市"""
     parts = []
@@ -869,7 +940,6 @@ def build_subtitle(fields):
     if city:
         parts.append(city)
     return " · ".join(parts)
-
 
 def order_cards(cards, liked_me_openids):
     """牵线卡片排序：整副牌随机打乱，避免按用户ID连号泄露身份。
@@ -901,7 +971,6 @@ def order_cards(cards, liked_me_openids):
     random.shuffle(rest)
     return front + rest
 
-
 def _coerce_filter_num(v):
     """筛选数值参数安全转 float：None/空/非数值（含 bool/nan/inf）一律视为未填。
 
@@ -916,7 +985,6 @@ def _coerce_filter_num(v):
     if num != num or abs(num) == float("inf"):
         return None
     return num
-
 
 def pass_card_filters(fields, f):
     """卡片筛选：全部条件满足才返回 True"""
@@ -996,7 +1064,6 @@ def pass_card_filters(fields, f):
             return False
     return True
 
-
 def _has_active_filter(filters):
     """是否启用了任一筛选条件（列表非空 / 标量非空）。
     观察员自预览卡片仅在无任何筛选时置顶，否则会混进筛选结果造成「筛 U-0022 却看到自己」。"""
@@ -1008,12 +1075,10 @@ def _has_active_filter(filters):
             return True
     return False
 
-
 # ========== 页面路由 ==========
 
 # index.html 里的 __FEISHU_APP_ID__ 占位符在服务时替换为当前环境 app_id（生产/测试各自不同）
 _INDEX_HTML_CACHE = None
-
 
 def _app_version():
     """前端版本号：取 index.html 的 mtime（整数秒）。每次 git pull 部署后 mtime 变化，
@@ -1022,7 +1087,6 @@ def _app_version():
         return str(int(os.path.getmtime(os.path.join(app.static_folder, "index.html"))))
     except OSError:
         return "0"
-
 
 def _render_index():
     """读取单文件前端并注入飞书 app_id 与前端版本号，返回不缓存的 HTML 响应。"""
@@ -1036,21 +1100,17 @@ def _render_index():
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
 
-
 @app.route("/api/version", methods=["GET"])
 def api_version():
     """当前前端版本号，供前端轮询比对、发现新版本后自动刷新。"""
     return jsonify({"version": _app_version()})
 
-
 @app.route("/")
 def index():
     return _render_index()
 
-
 # public.html 里的 __PUBLIC_QR_CODE__ 占位符在服务时替换为当前环境二维码（生产/测试各自不同）
 _PUBLIC_HTML_CACHE = None
-
 
 def _render_public():
     """读取 public.html 并注入当前环境二维码文件名，返回不缓存的 HTML 响应。"""
@@ -1062,11 +1122,9 @@ def _render_public():
     resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
 
-
 @app.route("/public.html")
 def public_page():
     return _render_public()
-
 
 @app.route("/<path:path>")
 def static_files(path):
@@ -1082,7 +1140,6 @@ def static_files(path):
         resp.headers["Cache-Control"] = "no-store, max-age=0"
     return resp
 
-
 # ========== 全局错误处理器（仅对 /api/ 路由返回 JSON） ==========
 
 @app.errorhandler(404)
@@ -1091,7 +1148,6 @@ def handle_404(error):
         return jsonify({"error": "请求的资源不存在"}), 404
     return error
 
-
 @app.errorhandler(500)
 def handle_500(error):
     app.logger.error(f"服务器内部错误: {error}")
@@ -1099,12 +1155,10 @@ def handle_500(error):
         return jsonify({"error": "服务器内部错误，请稍后重试"}), 500
     return error
 
-
 # ========== 图片代理（带磁盘缓存） ==========
 
 IMAGE_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "image_cache")
 os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
-
 
 def cleanup_image_cache(max_age_days=3, max_files=500):
     """过期与超量清理：删 7 天前文件，超 1000 个时删最旧的（后台线程每日执行）"""
@@ -1149,14 +1203,12 @@ def cleanup_image_cache(max_age_days=3, max_files=500):
     except Exception:
         pass
 
-
 cleanup_image_cache()
 def _image_cleanup_loop():
     while True:
         time.sleep(86400)
         cleanup_image_cache()
 threading.Thread(target=_image_cleanup_loop, daemon=True).start()
-
 
 def _get_cached_image(file_token):
     """检查磁盘缓存，返回 (path, content_type) 或 None"""
@@ -1171,7 +1223,6 @@ def _get_cached_image(file_token):
                       "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm"}
             return fpath, ct_map.get(ext, "image/jpeg")
     return None
-
 
 def _compress_image(image_bytes, ext):
     """用 Pillow 压缩图片，返回压缩后的字节。
@@ -1233,10 +1284,8 @@ def _compress_image(image_bytes, ext):
     except Exception:
         return image_bytes
 
-
 # ========== 图片缓存预热（后台把快照里的照片/海报提前下载到磁盘，避免首屏等待） ==========
 _image_warm_lock = threading.Lock()
-
 
 def _download_and_cache_image(file_token):
     """下载并缓存单张图片（已缓存则跳过），返回是否新下载"""
@@ -1268,7 +1317,6 @@ def _download_and_cache_image(file_token):
         return True
     except Exception:
         return False
-
 
 def warm_image_cache(max_per_run=30):
     """后台预热：增量下载 + 人脸异步补齐，避免长时间持有锁阻塞快照"""
@@ -1315,7 +1363,6 @@ def warm_image_cache(max_per_run=30):
     except Exception:
         pass
 
-
 # ========== 人脸检测（卡片照片智能对准） ==========
 # YuNet（精度高、支持侧脸，模型约 350KB，首次从 opencv_zoo 下载缓存）；
 # 下载/加载失败时回退 OpenCV 自带 Haar 级联；两者都不可用则整体静默降级为居中显示。
@@ -1329,7 +1376,6 @@ _FACE_SIDECAR_VERSION = 9  # 检测参数变更时递增，旧 sidecar 自动重
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
 _face_detector_state = None  # (kind, detector) kind in {"yunet", "haar", "none"}
-
 
 def _load_face_detector():
     """懒加载人脸检测器（单例）。返回 (kind, detector)，不可用时 ("none", None)"""
@@ -1369,10 +1415,8 @@ def _load_face_detector():
         _face_detector_state = ("none", None)
     return _face_detector_state
 
-
 def _face_sidecar_path(token):
     return os.path.join(_FACE_DIR, token + ".json")
-
 
 def _detect_content_margins(gray):
     """检测上下左右黑边比例（连续边缘行/列最大亮度 < 16 视为黑边）。
@@ -1405,7 +1449,6 @@ def _detect_content_margins(gray):
     if right > w * 0.45:
         right = 0
     return (top / h, bottom / h, left / w, right / w)
-
 
 def _analyze_photo(img_path):
     """分析照片：检测最大「完整可信」人脸 + 上下左右黑边比例。
@@ -1496,7 +1539,6 @@ def _analyze_photo(img_path):
         logging.getLogger(__name__).warning(f"照片分析失败 {img_path}: {e}")
         return None, [0.0, 0.0], [0.0, 0.0]
 
-
 def _crop_photo_margins(img_path, tb, lr):
     """按黑边比例裁切缓存图片（原子替换）。任一方向裁后剩余 < 40px 则放弃。"""
     t, b = tb
@@ -1522,12 +1564,10 @@ def _crop_photo_margins(img_path, tb, lr):
         logging.getLogger(__name__).warning(f"裁切黑边失败 {img_path}: {e}")
     return False
 
-
 def _face_sidecar_valid(d):
     """sidecar 数据是否完整且为当前版本（版本升级后旧数据自动重检；c/box 可为 None 表示已检测无脸）"""
     return (isinstance(d, dict) and "c" in d and "box" in d
             and d.get("v") == _FACE_SIDECAR_VERSION)
-
 
 def ensure_face_center(token):
     """确保照片处理完毕（人脸数据 + 黑边已裁切）：内存 → 完整 sidecar → 分析并裁切。
@@ -1590,7 +1630,6 @@ def ensure_face_center(token):
         _face_cache[token] = out
     return out
 
-
 def get_face_center(token):
     """读人脸数据（内存 → sidecar → None）。不做实时检测，保证请求路径零开销"""
     with _face_cache_lock:
@@ -1611,14 +1650,12 @@ def get_face_center(token):
         _face_cache[token] = face
     return face
 
-
 def user_has_face(user_record, is_observer=False):
     """本人是否至少有 1 张可检出真人脸的照片（观察员免验；无照片/全无脸为 False）。
     仅读内存/sidecar 缓存，无实时检测开销；新上传照片由后台秒级检测补齐。"""
     if is_observer:
         return True
     return _tokens_has_face(bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO))
-
 
 def _tokens_has_face(tokens, min_area=0.003):
     """token 列表是否含至少一张「清晰可见」人脸的照片：检出脸且最大脸框面积占比 >= 0.3%。
@@ -1632,12 +1669,26 @@ def _tokens_has_face(tokens, min_area=0.003):
                 return True
     return False
 
-
 @app.route("/api/image/<file_token>")
 def proxy_image(file_token):
     """代理飞书多维表格附件图片（带磁盘缓存，首次下载后直接读本地）"""
     if not require_login():
         return jsonify({"error": "未登录"}), 401
+    # 白名单：仅允许快照中可见的照片/海报对应的 token，防任意枚举
+    # own photos + active users + activities + self
+    try:
+        allowed = set()
+        for u in _snap("users"):
+            allowed.update(bitable.get_attachment_tokens(u.get("fields", {}), F_PHOTO))
+        for a in _snap("activities"):
+            allowed.update(bitable.get_attachment_tokens(a.get("fields", {}), F_ACTIVITY_POSTER))
+        # 放行已缓存的（历史可见）避免冷启动误拦
+        if file_token not in allowed and not _get_cached_image(file_token):
+            # 管理员放行
+            if g.yxq_open_id not in ADMIN_OPEN_IDS:
+                return jsonify({"error": "图片不存在"}), 404
+    except Exception:
+        pass
     # 1. 检查磁盘缓存（旧的大文件 >1MB 删除，触发重新下载并压缩）
     cached = _get_cached_image(file_token)
     if cached:
@@ -1678,13 +1729,11 @@ def proxy_image(file_token):
     except Exception:
         return jsonify({"error": "图片加载失败"}), 500
 
-
 # ========== 认证接口 ==========
 
 # ========== 最近活跃回写（打开 App 首页/登录时触发，同一用户 10 分钟内只写一次） ==========
 _LAST_ACTIVE_TTL = 600
 _last_active_written = {}
-
 
 def touch_last_active(open_id, user, role):
     """后台异步把「最近活跃」写入用户/观察员表（按角色选表）。节流防首页刷新刷爆飞书 API。"""
@@ -1706,7 +1755,6 @@ def touch_last_active(open_id, user, role):
             app.logger.warning(f"回写最近活跃失败: {e}")
 
     threading.Thread(target=_w, daemon=True).start()
-
 
 @app.route("/api/auth/feishu", methods=["GET"])
 def feishu_auth():
@@ -1770,13 +1818,11 @@ def feishu_auth():
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
 
-
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
     resp = make_response(jsonify({"ok": True}))
     resp.delete_cookie("yxq_session")
     return resp
-
 
 def _build_self_card(open_id, active_users, msg_counts):
     """观察员预览自己的「普通用户」卡片（别人看我的样子）。
@@ -1795,7 +1841,6 @@ def _build_self_card(open_id, active_users, msg_counts):
             brief["is_self"] = True
             return brief
     return None
-
 
 @app.route("/api/home", methods=["GET"])
 def home():
@@ -1844,9 +1889,11 @@ def home():
             continue
         if not is_observer and bitable.get_select_value(fields, F_GENDER) != target_gender:
             continue
-        brief = format_user_brief(u, include_openid=True, full=True)
-        brief["display_fields"] = build_display_fields(fields)
-        brief["subtitle"] = build_subtitle(fields)
+        brief = _cached_brief(uid)
+        if not brief:
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
         brief["liked"] = uid in liked_openids
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
@@ -1865,6 +1912,10 @@ def home():
         self_card = _build_self_card(open_id, active_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)
+    # 压测防护：首页聚合亦限 100 张，避免 1000 人全量打爆；cards_total 供前端显示全量
+    cards_total = len(cards)
+    if len(cards) > 100:
+        cards = cards[:100]
     i_liked = snap_likes_by_initiator(open_id)
     i_liked_targets = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
@@ -1908,11 +1959,11 @@ def home():
     return jsonify({
         "user": user_brief,
         "cards": cards,
+        "cards_total": cards_total,
         "likes": {"liked_me": liked_me_list, "mutual": mutual_list},
         "activities": activities,
         "register_form_url": REGISTER_FORM_URL,
     })
-
 
 @app.route("/api/user/me", methods=["GET"])
 def user_me():
@@ -1928,7 +1979,6 @@ def user_me():
     brief["hearts"] = computed_hearts(open_id)
     brief["hearts_total"] = hearts_total(open_id)
     return jsonify(brief)
-
 
 @app.route("/api/account/status", methods=["POST"])
 def toggle_account_status():
@@ -1961,7 +2011,6 @@ def toggle_account_status():
             u.setdefault("fields", {})[F_ACCOUNT_STATUS] = new_status
     return jsonify({"ok": True, "account_status": new_status})
 
-
 @app.route("/api/account/switch", methods=["POST"])
 def switch_account_role():
     """切换当前身份：user(普通用户) <-> observer(观察员)。需该账号已分别注册对应身份。"""
@@ -1981,7 +2030,6 @@ def switch_account_role():
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
 
-
 # ========== 活动接口 ==========
 
 @app.route("/api/activities", methods=["GET"])
@@ -1999,7 +2047,6 @@ def activities():
         act["my_signup"] = bool(snap_signup(act["activity_id"], open_id))
         result.append(act)
     return jsonify({"activities": result})
-
 
 @app.route("/api/activities/<activity_id>", methods=["GET"])
 def activity_detail(activity_id):
@@ -2021,7 +2068,6 @@ def activity_detail(activity_id):
     signups = snap_signups_by_activity(text_act_id)
     act["signup_users"] = [bitable.get_field_text(s.get("fields", {}), F_SIGNUP_NICKNAME) for s in signups]
     return jsonify(act)
-
 
 @app.route("/api/activities/<activity_id>/signup", methods=["POST"])
 def signup(activity_id):
@@ -2050,18 +2096,20 @@ def signup(activity_id):
     if bitable.get_user_signup(text_act_id, open_id):
         return jsonify({"error": "你已经报名了这个活动"}), 400
 
-    # 人数上限：快照口径，机器人会对账修正
-    signups_snap = snap_signups_by_activity(text_act_id) or bitable.get_signups(text_act_id)
-    max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
-    if max_signup > 0 and len(signups_snap) >= max_signup:
-        return jsonify({"error": "报名人数已满"}), 400
-
     user = snap_self_user()
     if not user:
         return jsonify({"error": "用户信息不存在"}), 404
     nickname = bitable.get_field_text(user.get("fields", {}), F_NICKNAME)
 
     with file_lock:
+        # 锁内二次校验：查重+人数上限以实时为准，防并发超员
+        if bitable.get_user_signup(text_act_id, open_id):
+            return jsonify({"error": "你已经报名了这个活动"}), 400
+        max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
+        if max_signup > 0:
+            real_cnt = len(bitable.get_signups(text_act_id) or [])
+            if real_cnt >= max_signup:
+                return jsonify({"error": "报名人数已满"}), 400
         signup_record = bitable.create_record(SIGNUP_TABLE_ID, {
             F_SIGNUP_ACTIVITY_ID: text_act_id,
             F_SIGNUP_OPENID: open_id,
@@ -2074,7 +2122,6 @@ def signup(activity_id):
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")
     return jsonify({"ok": True, "message": "报名成功"})
-
 
 @app.route("/api/activities/<activity_id>/signup", methods=["DELETE"])
 def cancel_signup(activity_id):
@@ -2114,7 +2161,6 @@ def cancel_signup(activity_id):
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")
     return jsonify({"ok": True, "message": "已取消报名"})
-
 
 # ========== 喜欢接口 ==========
 
@@ -2198,35 +2244,56 @@ def get_cards():
             continue
         if not pass_card_filters(fields, filters):
             continue
-        brief = format_user_brief(u, include_openid=True, full=True)
-        brief["display_fields"] = build_display_fields(fields)
-        brief["subtitle"] = build_subtitle(fields)
+        # 千人级：优先取预计算缓存，未命中才现场格式化
+        brief = _cached_brief(uid)
+        if not brief:
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
         brief["liked"] = uid in liked_openids
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
 
-    # 喜欢我的人随机前移到前30%，其余整副牌打乱
+    # 喜欢我的人随机散落前30%（构建订单时烘焙；likes 变化不重建订单，保证翻页顺序稳定）
     liked_me_openids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in snap_likes_by_target(open_id)
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
-    cards = order_cards(cards, liked_me_openids)
-    # 观察员预览自己的普通用户卡片（别人看我的样子），仅无任何筛选时置顶展示
-    if is_observer and not gender_filter and not _has_active_filter(filters):
+    self_flag = is_observer and not gender_filter and not _has_active_filter(filters)
+    filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
+    key = (open_id, filters_key)
+    order, order_ts = _get_session_order(key, cards, liked_me_openids, open_id)
+    by_oid = {c.get("openid"): c for c in cards}
+    self_card = None
+    if self_flag:
         self_card = _build_self_card(open_id, all_users, msg_counts)
         if self_card:
-            cards.insert(0, self_card)
+            by_oid[open_id] = self_card
+            order = [open_id] + order
+    total = len(order)
+    try:
+        offset = int(request.args.get("offset", "0"))
+    except Exception:
+        offset = 0
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except Exception:
+        limit = 50
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
+    page = []
+    for o in order[offset:offset + limit]:
+        c = by_oid.get(o)
+        if c is not None:
+            page.append(c)
 
-    return jsonify({"cards": cards})
-
+    return jsonify({"cards": page, "total": total, "offset": offset, "limit": limit, "version": int(order_ts)})
 
 # 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零
 _like_reserves = {}
 _recent_cancels = {}  # record_id -> ts：取消意图已发出、表/快照尚未更新的宽限豁免
-
-
 
 
 
@@ -2240,7 +2307,6 @@ def _spool_append(op):
             f.flush()
             os.fsync(f.fileno())
 
-
 def _spool_rewrite():
     with _spool_lock:
         ops = list(_spool_queue)
@@ -2249,7 +2315,6 @@ def _spool_rewrite():
         for op in ops:
             f.write(json.dumps(op, ensure_ascii=False) + "\n")
     os.replace(tmp, _SPOOL_FILE)
-
 
 def _spool_process(op):
     """幂等执行：喜欢=先查同向活跃记录再建；取消=按 record_id 置已取消（天然幂等）"""
@@ -2301,9 +2366,7 @@ def _spool_process(op):
         return False
     return False
 
-
 _dead_alert_state = {"last_ts": 0.0}
-
 
 def _alert_spool_dead(op):
     """死信告警：spool 重试耗尽、写入失败记录落入死信文件后，通知管理员。
@@ -2325,7 +2388,6 @@ def _alert_spool_dead(op):
             + json.dumps(brief, ensure_ascii=False))
     for admin_oid in ADMIN_OPEN_IDS:
         send_text_message(admin_oid, text)
-
 
 def _spool_worker():
     while True:
@@ -2353,7 +2415,6 @@ def _spool_worker():
             _spool_rewrite()
             _alert_spool_dead(op)
 
-
 def _spool_boot():
     if os.path.exists(_SPOOL_FILE):
         with open(_SPOOL_FILE, "r", encoding="utf-8") as f:
@@ -2366,9 +2427,38 @@ def _spool_boot():
                         pass
     threading.Thread(target=_spool_worker, daemon=True, name="spool-writer").start()
 
+def _spool_replay_dead():
+    # 每5分钟尝试重放死信，重试3次仍败保留
+    while True:
+        time.sleep(300)
+        if not os.path.exists(_SPOOL_DEAD):
+            continue
+        try:
+            with open(_SPOOL_DEAD, "r", encoding="utf-8") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+            if not lines:
+                continue
+            open(_SPOOL_DEAD, "w").close()
+            for ln in lines:
+                try:
+                    op = json.loads(ln)
+                except Exception:
+                    continue
+                ok = False
+                for attempt in range(3):
+                    if _spool_process(op):
+                        ok = True
+                        break
+                    time.sleep(2 ** attempt)
+                if not ok:
+                    with open(_SPOOL_DEAD, "a", encoding="utf-8") as df:
+                        df.write(ln + "\n")
+                    _alert_spool_dead(op)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"死信重放失败: {e}")
+threading.Thread(target=_spool_replay_dead, daemon=True, name="spool-replay").start()
 
 _spool_boot()
-
 
 @app.route("/api/like", methods=["POST"])
 def like_user():
@@ -2485,8 +2575,6 @@ def like_user():
 
 
 
-
-
 @app.route("/api/feedback", methods=["POST"])
 def feedback():
     _rl = _rate_limit(limit=10, window=60, key_prefix="feedback")
@@ -2496,6 +2584,12 @@ def feedback():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    # 待审核/不通过/已退出 拦截，已脱单/观察员 放行
+    _st, _ = _account_status(open_id)
+    if _st in GATE_MESSAGES:
+        return jsonify(GATE_MESSAGES[_st]), 403
+    if _st is None:
+        return jsonify({"error": "用户不存在"}), 404
 
     data = request.get_json() or {}
     target_openid = data.get("target_openid", "")
@@ -2541,10 +2635,8 @@ def feedback():
 
     return jsonify({"ok": True})
 
-
 SUGGESTION_TYPES = ("功能建议", "问题反馈", "其他")
 SUGGESTION_MAX_LEN = 500
-
 
 def validate_suggestion(data):
     """校验意见反馈请求体，返回 (错误信息, 类型, 内容)；通过时错误为 None"""
@@ -2562,7 +2654,6 @@ def validate_suggestion(data):
         return f"反馈内容最多 {SUGGESTION_MAX_LEN} 字", "", ""
     return None, sg_type, content
 
-
 @app.route("/api/suggestions", methods=["POST"])
 def suggestions():
     _rl = _rate_limit(limit=10, window=60, key_prefix="suggest")
@@ -2572,6 +2663,11 @@ def suggestions():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    _st, _ = _account_status(open_id)
+    if _st in GATE_MESSAGES:
+        return jsonify(GATE_MESSAGES[_st]), 403
+    if _st is None:
+        return jsonify({"error": "用户不存在"}), 404
 
     data = request.get_json() or {}
     err, sg_type, content = validate_suggestion(data)
@@ -2606,7 +2702,6 @@ def suggestions():
     threading.Thread(target=_notify_admins, daemon=True).start()
 
     return jsonify({"ok": True})
-
 
 @app.route("/api/likes/me", methods=["GET"])
 def my_likes():
@@ -2655,7 +2750,6 @@ def my_likes():
             liked_me_list.append(item)
 
     return jsonify({"liked_me": liked_me_list, "mutual": mutual_list})
-
 
 # ========== 留言接口 ==========
 
@@ -2707,7 +2801,6 @@ def list_messages():
     msgs.sort(key=lambda m: m["created_at"])
     return jsonify({"messages": msgs})
 
-
 @app.route("/api/messages/mine", methods=["GET"])
 def list_my_messages():
     """列出当前用户发出的全部留言（跨卡片），按时间倒序，附带所在卡片主人昵称。"""
@@ -2751,7 +2844,6 @@ def list_my_messages():
     msgs.sort(key=lambda m: m["created_at"], reverse=True)
     return jsonify({"messages": msgs})
 
-
 @app.route("/api/messages/received", methods=["GET"])
 def list_received_messages():
     """列出别人发给当前用户的留言（target=本人 open_id），按时间倒序，附带作者昵称头像。"""
@@ -2794,7 +2886,6 @@ def list_received_messages():
         })
     msgs.sort(key=lambda m: m["created_at"], reverse=True)
     return jsonify({"messages": msgs})
-
 
 @app.route("/api/messages", methods=["POST"])
 def create_message():
@@ -2896,7 +2987,6 @@ def create_message():
     app.logger.info(f"留言成功: role={g.yxq_role} id={rec.get('record_id')}")
     return jsonify({"ok": True, "id": rec.get("record_id")})
 
-
 @app.route("/api/messages/<record_id>", methods=["DELETE"])
 def delete_message(record_id):
     """删除留言（本人或卡片主人，管理员可删任意）"""
@@ -2919,7 +3009,6 @@ def delete_message(record_id):
     for r in replies:
         bitable.update_record(MESSAGE_TABLE_ID, r.get("record_id"), {F_MSG_STATUS: "已删除"})
     return jsonify({"ok": True})
-
 
 @app.route("/api/messages/<record_id>/report", methods=["POST"])
 def report_message(record_id):
@@ -3081,7 +3170,6 @@ def report_message(record_id):
     return jsonify({"ok": True})
 
 
-
 @app.route("/api/messages/reported", methods=["GET"])
 def list_reported_messages():
     """管理员：列出已举报留言（待处理 + 已处理历史，最新在前）"""
@@ -3205,7 +3293,6 @@ def list_reported_messages():
             m["handler_uid"] = hu
     msgs.sort(key=lambda x: x.get("report_time") or x.get("handled_at") or x.get("created_at") or 0, reverse=True)
     return jsonify({"messages": msgs})
-
 
 @app.route("/api/messages/<record_id>/handle", methods=["POST"])
 def handle_reported_message(record_id):
@@ -3346,7 +3433,6 @@ def handle_reported_message(record_id):
             pass
     return jsonify({"ok": bool(ok)})
 
-
 # ========== 分组接口 ==========
 
 @app.route("/api/activities/<activity_id>/group/candidates", methods=["GET"])
@@ -3414,7 +3500,6 @@ def group_candidates(activity_id):
         my_gender, target_gender, len(signups), len(candidates))
     return jsonify({"candidates": candidates})
 
-
 @app.route("/api/activities/<activity_id>/group/select", methods=["POST"])
 def group_select(activity_id):
     """提交分组志愿选择（秒提交版：查活动/报名/本人全走快照，同步仅 1 次写入）"""
@@ -3479,7 +3564,6 @@ def group_select(activity_id):
     refresh_snapshot_table_async("group_selections")
     return jsonify({"ok": True, "message": "志愿提交成功"})
 
-
 @app.route("/api/activities/<activity_id>/group/status", methods=["GET"])
 def group_status(activity_id):
     """查询分组状态和我的选择"""
@@ -3511,7 +3595,6 @@ def group_status(activity_id):
         "my_selected": bool(my_selection),
         "my_choices": my_choices
     })
-
 
 @app.route("/api/activities/<activity_id>/group/result", methods=["GET"])
 def group_result(activity_id):
@@ -3594,7 +3677,6 @@ def group_result(activity_id):
         "rounds": available_rounds
     })
 
-
 # ========== 个人中心 ==========
 
 def _editable_value(fields, fname, ftype):
@@ -3611,7 +3693,6 @@ def _editable_value(fields, fname, ftype):
     if ftype == "phone":
         return bitable.get_phone_value(fields, fname)
     return ""
-
 
 def _editable_schema(fields, skip_id_card=False):
     """可编辑字段 schema + 当前值，前端据此动态渲染「修改资料」表单"""
@@ -3632,7 +3713,6 @@ def _editable_schema(fields, skip_id_card=False):
     except Exception:
         pass
     return base
-
 
 def _normalize_editable_update(data, fields=None):
     """将前端提交的值按类型归一化为飞书写入格式；非法项静默忽略。
@@ -3712,7 +3792,6 @@ def _normalize_editable_update(data, fields=None):
             update_fields[k] = vals
     return update_fields
 
-
 @app.route("/api/profile", methods=["GET"])
 def get_profile():
     open_id = require_login()
@@ -3739,13 +3818,16 @@ def get_profile():
     data["has_face"] = user_has_face(user, is_observer)
     return jsonify(data)
 
-
 @app.route("/api/profile", methods=["PUT"])
 def update_profile():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
 
+    # 待审核/不通过/已退出 一律拦
+    _st, _ = _account_status(open_id)
+    if _st in GATE_MESSAGES:
+        return jsonify(GATE_MESSAGES[_st]), 403
     data = request.get_json() or {}
     user = snap_self_user()
     if not user:
@@ -3767,18 +3849,14 @@ def update_profile():
     refresh_snapshot_table("users")
     return jsonify({"ok": True, "message": "资料已更新"})
 
-
 MAX_PHOTOS = 9  # 个人照片最多 9 张（飞书附件字段单格上限）
-
 
 def _photo_tokens(user):
     """读取用户「个人照片」字段的全部附件 token（按展示顺序）"""
     return bitable.get_attachment_tokens(user.get("fields", {}), F_PHOTO)
 
-
 def _photo_urls(tokens):
     return ["/api/image/" + t + "?fv6" for t in tokens]
-
 
 def _write_photos(user, tokens):
     """把一组 file_token 写回「个人照片」字段（多张照片，牵线首页可切换展示）。"""
@@ -3787,7 +3865,6 @@ def _write_photos(user, tokens):
     if ok:
         refresh_snapshot_table("users")
     return ok
-
 
 @app.route("/api/profile/photo", methods=["POST"])
 def update_profile_photo():
@@ -3878,7 +3955,6 @@ def update_profile_photo():
     return jsonify({"ok": True, "photos": _photo_urls(tokens),
                     "has_face": _tokens_has_face(tokens)})
 
-
 @app.route("/api/profile/photo", methods=["DELETE"])
 def delete_profile_photo():
     """删除一张照片（按下标 0 起）。"""
@@ -3910,7 +3986,6 @@ def delete_profile_photo():
     return jsonify({"ok": True, "photos": _photo_urls(tokens),
                     "has_face": _tokens_has_face(tokens)})
 
-
 @app.route("/api/profile/photo/cover", methods=["POST"])
 def set_profile_cover():
     """把某张照片设为封面（头像）：移到第一张。"""
@@ -3938,7 +4013,6 @@ def set_profile_cover():
             return jsonify({"error": "资料更新失败，请稍后重试"}), 500
     return jsonify({"ok": True, "photos": _photo_urls(tokens)})
 
-
 # ========== 我的喜欢 ==========
 
 @app.route("/api/likes/mine", methods=["GET"])
@@ -3951,7 +4025,34 @@ def my_liked_list():
     if gate:
         return jsonify(gate[0]), gate[1]
 
+    _intent_prune()
     my_likes = snap_likes_by_initiator(open_id)
+    # 在途意图补齐：快照尚未见的新 like 应立即出现在“我喜欢”列表，否则消息页计数与列表均滞后 60s
+    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
+    # 过滤已取消的快照
+    my_likes = [l for l in my_likes if bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) not in cancel_targets]
+    # 合并在途
+    existing_targets = {bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) for l in my_likes if bitable.get_select_value(l.get("fields",{}), F_LIKE_STATUS) != "已取消"}
+    for it in list(_intent_likes.values()):
+        if it.get("oid") != open_id:
+            continue
+        tgt = it.get("target")
+        if not tgt or tgt in existing_targets or tgt in cancel_targets:
+            continue
+        # 合成一条 like 供展示（复用真实目标用户信息）
+        tgt_user = snap_find_user_by_openid(tgt)
+        # 用意图的 like_type
+        fields = {
+            F_LIKE_TARGET_OPENID: tgt,
+            F_LIKE_INITIATOR_OPENID: open_id,
+            F_LIKE_STATUS: "单向喜欢",
+            F_LIKE_TYPE: it.get("type","匿名"),
+        }
+        # 若能解析到目标昵称则带上，否则用占位
+        if tgt_user:
+            tf = tgt_user.get("fields",{})
+            fields[F_LIKE_TARGET] = bitable.get_field_text(tf, F_NICKNAME)
+        my_likes.append({"record_id": it.get("rid") or f"intent_{tgt}", "fields": fields})
 
     # 谁喜欢了我（用于判断相互喜欢；过滤已取消）
     liked_me = snap_likes_by_target(open_id)
@@ -3988,14 +4089,13 @@ def my_liked_list():
         result.append(brief)
     return jsonify({"likes": result})
 
-
 @app.route("/api/like/<target_openid>", methods=["DELETE"])
 def cancel_like(target_openid):
     """取消喜欢（v6：定位→spool→立即回包；爱心自动随事件计算恢复）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
+    gate = active_gate(open_id)
     if gate:
         return jsonify(gate[0]), gate[1]
 
@@ -4064,8 +4164,6 @@ def cancel_like(target_openid):
 
 
 
-
-
 # ========== 我的活动 ==========
 
 @app.route("/api/activities/mine", methods=["GET"])
@@ -4091,7 +4189,6 @@ def my_activities():
             act_data["signup_status"] = bitable.get_field_text(fields, F_SIGNUP_STATUS)
             result.append(act_data)
     return jsonify({"activities": result})
-
 
 @app.route("/api/activities/mine/groups", methods=["GET"])
 def my_groups():
@@ -4135,7 +4232,6 @@ def my_groups():
         result.append(act_data)
     return jsonify({"activities": result})
 
-
 @app.route("/api/activities/mine/groups/flag", methods=["GET"])
 def my_groups_flag():
     """我报名过的活动中，是否存在「分组功能开启=是」的活动（控制「我的」页是否显示分组入口）"""
@@ -4156,13 +4252,11 @@ def my_groups_flag():
             return jsonify({"has_group_activity": True})
     return jsonify({"has_group_activity": False})
 
-
 # ========== 活动报名名单 / 他人资料 / 通知 ==========
 
 def load_notifications():
     """读取共享通知文件（机器人写入、H5 读取）"""
     return storage.load_json(NOTIFICATIONS_FILE, {"items": []}).get("items", [])
-
 
 @app.route("/api/activities/<activity_id>/signups", methods=["GET"])
 def activity_signups(activity_id):
@@ -4200,7 +4294,6 @@ def activity_signups(activity_id):
         result.append({"openid": s_openid, "nickname": nick, "user_id": user_id, "photo": photo, "gender": gender})
     return jsonify({"signups": result})
 
-
 @app.route("/api/users/<openid>/public", methods=["GET"])
 def get_user_public(openid):
     oid = require_login()
@@ -4222,7 +4315,6 @@ def get_user_public(openid):
     }
     return jsonify(data)
 
-
 @app.route("/api/notifications", methods=["GET"])
 def get_notifications():
     oid = require_login()
@@ -4234,7 +4326,6 @@ def get_notifications():
     items = [n for n in load_notifications() if n.get("recipient") == oid]
     items.sort(key=lambda n: n.get("time", ""), reverse=True)
     return jsonify({"notifications": items})
-
 
 # ========== 引流埋点统计 ==========
 
@@ -4309,7 +4400,6 @@ def track_event():
             pass
     return jsonify({"ok": True})
 
-
 @app.route("/api/track/stats", methods=["GET"])
 def track_stats():
     """查看引流统计（按天/按事件聚合）——仅管理员可访问"""
@@ -4327,7 +4417,6 @@ def track_stats():
         by_event[ev] = by_event.get(ev, 0) + 1
     return jsonify({"total": len(events), "by_day": by_day, "by_event": by_event})
 
-
 @app.route("/api/public/users", methods=["GET"])
 def public_users():
     """公开接口：返回单身用户列表（引流页展示用，不含敏感信息；走本地快照）"""
@@ -4342,7 +4431,6 @@ def public_users():
             "display_fields": build_display_fields(fields),
         })
     return jsonify({"users": result})
-
 
 if __name__ == "__main__":
     logger = logging.getLogger(__name__)

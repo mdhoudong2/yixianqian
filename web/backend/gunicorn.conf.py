@@ -15,19 +15,22 @@ import os
 # 造成「切换状态后另一 worker 门禁漏拦」「取消喜欢后卡片池短暂不更新」等竞态。
 # 当前用户量级下单 worker + 8 线程吞吐足够，且后台快照轮询配额减半。
 workers = 1
-threads = 8
+threads = 16
 # 绑定地址可通过环境变量 BIND 覆盖（测试服 127.0.0.1:8092）
 bind = os.environ.get("BIND", "127.0.0.1:8091")
-timeout = 120
-graceful_timeout = 30
+timeout = 300
+graceful_timeout = 60
 max_requests = 1000
 max_requests_jitter = 50
 
 
 def post_fork(server, worker):
     try:
+        import threading
+
         import app as appmod
-        appmod.refresh_snapshot()
+        # 1000人压测时同步拉全量会阻塞 worker 启动 30s+，导致 /api/version 亦超时；改为后台线程异步拉取
+        threading.Thread(target=appmod.refresh_snapshot, daemon=True, name="snapshot-warm").start()
         appmod.start_snapshot_loop()
     except Exception as e:
         logging.getLogger(__name__).warning("worker 快照初始化失败: %s", e)

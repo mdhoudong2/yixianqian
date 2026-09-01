@@ -2330,36 +2330,31 @@ createApp({
     function onCardTouchMove(e) {}
     async function loadPageAt(offset) {
       // 整窗替换：拉取指定偏移的一页，cardsStart 对齐 offset；命中页面缓存则同步切换
-      // 任何失败都返回 false（不抛异常），保证 cardsNavBusy 始终复位，滑动不再卡死
-      try {
-        const cached = cardsPageCache.get(offset);
-        if (cached && (cached.version == null || cardsVersion.value == null || cached.version === cardsVersion.value)) {
-          cards.value = cached.cards;
-          cardsTotal.value = cached.total;
-          cardsStart.value = offset;
-          prefetchPage(offset - 50);
-          prefetchPage(offset + 50);
-          return true;
-        }
-        const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
-        if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
-          cardsVersion.value = data.version;
-          cardsPageCache.clear();
-          return loadPageAt(offset);
-        }
-        if (data.version != null) cardsVersion.value = data.version;
-        const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
-        const total = (typeof data.total === 'number' ? data.total : page.length);
-        cardsPageCache.set(offset, { cards: page, total, version: data.version });
-        cards.value = page;
-        cardsTotal.value = total;
+      const cached = cardsPageCache.get(offset);
+      if (cached && (cached.version == null || cardsVersion.value == null || cached.version === cardsVersion.value)) {
+        cards.value = cached.cards;
+        cardsTotal.value = cached.total;
         cardsStart.value = offset;
         prefetchPage(offset - 50);
         prefetchPage(offset + 50);
         return true;
-      } catch (e) {
-        return false;
       }
+      const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
+      if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
+        cardsVersion.value = data.version;
+        cardsPageCache.clear();
+        return loadPageAt(offset);
+      }
+      if (data.version != null) cardsVersion.value = data.version;
+      const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      const total = (typeof data.total === 'number' ? data.total : page.length);
+      cardsPageCache.set(offset, { cards: page, total, version: data.version });
+      cards.value = page;
+      cardsTotal.value = total;
+      cardsStart.value = offset;
+      prefetchPage(offset - 50);
+      prefetchPage(offset + 50);
+      return true;
     }
     function _prependPage(page, offset){
       // 把一页前置到窗口头部，返回 prepend 条数（超过150张时以落地卡为中心裁窗）
@@ -2417,15 +2412,15 @@ createApp({
               cardIndex.value += 1;
               slideDir.value = 'right';
             }
-          }).catch(() => {}).finally(() => { cardsNavBusy = false; });
+            cardsNavBusy = false;
+          });
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
         } else {
           // 已是全序最后一张：循环回第一页
           cardsNavBusy = true;
-          loadPageAt(0).then((ok) => { if (ok) { cardIndex.value = 0; slideDir.value = 'right'; } })
-            .catch(() => {}).finally(() => { cardsNavBusy = false; });
+          loadPageAt(0).then((ok) => { if (ok) { cardIndex.value = 0; slideDir.value = 'right'; } cardsNavBusy = false; });
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
@@ -2443,7 +2438,8 @@ createApp({
               cardIndex.value = prep - 1;
               slideDir.value = 'left';
             }
-          }).catch(() => {}).finally(() => { cardsNavBusy = false; });
+            cardsNavBusy = false;
+          });
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
@@ -2457,7 +2453,8 @@ createApp({
               cardIndex.value = cards.value.length - 1;
               slideDir.value = 'left';
             }
-          }).catch(() => {}).finally(() => { cardsNavBusy = false; });
+            cardsNavBusy = false;
+          });
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;

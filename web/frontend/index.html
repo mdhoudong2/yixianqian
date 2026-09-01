@@ -2250,21 +2250,9 @@ createApp({
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
-        // 后台预取最后页：首卡左翻到尾即缓存命中零等待
-        const lastOff = Math.max(0, Math.floor((cardsTotal.value - 1) / 50) * 50);
-        if (lastOff > 0) prefetchPage(lastOff);
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
-    }
-    async function prefetchPage(offset){
-      // 后台预取（不动 UI）：命中缓存/越界/版本不符则跳过
-      if(offset < 0 || offset >= cardsTotal.value || cardsPageCache.has(offset)) return;
-      try{
-        const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
-        const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
-        cardsPageCache.set(offset, { cards: page, total: data.total, version: data.version });
-      }catch(e){}
     }
     function trimCardsWindow() {
       // 内存上限：窗口最多 150 张，防 Vue 深层代理放大导致 WebView 内存压力重载
@@ -2281,17 +2269,7 @@ createApp({
       if (cardsLoadingMore.value || cardsStart.value + cards.value.length >= cardsTotal.value) return;
       cardsLoadingMore.value = true;
       try {
-        const nextOff = cardsStart.value + cards.value.length;
-        const cached = cardsPageCache.get(nextOff);
-        if (cached && (cached.version == null || cardsVersion.value == null || cached.version === cardsVersion.value)) {
-          const existing = new Set(cards.value.map(c => c.openid));
-          cards.value = cards.value.concat(cached.cards.filter(c => !existing.has(c.openid)));
-          cardsTotal.value = cached.total;
-          trimCardsWindow();
-          cardsLoadingMore.value = false;
-          return;
-        }
-        const data = await api('/api/cards' + cardsQuery() + 'offset=' + nextOff + '&limit=50');
+        const data = await api('/api/cards' + cardsQuery() + 'offset=' + (cardsStart.value + cards.value.length) + '&limit=50');
         // users 快照版本变化：顺序已变，按当前全序位置重建窗口（不跳回第一张）
         if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
           cardsVersion.value = data.version;
@@ -2335,8 +2313,6 @@ createApp({
         cards.value = cached.cards;
         cardsTotal.value = cached.total;
         cardsStart.value = offset;
-        prefetchPage(offset - 50);
-        prefetchPage(offset + 50);
         return true;
       }
       const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
@@ -2352,33 +2328,11 @@ createApp({
       cards.value = page;
       cardsTotal.value = total;
       cardsStart.value = offset;
-      prefetchPage(offset - 50);
-      prefetchPage(offset + 50);
       return true;
-    }
-    function _prependPage(page, offset){
-      // 把一页前置到窗口头部，返回 prepend 条数（超过150张时以落地卡为中心裁窗）
-      const existing = new Set(cards.value.map(c => c.openid));
-      const prepend = page.filter(c => !existing.has(c.openid));
-      cards.value = prepend.concat(cards.value);
-      cardsStart.value = offset;
-      if (cards.value.length > 150) {
-        const landSeq = cardsStart.value + prepend.length - 1;
-        const start = Math.max(0, landSeq - 50);
-        const end = Math.min(cardsTotal.value, start + 150);
-        cards.value = cards.value.slice(start - cardsStart.value, end - cardsStart.value);
-        cardsStart.value = start;
-        return (landSeq - start) + 1;
-      }
-      return prepend.length;
     }
     async function loadPrevPage() {
       // 前置一页（往回连续翻）：prepend 前一页，返回 prepend 条数供 cardIndex 对齐
       const offset = Math.max(0, cardsStart.value - 50);
-      const cached = cardsPageCache.get(offset);
-      if (cached && (cached.version == null || cardsVersion.value == null || cached.version === cardsVersion.value)) {
-        return _prependPage(cached.cards, offset);
-      }
       const data = await api('/api/cards' + cardsQuery() + 'offset=' + offset + '&limit=50');
       if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
         cardsVersion.value = data.version;
@@ -2392,7 +2346,21 @@ createApp({
       if (data.version != null) cardsVersion.value = data.version;
       const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
       cardsPageCache.set(offset, { cards: page, total: data.total, version: data.version });
-      return _prependPage(page, offset);
+      const existing = new Set(cards.value.map(c => c.openid));
+      const prepend = page.filter(c => !existing.has(c.openid));
+      cards.value = prepend.concat(cards.value);
+      cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
+      cardsStart.value = offset;
+      // 以落地卡（上一张）为中心裁窗，避免 caller 再调 cardIndex 后错位
+      if (cards.value.length > 150) {
+        const landSeq = cardsStart.value + prepend.length - 1;
+        const start = Math.max(0, landSeq - 50);
+        const end = Math.min(cardsTotal.value, start + 150);
+        cards.value = cards.value.slice(start - cardsStart.value, end - cardsStart.value);
+        cardsStart.value = start;
+        return (landSeq - start) + 1;  // 落地卡在新窗口中的索引 +1 = 原 prep 语义
+      }
+      return prepend.length;
     }
     function switchCard(dir) {
       if (cardsNavBusy) return;
@@ -3821,7 +3789,7 @@ createApp({
       if(e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
       e.preventDefault();
       const now = Date.now();
-      if(now - lastKeyNavTs < 60) return;
+      if(now - lastKeyNavTs < 120) return;
       lastKeyNavTs = now;
       if(e.key === 'ArrowRight'){ switchCard(-1); }
       else { switchCard(1); }

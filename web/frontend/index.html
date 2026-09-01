@@ -2249,20 +2249,9 @@ createApp({
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
-        prefetchNextPage();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
-    }
-    async function prefetchNextPage(){
-      // 后台预取下一页：滑到窗口尾时缓存命中即时追加，消除停顿
-      const off = cardsStart.value + cards.value.length;
-      if (off >= cardsTotal.value || cardsPageCache.has(off)) return;
-      try {
-        const data = await api('/api/cards' + cardsQuery() + 'offset=' + off + '&limit=50');
-        const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
-        cardsPageCache.set(off, { cards: page, total: data.total, version: data.version });
-      } catch (e) {}
     }
     function trimCardsWindow() {
       // 内存上限：窗口最多 150 张，防 Vue 深层代理放大导致 WebView 内存压力重载
@@ -2299,7 +2288,6 @@ createApp({
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
         trimCardsWindow();
-        prefetchNextPage();
       }
       catch(e) { vant.showToast(e.message); }
       cardsLoadingMore.value = false;
@@ -2393,25 +2381,27 @@ createApp({
       const total = cardsTotal.value;
       if (total <= 1) return;
       const n = cards.value.length;
+      const seq = cardsStart.value + cardIndex.value;  // 当前全序位置
       if (dir < 0) {
         // 下一张
         if (cardIndex.value < n - 1) {
           slideDir.value = 'right';
           cardIndex.value += 1;
-        } else if (cardsStart.value + n < total) {
-          // 窗口尾且后面还有：加载下一页后前进（在途时直接等待，不重复挂回调）
-          if (cardsLoadingMore.value) return;
-          loadMoreCards().then(() => {
-            if (cardIndex.value < cards.value.length - 1) {
-              cardIndex.value += 1;
-              slideDir.value = 'right';
-            }
-          }).catch(() => {});
+        } else if (seq < total - 1) {
+          // 后面还有卡（按绝对位置判断）：触发加载下一页并等待
+          if (!cardsLoadingMore.value) {
+            loadMoreCards().then(() => {
+              if (cardIndex.value < cards.value.length - 1) {
+                cardIndex.value += 1;
+                slideDir.value = 'right';
+              }
+            }).catch(() => {});
+          }
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
         }
-        // 已是最后一张：不支持循环，提示后原地不动
+        // 真·最后一张：提示后原地不动
         boundaryToast('已是最后一张');
         return;
       } else if (dir > 0) {
@@ -2419,20 +2409,21 @@ createApp({
         if (cardIndex.value > 0) {
           slideDir.value = 'left';
           cardIndex.value -= 1;
-        } else if (cardsStart.value > 0) {
-          // 窗口头且前面还有：前置上一页（在途时直接等待，不重复挂回调）
-          if (cardsLoadingPrev) return;
-          loadPrevPage().then((prep) => {
-            if (prep > 1) {
-              cardIndex.value = prep - 1;
-              slideDir.value = 'left';
-            }
-          }).catch(() => {});
+        } else if (seq > 0) {
+          // 前面还有卡（按绝对位置判断）：前置上一页并等待
+          if (!cardsLoadingPrev) {
+            loadPrevPage().then((prep) => {
+              if (prep > 1) {
+                cardIndex.value = prep - 1;
+                slideDir.value = 'left';
+              }
+            }).catch(() => {});
+          }
           photoIndex.value = 0;
           photoSlideDir.value = '';
           return;
         }
-        // 已是第一张：不支持循环，提示后原地不动
+        // 真·第一张：提示后原地不动
         boundaryToast('已是第一张');
         return;
       }

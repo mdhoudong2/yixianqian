@@ -1592,6 +1592,8 @@ createApp({
     const loadingCards = ref(false);
     const cardIndex = ref(0);
     const cardsTotal = ref(0);
+    const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
+    const cardsLoadingMore = ref(false);
     const photoIndex = ref(0);
     const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
@@ -2103,6 +2105,8 @@ createApp({
       if (data.user && data.user.is_admin) setTimeout(()=>{ try{ refreshReportedCount(); }catch(e){} }, 600);
       if (data.register_form_url) registerFormUrl.value = data.register_form_url;
       cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
+      cardsTotal.value = (typeof data.cards_total === 'number' ? data.cards_total : cards.value.length);
+      cardsVersion.value = null;
       likesData.value = data.likes || { liked_me: [], mutual: [] };
       activities.value = data.activities || [];
       triggerPhotoLoading();
@@ -2216,20 +2220,46 @@ createApp({
         if (p[0]) preloadImage(p[0]);
       }
     }
+    function cardsQuery() {
+      const q = buildFilterQuery();
+      return q ? q + '&' : '?';
+    }
     async function loadCards(force) {
       if (cards.value.length && !force) return; // 缓存
       loadingCards.value = true;
       try {
-        const data = await api('/api/cards' + buildFilterQuery());
+        const data = await api('/api/cards' + cardsQuery() + 'offset=0&limit=50');
         // 已喜欢的人保留在牌堆（liked=true 置灰），justLiked 覆盖快照刷新窗口
         cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cards.value.length);
+        cardsVersion.value = (typeof data.version === 'number' ? data.version : null);
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
+    }
+    async function loadMoreCards() {
+      if (cardsLoadingMore.value || cards.value.length >= cardsTotal.value) return;
+      cardsLoadingMore.value = true;
+      try {
+        const data = await api('/api/cards' + cardsQuery() + 'offset=' + cards.value.length + '&limit=50');
+        // 快照版本变化：顺序已变，重头拉取避免重复/漏卡
+        if (typeof data.version === 'number' && cardsVersion.value !== null && data.version !== cardsVersion.value) {
+          cardsVersion.value = data.version;
+          await loadCards(true);
+          cardsLoadingMore.value = false;
+          return;
+        }
+        if (typeof data.version === 'number') cardsVersion.value = data.version;
+        const more = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+        const existing = new Set(cards.value.map(c => c.openid));
+        cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
+        cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
+      }
+      catch(e) { vant.showToast(e.message); }
+      cardsLoadingMore.value = false;
     }
     function onPhotoError() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
     // —— 卡片滑动（仅下半区） ——
@@ -2258,6 +2288,10 @@ createApp({
         cardIndex.value = (cardIndex.value - 1 + n) % n;
         photoIndex.value = 0;
         photoSlideDir.value = '';
+      }
+      // 千人级翻页：快翻到牌尾时后台拉下一页
+      if (cardIndex.value >= cards.value.length - 5 && cards.value.length < cardsTotal.value) {
+        loadMoreCards();
       }
     }
     function onCardTouchEnd(e) {

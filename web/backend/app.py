@@ -34,6 +34,7 @@ import bitable
 from config import *
 
 from lib import storage
+from lib.util import order_cards_seeded
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 
@@ -103,6 +104,31 @@ _snapshot_lock = threading.RLock()
 # 飞书表合法地没有记录时（如活动表空档期），空快照是权威结果，不应每次请求回退实时查询。
 _snapshot_loaded = set()
 _snapshot_last_ok = {}  # key -> timestamp of last successful fetch
+_snapshot_version = {}  # key -> int 版本号：每次成功交换 +1，供卡片缓存/分页种子使用
+_next_due = {}  # key -> 下次刷新到期时间（分表调度）
+
+# 分表刷新间隔（秒）：users 变化最频繁最重要；活动/观察员/分组低频
+_SNAPSHOT_INTERVALS = {
+    "users": 60,
+    "likes": 20,
+    "messages": 20,
+    "signups": 45,
+    "activities": 180,
+    "observers": 300,
+    "group_selections": 300,
+    "group_results": 300,
+}
+# 每表过期阈值（秒）：超过则读接口回退实时查询；低频表阈值放宽避免每次请求打飞书
+_SNAPSHOT_STALE = {
+    "users": 120,
+    "likes": 60,
+    "messages": 60,
+    "signups": 90,
+    "activities": 600,
+    "observers": 600,
+    "group_selections": 600,
+    "group_results": 600,
+}
 
 _SNAPSHOT_FETCHERS = {
     "users": lambda: bitable.raw_search_records(USER_TABLE_ID),
@@ -130,8 +156,11 @@ def refresh_snapshot_table(key):
             _snapshot[key] = data
             _snapshot_loaded.add(key)
             _snapshot_last_ok[key] = time.time()
+            _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
     except Exception as e:
         logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
+    if key == "users":
+        _rebuild_cards_cache()
 
 def refresh_snapshot_table_async(key):
     """后台线程异步刷新单个快照表（写接口回包后调用，避免同步刷新拖慢写请求）"""
@@ -145,14 +174,34 @@ def refresh_snapshot():
     for key in _SNAPSHOT_FETCHERS:
         refresh_snapshot_table(key)
 
+def _group_collecting():
+    """是否有活动正在「收集中」分组志愿（分组表仅在此时高频刷新）"""
+    for a in _snapshot.get("activities", []):
+        if bitable.get_select_value(a.get("fields", {}), F_ACTIVITY_GROUP_STATUS) == "收集中":
+            return True
+    return False
+
+_IMAGE_WARM_DUE = [0.0]
+
 def _snapshot_loop():
+    """分表调度：每 5s tick，到期的表才刷新，避免 8 表全量轮询打爆飞书。"""
     while True:
         try:
-            refresh_snapshot()
-            warm_image_cache()
+            now = time.time()
+            for key in _SNAPSHOT_FETCHERS:
+                interval = _SNAPSHOT_INTERVALS.get(key, 60)
+                # 分组表仅在收集中才高频；否则低频
+                if key.startswith("group_") and not _group_collecting():
+                    interval = 600
+                if now >= _next_due.get(key, 0):
+                    refresh_snapshot_table(key)
+                    _next_due[key] = time.time() + interval
+            if now >= _IMAGE_WARM_DUE[0]:
+                warm_image_cache()
+                _IMAGE_WARM_DUE[0] = time.time() + 300
         except Exception as e:
             logging.getLogger(__name__).warning(f"刷新本地快照失败: {e}")
-        time.sleep(SNAPSHOT_REFRESH_INTERVAL)
+        time.sleep(5)
 
 def start_snapshot_loop():
     threading.Thread(target=_snapshot_loop, daemon=True, name="snapshot-refresh").start()
@@ -162,12 +211,12 @@ def _snap(key):
         return list(_snapshot.get(key, []))
 
 def _snap_ready(key):
-    """该表快照是否已成功加载过（空表也算就绪，无需回退实时查询）；超过90s未刷新视为过期需回退实时。"""
+    """该表快照是否已成功加载过（空表也算就绪，无需回退实时查询）；超过阈值未刷新视为过期需回退实时。"""
     with _snapshot_lock:
         if key not in _snapshot_loaded:
             return False
         ts = _snapshot_last_ok.get(key)
-        if ts and time.time() - ts > 90:
+        if ts and time.time() - ts > _SNAPSHOT_STALE.get(key, 90):
             return False
         return True
 
@@ -283,6 +332,43 @@ def snap_active_users():
         return bitable.get_all_users()
     return [u for u in users
             if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "单身"]
+
+# ========== 卡片预计算缓存 ==========
+# 千人级优化：users 快照刷新时一次性格式化全部卡片 brief（纯文本），
+# /api/cards /api/home 只做过滤+排序+切片，不再现场拼 1000+ 张。
+_cards_cache = {}
+_cards_cache_version = 0
+_cards_cache_lock = threading.Lock()
+
+
+def _rebuild_cards_cache():
+    """按 users 快照重建卡片 brief 缓存（open_id -> brief dict）。"""
+    users = _snap("users")
+    cache = {}
+    for u in users:
+        fields = u.get("fields", {})
+        oid = bitable.get_field_text(fields, F_FEISHU_ID)
+        if not oid:
+            continue
+        try:
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
+            cache[oid] = brief
+        except Exception:
+            continue
+    with _cards_cache_lock:
+        _cards_cache.clear()
+        _cards_cache.update(cache)
+        global _cards_cache_version
+        _cards_cache_version += 1
+
+
+def _cached_brief(oid):
+    with _cards_cache_lock:
+        b = _cards_cache.get(oid)
+        return dict(b) if b else {}
+
 
 def snap_find_activity(act_id):
     activities = _snap("activities")
@@ -1775,9 +1861,11 @@ def home():
             continue
         if not is_observer and bitable.get_select_value(fields, F_GENDER) != target_gender:
             continue
-        brief = format_user_brief(u, include_openid=True, full=True)
-        brief["display_fields"] = build_display_fields(fields)
-        brief["subtitle"] = build_subtitle(fields)
+        brief = _cached_brief(uid)
+        if not brief:
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
         brief["liked"] = uid in liked_openids
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
@@ -1796,7 +1884,8 @@ def home():
         self_card = _build_self_card(open_id, active_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)
-    # 压测防护：首页聚合亦限 100 张，避免 1000 人全量打爆
+    # 压测防护：首页聚合亦限 100 张，避免 1000 人全量打爆；cards_total 供前端显示全量
+    cards_total = len(cards)
     if len(cards) > 100:
         cards = cards[:100]
     i_liked = snap_likes_by_initiator(open_id)
@@ -1842,6 +1931,7 @@ def home():
     return jsonify({
         "user": user_brief,
         "cards": cards,
+        "cards_total": cards_total,
         "likes": {"liked_me": liked_me_list, "mutual": mutual_list},
         "activities": activities,
         "register_form_url": REGISTER_FORM_URL,
@@ -2126,36 +2216,45 @@ def get_cards():
             continue
         if not pass_card_filters(fields, filters):
             continue
-        brief = format_user_brief(u, include_openid=True, full=True)
-        brief["display_fields"] = build_display_fields(fields)
-        brief["subtitle"] = build_subtitle(fields)
+        # 千人级：优先取预计算缓存，未命中才现场格式化
+        brief = _cached_brief(uid)
+        if not brief:
+            brief = format_user_brief(u, include_openid=True, full=True)
+            brief["display_fields"] = build_display_fields(fields)
+            brief["subtitle"] = build_subtitle(fields)
         brief["liked"] = uid in liked_openids
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
 
-    # 喜欢我的人随机前移到前30%，其余整副牌打乱
+    # 喜欢我的人随机散落前30%，其余整副牌打乱 —— 确定性种子：同 (用户+快照版本+筛选) 翻页不重不漏
     liked_me_openids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in snap_likes_by_target(open_id)
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
-    cards = order_cards(cards, liked_me_openids)
+    filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
+    ver = _snapshot_version.get("users", 0)
+    seed_str = f"{open_id}|{ver}|{filters_key}"
+    cards = order_cards_seeded(cards, liked_me_openids, seed_str)
     # 观察员预览自己的普通用户卡片（别人看我的样子），仅无任何筛选时置顶展示
     if is_observer and not gender_filter and not _has_active_filter(filters):
         self_card = _build_self_card(open_id, all_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)
-    # 分页：默认最多 100 张，防千人全量打爆内存/流量；前端可传 ?limit=20 分页，total 为筛选后全量
     total = len(cards)
     try:
-        limit = int(request.args.get("limit", "100"))
-    except:
-        limit = 100
+        offset = int(request.args.get("offset", "0"))
+    except Exception:
+        offset = 0
+    try:
+        limit = int(request.args.get("limit", "50"))
+    except Exception:
+        limit = 50
+    offset = max(0, offset)
     limit = max(1, min(limit, 200))
-    if len(cards) > limit:
-        cards = cards[:limit]
+    cards = cards[offset:offset + limit]
 
-    return jsonify({"cards": cards, "total": total})
+    return jsonify({"cards": cards, "total": total, "offset": offset, "limit": limit, "version": ver})
 
 # 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零

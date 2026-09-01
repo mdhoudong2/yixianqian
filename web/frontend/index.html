@@ -1396,6 +1396,10 @@
         </div>
       </div>
       <div class="filter-row">
+        <div class="filter-label">昵称</div>
+        <van-field v-model="filter.nickname" placeholder="如：张三" class="filter-input"></van-field>
+      </div>
+      <div class="filter-row">
         <div class="filter-label">用户ID</div>
         <div style="display:flex; align-items:center;">
           <span style="color:#969799; font-size:14px; margin-right:2px;">U-</span>
@@ -2141,6 +2145,7 @@ createApp({
     // 牵线卡片
     const filter = ref({
       gender: '',
+      nickname: '',
       user_id: '',
       height_min: '', height_max: '',
       age_min: '', age_max: '',
@@ -2153,12 +2158,14 @@ createApp({
     const slideDir = ref('');
     const hasActiveFilter = computed(() => {
       const f = filter.value;
-      return !!(f.gender || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.house.length || f.driving.length);
+      return !!(f.gender || f.nickname || f.user_id || f.height_min || f.height_max || f.age_min || f.age_max || f.education.length || f.income.length || f.house.length || f.driving.length);
     });
     function buildFilterQuery() {
       const f = filter.value;
       const parts = [];
       if (f.gender) parts.push('gender=' + encodeURIComponent(f.gender));
+      const nick = (f.nickname || '').trim();
+      if (nick) parts.push('nickname=' + encodeURIComponent(nick));
       ['height_min','height_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
       ['age_min','age_max'].forEach(k => { if (f[k] !== '') parts.push(k + '=' + encodeURIComponent(f[k])); });
       f.education.forEach(e => parts.push('education=' + encodeURIComponent(e)));
@@ -2176,7 +2183,7 @@ createApp({
       else arr.push(val);
     }
     async function resetFilter() {
-      filter.value = { gender: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], house: [], driving: [] };
+      filter.value = { gender: '', nickname: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], house: [], driving: [] };
       showFilter.value = false;
       cards.value = [];
       cardIndex.value = 0;

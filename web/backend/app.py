@@ -936,6 +936,7 @@ def pass_card_filters(fields, f):
                 return False
     # 文本包含匹配
     for key, fname in [
+        ("nickname", F_NICKNAME),
         ("user_id", F_USER_ID),
         ("church", F_CHURCH), ("native_place", F_NATIVE_PLACE), ("city", F_CITY),
         ("industry", F_INDUSTRY),
@@ -2090,6 +2091,7 @@ def get_cards():
             return None
 
     filters = {
+        "nickname": (request.args.get("nickname") or "").strip(),
         "user_id": (request.args.get("user_id") or "").strip(),
         "height_min": _num("height_min"), "height_max": _num("height_max"),
         "age_min": _num("age_min"), "age_max": _num("age_max"),

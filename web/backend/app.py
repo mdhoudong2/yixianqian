@@ -1,10 +1,12 @@
 """一线牵 H5 后端服务 - Flask"""
+import hmac as _hmac
 import io
 import json
 import logging
 import os
 import random
 import re
+import secrets as _secrets
 import sys
 import threading
 import time
@@ -475,6 +477,55 @@ def _load_session_into_g():
     g.yxq_open_id = sess["open_id"] if sess else None
     g.yxq_role = sess["role"] if sess else "user"
 
+
+# ========== 轻量限流与 CSRF 基础（P0） ==========
+
+_rate_store = {}
+_rate_lock = threading.Lock()
+
+def _check_rate(key, limit=5, window=60):
+    now = time.time()
+    with _rate_lock:
+        lst = _rate_store.get(key, [])
+        lst = [ts for ts in lst if now - ts < window]
+        if len(lst) >= limit:
+            _rate_store[key] = lst
+            return False
+        lst.append(now)
+        _rate_store[key] = lst
+        return True
+
+def _rate_limit(limit=5, window=60, key_prefix="rl"):
+    open_id = g.get("yxq_open_id") or request.remote_addr or "anon"
+    k = f"{key_prefix}:{open_id}:{request.path}"
+    if not _check_rate(k, limit, window):
+        return jsonify({"error": "操作过于频繁，请稍后再试"}), 429
+    return None
+
+# CSRF: 写接口要求自定义头 X-Requested-With，阻断跨站表单
+@app.before_request
+def _csrf_guard():
+    if request.method in ("POST", "PUT", "DELETE") and request.path.startswith("/api/"):
+        # 白名单：免登与埋点本身不需要 CSRF（埋点已在 nginx 限流）
+        if request.path.startswith("/api/auth/feishu") or request.path.startswith("/api/track") or request.path == "/api/version":
+            return None
+        # 仅对已登录写接口强制
+        if not g.get("yxq_open_id"):
+            return None
+        # 要求前端带自定义头，浏览器跨站表单无法设置
+        if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+            # 兼容部分旧 fetch 未带头时，允许带 X-CSRF-Token 双提交
+            csrf_cookie = request.cookies.get("yxq_csrf")
+            csrf_header = request.headers.get("X-CSRF-Token") or request.headers.get("X-CSRFToken")
+            if not (csrf_cookie and csrf_header and _hmac.compare_digest(csrf_cookie, csrf_header)):
+                return jsonify({"error": "CSRF校验失败，请刷新页面重试"}), 403
+
+
+def _ensure_csrf_cookie(resp):
+    if not request.cookies.get("yxq_csrf"):
+        resp.set_cookie("yxq_csrf", _secrets.token_urlsafe(32), httponly=False, secure=True, samesite="Lax", max_age=30*86400)
+    return resp
+app.after_request(_ensure_csrf_cookie)
 
 def require_login():
     """要求登录，返回open_id或None"""
@@ -1585,6 +1636,8 @@ def _tokens_has_face(tokens, min_area=0.003):
 @app.route("/api/image/<file_token>")
 def proxy_image(file_token):
     """代理飞书多维表格附件图片（带磁盘缓存，首次下载后直接读本地）"""
+    if not require_login():
+        return jsonify({"error": "未登录"}), 401
     # 1. 检查磁盘缓存（旧的大文件 >1MB 删除，触发重新下载并压缩）
     cached = _get_cached_image(file_token)
     if cached:
@@ -1972,6 +2025,9 @@ def activity_detail(activity_id):
 
 @app.route("/api/activities/<activity_id>/signup", methods=["POST"])
 def signup(activity_id):
+    _rl = _rate_limit(limit=10, window=60, key_prefix="signup")
+    if _rl:
+        return _rl
     """报名（秒提交版）：查重/上限走快照，同步仅 1 次写入；
     人数与满员状态由机器人 auto_update_activity_signup_count 每30秒对账修正"""
     open_id = require_login()
@@ -2316,6 +2372,9 @@ _spool_boot()
 
 @app.route("/api/like", methods=["POST"])
 def like_user():
+    _rl = _rate_limit(limit=10, window=60, key_prefix="like")
+    if _rl:
+        return _rl
     """喜欢某人（v6：校验→spool落盘→立即回包；爱心为事件计算值，0秒精确）"""
     open_id = require_login()
     if not open_id:
@@ -2430,6 +2489,9 @@ def like_user():
 
 @app.route("/api/feedback", methods=["POST"])
 def feedback():
+    _rl = _rate_limit(limit=10, window=60, key_prefix="feedback")
+    if _rl:
+        return _rl
     """卡片反馈：写举报表 + 通知管理员"""
     open_id = require_login()
     if not open_id:
@@ -2503,6 +2565,9 @@ def validate_suggestion(data):
 
 @app.route("/api/suggestions", methods=["POST"])
 def suggestions():
+    _rl = _rate_limit(limit=10, window=60, key_prefix="suggest")
+    if _rl:
+        return _rl
     """产品意见反馈：写意见反馈表 + 通知管理员（一期仅收集，不做站内回复）"""
     open_id = require_login()
     if not open_id:
@@ -2733,6 +2798,9 @@ def list_received_messages():
 
 @app.route("/api/messages", methods=["POST"])
 def create_message():
+    _rl = _rate_limit(limit=20, window=60, key_prefix="msg")
+    if _rl:
+        return _rl
     """发留言/回帖（固定显示昵称+用户ID，无匿名）"""
     open_id = require_login()
     if not open_id:
@@ -3723,6 +3791,9 @@ def _write_photos(user, tokens):
 
 @app.route("/api/profile/photo", methods=["POST"])
 def update_profile_photo():
+    _rl = _rate_limit(limit=10, window=60, key_prefix="photo")
+    if _rl:
+        return _rl
     """新增一张照片：上传图片并追加到「个人照片」（牵线首页可切换展示的多张照片）。"""
     open_id = require_login()
     if not open_id:

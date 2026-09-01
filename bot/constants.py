@@ -10,32 +10,49 @@ IS_DEV = os.environ.get("YIXIANQIAN_ENV", "prod") == "dev"
 
 import local_config as _cfg
 
-if IS_DEV:
-    APP_ID = _cfg.ASSISTANT_APP_ID
-    APP_SECRET = _cfg.ASSISTANT_APP_SECRET
-else:
-    APP_ID = _cfg.FEISHU_APP_ID
-    APP_SECRET = _cfg.FEISHU_APP_SECRET
 
-# 管理员open_id列表（可添加多个）
-ADMIN_OPEN_IDS = _cfg.ADMIN_OPEN_IDS
+def _cfg_get(name, default=None):
+    """环境变量优先于 local_config.py，便于 systemd EnvironmentFile 注入密钥。"""
+    v = os.environ.get(name)
+    if v not in (None, ""):
+        return v
+    return getattr(_cfg, name, default)
+
+
+def _cfg_list(name, default=None):
+    """列表型配置：ENV 用逗号分隔，优先级高于文件。"""
+    v = os.environ.get(name)
+    if v not in (None, ""):
+        return [x.strip() for x in v.split(",") if x.strip()]
+    return getattr(_cfg, name, default)
+
+
+if IS_DEV:
+    APP_ID = _cfg_get("ASSISTANT_APP_ID", getattr(_cfg, "ASSISTANT_APP_ID", ""))
+    APP_SECRET = _cfg_get("ASSISTANT_APP_SECRET", getattr(_cfg, "ASSISTANT_APP_SECRET", ""))
+else:
+    APP_ID = _cfg_get("FEISHU_APP_ID", getattr(_cfg, "FEISHU_APP_ID", ""))
+    APP_SECRET = _cfg_get("FEISHU_APP_SECRET", getattr(_cfg, "FEISHU_APP_SECRET", ""))
+
+# 管理员open_id列表（可添加多个）—— 支持 ENV: ADMIN_OPEN_IDS=ou_xxx,ou_yyy
+ADMIN_OPEN_IDS = _cfg_list("ADMIN_OPEN_IDS", getattr(_cfg, "ADMIN_OPEN_IDS", []))
 
 # ==================== 多维表格链接配置（默认生产，测试服在 local_config.py 覆盖） ====================
-REGISTER_FORM_URL = getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf")
-LIKE_FORM_URL = getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b")
+REGISTER_FORM_URL = _cfg_get("REGISTER_FORM_URL", getattr(_cfg, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf"))
+LIKE_FORM_URL = _cfg_get("LIKE_FORM_URL", getattr(_cfg, "LIKE_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnNhTZVdSTcmVRzRTwZg0E0b"))
 # 观察员注册（非单身看热闹，限权）：管理员批量生成的唯一邀请码 + 独立表单
-OBSERVER_FORM_URL = getattr(_cfg, "OBSERVER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnaUgAS9uNQ9YqApwlp4jXlh")
+OBSERVER_FORM_URL = _cfg_get("OBSERVER_FORM_URL", getattr(_cfg, "OBSERVER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnaUgAS9uNQ9YqApwlp4jXlh"))
 
 # ==================== 多维表格配置 ====================
-BASE_TOKEN = _cfg.BASE_TOKEN
+BASE_TOKEN = _cfg_get("BASE_TOKEN", getattr(_cfg, "BASE_TOKEN", ""))
 # 表 ID 默认值 = 生产环境；测试服在 local_config.py 覆盖同名变量即可（getattr 回退默认值）。
 # 复制多维表格到新 base 后表 ID 会变，需在 local_config.py 里按新值填。
-USER_TABLE_ID = getattr(_cfg, "USER_TABLE_ID", "tblsecbZZv0thaPe")
-OBSERVER_TABLE_ID = getattr(_cfg, "OBSERVER_TABLE_ID", "")  # 村情六处独立表（观察员，非普通用户）
-LIKE_TABLE_ID = getattr(_cfg, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA")
-ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu")
-SIGNUP_TABLE_ID = getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
-MATCH_TABLE_ID = getattr(_cfg, "MATCH_TABLE_ID", "tbl8eu9Y85tQZCu7")
+USER_TABLE_ID = _cfg_get("USER_TABLE_ID", getattr(_cfg, "USER_TABLE_ID", "tblsecbZZv0thaPe"))
+OBSERVER_TABLE_ID = _cfg_get("OBSERVER_TABLE_ID", getattr(_cfg, "OBSERVER_TABLE_ID", ""))  # 村情六处独立表（观察员，非普通用户）
+LIKE_TABLE_ID = _cfg_get("LIKE_TABLE_ID", getattr(_cfg, "LIKE_TABLE_ID", "tblaciMZHRQH7QBA"))
+ACTIVITY_TABLE_ID = _cfg_get("ACTIVITY_TABLE_ID", getattr(_cfg, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu"))
+SIGNUP_TABLE_ID = _cfg_get("SIGNUP_TABLE_ID", getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t"))
+MATCH_TABLE_ID = _cfg_get("MATCH_TABLE_ID", getattr(_cfg, "MATCH_TABLE_ID", "tbl8eu9Y85tQZCu7"))
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
@@ -75,8 +92,8 @@ FIELD_MATCH_REASON = "推荐理由"
 FIELD_MATCH_STATUS = "推荐状态"
 
 # 分组功能
-GROUP_SELECT_TABLE = getattr(_cfg, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ")
-GROUP_RESULT_TABLE = getattr(_cfg, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB")
+GROUP_SELECT_TABLE = _cfg_get("GROUP_SELECT_TABLE", getattr(_cfg, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ"))
+GROUP_RESULT_TABLE = _cfg_get("GROUP_RESULT_TABLE", getattr(_cfg, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB"))
 FIELD_GS_ACTIVITY_ID = "活动ID"
 FIELD_GS_SELECTOR_OID = "选择人open_id"
 FIELD_GS_SELECTOR_NAME = "选择人昵称"
@@ -100,11 +117,11 @@ STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身�
 INITIAL_HEARTS = 3
 MAX_HEARTS = 30
 # H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://testapp.nantou.love
-H5_BASE_URL = getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love")
+H5_BASE_URL = _cfg_get("H5_BASE_URL", getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love"))
 
 # ==================== 本地记录文件 ====================
 # bot 与 H5 共享的运行时数据目录（可在 local_config.py 覆盖，默认取仓库下 data/）
-SHARED_DATA_DIR = getattr(_cfg, "SHARED_DATA_DIR", None) or os.path.join(_REPO_ROOT, "data")
+SHARED_DATA_DIR = _cfg_get("SHARED_DATA_DIR", getattr(_cfg, "SHARED_DATA_DIR", None)) or os.path.join(_REPO_ROOT, "data")
 os.makedirs(SHARED_DATA_DIR, exist_ok=True)
 BINDING_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_bindings.json")
 NOTIFIED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notified.json")  # 记录已发送通知的记录ID，避免重复

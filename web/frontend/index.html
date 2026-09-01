@@ -431,7 +431,7 @@
   </div>
   <template v-else>
     <div class="card-top-left">
-      <div class="card-counter">{{ cards.length ? (cardIndex + 1) + ' / ' + cards.length : '0 / 0' }}</div>
+      <div class="card-counter">{{ cards.length ? (cardIndex + 1) + ' / ' + (cardsTotal || cards.length) : '0 / 0' }}</div>
       <div class="hearts-badge" v-if="!isObserver">💕 {{ user.hearts }}</div>
     </div>
     <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
@@ -1591,6 +1591,7 @@ createApp({
     const cards = ref([]);
     const loadingCards = ref(false);
     const cardIndex = ref(0);
+    const cardsTotal = ref(0);
     const photoIndex = ref(0);
     const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
@@ -2222,6 +2223,7 @@ createApp({
         const data = await api('/api/cards' + buildFilterQuery());
         // 已喜欢的人保留在牌堆（liked=true 置灰），justLiked 覆盖快照刷新窗口
         cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+        cardsTotal.value = (typeof data.total === 'number' ? data.total : cards.value.length);
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
@@ -3520,7 +3522,7 @@ createApp({
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup,
-      cards, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
+      cards, cardsTotal, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,

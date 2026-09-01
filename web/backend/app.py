@@ -2142,7 +2142,8 @@ def get_cards():
         self_card = _build_self_card(open_id, all_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)
-    # 分页：默认最多 100 张，防千人全量打爆内存/流量；前端可传 ?limit=20 分页
+    # 分页：默认最多 100 张，防千人全量打爆内存/流量；前端可传 ?limit=20 分页，total 为筛选后全量
+    total = len(cards)
     try:
         limit = int(request.args.get("limit", "100"))
     except:
@@ -2151,7 +2152,7 @@ def get_cards():
     if len(cards) > limit:
         cards = cards[:limit]
 
-    return jsonify({"cards": cards, "total": len(cards)})
+    return jsonify({"cards": cards, "total": total})
 
 # 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
 # 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零

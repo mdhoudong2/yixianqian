@@ -2253,18 +2253,6 @@ createApp({
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
     }
-    function trimCardsWindow() {
-      // 内存上限：窗口最多 150 张，防 Vue 深层代理放大导致 WebView 内存压力重载
-      // 起点必须 50 对齐：否则 cardsStart+len 非倍数，取页错位导致每页边界都现取等待
-      const MAX = 150;
-      if (cards.value.length <= MAX) return;
-      const seqCur = cardsStart.value + cardIndex.value;
-      const start = Math.max(0, Math.floor((seqCur - 50) / 50) * 50);
-      const end = Math.min(cardsTotal.value, start + MAX);
-      cards.value = cards.value.slice(start - cardsStart.value, end - cardsStart.value);
-      cardsStart.value = start;
-      cardIndex.value = seqCur - start;
-    }
     async function loadMoreCards() {
       if (cardsLoadingMore.value || cardsStart.value + cards.value.length >= cardsTotal.value) return;
       cardsLoadingMore.value = true;
@@ -2287,7 +2275,6 @@ createApp({
         const existing = new Set(cards.value.map(c => c.openid));
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
-        trimCardsWindow();
       }
       catch(e) { vant.showToast(e.message); }
       cardsLoadingMore.value = false;
@@ -2358,15 +2345,6 @@ createApp({
       cards.value = prepend.concat(cards.value);
       cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
       cardsStart.value = offset;
-      // 以落地卡（上一张）为中心裁窗，避免 caller 再调 cardIndex 后错位
-      if (cards.value.length > 150) {
-        const landSeq = cardsStart.value + prepend.length - 1;
-        const start = Math.max(0, landSeq - 50);
-        const end = Math.min(cardsTotal.value, start + 150);
-        cards.value = cards.value.slice(start - cardsStart.value, end - cardsStart.value);
-        cardsStart.value = start;
-        return (landSeq - start) + 1;  // 落地卡在新窗口中的索引 +1 = 原 prep 语义
-      }
       return prepend.length;
       } finally { cardsLoadingPrev = false; }
     }

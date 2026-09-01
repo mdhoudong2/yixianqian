@@ -293,6 +293,8 @@
   .reported-status-done { color:#969799; font-size:12px; }
   .msg-content { font-size: 14px; color: #323233; margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
   .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; }
+  .msg-reply-tag { color: #969799; font-size: 13px; }
+  .msg-reply-target { color: #ff6b81; font-weight: 600; }
   .msg-reply-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px 0; font-size: 12px; color: #ff6b81; }
   .msg-reply-cancel { color: #969799; cursor: pointer; }
   .msg-input-bar { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid #f2f3f5; }
@@ -351,6 +353,7 @@
   .van-theme-dark .card-tabs, .van-theme-dark .picker-header, .van-theme-dark .msg-input-bar,
   .van-theme-dark .back-nav, .van-theme-dark .msg-thread, .van-theme-dark .modal-divider { border-color: #3a3a3e; }
   .van-theme-dark .msg-reply { border-left-color: rgba(255,107,129,0.35); }
+  .van-theme-dark .msg-reply-target { color: #ff8fa1; }
   .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
   .van-theme-dark .profile-photo-section img { border-color: #3a3a3e; }
   .van-theme-dark .msg-input { color: #f5f5f5; }
@@ -492,7 +495,7 @@
                   <span v-else-if="!m.is_mine" class="msg-report" @click="openReportDialog(m)">举报</span>
                 </div>
                 <div class="msg-content">{{ m.content }}</div>
-                <div class="msg-reply-btn" @click="replyTo(m)">回复</div>
+                <div class="msg-reply-btn" @click="replyTo(m, m)">回复</div>
               </div>
               <div v-for="r in m.replies" :key="r.id" class="msg-item msg-reply">
                 <div class="msg-head">
@@ -503,8 +506,8 @@
                   <span v-if="r.can_delete" class="msg-del" @click="deleteMessage(r)">删除</span>
                   <span v-else-if="!r.is_mine" class="msg-report" @click="openReportDialog(r)">举报</span>
                 </div>
-                <div class="msg-content">{{ r.content }}</div>
-                <div class="msg-reply-btn" @click="replyTo(m)">回复</div>
+                <div class="msg-content"><span v-if="r.reply_to_nickname && r.reply_to_id && r.reply_to_id !== m.id" class="msg-reply-tag">回复 <span class="msg-reply-target">@{{ r.reply_to_nickname }}</span><span v-if="r.reply_to_uid"> · {{ r.reply_to_uid }}</span>：</span>{{ r.content }}</div>
+                <div class="msg-reply-btn" @click="replyTo(r, m)">回复</div>
               </div>
             </div>
           </div>
@@ -3211,7 +3214,10 @@ createApp({
       const text = msgText.value.trim();
       if (!text) { vant.showToast('请先输入留言内容'); return; }
       if (!c || !c.openid) { vant.showToast('卡片信息异常，请左右切换到其他用户后重试'); return; }
-      const parentId = replyTarget.value ? replyTarget.value.id : '';
+      const parentId = replyTarget.value ? (replyTarget.value.parentId || replyTarget.value.id) : '';
+      const replyToId = replyTarget.value ? replyTarget.value.id : '';
+      const replyToNickname = replyTarget.value ? replyTarget.value.author_nickname : '';
+      const replyToUid = replyTarget.value ? replyTarget.value.author_uid : '';
       const tempId = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
       const now = Date.now();
       const tempMsg = {
@@ -3221,6 +3227,9 @@ createApp({
         author_avatar: (user.value && user.value.photo) || '',
         content: text,
         parent_id: parentId,
+        reply_to_id: replyToId,
+        reply_to_nickname: replyToNickname,
+        reply_to_uid: replyToUid,
         created_at: now,
         is_mine: true,
         can_delete: true,
@@ -3245,7 +3254,7 @@ createApp({
       try {
         const data = await api('/api/messages', {
           method: 'POST',
-          body: JSON.stringify({ target_openid: c.openid, content: savedText, parent_id: parentId })
+          body: JSON.stringify({ target_openid: c.openid, content: savedText, parent_id: parentId, reply_to_id: replyToId })
         });
         realId = data && data.id;
         if (realId) {
@@ -3403,9 +3412,16 @@ createApp({
         loadingReceivedMessages.value = false;
       }
     }
-    function replyTo(m) {
-      replyTarget.value = m;
+    function replyTo(target, threadRoot) {
+      if (!target) return;
+      const parent = threadRoot || target;
+      // 将目标留言附上 parentId 供发送时区分 thread 与 reply_to
+      replyTarget.value = { ...target, parentId: parent.id };
       msgText.value = '';
+      // 聚焦输入框
+      nextTick(() => {
+        try { const el = document.querySelector('.msg-input'); if (el) el.focus(); } catch (_) {}
+      });
     }
     function cancelReply() {
       replyTarget.value = null;

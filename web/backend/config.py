@@ -87,6 +87,10 @@ F_MSG_PARENT_ID = "父留言ID"
 F_MSG_CONTENT = "内容"
 F_MSG_CREATED_AT = "创建时间"
 F_MSG_STATUS = "状态"
+F_MSG_REPLY_TO_OID = "被回复人open_id"
+F_MSG_REPLY_TO_NICKNAME = "被回复人昵称"
+F_MSG_REPLY_TO_UID = "被回复人用户ID"
+F_MSG_REPLY_TO_ID = "被回复留言ID"
 
 # 简洁行字段：不标注字段名，用「·」连接显示（如 U-0003 · 玛利亚 · 97-10 · 190 · 本科）
 SIMPLE_FIELDS = [

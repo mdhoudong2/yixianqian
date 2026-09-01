@@ -2294,7 +2294,17 @@ createApp({
         const more = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardsPageCache.set(cardsStart.value + cards.value.length, { cards: more, total: data.total, version: data.version });
         const existing = new Set(cards.value.map(c => c.openid));
-        cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
+        const fresh = more.filter(c => !existing.has(c.openid));
+        if (!fresh.length && cardsStart.value + cards.value.length < cardsTotal.value) {
+          // 全部重复（顺序漂移/服务重启换序）：按当前全序位置重建窗口，避免卡死
+          const seqCur = cardsStart.value + cardIndex.value;
+          const off = Math.floor(seqCur / 50) * 50;
+          const ok = await loadPageAt(off);
+          if (ok) cardIndex.value = Math.min(seqCur - off, cards.value.length - 1);
+          cardsLoadingMore.value = false;
+          return;
+        }
+        cards.value = cards.value.concat(fresh);
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
         trimCardsWindow();
       }
@@ -2333,6 +2343,7 @@ createApp({
       }
       if (data.version != null) cardsVersion.value = data.version;
       const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      if (!page.length) return false;  // 空页绝不替换窗口（防 0/0）
       const total = (typeof data.total === 'number' ? data.total : page.length);
       cardsPageCache.set(offset, { cards: page, total, version: data.version });
       cards.value = page;

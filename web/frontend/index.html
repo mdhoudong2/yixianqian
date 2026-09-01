@@ -283,16 +283,17 @@
   .msg-avatar-sm { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #fff0f3; }
   .msg-avatar-sm-fallback { display: flex; align-items: center; justify-content: center; color: #ff6b81; font-size: 14px; font-weight: 600; }
   .msg-author { font-size: 13px; font-weight: 600; color: #ff6b81; }
-  .msg-time { font-size: 11px; color: #c8c9cc; flex: 1; }
+  .msg-time { font-size: 11px; color: #c8c9cc; }
   .msg-del { font-size: 12px; color: #969799; cursor: pointer; }
   .msg-report { font-size: 12px; color: #ee0a24; cursor: pointer; margin-left: 6px; }
   .msg-report:active { opacity: 0.7; }
+  .msg-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
   .reported-msg-content { background:#fff0f3; color:#323233; padding:6px 10px; border-radius:8px; margin-top:6px; white-space:normal; word-break:break-word; }
   .van-theme-dark .reported-msg-content { background: rgba(255,107,129,0.18); color:#f5f5f5; }
   .reported-status-pending { color:#ff6b81; font-size:12px; }
   .reported-status-done { color:#969799; font-size:12px; }
   .msg-content { font-size: 14px; color: #323233; margin-top: 4px; word-break: break-word; white-space: pre-wrap; }
-  .msg-reply-btn { font-size: 12px; color: #969799; margin-top: 4px; cursor: pointer; text-align: right; display: block; }
+  .msg-reply-btn { font-size: 12px; color: #969799; cursor: pointer; }
   .msg-reply-tag { color: #969799; font-size: 13px; }
   .msg-reply-target { color: #ff6b81; font-weight: 600; }
   .msg-reply-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 4px 0; font-size: 12px; color: #ff6b81; }
@@ -490,24 +491,30 @@
                   <img v-if="m.author_avatar" class="msg-avatar-sm" :src="m.author_avatar" alt="">
                   <span v-else class="msg-avatar-sm msg-avatar-sm-fallback">{{ (m.author_nickname || '?')[0] }}</span>
                   <span class="msg-author">{{ m.author_nickname }} · {{ m.author_uid }}</span>
-                  <span class="msg-time">{{ fmtTimeAgo(m.created_at) }}</span>
+                  <span style="flex:1"></span>
                   <span v-if="m.can_delete" class="msg-del" @click="deleteMessage(m)">删除</span>
                   <span v-else-if="!m.is_mine" class="msg-report" @click="openReportDialog(m)">举报</span>
                 </div>
                 <div class="msg-content">{{ m.content }}</div>
-                <div class="msg-reply-btn" @click="replyTo(m, m)">回复</div>
+                <div class="msg-foot">
+                  <span class="msg-time">{{ fmtTimeAgo(m.created_at) }}</span>
+                  <span class="msg-reply-btn" @click="replyTo(m, m)">回复</span>
+                </div>
               </div>
               <div v-for="r in m.replies" :key="r.id" class="msg-item msg-reply">
                 <div class="msg-head">
                   <img v-if="r.author_avatar" class="msg-avatar-sm" :src="r.author_avatar" alt="">
                   <span v-else class="msg-avatar-sm msg-avatar-sm-fallback">{{ (r.author_nickname || '?')[0] }}</span>
                   <span class="msg-author">{{ r.author_nickname }} · {{ r.author_uid }}</span>
-                  <span class="msg-time">{{ fmtTimeAgo(r.created_at) }}</span>
+                  <span style="flex:1"></span>
                   <span v-if="r.can_delete" class="msg-del" @click="deleteMessage(r)">删除</span>
                   <span v-else-if="!r.is_mine" class="msg-report" @click="openReportDialog(r)">举报</span>
                 </div>
                 <div class="msg-content"><span v-if="r.reply_to_nickname && r.reply_to_id && r.reply_to_id !== m.id" class="msg-reply-tag">回复 <span class="msg-reply-target">@{{ r.reply_to_nickname }}<span v-if="r.reply_to_uid"> · {{ r.reply_to_uid }}</span></span>：</span>{{ r.content }}</div>
-                <div class="msg-reply-btn" @click="replyTo(r, m)">回复</div>
+                <div class="msg-foot">
+                  <span class="msg-time">{{ fmtTimeAgo(r.created_at) }}</span>
+                  <span class="msg-reply-btn" @click="replyTo(r, m)">回复</span>
+                </div>
               </div>
             </div>
           </div>

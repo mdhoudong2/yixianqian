@@ -2233,7 +2233,7 @@ def get_cards():
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
     filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
-    ver = _snapshot_version.get("users", 0)
+    ver = f"{_snapshot_version.get('users', 0)}.{_snapshot_version.get('likes', 0)}"
     seed_str = f"{open_id}|{ver}|{filters_key}"
     cards = order_cards_seeded(cards, liked_me_openids, seed_str)
     # 观察员预览自己的普通用户卡片（别人看我的样子），仅无任何筛选时置顶展示

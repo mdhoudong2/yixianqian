@@ -2232,7 +2232,7 @@ createApp({
         // 已喜欢的人保留在牌堆（liked=true 置灰），justLiked 覆盖快照刷新窗口
         cards.value = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cards.value.length);
-        cardsVersion.value = (typeof data.version === 'number' ? data.version : null);
+        cardsVersion.value = (data.version != null ? data.version : null);
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
@@ -2246,13 +2246,13 @@ createApp({
       try {
         const data = await api('/api/cards' + cardsQuery() + 'offset=' + cards.value.length + '&limit=50');
         // 快照版本变化：顺序已变，重头拉取避免重复/漏卡
-        if (typeof data.version === 'number' && cardsVersion.value !== null && data.version !== cardsVersion.value) {
+        if (data.version != null && cardsVersion.value !== null && data.version !== cardsVersion.value) {
           cardsVersion.value = data.version;
           await loadCards(true);
           cardsLoadingMore.value = false;
           return;
         }
-        if (typeof data.version === 'number') cardsVersion.value = data.version;
+        if (data.version != null) cardsVersion.value = data.version;
         const more = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
         const existing = new Set(cards.value.map(c => c.openid));
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));

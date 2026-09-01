@@ -2249,9 +2249,20 @@ createApp({
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
+        prefetchNextPage();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
+    }
+    async function prefetchNextPage(){
+      // 后台预取下一页：滑到窗口尾时缓存命中即时追加，消除停顿
+      const off = cardsStart.value + cards.value.length;
+      if (off >= cardsTotal.value || cardsPageCache.has(off)) return;
+      try {
+        const data = await api('/api/cards' + cardsQuery() + 'offset=' + off + '&limit=50');
+        const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+        cardsPageCache.set(off, { cards: page, total: data.total, version: data.version });
+      } catch (e) {}
     }
     function trimCardsWindow() {
       // 内存上限：窗口最多 150 张，防 Vue 深层代理放大导致 WebView 内存压力重载
@@ -2287,6 +2298,7 @@ createApp({
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
         trimCardsWindow();
+        prefetchNextPage();
       }
       catch(e) { vant.showToast(e.message); }
       cardsLoadingMore.value = false;
@@ -2350,6 +2362,7 @@ createApp({
       }
       if (data.version != null) cardsVersion.value = data.version;
       const page = (data.cards || []).map(c => ({ ...c, liked: !!(c.liked || justLiked.has(c.openid)) }));
+      if (!page.length) return 0;  // 空页：保持窗口不动
       cardsPageCache.set(offset, { cards: page, total: data.total, version: data.version });
       const existing = new Set(cards.value.map(c => c.openid));
       const prepend = page.filter(c => !existing.has(c.openid));
@@ -2367,6 +2380,13 @@ createApp({
       }
       return prepend.length;
       } finally { cardsLoadingPrev = false; }
+    }
+    let lastBoundaryToastTs = 0;
+    function boundaryToast(msg){
+      const now = Date.now();
+      if (now - lastBoundaryToastTs < 1500) return;
+      lastBoundaryToastTs = now;
+      vant.showToast({ message: msg, position: 'top' });
     }
     function switchCard(dir) {
       const total = cardsTotal.value;
@@ -2389,7 +2409,8 @@ createApp({
           photoSlideDir.value = '';
           return;
         }
-        // 已是最后一张：不支持循环，原地不动
+        // 已是最后一张：不支持循环，提示后原地不动
+        boundaryToast('已是最后一张');
         return;
       } else if (dir > 0) {
         // 上一张
@@ -2408,7 +2429,8 @@ createApp({
           photoSlideDir.value = '';
           return;
         }
-        // 已是第一张：不支持循环，原地不动
+        // 已是第一张：不支持循环，提示后原地不动
+        boundaryToast('已是第一张');
         return;
       }
       photoIndex.value = 0;

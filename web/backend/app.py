@@ -1,4 +1,5 @@
 """一线牵 H5 后端服务 - Flask"""
+import hashlib
 import hmac as _hmac
 import io
 import json
@@ -341,9 +342,23 @@ _cards_cache_version = 0
 _cards_cache_lock = threading.Lock()
 
 
+_last_users_sig = [None]
+
+
 def _rebuild_cards_cache():
-    """按 users 快照重建卡片 brief 缓存（open_id -> brief dict）。"""
+    """按 users 快照重建卡片 brief 缓存（open_id -> brief dict）。
+
+    千人级优化：先对原始记录做 md5 签名，未变化则完全跳过重建（省 1-3s CPU），
+    杜绝每 60s 的 GIL 长占导致翻页边界卡顿。
+    """
     users = _snap("users")
+    try:
+        sig = hashlib.md5(json.dumps(users, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    except Exception:
+        sig = None
+    if sig is not None and sig == _last_users_sig[0]:
+        return
+    _last_users_sig[0] = sig
     cache = {}
     for u in users:
         fields = u.get("fields", {})

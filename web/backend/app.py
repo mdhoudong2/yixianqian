@@ -1,6 +1,6 @@
 """一线牵 H5 后端服务 - Flask"""
-import hmac as _hmac
 import hashlib
+import hmac as _hmac
 import io
 import json
 import logging

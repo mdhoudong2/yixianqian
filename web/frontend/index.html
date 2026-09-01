@@ -208,7 +208,8 @@
   .photo-viewer-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; cursor: grab; }
   .photo-viewer-track:active { cursor: grabbing; }
   .photo-viewer-item { flex: 0 0 100%; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-  .photo-viewer-item img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .photo-viewer-item img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center center; will-change: transform; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .photo-viewer-item img.viewer-zoom-anim { transition: transform 0.2s ease-out; }
   .photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; will-change: opacity, transform; animation: viewerFadeIn 0.25s ease; }
   .photo-viewer img.viewer-slide-left { animation: viewerSlideLeft 0.28s ease; }
   .photo-viewer img.viewer-slide-right { animation: viewerSlideRight 0.28s ease; }
@@ -1301,9 +1302,9 @@
 <div v-if="showPhotoViewer" class="photo-viewer" @click="closePhotoViewer">
   <div class="photo-viewer-close" @click.stop="closePhotoViewer">✕</div>
   <div class="photo-viewer-nav prev" v-if="viewerPhotos.length > 1" @click.stop="viewerPrev">‹</div>
-  <div class="photo-viewer-track" :style="{ transform: 'translateX(-' + viewerIndex * 100 + '%)' }" @touchstart="onViewerTouchStart" @touchmove="onViewerTouchMove" @touchend="onViewerTouchEnd" @mousedown="onViewerMouseDown" @mousemove="onViewerMouseMove" @mouseup="onViewerMouseUp" @mouseleave="onViewerMouseLeave">
+  <div class="photo-viewer-track" :style="{ transform: 'translateX(-' + viewerIndex * 100 + '%)' }" @touchstart="onViewerTouchStart" @touchmove.prevent="onViewerTouchMove" @touchend="onViewerTouchEnd" @mousedown="onViewerMouseDown" @mousemove="onViewerMouseMove" @mouseup="onViewerMouseUp" @mouseleave="onViewerMouseLeave" @wheel.prevent="onViewerWheel">
     <div v-for="(p,i) in viewerPhotos" :key="i" class="photo-viewer-item" @click.stop="onViewerImageClick">
-      <img :src="p" alt="">
+      <img :src="p" alt="" :style="viewerImgStyle()">
     </div>
   </div>
   <div class="photo-viewer-nav next" v-if="viewerPhotos.length > 1" @click.stop="viewerNext">›</div>
@@ -1956,6 +1957,9 @@ createApp({
     const viewerPhotos = ref([]);
     const viewerIndex = ref(0);
     const viewerSlideDir = ref('');
+    const viewerScale = ref(1);
+    const viewerTx = ref(0);
+    const viewerTy = ref(0);
 
     // 进入牵线前的页面（喜欢完最后一人后返回）
     const prevPage = ref('likes');
@@ -2589,39 +2593,118 @@ createApp({
       viewerPhotos.value = photos;
       viewerIndex.value = photoIndex.value;
       viewerSlideDir.value = '';
+      viewerResetZoom();
       showPhotoViewer.value = true;
     }
     function viewPoster() {
       if (currentActivity.value && currentActivity.value.poster) {
         viewerPhotos.value = [currentActivity.value.poster];
         viewerIndex.value = 0;
+        viewerResetZoom();
         showPhotoViewer.value = true;
       }
     }
+    function viewerResetZoom() { viewerScale.value = 1; viewerTx.value = 0; viewerTy.value = 0; }
+    function viewerImgStyle() {
+      if (viewerScale.value === 1 && viewerTx.value === 0 && viewerTy.value === 0) return null;
+      return { transform: 'translate(' + viewerTx.value + 'px, ' + viewerTy.value + 'px) scale(' + viewerScale.value + ')' };
+    }
+    function currentViewerImg() {
+      try {
+        const items = document.querySelectorAll('.photo-viewer-item');
+        const el = items[viewerIndex.value];
+        return el ? el.querySelector('img') : null;
+      } catch (_) { return null; }
+    }
+    function viewerAnimateReset() {
+      const img = currentViewerImg();
+      if (img) img.classList.add('viewer-zoom-anim');
+      viewerResetZoom();
+      if (img) setTimeout(() => { img.classList.remove('viewer-zoom-anim'); }, 250);
+    }
+    function viewerWheel(e) {
+      const delta = (e.deltaY < 0 ? 1 : -1) * 0.15;
+      const next = Math.min(5, Math.max(1, viewerScale.value + delta));
+      if (next === viewerScale.value) return;
+      viewerScale.value = next;
+      if (next === 1) { viewerTx.value = 0; viewerTy.value = 0; }
+    }
     function viewerPrev() {
-      if (viewerPhotos.value.length > 1) { viewerSlideDir.value = 'right'; viewerIndex.value = (viewerIndex.value - 1 + viewerPhotos.value.length) % viewerPhotos.value.length; }
+      if (viewerPhotos.value.length > 1) { viewerResetZoom(); viewerSlideDir.value = 'right'; viewerIndex.value = (viewerIndex.value - 1 + viewerPhotos.value.length) % viewerPhotos.value.length; }
     }
     function viewerNext() {
-      if (viewerPhotos.value.length > 1) { viewerSlideDir.value = 'left'; viewerIndex.value = (viewerIndex.value + 1) % viewerPhotos.value.length; }
+      if (viewerPhotos.value.length > 1) { viewerResetZoom(); viewerSlideDir.value = 'left'; viewerIndex.value = (viewerIndex.value + 1) % viewerPhotos.value.length; }
     }
     let viewerTouchX = 0, viewerTouchY = 0, viewerTouchTime = 0, viewerDidSwipe = false;
-    function onViewerTouchStart(e) { viewerTouchX = e.touches[0].clientX; viewerTouchY = e.touches[0].clientY; viewerTouchTime = Date.now(); viewerDidSwipe = false; }
+    let viewerPinchDist0 = 0, viewerPinchScale0 = 1;
+    let viewerPinchCX0 = 0, viewerPinchCY0 = 0;
+    let viewerPanX0 = 0, viewerPanY0 = 0;
+    function onViewerTouchStart(e) {
+      viewerTouchTime = Date.now(); viewerDidSwipe = false;
+      const ts = e.touches;
+      if (ts.length >= 2) {
+        viewerPinchDist0 = Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
+        viewerPinchScale0 = viewerScale.value;
+        viewerPinchCX0 = (ts[0].clientX + ts[1].clientX) / 2;
+        viewerPinchCY0 = (ts[0].clientY + ts[1].clientY) / 2;
+        viewerPanX0 = viewerTx.value;
+        viewerPanY0 = viewerTy.value;
+      } else {
+        viewerTouchX = ts[0].clientX; viewerTouchY = ts[0].clientY;
+        viewerPanX0 = viewerTx.value; viewerPanY0 = viewerTy.value;
+        viewerPinchDist0 = 0;
+      }
+    }
     function onViewerTouchMove(e) {
       if (!viewerTouchTime) return;
-      const dx = Math.abs(e.touches[0].clientX - viewerTouchX);
-      const dy = Math.abs(e.touches[0].clientY - viewerTouchY);
-      if (dx > 15 || dy > 15) viewerDidSwipe = true;
+      const ts = e.touches;
+      if (ts.length >= 2) {
+        viewerDidSwipe = true;
+        if (viewerPinchDist0 > 0) {
+          const dist = Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY);
+          viewerScale.value = Math.min(5, Math.max(1, viewerPinchScale0 * (dist / viewerPinchDist0)));
+        }
+        const cx = (ts[0].clientX + ts[1].clientX) / 2;
+        const cy = (ts[0].clientY + ts[1].clientY) / 2;
+        viewerTx.value = viewerPanX0 + (cx - viewerPinchCX0);
+        viewerTy.value = viewerPanY0 + (cy - viewerPinchCY0);
+        return;
+      }
+      if (ts.length === 1) {
+        const dx = Math.abs(ts[0].clientX - viewerTouchX);
+        const dy = Math.abs(ts[0].clientY - viewerTouchY);
+        if (dx > 15 || dy > 15) viewerDidSwipe = true;
+        if (viewerScale.value > 1) {
+          viewerDidSwipe = true;
+          viewerTx.value = viewerPanX0 + (ts[0].clientX - viewerTouchX);
+          viewerTy.value = viewerPanY0 + (ts[0].clientY - viewerTouchY);
+        }
+      }
     }
     function onViewerTouchEnd(e) {
-      const dx = e.changedTouches[0].clientX - viewerTouchX;
-      const dy = e.changedTouches[0].clientY - viewerTouchY;
-      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { viewerDidSwipe = true; dx < 0 ? viewerNext() : viewerPrev(); return; }
+      const ts = e.touches;
+      if (ts.length >= 2) return;
+      if (ts.length === 1) {
+        viewerTouchX = ts[0].clientX; viewerTouchY = ts[0].clientY;
+        viewerPanX0 = viewerTx.value; viewerPanY0 = viewerTy.value;
+        viewerPinchDist0 = 0;
+        return;
+      }
+      if (viewerScale.value <= 1) viewerAnimateReset();
+      if (viewerScale.value === 1 && !viewerPinchDist0) {
+        const t = e.changedTouches[0];
+        const dx = t.clientX - viewerTouchX;
+        const dy = t.clientY - viewerTouchY;
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) { viewerDidSwipe = true; dx < 0 ? viewerNext() : viewerPrev(); }
+      }
+      viewerPinchDist0 = 0;
+      viewerTouchTime = 0;
     }
     function onViewerImageClick(e) {
       if (viewerDidSwipe) { viewerDidSwipe = false; return; }
       closePhotoViewer();
     }
-    // —— 全屏预览：鼠标拖动切换 ——
+    // —— 全屏预览：鼠标拖动/滚轮缩放 ——
     let viewerMouseDown = false;
     let viewerMouseStartX = 0, viewerMouseStartY = 0, viewerMouseStartTime = 0;
     function onViewerMouseDown(e) {
@@ -2631,10 +2714,18 @@ createApp({
       viewerMouseStartY = e.clientY;
       viewerMouseStartTime = Date.now();
       viewerDidSwipe = false;
+      viewerPanX0 = viewerTx.value; viewerPanY0 = viewerTy.value;
       e.preventDefault();
     }
     function onViewerMouseMove(e) {
       if (!viewerMouseDown) return;
+      if (viewerScale.value > 1) {
+        viewerDidSwipe = true;
+        viewerTx.value = viewerPanX0 + (e.clientX - viewerMouseStartX);
+        viewerTy.value = viewerPanY0 + (e.clientY - viewerMouseStartY);
+        e.preventDefault();
+        return;
+      }
       const dx = Math.abs(e.clientX - viewerMouseStartX);
       const dy = Math.abs(e.clientY - viewerMouseStartY);
       if (dx > 15 || dy > 15) viewerDidSwipe = true;
@@ -2643,6 +2734,11 @@ createApp({
     function onViewerMouseUp(e) {
       if (!viewerMouseDown) return;
       viewerMouseDown = false;
+      if (viewerScale.value > 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       const dx = e.clientX - viewerMouseStartX;
       const dy = e.clientY - viewerMouseStartY;
       if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
@@ -2660,7 +2756,7 @@ createApp({
     function openPhotoViewerForUser(u) {
       const photos = u.photos || (u.photo ? [u.photo] : []);
       if (!photos.length) return;
-      viewerPhotos.value = photos; viewerIndex.value = 0; showPhotoViewer.value = true;
+      viewerPhotos.value = photos; viewerIndex.value = 0; viewerResetZoom(); showPhotoViewer.value = true;
     }
     function gotoCards(from) {
       prevPage.value = from || 'likes';
@@ -3830,7 +3926,7 @@ createApp({
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewerPhotos, viewerIndex, viewerSlideDir, openPhotoViewer, closePhotoViewer, viewPoster,
       viewerPrev, viewerNext, onViewerTouchStart, onViewerTouchMove, onViewerTouchEnd, onViewerImageClick,
-      onViewerMouseDown, onViewerMouseMove, onViewerMouseUp, onViewerMouseLeave,
+      onViewerMouseDown, onViewerMouseMove, onViewerMouseUp, onViewerMouseLeave, viewerWheel, viewerImgStyle,
       handleBack, showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,

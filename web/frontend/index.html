@@ -2519,6 +2519,8 @@ createApp({
           photoSlideDir.value = dx < 0 ? 'left' : 'right';
           if (dx < 0) photoIndex.value = (photoIndex.value + 1) % photos.length;
           else photoIndex.value = (photoIndex.value - 1 + photos.length) % photos.length;
+        } else {
+          boundaryToast('没有更多照片了');
         }
         return;
       }
@@ -2560,6 +2562,8 @@ createApp({
           photoSlideDir.value = dx < 0 ? 'left' : 'right';
           if (dx < 0) photoIndex.value = (photoIndex.value + 1) % photos.length;
           else photoIndex.value = (photoIndex.value - 1 + photos.length) % photos.length;
+        } else {
+          boundaryToast('没有更多照片了');
         }
         e.preventDefault();
         e.stopPropagation();

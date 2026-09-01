@@ -342,10 +342,14 @@ _cards_cache_lock = threading.Lock()
 
 
 def _rebuild_cards_cache():
-    """按 users 快照重建卡片 brief 缓存（open_id -> brief dict）。"""
+    """按 users 快照重建卡片 brief 缓存（open_id -> brief dict）。
+
+    千人级：每 50 人 time.sleep(0) 让出 GIL，避免重建期间（约 1-3s）
+    请求线程被饿死——表现为往回滑到某页时「等了许久才动」。
+    """
     users = _snap("users")
     cache = {}
-    for u in users:
+    for i, u in enumerate(users):
         fields = u.get("fields", {})
         oid = bitable.get_field_text(fields, F_FEISHU_ID)
         if not oid:
@@ -357,6 +361,8 @@ def _rebuild_cards_cache():
             cache[oid] = brief
         except Exception:
             continue
+        if i % 50 == 49:
+            time.sleep(0)
     with _cards_cache_lock:
         _cards_cache.clear()
         _cards_cache.update(cache)
@@ -2264,7 +2270,11 @@ def get_cards():
     filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
     key = (open_id, filters_key)
     order, order_ts = _get_session_order(key, cards, liked_me_openids, open_id)
-    by_oid = {c.get("openid"): c for c in cards}
+    by_oid = {}
+    for i, c in enumerate(cards):
+        by_oid[c.get("openid")] = c
+        if i % 100 == 99:
+            time.sleep(0)
     self_card = None
     if self_flag:
         self_card = _build_self_card(open_id, all_users, msg_counts)

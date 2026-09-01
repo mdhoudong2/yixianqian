@@ -2253,6 +2253,27 @@ createApp({
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
     }
+    function trimCardsWindow() {
+      // 内存上限：窗口最多 150 张；只在本窗口内截头/截尾，绝不引用窗口外页
+      // （截头/截尾均为正偏移切片，杜绝负切片空窗 0/0）
+      const MAX = 150;
+      if (cards.value.length <= MAX) return;
+      const seqCur = cardsStart.value + cardIndex.value;
+      const start = cardsStart.value;
+      const end = start + cards.value.length;
+      // 尾部多余：截尾至 seqCur+100
+      const tailCap = seqCur + 100;
+      if (end > tailCap) {
+        cards.value = cards.value.slice(0, tailCap - start);
+      }
+      // 头部多余：截头至 seqCur-50
+      const headCap = seqCur - 50;
+      if (headCap > start) {
+        cards.value = cards.value.slice(headCap - start);
+        cardsStart.value = headCap;
+        cardIndex.value = seqCur - headCap;
+      }
+    }
     async function loadMoreCards() {
       if (cardsLoadingMore.value || cardsStart.value + cards.value.length >= cardsTotal.value) return;
       cardsLoadingMore.value = true;
@@ -2275,6 +2296,7 @@ createApp({
         const existing = new Set(cards.value.map(c => c.openid));
         cards.value = cards.value.concat(more.filter(c => !existing.has(c.openid)));
         cardsTotal.value = (typeof data.total === 'number' ? data.total : cardsTotal.value);
+        trimCardsWindow();
       }
       catch(e) { vant.showToast(e.message); }
       cardsLoadingMore.value = false;
@@ -2403,6 +2425,7 @@ createApp({
               if (prep > 1) {
                 cardIndex.value = prep - 1;
                 slideDir.value = 'left';
+                trimCardsWindow();
               }
             }).catch(() => {});
           }

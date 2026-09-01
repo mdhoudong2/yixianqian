@@ -27,7 +27,9 @@ max_requests_jitter = 50
 def post_fork(server, worker):
     try:
         import app as appmod
-        appmod.refresh_snapshot()
+        import threading
+        # 1000人压测时同步拉全量会阻塞 worker 启动 30s+，导致 /api/version 亦超时；改为后台线程异步拉取
+        threading.Thread(target=appmod.refresh_snapshot, daemon=True, name="snapshot-warm").start()
         appmod.start_snapshot_loop()
     except Exception as e:
         logging.getLogger(__name__).warning("worker 快照初始化失败: %s", e)

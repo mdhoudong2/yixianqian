@@ -1796,6 +1796,9 @@ def home():
         self_card = _build_self_card(open_id, active_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)
+    # 压测防护：首页聚合亦限 100 张，避免 1000 人全量打爆
+    if len(cards) > 100:
+        cards = cards[:100]
     i_liked = snap_likes_by_initiator(open_id)
     i_liked_targets = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)

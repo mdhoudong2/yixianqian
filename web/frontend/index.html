@@ -2615,9 +2615,20 @@ createApp({
         }, 250);
       }
     }
+    function vTapBlockLongPress(e) {
+      // 长按拦截：touchstart preventDefault 从手势层阻断系统/飞书/微信的长按保存菜单，
+      // 比 pointer-events:none 更彻底（加载期占位图/部分 WebView 原生命中绕过 CSS 也能拦）。
+      const p = viewerLightbox && viewerLightbox.pswp;
+      if (!p || p.isDestroying) return;
+      const el = e.target;
+      if (!el || !el.closest) return;
+      if (el.closest('.pswp__button, .pswp__top-bar')) return;  // 关闭/缩放按钮与顶栏保留点击
+      if (el.closest('.pswp') === p.element) e.preventDefault();
+    }
     function vTapBind() {
       if (vTapBound) return;
       vTapBound = true;
+      document.addEventListener('touchstart', vTapBlockLongPress, { passive: false, capture: true });
       if (window.PointerEvent) {
         document.addEventListener('pointerdown', vTapDown, true);
         document.addEventListener('pointermove', vTapMove, true);

@@ -451,7 +451,7 @@
       <div class="card-main" @touchstart="onCardTouchStart" @touchmove="onCardTouchMove" @touchend="onCardTouchEnd" @mousedown="onCardMouseDown" @mousemove="onCardMouseMove" @mouseup="onCardMouseUp" @mouseleave="onCardMouseLeave">
       <div class="card-tabs">
         <div class="card-tab" :class="{active: cardTab==='profile'}" @click="cardTab='profile'">资料</div>
-        <div v-if="!currentCard.is_self" class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
+        <div class="card-tab" :class="{active: cardTab==='messages'}" @click="openMessageTab">留言<span v-if="currentMsgCount > 0" class="msg-count-badge">{{ currentMsgCount }}</span></div>
       </div>
       <div class="card-info">
         <template v-if="cardTab==='profile'">
@@ -509,7 +509,7 @@
             <span>正在回复 {{ replyTarget.author_nickname }}</span>
             <span class="msg-reply-cancel" @click="cancelReply">取消</span>
           </div>
-          <div class="msg-input-bar">
+          <div class="msg-input-bar" v-if="!currentCard.is_self || replyTarget">
             <input v-model="msgText" class="msg-input" :placeholder="replyTarget ? '回复 ' + replyTarget.author_nickname + '：' : '写下你的留言…'" />
             <button class="msg-send" :disabled="!msgText.trim() || msgSending" @click="sendMessage">{{ msgSending ? '发送中…' : '发送' }}</button>
           </div>

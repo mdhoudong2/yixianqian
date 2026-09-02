@@ -3744,7 +3744,7 @@ createApp({
     watch(cards, () => {
       photoPositions.value = [];
     });
-    watch(cardIndex, () => {
+    watch([cardIndex, () => (currentCard.value && currentCard.value.openid) || null], () => {
       cardTab.value = 'profile';
       messages.value = [];
       msgLoadedFor = null;

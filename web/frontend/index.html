@@ -208,6 +208,8 @@
   .pswp__counter { left: 50%; right: auto; transform: translateX(-50%); }
   /* 全屏图片保持 pointer-events:none：拦截长按保存菜单；单击关闭由 .pswp__zoom-wrap/.pswp__item 承接（见 bg/tap 配置） */
   .pswp img, .pswp__img { pointer-events: none !important; -webkit-touch-callout: none !important; }
+  /* 尺寸未知前的加载态：隐藏容器防 0 尺寸回退视口导致加载期拉伸 */
+  .yxq-dim-wait { visibility: hidden !important; }
   /* 送爱心弹窗 */
   .like-dialog-body { padding: 16px; }
   .like-notes { color: #969799; font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
@@ -2659,7 +2661,30 @@ createApp({
         if (d && e.slide && e.slide.content) {
           e.slide.width = d.w; e.slide.height = d.h;
           e.slide.content.width = d.w; e.slide.content.height = d.h;
+        } else if (e.slide && e.slide.container) {
+          // 尺寸未知：先隐藏，尺寸就绪（探针或 loadComplete）再显示，避免加载期被拉成视口比例
+          e.slide.container.classList.add('yxq-dim-wait');
         }
+      });
+      viewerLightbox.on('loadComplete', (e) => {
+        // 兜底：以已加载图片的真实宽高为准修正 slide 尺寸（含加载失败时仅恢复显示）
+        const s = e && e.slide;
+        const c = s && s.content;
+        if (!s || !c) return;
+        if (s.container) s.container.classList.remove('yxq-dim-wait');
+        const nw = c.element && c.element.naturalWidth;
+        const nh = c.element && c.element.naturalHeight;
+        if (!nw || !nh) return;
+        s.width = nw; s.height = nh;
+        c.width = nw; c.height = nh;
+        if (s.data) { s.data.w = nw; s.data.h = nh; }
+        try {
+          s.calculateSize();
+          s.currentResolution = 0;
+          s.zoomAndPanToInitial();
+          s.applyCurrentZoomPan();
+          s.updateContentSize(true);
+        } catch (err) {}
       });
       viewerLightbox.on('close', () => {
         vTapReset();
@@ -2692,6 +2717,7 @@ createApp({
         s.width = d.w;
         s.height = d.h;
         if (s.data) { s.data.w = d.w; s.data.h = d.h; }
+        if (s.container) s.container.classList.remove('yxq-dim-wait');
         try {
           s.calculateSize();
           s.currentResolution = 0;

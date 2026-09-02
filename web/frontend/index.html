@@ -2677,6 +2677,31 @@ createApp({
       im.onerror = () => cb(null);
       im.src = src;
     }
+    function applyDimsToLiveSlide(seq, index, d) {
+      // 快速滑动竞态：slide 已在尺寸探针完成前创建，content 宽高为 0，
+      // PhotoSwipe updateContentSize 会回退成视口尺寸导致图片被拉伸；
+      // 尺寸就绪后就地修正已创建 slide 的宽高并重算布局。
+      if (!d || seq !== viewerOpenSeq) return;
+      const p = viewerLightbox && viewerLightbox.pswp;
+      if (!p || p.isDestroying || !p.mainScroll || !p.mainScroll.itemHolders) return;
+      for (const h of p.mainScroll.itemHolders) {
+        const s = h && h.slide;
+        if (!s || s.index !== index || !s.content) continue;
+        s.content.width = d.w;
+        s.content.height = d.h;
+        s.width = d.w;
+        s.height = d.h;
+        if (s.data) { s.data.w = d.w; s.data.h = d.h; }
+        try {
+          s.calculateSize();
+          s.currentResolution = 0;
+          s.zoomAndPanToInitial();
+          s.applyCurrentZoomPan();
+          s.updateContentSize(true);
+        } catch (e) {}
+        break;
+      }
+    }
     function viewerOpen(photos, index) {
       if (!photos || !photos.length) return;
       viewerEnsure();
@@ -2690,12 +2715,13 @@ createApp({
       viewerDims = new Map();
       photos.forEach((p, i) => {
         viewerGetDims(p, (d) => {
-          if (d) viewerDims.set(i, d);
-          if (i !== idx || seq !== viewerOpenSeq) return;
           if (d) {
-            anchors[idx].dataset.pswpWidth = d.w;
-            anchors[idx].dataset.pswpHeight = d.h;
+            viewerDims.set(i, d);
+            anchors[i].dataset.pswpWidth = d.w;
+            anchors[i].dataset.pswpHeight = d.h;
+            applyDimsToLiveSlide(seq, i, d);
           }
+          if (i !== idx || seq !== viewerOpenSeq) return;
           showPhotoViewer.value = true;
           viewerLightbox.loadAndOpen(idx);
         });

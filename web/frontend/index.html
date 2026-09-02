@@ -206,6 +206,8 @@
   .like-item-msg { font-size: 13px; color: #646566; margin-top: 4px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
   /* 全屏图片预览（PhotoSwipe）：页码居中 */
   .pswp__counter { left: 50%; right: auto; transform: translateX(-50%); }
+  /* 全屏图片保持 pointer-events:none：拦截长按保存菜单；单击关闭由 .pswp__zoom-wrap/.pswp__item 承接（见 bg/tap 配置） */
+  .pswp img, .pswp__img { pointer-events: none !important; -webkit-touch-callout: none !important; }
   /* 送爱心弹窗 */
   .like-dialog-body { padding: 16px; }
   .like-notes { color: #969799; font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
@@ -2552,6 +2554,91 @@ createApp({
     let viewerLightbox = null;
     let viewerOpenSeq = 0;
     let viewerDims = new Map();
+    // 自管理单击/双击：PhotoSwipe 内置双击检测会给单击加固定 300ms 延迟，
+    // 这里自行实现 250ms 短窗口——单击即关、双击缩放。
+    // 图片保持 pointer-events:none（拦截长按保存菜单），事件在 zoom-wrap/item 上捕获。
+    let vTapBound = false;
+    let vTapTimer = null;
+    let vLastTap = { t: 0, x: 0, y: 0 };
+    let vDown = null;
+    let vPtrCount = 0;
+    function vTapReset() {
+      if (vTapTimer) { clearTimeout(vTapTimer); vTapTimer = null; }
+      vLastTap.t = 0; vDown = null; vPtrCount = 0;
+    }
+    function vTapInViewer(e) {
+      const p = viewerLightbox && viewerLightbox.pswp;
+      if (!p || p.isDestroying || p.isClosing || !p.currSlide) return null;
+      const el = e.target;
+      if (!el || !el.closest) return null;
+      if (el.closest('.pswp__button, .pswp__top-bar')) return null;
+      return el.closest('.pswp') === p.element ? p : null;
+    }
+    function vTapDown(e) {
+      if (!vTapInViewer(e)) { vDown = null; return; }
+      if (e.type === 'pointerdown') {
+        vPtrCount++;
+        if (vPtrCount > 1) { vDown = null; return; }
+        if (e.pointerType === 'mouse') { vDown = null; return; }
+      }
+      if (e.touches && e.touches.length > 1) { vDown = null; return; }
+      const t = e.touches ? e.touches[0] : e;
+      vDown = { x: t.clientX, y: t.clientY, t: Date.now(), moved: false };
+    }
+    function vTapMove(e) {
+      if (!vDown) return;
+      const t = e.touches ? e.touches[0] : e;
+      if (Math.abs(t.clientX - vDown.x) > 12 || Math.abs(t.clientY - vDown.y) > 12) vDown.moved = true;
+    }
+    function vTapUp(e) {
+      if (e.type === 'pointerup') vPtrCount = Math.max(0, vPtrCount - 1);
+      const p = vTapInViewer(e);
+      if (!vDown || !p) return;
+      if (e.type === 'pointerup' && e.pointerType === 'mouse') { vDown = null; return; }
+      const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e;
+      const d = vDown;
+      vDown = null;
+      if (d.moved) return;
+      if (Date.now() - d.t > 500) return;
+      const now = Date.now();
+      if (now - vLastTap.t < 250 && Math.abs(t.clientX - vLastTap.x) < 40 && Math.abs(t.clientY - vLastTap.y) < 40) {
+        if (vTapTimer) { clearTimeout(vTapTimer); vTapTimer = null; }
+        vLastTap.t = 0;
+        const rect = p.element.getBoundingClientRect();
+        p.currSlide.toggleZoom({ x: t.clientX - rect.left, y: t.clientY - rect.top });
+      } else {
+        vLastTap.t = now; vLastTap.x = t.clientX; vLastTap.y = t.clientY;
+        vTapTimer = setTimeout(() => {
+          vTapTimer = null;
+          const ps = viewerLightbox && viewerLightbox.pswp;
+          if (ps && !ps.isDestroying && !ps.isClosing) ps.close();
+        }, 250);
+      }
+    }
+    function vTapBlockLongPress(e) {
+      // 长按拦截：touchstart preventDefault 从手势层阻断系统/飞书/微信的长按保存菜单，
+      // 比 pointer-events:none 更彻底（加载期占位图/部分 WebView 原生命中绕过 CSS 也能拦）。
+      const p = viewerLightbox && viewerLightbox.pswp;
+      if (!p || p.isDestroying) return;
+      const el = e.target;
+      if (!el || !el.closest) return;
+      if (el.closest('.pswp__button, .pswp__top-bar')) return;  // 关闭/缩放按钮与顶栏保留点击
+      if (el.closest('.pswp') === p.element) e.preventDefault();
+    }
+    function vTapBind() {
+      if (vTapBound) return;
+      vTapBound = true;
+      document.addEventListener('touchstart', vTapBlockLongPress, { passive: false, capture: true });
+      if (window.PointerEvent) {
+        document.addEventListener('pointerdown', vTapDown, true);
+        document.addEventListener('pointermove', vTapMove, true);
+        document.addEventListener('pointerup', vTapUp, true);
+      } else {
+        document.addEventListener('touchstart', vTapDown, true);
+        document.addEventListener('touchmove', vTapMove, true);
+        document.addEventListener('touchend', vTapUp, true);
+      }
+    }
     function viewerEnsure() {
       if (viewerLightbox) return;
       viewerLightbox = new PhotoSwipeLightbox({
@@ -2560,10 +2647,11 @@ createApp({
         pswpModule: () => PhotoSwipe,
         bgOpacity: 1,
         closeOnVerticalDrag: true,
-        tapAction: 'toggle-controls',
-        doubleTapAction: 'zoom',
+        tapAction: null,
+        doubleTapAction: null,
         bgClickAction: 'close',
-        imageClickAction: 'zoom-or-close',
+        imageClickAction: 'close',
+        hideAnimationDuration: 160,
         preloaderDelay: 200,
       });
       viewerLightbox.on('slideInit', (e) => {
@@ -2574,9 +2662,11 @@ createApp({
         }
       });
       viewerLightbox.on('close', () => {
+        vTapReset();
         if (showPhotoViewer.value) showPhotoViewer.value = false;
       });
       viewerLightbox.init();
+      vTapBind();
     }
     function attrEscape(s) {
       return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -2586,6 +2676,31 @@ createApp({
       im.onload = () => cb(im.naturalWidth ? { w: im.naturalWidth, h: im.naturalHeight } : null);
       im.onerror = () => cb(null);
       im.src = src;
+    }
+    function applyDimsToLiveSlide(seq, index, d) {
+      // 快速滑动竞态：slide 已在尺寸探针完成前创建，content 宽高为 0，
+      // PhotoSwipe updateContentSize 会回退成视口尺寸导致图片被拉伸；
+      // 尺寸就绪后就地修正已创建 slide 的宽高并重算布局。
+      if (!d || seq !== viewerOpenSeq) return;
+      const p = viewerLightbox && viewerLightbox.pswp;
+      if (!p || p.isDestroying || !p.mainScroll || !p.mainScroll.itemHolders) return;
+      for (const h of p.mainScroll.itemHolders) {
+        const s = h && h.slide;
+        if (!s || s.index !== index || !s.content) continue;
+        s.content.width = d.w;
+        s.content.height = d.h;
+        s.width = d.w;
+        s.height = d.h;
+        if (s.data) { s.data.w = d.w; s.data.h = d.h; }
+        try {
+          s.calculateSize();
+          s.currentResolution = 0;
+          s.zoomAndPanToInitial();
+          s.applyCurrentZoomPan();
+          s.updateContentSize(true);
+        } catch (e) {}
+        break;
+      }
     }
     function viewerOpen(photos, index) {
       if (!photos || !photos.length) return;
@@ -2600,12 +2715,13 @@ createApp({
       viewerDims = new Map();
       photos.forEach((p, i) => {
         viewerGetDims(p, (d) => {
-          if (d) viewerDims.set(i, d);
-          if (i !== idx || seq !== viewerOpenSeq) return;
           if (d) {
-            anchors[idx].dataset.pswpWidth = d.w;
-            anchors[idx].dataset.pswpHeight = d.h;
+            viewerDims.set(i, d);
+            anchors[i].dataset.pswpWidth = d.w;
+            anchors[i].dataset.pswpHeight = d.h;
+            applyDimsToLiveSlide(seq, i, d);
           }
+          if (i !== idx || seq !== viewerOpenSeq) return;
           showPhotoViewer.value = true;
           viewerLightbox.loadAndOpen(idx);
         });
@@ -3628,7 +3744,7 @@ createApp({
     watch(cards, () => {
       photoPositions.value = [];
     });
-    watch(cardIndex, () => {
+    watch([cardIndex, () => (currentCard.value && currentCard.value.openid) || null], () => {
       cardTab.value = 'profile';
       messages.value = [];
       msgLoadedFor = null;

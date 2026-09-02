@@ -1603,6 +1603,12 @@ def _face_sidecar_valid(d):
     return (isinstance(d, dict) and "c" in d and "box" in d
             and d.get("v") == _FACE_SIDECAR_VERSION)
 
+
+def _face_sidecar_usable(d):
+    """sidecar 是否可读：含人脸数据即可，不要求当前版本。
+    版本升级后全量重检完成前，旧版数据在读取侧（门禁/前端对准）照常可用，避免误拦/无对准。"""
+    return isinstance(d, dict) and "c" in d and "box" in d
+
 def ensure_face_center(token):
     """确保照片处理完毕（人脸数据 + 黑边已裁切）：内存 → 完整 sidecar → 分析并裁切。
     仅后台路径调用；旧版 sidecar 自动重新处理；裁切后缓存文件即无黑边版。
@@ -1687,7 +1693,7 @@ def get_face_center(token):
         if os.path.exists(p):
             with open(p) as f:
                 d = json.load(f)
-            if _face_sidecar_valid(d):
+            if _face_sidecar_usable(d):
                 face = ({"c": d["c"], "box": d["box"], "tb": [0.0, 0.0], "lr": [0.0, 0.0]}
                         if d.get("c") else None)
     except Exception:

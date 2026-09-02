@@ -1386,7 +1386,7 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 9  # 检测参数变更时递增，旧 sidecar 自动重检；v9 多脸主体权重（面积×中心）
+_FACE_SIDECAR_VERSION = 10  # 检测参数变更时递增，旧 sidecar 自动重检；v10 黑边回归复检
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
@@ -1464,6 +1464,25 @@ def _detect_content_margins(gray):
     if right > w * 0.45:
         right = 0
     return (top / h, bottom / h, left / w, right / w)
+
+
+def _quick_content_margins(img_path):
+    """快速边缘黑边检测（灰度扫描，毫秒级）。返回 ([top,bottom],[left,right]) 或 None（打开失败）"""
+    try:
+        import numpy as np
+        from PIL import Image
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass
+        with Image.open(img_path) as im:
+            im = im.convert("L")
+            a = np.asarray(im)
+        tb, bb, lb, rb = _detect_content_margins(a)
+        return [tb, bb], [lb, rb]
+    except Exception:
+        return None
 
 def _analyze_photo(img_path):
     """分析照片：检测最大「完整可信」人脸 + 上下左右黑边比例。
@@ -1586,7 +1605,8 @@ def _face_sidecar_valid(d):
 
 def ensure_face_center(token):
     """确保照片处理完毕（人脸数据 + 黑边已裁切）：内存 → 完整 sidecar → 分析并裁切。
-    仅后台路径调用；旧版 sidecar 自动重新处理；裁切后缓存文件即无黑边版。"""
+    仅后台路径调用；旧版 sidecar 自动重新处理；裁切后缓存文件即无黑边版。
+    已裁照片做黑边回归复检：缓存清理后重下载的原图会带回黑边，按存储参数重新裁切。"""
     with _face_cache_lock:
         if token in _face_cache:
             return _face_cache[token]
@@ -1598,6 +1618,15 @@ def ensure_face_center(token):
             if _face_sidecar_valid(d):
                 face = ({"c": d["c"], "box": d["box"], "tb": [0.0, 0.0], "lr": [0.0, 0.0]}
                         if d.get("c") else None)
+                # 黑边回归复检：曾裁切过的照片，若缓存文件（被清理重下载后）又出现黑边，按存储参数重裁
+                if d.get("cropped"):
+                    cached = _get_cached_image(token)
+                    if cached:
+                        tb2, lr2 = _quick_content_margins(cached[0])
+                        if tb2 is not None and (max(tb2) > 0.004 or max(lr2) > 0.004):
+                            tb_s = d.get("tb") or tb2
+                            lr_s = d.get("lr") or lr2
+                            _crop_photo_margins(cached[0], tb_s, lr_s)
                 with _face_cache_lock:
                     _face_cache[token] = face
                 return face
@@ -1609,6 +1638,7 @@ def ensure_face_center(token):
     fpath = cached[0]
     face, tb, lr = _analyze_photo(fpath)
     cropped = False
+    tb_used, lr_used = tb, lr
     # 最多两轮裁切：首轮按检测值裁，裁后重检（黑边可能因脸约束/检测粒度残留），再裁一次收敛
     for _round in range(2):
         if tb[0] + tb[1] + lr[0] + lr[1] <= 0.004:
@@ -1637,7 +1667,8 @@ def ensure_face_center(token):
             json.dump({"v": _FACE_SIDECAR_VERSION,
                        "c": face["c"] if face else None,
                        "box": face["box"] if face else None,
-                       "cropped": cropped}, f)
+                       "cropped": cropped,
+                       "tb": tb_used, "lr": lr_used}, f)
         os.replace(tmp, _face_sidecar_path(token))
     except Exception:
         pass

@@ -1225,6 +1225,15 @@ def _image_cleanup_loop():
         cleanup_image_cache()
 threading.Thread(target=_image_cleanup_loop, daemon=True).start()
 
+def _image_etag(fpath):
+    """基于文件 mtime+size 的内容指纹（服务端处理图片后 ETag 变化，客户端立即拿新图）"""
+    try:
+        st = os.stat(fpath)
+        return '"%d-%d"' % (st.st_mtime_ns, st.st_size)
+    except Exception:
+        return None
+
+
 def _get_cached_image(file_token):
     """检查磁盘缓存，返回 (path, content_type) 或 None"""
     for fname in os.listdir(IMAGE_CACHE_DIR):
@@ -1745,9 +1754,18 @@ def proxy_image(file_token):
     cached = _get_cached_image(file_token)
     if cached:
         fpath, content_type = cached
+        etag = _image_etag(fpath)
+        # ETag 协商缓存：内容未变返回 304（几乎零流量），内容变了立即下发新图
+        if etag and request.headers.get("If-None-Match") == etag:
+            resp = make_response("", 304)
+            resp.headers["Cache-Control"] = "public, max-age=3600"
+            resp.headers["ETag"] = etag
+            return resp
         resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
                                    mimetype=content_type))
         resp.headers["Cache-Control"] = "public, max-age=3600"
+        if etag:
+            resp.headers["ETag"] = etag
         return resp
 
     # 2. 从飞书下载并压缩后缓存
@@ -1776,8 +1794,12 @@ def proxy_image(file_token):
         with open(tmp, "wb") as f:
             f.write(compressed)
         os.replace(tmp, cache_path)  # 原子替换，避免与请求线程并发写坏
-        return Response(compressed, content_type=content_type,
+        etag = _image_etag(cache_path)
+        resp = Response(compressed, content_type=content_type,
                         headers={"Cache-Control": "public, max-age=3600"})
+        if etag:
+            resp.headers["ETag"] = etag
+        return resp
     except Exception:
         return jsonify({"error": "图片加载失败"}), 500
 

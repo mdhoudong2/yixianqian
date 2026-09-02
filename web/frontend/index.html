@@ -206,6 +206,8 @@
   .like-item-msg { font-size: 13px; color: #646566; margin-top: 4px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
   /* 全屏图片预览（PhotoSwipe）：页码居中 */
   .pswp__counter { left: 50%; right: auto; transform: translateX(-50%); }
+  /* 防存图全局 img{pointer-events:none} 放行 pswp 图片点击，否则单击无法命中 */
+  .pswp img, .pswp__img { pointer-events: auto !important; }
   /* 送爱心弹窗 */
   .like-dialog-body { padding: 16px; }
   .like-notes { color: #969799; font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
@@ -2560,10 +2562,10 @@ createApp({
         pswpModule: () => PhotoSwipe,
         bgOpacity: 1,
         closeOnVerticalDrag: true,
-        tapAction: 'toggle-controls',
+        tapAction: 'close',
         doubleTapAction: 'zoom',
         bgClickAction: 'close',
-        imageClickAction: 'zoom-or-close',
+        imageClickAction: 'close',
         preloaderDelay: 200,
       });
       viewerLightbox.on('slideInit', (e) => {

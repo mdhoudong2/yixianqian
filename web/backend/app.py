@@ -596,7 +596,7 @@ def _rate_limit(limit=5, window=60, key_prefix="rl"):
 def _csrf_guard():
     if request.method in ("POST", "PUT", "DELETE") and request.path.startswith("/api/"):
         # 白名单：免登与埋点本身不需要 CSRF（埋点已在 nginx 限流）
-        if request.path.startswith("/api/auth/feishu") or request.path.startswith("/api/track") or request.path == "/api/version":
+        if request.path.startswith("/api/auth/feishu") or request.path.startswith("/api/register/prepare") or request.path.startswith("/api/track") or request.path == "/api/version":
             return None
         # 仅对已登录写接口强制
         if not g.get("yxq_open_id"):
@@ -1140,6 +1140,24 @@ def _render_public():
 @app.route("/public.html")
 def public_page():
     return _render_public()
+
+# register.html 里的 __FEISHU_APP_ID__ 占位符在服务时替换为当前环境 app_id
+_REGISTER_HTML_CACHE = None
+
+def _render_register():
+    """读取 H5 原生注册页并注入飞书 app_id，返回不缓存的 HTML。"""
+    global _REGISTER_HTML_CACHE
+    if _REGISTER_HTML_CACHE is None:
+        with open(os.path.join(app.static_folder, "register.html"), "r", encoding="utf-8") as f:
+            _REGISTER_HTML_CACHE = f.read()
+    html = _REGISTER_HTML_CACHE.replace("__FEISHU_APP_ID__", FEISHU_APP_ID)
+    resp = make_response(html)
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+@app.route("/register.html")
+def register_page():
+    return _render_register()
 
 @app.route("/<path:path>")
 def static_files(path):
@@ -1904,6 +1922,296 @@ def logout():
     resp = make_response(jsonify({"ok": True}))
     resp.delete_cookie("yxq_session")
     return resp
+
+# ========== H5 原生注册（复刻「一线牵-注册（新）」表单） ==========
+# 注册页字段白名单：提交值 -> (多维表格字段名, 类型)。严格白名单，忽略任何多余键。
+# 类型: text/select/multi/number/date/phone/longtext
+REGISTER_FIELD_MAP = {
+    F_REAL_NAME:        (F_REAL_NAME, "text"),
+    F_NICKNAME:         (F_NICKNAME, "text"),
+    F_ID_CARD:          (F_ID_CARD, "text"),
+    F_GENDER:           (F_GENDER, "select"),
+    F_BIRTHDAY:         (F_BIRTHDAY, "date"),
+    F_PHONE:            (F_PHONE, "phone"),
+    F_WECHAT:           (F_WECHAT, "text"),
+    F_BAPTISMAL_NAME:   (F_BAPTISMAL_NAME, "text"),
+    F_CHURCH:           (F_CHURCH, "text"),
+    F_GROUP:            (F_GROUP, "text"),
+    F_CHURCH_LOCATION:  (F_CHURCH_LOCATION, "text"),
+    F_NATIVE_PLACE:     (F_NATIVE_PLACE, "text"),
+    F_FAMILY:           (F_FAMILY, "longtext"),
+    F_CITY:             (F_CITY, "text"),
+    F_HEIGHT:           (F_HEIGHT, "number"),
+    F_EDUCATION:        (F_EDUCATION, "select"),
+    F_INDUSTRY:         (F_INDUSTRY, "text"),
+    F_POSITION:         (F_POSITION, "text"),
+    F_HOUSE:            (F_HOUSE, "select"),
+    F_HOUSE_NOTE_HAVE:  (F_HOUSE_NOTE_HAVE, "text"),
+    F_HOUSE_NOTE_NONE:  (F_HOUSE_NOTE_NONE, "text"),
+    F_INCOME:           (F_INCOME, "select"),
+    F_DRIVING:          (F_DRIVING, "select"),
+    F_DRIVING_NOTE_HAVE:(F_DRIVING_NOTE_HAVE, "text"),
+    F_DRIVING_NOTE_NONE:(F_DRIVING_NOTE_NONE, "text"),
+    F_PERSONALITY:      (F_PERSONALITY, "longtext"),
+    F_SELF_TRAITS:      (F_SELF_TRAITS, "multi"),
+    "我是一个怎样的人-性格-其他-补充内容": ("我是一个怎样的人-性格-其他-补充内容", "text"),
+    F_SELF_HOBBIES:     (F_SELF_HOBBIES, "multi"),
+    "我是一个怎样的人-爱好-其他-补充内容": ("我是一个怎样的人-爱好-其他-补充内容", "text"),
+    F_SELF_SPORTS:      (F_SELF_SPORTS, "multi"),
+    "我是一个怎样的人-运动-其他-补充内容": ("我是一个怎样的人-运动-其他-补充内容", "text"),
+    F_MBTI:             (F_MBTI, "multi"),
+    F_PARTNER_CRITERIA: (F_PARTNER_CRITERIA, "longtext"),
+    F_PARTNER_TRAITS:   (F_PARTNER_TRAITS, "multi"),
+    "理想中的TA-性格-其他-补充内容": ("理想中的TA-性格-其他-补充内容", "text"),
+    F_PARTNER_HOBBIES:  (F_PARTNER_HOBBIES, "multi"),
+    "理想中的TA-爱好-其他-补充内容": ("理想中的TA-爱好-其他-补充内容", "text"),
+    F_PARTNER_SPORTS:   (F_PARTNER_SPORTS, "multi"),
+    "理想中的TA-运动-其他-补充内容": ("理想中的TA-运动-其他-补充内容", "text"),
+    F_LIVE_WITH_PARENTS:(F_LIVE_WITH_PARENTS, "select"),
+    F_MARRIAGE:         (F_MARRIAGE, "select"),
+    F_IS_FOR_CHILD:     (F_IS_FOR_CHILD, "select"),
+    F_REFERRAL_SOURCE:  (F_REFERRAL_SOURCE, "longtext"),
+    "邀请人ID":          ("邀请人ID", "text"),
+    "记得一定要加小天使👼微信号，并备注“真实姓名”。": ("记得一定要加小天使👼微信号，并备注“真实姓名”。", "select"),
+}
+# 必填字段（其余为选填：参加的团体 / 房产状况 / 年收入 / 是否有车 / 邀请人ID）
+REGISTER_REQUIRED = [
+    F_REAL_NAME, F_NICKNAME, F_ID_CARD, F_GENDER, F_BIRTHDAY, F_PHONE, F_WECHAT,
+    F_BAPTISMAL_NAME, F_CHURCH, F_CHURCH_LOCATION, F_NATIVE_PLACE, F_FAMILY, F_CITY,
+    F_HEIGHT, F_EDUCATION, F_INDUSTRY, F_POSITION, F_PERSONALITY, F_SELF_TRAITS,
+    F_SELF_HOBBIES, F_SELF_SPORTS, F_MBTI, F_PARTNER_CRITERIA, F_PARTNER_TRAITS,
+    F_PARTNER_HOBBIES, F_PARTNER_SPORTS, F_LIVE_WITH_PARENTS, F_MARRIAGE,
+    F_IS_FOR_CHILD, F_REFERRAL_SOURCE,
+    "记得一定要加小天使👼微信号，并备注“真实姓名”。",
+]
+REGISTER_ANGEL_FIELD = "记得一定要加小天使👼微信号，并备注“真实姓名”。"
+REGISTER_INVITER_FIELD = "邀请人ID"
+
+def _feishu_code_to_openid(code):
+    """飞书免登/授权 code 换 open_id。成功返回 open_id，失败返回 None。"""
+    try:
+        tok = requests.post(
+            "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal",
+            json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET}, timeout=10).json()
+        app_access_token = tok.get("app_access_token", "")
+        if not app_access_token:
+            return None
+        resp = requests.post(
+            "https://open.feishu.cn/open-apis/authen/v1/access_token",
+            headers={"Authorization": f"Bearer {app_access_token}", "Content-Type": "application/json"},
+            json={"grant_type": "authorization_code", "code": code}, timeout=15)
+        result = resp.json()
+        if result.get("code") == 0:
+            return result.get("data", {}).get("open_id")
+        app.logger.warning(f"register code2openid failed: {result.get('code')} {result.get('msg')}")
+    except Exception as e:
+        app.logger.error(f"register code2openid exception: {e}")
+    return None
+
+def _register_existing(open_id):
+    """该 open_id 是否已有任意档案（用户表或村情六处表）。返回 (bool, status, nickname)。"""
+    rec = snap_find_user_by_openid(open_id)
+    if not rec:
+        # 快照可能滞后，实时直查兜底
+        recs = bitable.search_records(USER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+        if OBSERVER_TABLE_ID:
+            recs += bitable.search_records(OBSERVER_TABLE_ID, [
+                {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+        rec = _pick_primary_user(recs) if recs else None
+    if not rec:
+        return False, "", ""
+    fields = rec.get("fields", {})
+    return True, bitable.get_select_value(fields, F_ACCOUNT_STATUS), bitable.get_field_text(fields, F_NICKNAME)
+
+@app.route("/api/register/prepare", methods=["GET", "POST"])
+def register_prepare():
+    """注册前置：用飞书 code 确认身份并下发会话；已有档案则告知无需重复注册。
+    无 code 但带有效会话时返回当前状态（供注册页刷新后恢复）。"""
+    open_id = g.get("yxq_open_id")
+    code = request.args.get("code") or (request.get_json(silent=True) or {}).get("code", "")
+    if not open_id and code:
+        open_id = _feishu_code_to_openid(code)
+        if not open_id:
+            return jsonify({"error": "飞书登录校验失败，请从「一线牵」机器人重新进入注册"}), 401
+    if not open_id:
+        return jsonify({"error": "缺少登录态"}), 401
+
+    exists, status, nickname = _register_existing(open_id)
+    resp = make_response(jsonify({
+        "ok": True,
+        "stage": "exists" if exists else "new",
+        "status": status or "",
+        "nickname": nickname or "",
+    }))
+    # 即使尚未建档也下发会话，submit/photo 据此确认注册人身份
+    resp.set_cookie("yxq_session", create_session(open_id, "user"), httponly=True, secure=True,
+                    max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
+    return resp
+
+def _register_read_image(file_storage):
+    """校验并归一化注册上传图片，返回 (bytes, filename, content_type)；非法抛 ValueError。"""
+    data = file_storage.read()
+    if not data:
+        raise ValueError("图片为空")
+    if len(data) > 10 * 1024 * 1024:
+        raise ValueError("图片不能超过10MB")
+    mimetype = file_storage.mimetype or "image/jpeg"
+    filename = (file_storage.filename or "photo.jpg").rsplit("/", 1)[-1] or "photo.jpg"
+    if mimetype.startswith("video/") or filename.lower().endswith((".mp4", ".mov", ".avi", ".webm")):
+        raise ValueError("请上传 JPG/PNG 图片，暂不支持视频")
+    if mimetype == "image/heic" or filename.lower().endswith((".heic", ".heif")):
+        try:
+            import pillow_heif
+            from PIL import Image as _PILImage
+            heif = pillow_heif.open_heif(io.BytesIO(data))
+            im = _PILImage.frombytes(heif.mode, heif.size, heif.data, "raw", heif.mode, heif.stride)
+            if max(im.size) > 1080:
+                ratio = 1080.0 / im.width
+                im = im.resize((1080, int(im.height * ratio)), _PILImage.LANCZOS)
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=85, optimize=True)
+            data, mimetype, filename = out.getvalue(), "image/jpeg", filename.rsplit(".", 1)[0] + ".jpg"
+        except Exception:
+            raise ValueError("HEIC 图片处理失败，请转成 JPG 后重试")
+    try:
+        from PIL import Image as _PILImage
+        _prev = _PILImage.MAX_IMAGE_PIXELS
+        _PILImage.MAX_IMAGE_PIXELS = None
+        try:
+            _PILImage.open(io.BytesIO(data)).verify()
+        finally:
+            _PILImage.MAX_IMAGE_PIXELS = _prev
+    except Exception:
+        raise ValueError("文件不是有效图片")
+    return data, filename, mimetype
+
+@app.route("/api/register/photo", methods=["POST"])
+def register_photo():
+    _rl = _rate_limit(limit=30, window=60, key_prefix="regphoto")
+    if _rl:
+        return _rl
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录，请从机器人重新进入注册"}), 401
+    # 已有档案不允许再走注册上传
+    exists, _, _ = _register_existing(open_id)
+    if exists:
+        return jsonify({"error": "你已经注册过啦"}), 400
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "未收到图片"}), 400
+    try:
+        data, filename, mimetype = _register_read_image(f)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    token = bitable.upload_attachment(data, filename, mimetype)
+    if not token:
+        return jsonify({"error": "图片上传失败，请稍后重试"}), 500
+    return jsonify({"ok": True, "token": token})
+
+def _register_normalize(data, photo_tokens):
+    """把注册提交值归一化为多维表格写入字段；返回 (fields, error)。"""
+    import calendar as _cal
+    import datetime as _dt
+    fields_out = {}
+    for key, val in (data or {}).items():
+        spec = REGISTER_FIELD_MAP.get(key)
+        if not spec:
+            continue
+        tbl_name, kind = spec
+        if kind in ("text", "longtext"):
+            s = str(val if val is not None else "").strip()
+            if s:
+                fields_out[tbl_name] = s
+        elif kind == "select":
+            s = str(val if val is not None else "").strip()
+            if s:
+                fields_out[tbl_name] = s
+        elif kind == "multi":
+            vals = val if isinstance(val, list) else []
+            vals = [str(x).strip() for x in vals if str(x).strip()]
+            if vals:
+                fields_out[tbl_name] = vals
+        elif kind == "number":
+            if val in ("", None):
+                continue
+            try:
+                fields_out[tbl_name] = int(float(str(val)))
+            except (ValueError, TypeError):
+                return None, f"「{tbl_name}」需为整数"
+        elif kind == "phone":
+            raw = re.sub(r"[^0-9+]", "", str(val or ""))
+            if not re.match(r"^\+?\d{7,15}$", raw):
+                return None, "手机号格式有误"
+            fields_out[tbl_name] = raw
+        elif kind == "date":
+            s = str(val or "").strip()
+            try:
+                bd = _dt.datetime.strptime(s, "%Y-%m-%d")
+                fields_out[tbl_name] = _cal.timegm(bd.timetuple()) * 1000
+            except (ValueError, TypeError):
+                return None, "生日格式有误"
+    # 必填校验
+    for key in REGISTER_REQUIRED:
+        tbl_name = REGISTER_FIELD_MAP[key][0]
+        cur = fields_out.get(tbl_name)
+        empty = (cur is None) or (isinstance(cur, str) and not cur.strip()) or (isinstance(cur, list) and not cur)
+        if empty:
+            return None, f"请填写「{key}」"
+    # 身份证格式强校验
+    idc = fields_out.get(F_ID_CARD, "").upper().replace(" ", "")
+    ok, _msg = bitable.validate_id_card(idc)
+    if not ok:
+        return None, "身份证号格式有误，请检查后重新填写"
+    fields_out[F_ID_CARD] = idc
+    # 照片 3-9 张
+    if not (3 <= len(photo_tokens) <= 9):
+        return None, "请上传 3-9 张个人照片"
+    fields_out[F_PHOTO] = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(photo_tokens)]
+    # 小天使确认项固定写“我会记得的”
+    fields_out[REGISTER_ANGEL_FIELD] = "我会记得的"
+    return fields_out, None
+
+@app.route("/api/register/submit", methods=["POST"])
+def register_submit():
+    _rl = _rate_limit(limit=6, window=300, key_prefix="regsubmit")
+    if _rl:
+        return _rl
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录，请从机器人重新进入注册"}), 401
+    exists, _s, _n = _register_existing(open_id)
+    if exists:
+        return jsonify({"error": "你已经注册过啦，无需重复注册"}), 400
+
+    body = request.get_json(silent=True) or {}
+    photo_tokens = [str(t) for t in (body.get("photos") or []) if str(t).strip()]
+    fields_out, err = _register_normalize(body.get("fields") or {}, photo_tokens)
+    if err:
+        return jsonify({"error": err}), 400
+
+    # 系统字段：绑定 open_id、强制待审核、初始爱心（用户ID/注册时间由表格自动生成）
+    fields_out[F_FEISHU_ID] = open_id
+    fields_out[F_ACCOUNT_STATUS] = "待审核"
+    fields_out[F_HEART_REMAIN] = INITIAL_HEARTS
+
+    try:
+        rec = bitable.create_record(USER_TABLE_ID, fields_out)
+    except Exception as e:
+        app.logger.error(f"register create_record failed: {e}")
+        return jsonify({"error": "提交失败，请稍后重试"}), 500
+    if not rec or not rec.get("record_id"):
+        return jsonify({"error": "提交失败，请稍后重试"}), 500
+    # 刷新快照，便于随后登录读到“审核中”状态
+    try:
+        refresh_snapshot_table("users")
+    except Exception:
+        pass
+    app.logger.info(f"H5注册提交成功: {fields_out.get(F_NICKNAME)} open_id={open_id} rec={rec.get('record_id')}")
+    return jsonify({"ok": True, "message": "资料已提交，请耐心等待人工审核"})
 
 def _build_self_card(open_id, active_users, msg_counts):
     """观察员预览自己的「普通用户」卡片（别人看我的样子）。

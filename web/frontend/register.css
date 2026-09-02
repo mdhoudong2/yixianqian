@@ -1,0 +1,83 @@
+/* 一线牵 H5 原生注册页（复刻「一线牵-注册（新）」表单） */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(180deg, #eef4fb 0%, #f7f8fa 240px, #f7f8fa 100%);
+  color: #323233; font-size: 15px; line-height: 1.55;
+  padding-bottom: 96px;
+}
+.reg-wrap { max-width: 640px; margin: 0 auto; padding: 0 16px; }
+
+/* 顶部标题区 */
+.reg-header { text-align: center; padding: 26px 8px 10px; }
+.reg-header .logo { font-size: 34px; }
+.reg-title { font-size: 22px; font-weight: 700; color: #1f2d3d; margin: 6px 0 10px; }
+.reg-intro { color: #8a94a6; font-size: 13px; line-height: 1.9; text-align: left;
+  background: rgba(255,255,255,.6); border-radius: 10px; padding: 10px 14px; }
+
+/* 加载/结果状态页 */
+.state-page { text-align: center; padding: 120px 28px; }
+.state-page .big { font-size: 46px; margin-bottom: 16px; }
+.state-page h2 { font-size: 19px; margin: 8px 0; }
+.state-page p { color: #646566; font-size: 14px; margin: 8px 0 22px; }
+
+/* 字段块 */
+.field { background: #fff; border-radius: 12px; padding: 16px; margin-top: 12px; box-shadow: 0 1px 8px rgba(0,0,0,.04); }
+.field-label { font-size: 15px; font-weight: 600; color: #1f2d3d; margin-bottom: 4px; display: flex; align-items: baseline; }
+.field-label .req { color: #ee0a24; margin-right: 3px; }
+.field-label .idx { color: #969799; font-weight: 400; font-size: 13px; margin-right: 6px; }
+.field-hint { color: #969799; font-size: 12.5px; line-height: 1.6; margin: 2px 0 10px; white-space: pre-wrap; }
+.field-hint.example { color: #a3abb8; }
+.field-err { color: #ee0a24; font-size: 12.5px; margin-top: 6px; }
+
+input[type=text], input[type=tel], input[type=number], input[type=date], select, textarea {
+  width: 100%; border: 1px solid #dcdee0; border-radius: 8px; background: #fafbfc;
+  padding: 11px 12px; font-size: 15px; color: #323233; outline: none; font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+textarea { resize: vertical; min-height: 84px; line-height: 1.6; }
+input:focus, select:focus, textarea:focus { border-color: #ff8e9b; background: #fff; }
+input.invalid, select.invalid, textarea.invalid { border-color: #ee0a24; background: #fff7f7; }
+select { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%23969799' stroke-width='1.4' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; }
+
+/* 单选芯片 / 多选芯片 */
+.chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip { border: 1px solid #dcdee0; background: #f7f8fa; color: #4a4f59; border-radius: 8px;
+  padding: 8px 14px; font-size: 14px; cursor: pointer; user-select: none; transition: all .12s; }
+.chip.on { border-color: #ff6b81; background: #fff1f3; color: #ff4d6a; font-weight: 600; }
+.chip.radio-on::before { content: "● "; }
+.other-note { margin-top: 10px; }
+
+/* 省市区三级联动 */
+.area-row { display: flex; gap: 8px; }
+.area-row select { flex: 1; min-width: 0; }
+
+/* 照片上传 */
+.photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.photo-item { position: relative; width: 100%; padding-top: 100%; border-radius: 10px; overflow: hidden; background: #f2f3f5; }
+.photo-item img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.photo-item .cover-badge { position: absolute; left: 0; bottom: 0; background: rgba(0,0,0,.5); color:#fff; font-size:11px; padding:2px 6px; border-top-right-radius:6px; }
+.photo-item .del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(0,0,0,.55); color: #fff; border: none; font-size: 14px; line-height: 22px; text-align: center; padding: 0; }
+.photo-add { position: relative; width: 100%; padding-top: 100%; border: 1.5px dashed #c8c9cc; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; color: #969799; cursor: pointer; background: #fafbfc; }
+.photo-add .plus { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; }
+.photo-add .plus b { font-size: 26px; font-weight: 400; line-height: 1; }
+.photo-add input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+/* 小天使二维码 */
+.angel-qr { width: 220px; max-width: 70%; display: block; margin: 10px auto 4px; border-radius: 10px; border: 1px solid #ebedf0; }
+.confirm-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.confirm-line .chip { flex: 0 0 auto; }
+
+/* 底部提交栏 */
+.submit-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; background: rgba(255,255,255,.96);
+  backdrop-filter: blur(6px); border-top: 1px solid #f0f0f0; padding: 10px 16px; }
+.submit-bar .inner { max-width: 640px; margin: 0 auto; }
+.btn-primary { width: 100%; height: 46px; border: none; border-radius: 23px; color: #fff; font-size: 16px; font-weight: 600;
+  background: linear-gradient(135deg, #ff6b81, #ff8e9b); box-shadow: 0 4px 14px rgba(255,107,129,.35); cursor: pointer; }
+.btn-primary:disabled { opacity: .6; box-shadow: none; }
+.btn-plain { width: 100%; height: 44px; border: 1px solid #c8c9cc; background: #fff; border-radius: 22px; font-size: 15px; color: #4a4f59; cursor: pointer; }
+.muted { color: #969799; font-size: 12.5px; }

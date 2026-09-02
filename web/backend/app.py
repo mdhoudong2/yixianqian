@@ -1362,9 +1362,11 @@ def warm_image_cache(max_per_run=30):
             logging.getLogger(__name__).warning(f"预热图片 {t} 失败: {e}")
     if warmed:
         logging.getLogger(__name__).info(f"图片预热完成，本次下载 {warmed} 张，待下载 {len(pending)-warmed} 张")
-    # 人脸检测异步批量，不阻塞快照循环；有效 sidecar 已存在则跳过
+    # 人脸检测异步批量，不阻塞快照循环；每轮先过滤出「未完成检测」的 token 再取前 N，
+    # 否则哈希序固定的前 N 个完成后只 continue 不让位，排在后面的新照片永远轮不到
     def _bg_face_batch():
-        for tok in list(tokens)[:max_per_run]:
+        pending = []
+        for tok in tokens:
             if not tok:
                 continue
             try:
@@ -1379,6 +1381,11 @@ def warm_image_cache(max_per_run=30):
                             continue
                     except Exception:
                         pass
+                pending.append(tok)
+            except Exception:
+                pass
+        for tok in pending[:max_per_run]:
+            try:
                 ensure_face_center(tok)
             except Exception:
                 pass

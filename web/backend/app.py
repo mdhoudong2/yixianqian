@@ -2969,14 +2969,6 @@ def list_received_messages():
     return jsonify({"messages": msgs})
 
 
-# 进程内留言去重：bitable 写入后搜索索引有秒级延迟，仅靠查表去重会漏掉 2~3 秒内的连点/重试。
-# 单 worker 多线程共享本缓存，按 (作者,对象,父留言,内容) 记录最近提交时间，窗口内直接幂等返回。
-import threading as _threading_mod
-_MSG_RECENT_LOCK = _threading_mod.Lock()
-_MSG_RECENT = {}  # key -> 创建时间(ms)
-_MSG_DEDUP_WINDOW_MS = 15000  # 15秒内同作者同对象同内容视为重复
-
-
 @app.route("/api/messages", methods=["POST"])
 def create_message():
     _rl = _rate_limit(limit=20, window=60, key_prefix="msg")
@@ -3038,17 +3030,6 @@ def create_message():
             reply_to_oid = ""
             reply_to_nickname = ""
             reply_to_uid = ""
-    # —— 进程内幂等去重（主防线，不依赖 bitable 索引时效）——
-    dedup_key = f"{open_id}|{target}|{parent_id}|{content}"
-    with _MSG_RECENT_LOCK:
-        # 顺带清理过期键，避免缓存无限增长
-        for k in [k for k, t in _MSG_RECENT.items() if now_ms - t > _MSG_DEDUP_WINDOW_MS]:
-            _MSG_RECENT.pop(k, None)
-        prev_ms = _MSG_RECENT.get(dedup_key)
-        if prev_ms is not None and now_ms - prev_ms <= _MSG_DEDUP_WINDOW_MS:
-            app.logger.info(f"留言幂等拦截(进程内): role={g.yxq_role} open_id={open_id[:16]} 间隔={now_ms-prev_ms}ms")
-            return jsonify({"ok": True, "id": "dedup", "dedup": True})
-        _MSG_RECENT[dedup_key] = now_ms
     dup_rows = bitable.search_records(MESSAGE_TABLE_ID, {
         "conjunction": "and",
         "conditions": [

@@ -2554,6 +2554,80 @@ createApp({
     let viewerLightbox = null;
     let viewerOpenSeq = 0;
     let viewerDims = new Map();
+    // 自管理单击/双击：PhotoSwipe 内置双击检测会给单击加固定 300ms 延迟，
+    // 这里自行实现 250ms 短窗口——单击即关、双击缩放。
+    // 图片保持 pointer-events:none（拦截长按保存菜单），事件在 zoom-wrap/item 上捕获。
+    let vTapBound = false;
+    let vTapTimer = null;
+    let vLastTap = { t: 0, x: 0, y: 0 };
+    let vDown = null;
+    let vPtrCount = 0;
+    function vTapReset() {
+      if (vTapTimer) { clearTimeout(vTapTimer); vTapTimer = null; }
+      vLastTap.t = 0; vDown = null; vPtrCount = 0;
+    }
+    function vTapInViewer(e) {
+      const p = viewerLightbox && viewerLightbox.pswp;
+      if (!p || p.isDestroying || p.isClosing || !p.currSlide) return null;
+      const el = e.target;
+      if (!el || !el.closest) return null;
+      if (el.closest('.pswp__button, .pswp__top-bar')) return null;
+      return el.closest('.pswp') === p.element ? p : null;
+    }
+    function vTapDown(e) {
+      if (!vTapInViewer(e)) { vDown = null; return; }
+      if (e.type === 'pointerdown') {
+        vPtrCount++;
+        if (vPtrCount > 1) { vDown = null; return; }
+        if (e.pointerType === 'mouse') { vDown = null; return; }
+      }
+      if (e.touches && e.touches.length > 1) { vDown = null; return; }
+      const t = e.touches ? e.touches[0] : e;
+      vDown = { x: t.clientX, y: t.clientY, t: Date.now(), moved: false };
+    }
+    function vTapMove(e) {
+      if (!vDown) return;
+      const t = e.touches ? e.touches[0] : e;
+      if (Math.abs(t.clientX - vDown.x) > 12 || Math.abs(t.clientY - vDown.y) > 12) vDown.moved = true;
+    }
+    function vTapUp(e) {
+      if (e.type === 'pointerup') vPtrCount = Math.max(0, vPtrCount - 1);
+      const p = vTapInViewer(e);
+      if (!vDown || !p) return;
+      if (e.type === 'pointerup' && e.pointerType === 'mouse') { vDown = null; return; }
+      const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e;
+      const d = vDown;
+      vDown = null;
+      if (d.moved) return;
+      if (Date.now() - d.t > 500) return;
+      const now = Date.now();
+      if (now - vLastTap.t < 250 && Math.abs(t.clientX - vLastTap.x) < 40 && Math.abs(t.clientY - vLastTap.y) < 40) {
+        if (vTapTimer) { clearTimeout(vTapTimer); vTapTimer = null; }
+        vLastTap.t = 0;
+        const rect = p.element.getBoundingClientRect();
+        p.currSlide.toggleZoom({ x: t.clientX - rect.left, y: t.clientY - rect.top });
+      } else {
+        vLastTap.t = now; vLastTap.x = t.clientX; vLastTap.y = t.clientY;
+        vTapTimer = setTimeout(() => {
+          vTapTimer = null;
+          const ps = viewerLightbox && viewerLightbox.pswp;
+          if (ps && !ps.isDestroying && !ps.isClosing) ps.close();
+        }, 250);
+      }
+    }
+    function vTapBind() {
+      if (vTapBound) return;
+      vTapBound = true;
+      if (window.PointerEvent) {
+        document.addEventListener('pointerdown', vTapDown, true);
+        document.addEventListener('pointermove', vTapMove, true);
+        document.addEventListener('pointerup', vTapUp, true);
+      } else {
+        document.addEventListener('touchstart', vTapDown, true);
+        document.addEventListener('touchmove', vTapMove, true);
+        document.addEventListener('touchend', vTapUp, true);
+      }
+    }
     function viewerEnsure() {
       if (viewerLightbox) return;
       viewerLightbox = new PhotoSwipeLightbox({
@@ -2562,10 +2636,11 @@ createApp({
         pswpModule: () => PhotoSwipe,
         bgOpacity: 1,
         closeOnVerticalDrag: true,
-        tapAction: 'close',
+        tapAction: null,
         doubleTapAction: null,
         bgClickAction: 'close',
         imageClickAction: 'close',
+        hideAnimationDuration: 160,
         preloaderDelay: 200,
       });
       viewerLightbox.on('slideInit', (e) => {
@@ -2576,9 +2651,11 @@ createApp({
         }
       });
       viewerLightbox.on('close', () => {
+        vTapReset();
         if (showPhotoViewer.value) showPhotoViewer.value = false;
       });
       viewerLightbox.init();
+      vTapBind();
     }
     function attrEscape(s) {
       return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -813,7 +813,7 @@ def format_user_brief(record, include_openid=False, full=False):
     """格式化用户信息（卡片展示用，不含敏感信息）"""
     fields = record.get("fields", {})
     photos = bitable.get_attachment_tokens(fields, F_PHOTO)
-    photo_url = ("/api/image/" + photos[0] + "?fv6") if photos else ""
+    photo_url = ("/api/image/" + photos[0] + "?fv10") if photos else ""
     data = {
         "user_id": bitable.get_field_text(fields, F_USER_ID),
         "nickname": bitable.get_field_text(fields, F_NICKNAME),
@@ -852,7 +852,7 @@ def format_user_brief(record, include_openid=False, full=False):
             "family": bitable.get_field_text(fields, F_FAMILY),
             "live_with_parents": bitable.get_select_value(fields, F_LIVE_WITH_PARENTS),
             "birthday": format_birthday(fields),
-            "photos": ["/api/image/" + t + "?fv6" for t in photos],
+            "photos": ["/api/image/" + t + "?fv10" for t in photos],
             "faces": [get_face_center(t) for t in photos],
         })
     if include_openid:
@@ -884,7 +884,7 @@ def format_activity(record):
     """格式化活动信息"""
     fields = record.get("fields", {})
     posters = bitable.get_attachment_tokens(fields, F_ACTIVITY_POSTER)
-    poster_url = ("/api/image/" + posters[0] + "?fv6") if posters else ""
+    poster_url = ("/api/image/" + posters[0] + "?fv10") if posters else ""
     return {
         "activity_id": bitable.get_field_text(fields, F_ACTIVITY_ID),
         "name": bitable.get_field_text(fields, F_ACTIVITY_NAME),
@@ -1747,7 +1747,7 @@ def proxy_image(file_token):
         fpath, content_type = cached
         resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
                                    mimetype=content_type))
-        resp.headers["Cache-Control"] = "public, max-age=604800"
+        resp.headers["Cache-Control"] = "public, max-age=3600"
         return resp
 
     # 2. 从飞书下载并压缩后缓存
@@ -1777,7 +1777,7 @@ def proxy_image(file_token):
             f.write(compressed)
         os.replace(tmp, cache_path)  # 原子替换，避免与请求线程并发写坏
         return Response(compressed, content_type=content_type,
-                        headers={"Cache-Control": "public, max-age=604800"})
+                        headers={"Cache-Control": "public, max-age=3600"})
     except Exception:
         return jsonify({"error": "图片加载失败"}), 500
 
@@ -2828,7 +2828,7 @@ def list_messages():
         # keep-first：同号多档时取最早建档（=主档案规则的最小用户ID），与「我的」页一致
         if oid and oid not in avatar_map:
             toks = bitable.get_attachment_tokens(uf, F_PHOTO)
-            avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+            avatar_map[oid] = ("/api/image/" + toks[0] + "?fv10") if toks else ""
     msgs = []
     for it in items:
         fields = it.get("fields", {})
@@ -2874,7 +2874,7 @@ def list_my_messages():
             if oid and oid not in nick_map:
                 nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
                 toks = bitable.get_attachment_tokens(uf, F_PHOTO)
-                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv10") if toks else ""
     msgs = []
     for it in items:
         fields = it.get("fields", {})
@@ -2916,7 +2916,7 @@ def list_received_messages():
             if oid and oid not in nick_map:
                 nick_map[oid] = bitable.get_field_text(uf, F_NICKNAME)
                 toks = bitable.get_attachment_tokens(uf, F_PHOTO)
-                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv10") if toks else ""
     msgs = []
     for it in items:
         fields = it.get("fields", {})
@@ -3241,7 +3241,7 @@ def list_reported_messages():
             oid = bitable.get_field_text(uf, F_FEISHU_ID)
             if oid and oid not in avatar_map:
                 toks = bitable.get_attachment_tokens(uf, F_PHOTO)
-                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv6") if toks else ""
+                avatar_map[oid] = ("/api/image/" + toks[0] + "?fv10") if toks else ""
     # 昵称映射（用于 target 展示）
     nick_map = {}
     for key in ("users", "observers"):
@@ -3532,7 +3532,7 @@ def group_candidates(activity_id):
             if u_gender == target_gender:
                 uf = u.get("fields", {})
                 tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
-                photo = ("/api/image/" + tokens[0] + "?fv6") if tokens else ""
+                photo = ("/api/image/" + tokens[0] + "?fv10") if tokens else ""
                 candidates.append({
                     "openid": s_openid,
                     "nickname": bitable.get_field_text(uf, F_NICKNAME),
@@ -3908,7 +3908,7 @@ def _photo_tokens(user):
     return bitable.get_attachment_tokens(user.get("fields", {}), F_PHOTO)
 
 def _photo_urls(tokens):
-    return ["/api/image/" + t + "?fv6" for t in tokens]
+    return ["/api/image/" + t + "?fv10" for t in tokens]
 
 def _write_photos(user, tokens):
     """把一组 file_token 写回「个人照片」字段（多张照片，牵线首页可切换展示）。"""
@@ -4340,7 +4340,7 @@ def activity_signups(activity_id):
         if u:
             uf = u.get("fields", {})
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
-            photo = ("/api/image/" + tokens[0] + "?fv6") if tokens else ""
+            photo = ("/api/image/" + tokens[0] + "?fv10") if tokens else ""
             user_id = bitable.get_field_text(uf, F_USER_ID)
             gender = bitable.get_select_value(uf, F_GENDER)
         result.append({"openid": s_openid, "nickname": nick, "user_id": user_id, "photo": photo, "gender": gender})
@@ -4362,7 +4362,7 @@ def get_user_public(openid):
         "openid": bitable.get_field_text(fields, F_FEISHU_ID),
         "nickname": bitable.get_field_text(fields, F_NICKNAME),
         "gender": bitable.get_select_value(fields, F_GENDER),
-        "photos": ["/api/image/" + t + "?fv6" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
+        "photos": ["/api/image/" + t + "?fv10" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
         "display_fields": build_display_fields(fields),
     }
     return jsonify(data)
@@ -4479,7 +4479,7 @@ def public_users():
         result.append({
             "nickname": bitable.get_field_text(fields, F_NICKNAME),
             "gender": bitable.get_select_value(fields, F_GENDER),
-            "photos": ["/api/image/" + t + "?fv6" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
+            "photos": ["/api/image/" + t + "?fv10" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
             "display_fields": build_display_fields(fields),
         })
     return jsonify({"users": result})

@@ -2649,18 +2649,12 @@ createApp({
         pswpModule: () => PhotoSwipe,
         bgOpacity: 1,
         closeOnVerticalDrag: true,
-        loop: true,
         tapAction: null,
         doubleTapAction: null,
         bgClickAction: 'close',
         imageClickAction: 'close',
         hideAnimationDuration: 160,
         preloaderDelay: 200,
-      });
-      viewerLightbox.on('firstUpdate', () => {
-        // PhotoSwipe 核心 canLoop 要求 >2 张才循环，1-2 张卡片也允许首尾互绕
-        const p = viewerLightbox && viewerLightbox.pswp;
-        if (p) { p.canLoop = () => true; }
       });
       viewerLightbox.on('slideInit', (e) => {
         const d = e.slide ? viewerDims.get(e.slide.index) : null;

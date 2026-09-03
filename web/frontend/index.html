@@ -1887,7 +1887,8 @@ createApp({
         xhr.upload.onprogress = (e)=>{
           if (e.lengthComputable) {
             const pct = Math.round(e.loaded*100/e.total);
-            uploadProgress.value = pct;
+            // 映射到 50-85 区间，避免小文件直接 100%
+            uploadProgress.value = 50 + Math.round(pct*0.35);
           }
         };
         xhr.onload = ()=>{
@@ -1912,10 +1913,11 @@ createApp({
       uploadingPhoto.value = true; uploadProgress.value = 0; uploadStage.value = 'compress';
       try {
         // 1) 前端预压缩（降低上行 3-5 倍，2.5s→0.6s）
-        uploadProgress.value = 30;
+        uploadProgress.value = 5;
         const compressed = await compressImage(file);
-        uploadProgress.value = 50;
+        uploadProgress.value = 45;
         uploadStage.value = 'upload';
+        uploadProgress.value = 50;
         const fd = new FormData();
         fd.append('file', compressed, compressed.name||file.name);
         // 2) 带进度上传
@@ -1940,14 +1942,17 @@ createApp({
     }
     async function deletePhoto(i) {
       if (i < 0 || i >= profilePhotos.value.length) return;
+      uploadingPhoto.value = true; uploadStage.value='process'; uploadProgress.value=50;
+      vant.showToast({message:'删除中…', duration: 0, forbidClick:true});
       try {
         const data = await api('/api/profile/photo', { method: 'DELETE', body: JSON.stringify({ index: i }) });
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
         if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
-        vant.showToast('已删除');
-      } catch (err) { vant.showToast(err.message || '删除失败'); }
+        vant.clearToast(); vant.showToast('已删除');
+      } catch (err) { vant.clearToast(); vant.showToast(err.message || '删除失败'); }
+      uploadingPhoto.value = false; uploadStage.value=''; uploadProgress.value=0;
     }
     async function setCover(i) {
       if (i <= 0 || i >= profilePhotos.value.length) return;

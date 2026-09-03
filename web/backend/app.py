@@ -4416,13 +4416,47 @@ def delete_profile_photo():
     tokens = _photo_tokens(user)
     if idx < 0 or idx >= len(tokens):
         return jsonify({"error": "照片不存在"}), 400
+    # 记录被删 token 用于清理侧车
+    del_token = tokens[idx] if 0 <= idx < len(tokens) else None
     tokens.pop(idx)
-    if not _write_photos(user, tokens):
-        return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+    # 内存快照立即更新，保证 GET 立即见效；落库异步（省 6s）
     try:
-        refresh_snapshot_table("users")
+        with _snapshot_lock:
+            for u in _snapshot.get("users", []):
+                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id:
+                    u["fields"][F_PHOTO] = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(tokens)]
+                    break
     except Exception:
         pass
+    # 清理侧车与缓存（后台）
+    try:
+        if del_token:
+            # 同步清理内存与侧车，避免 has_face 误判
+            with _face_cache_lock:
+                _face_cache.pop(del_token, None)
+            try:
+                p = _face_sidecar_path(del_token)
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    def _bg_del():
+        try:
+            _write_photos(user, tokens)
+            refresh_snapshot_table_async("users")
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"后台删图失败 {e}")
+    try:
+        threading.Thread(target=_bg_del, daemon=True).start()
+    except Exception:
+        if not _write_photos(user, tokens):
+            return jsonify({"error": "资料更新失败，请稍后重试"}), 500
+        try:
+            refresh_snapshot_table_async("users")
+        except Exception:
+            pass
     return jsonify({"ok": True, "photos": _photo_urls(tokens),
                     "has_face": _tokens_has_face(tokens)})
 

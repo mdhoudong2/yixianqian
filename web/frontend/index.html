@@ -1942,22 +1942,23 @@ createApp({
     }
     async function deletePhoto(i) {
       if (i < 0 || i >= profilePhotos.value.length) return;
-      uploadingPhoto.value = true; uploadStage.value='process'; uploadProgress.value=50;
-      const toast = vant.showToast({message:'删除中…', duration: 0, forbidClick:true});
-      let timer = setTimeout(()=>{ try{ vant.clearToast(); }catch(_){} vant.showToast('删除超时，请检查网络'); uploadingPhoto.value=false; uploadStage.value=''; }, 15000);
+      // 避免 forbidClick 永久遮罩：用轻量 loading，不阻塞点击
+      uploadingPhoto.value = true; uploadStage.value='process'; uploadProgress.value=30;
+      let done=false;
+      const tid = setTimeout(()=>{ if(!done){ vant.showToast('删除较慢，请稍候…'); } }, 2000);
       try {
         const data = await api('/api/profile/photo', { method: 'DELETE', body: JSON.stringify({ index: i }) });
-        clearTimeout(timer);
+        done=true; clearTimeout(tid);
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
         if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
-        vant.clearToast(); vant.showToast('已删除');
+        vant.showToast('已删除');
       } catch (err) {
-        clearTimeout(timer);
-        vant.clearToast(); vant.showToast(err.message || '删除失败');
+        done=true; clearTimeout(tid);
+        vant.showToast(err.message || '删除失败');
       } finally {
-        clearTimeout(timer);
+        done=true; clearTimeout(tid);
         uploadingPhoto.value = false; uploadStage.value=''; uploadProgress.value=0;
       }
     }

@@ -1649,7 +1649,10 @@ def ensure_face_center(token):
     已裁照片做黑边回归复检：缓存清理后重下载的原图会带回黑边，按存储参数重新裁切。"""
     with _face_cache_lock:
         if token in _face_cache:
-            return _face_cache[token]
+            _cached = _face_cache[token]
+            if _cached is not None:
+                return _cached
+            # 曾被 get_face_center 以 None 负缓存（上传后瞬时），需继续走 sidecar/检测而非直接返回，否则新图永不解封
     try:
         p = _face_sidecar_path(token)
         if os.path.exists(p):
@@ -4328,16 +4331,16 @@ def update_profile_photo():
     tokens.append(file_token)
     if not _write_photos(user, tokens):
         return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    # 异步预热：先快速缓存图片，人脸后台计算，避免接口阻塞 2-4s；has_face 稍后通过快照刷新补齐
+    # 同步预热：先下载图片，再同步检测人脸（约0.3-1s），保证 has_face 立即准确，避免删光后重传仍被门禁拦
+    # 此前为异步线程 + 立即返回 _tokens_has_face，因 get_face_center 会负缓存 None 导致 ensure 早退，致使新图永不解封（U-0006 复现）
     try:
         _download_and_cache_image(file_token)
     except Exception:
         pass
     try:
-        threading.Thread(target=ensure_face_center, args=(file_token,), daemon=True).start()
+        ensure_face_center(file_token)
     except Exception:
         pass
-    # 同步刷新用户快照，保证 /api/profile、/api/home 的基础信息与本响应一致（人脸异步）
     try:
         refresh_snapshot_table("users")
     except Exception:

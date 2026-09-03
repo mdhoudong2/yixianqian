@@ -1943,16 +1943,23 @@ createApp({
     async function deletePhoto(i) {
       if (i < 0 || i >= profilePhotos.value.length) return;
       uploadingPhoto.value = true; uploadStage.value='process'; uploadProgress.value=50;
-      vant.showToast({message:'删除中…', duration: 0, forbidClick:true});
+      const toast = vant.showToast({message:'删除中…', duration: 0, forbidClick:true});
+      let timer = setTimeout(()=>{ try{ vant.clearToast(); }catch(_){} vant.showToast('删除超时，请检查网络'); uploadingPhoto.value=false; uploadStage.value=''; }, 15000);
       try {
         const data = await api('/api/profile/photo', { method: 'DELETE', body: JSON.stringify({ index: i }) });
+        clearTimeout(timer);
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
         if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
         vant.clearToast(); vant.showToast('已删除');
-      } catch (err) { vant.clearToast(); vant.showToast(err.message || '删除失败'); }
-      uploadingPhoto.value = false; uploadStage.value=''; uploadProgress.value=0;
+      } catch (err) {
+        clearTimeout(timer);
+        vant.clearToast(); vant.showToast(err.message || '删除失败');
+      } finally {
+        clearTimeout(timer);
+        uploadingPhoto.value = false; uploadStage.value=''; uploadProgress.value=0;
+      }
     }
     async function setCover(i) {
       if (i <= 0 || i >= profilePhotos.value.length) return;
@@ -2034,18 +2041,28 @@ createApp({
       const csrf = (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || '';
       const baseHeaders = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
       if (csrf) baseHeaders['X-CSRF-Token'] = csrf;
-      const resp = await fetch(BASE_PATH + url, {
-        credentials: 'same-origin',
-        headers: { ...baseHeaders, ...(options.headers||{}) },
-        ...options
-      });
-      const contentType = resp.headers.get('Content-Type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('服务器返回了非预期的响应，请稍后重试');
+      const controller = new AbortController();
+      const timeout = setTimeout(()=> controller.abort(), 15000);
+      try {
+        const resp = await fetch(BASE_PATH + url, {
+          credentials: 'same-origin',
+          headers: { ...baseHeaders, ...(options.headers||{}) },
+          signal: controller.signal,
+          ...options
+        });
+        clearTimeout(timeout);
+        const contentType = resp.headers.get('Content-Type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error('服务器返回了非预期的响应，请稍后重试');
+        }
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || '请求失败');
+        return data;
+      } catch(e) {
+        clearTimeout(timeout);
+        if (e.name==='AbortError') throw new Error('请求超时，请检查网络后重试');
+        throw e;
       }
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || '请求失败');
-      return data;
     }
 
     // 登录（app_id 由后端注入：生产/测试服各自不同）

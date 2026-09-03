@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>一线牵-注册（新）</title>
+<link rel="icon" href="favicon.svg?v=5" type="image/svg+xml">
+<link rel="stylesheet" href="lib/vant.min.css">
+<link rel="stylesheet" href="register.css?v=1">
+<script>window.YXQ_FEISHU_APP_ID = "__FEISHU_APP_ID__";</script>
+</head>
+<body>
+<div id="app" v-cloak>
+
+  <!-- 登录/身份确认中 -->
+  <div v-if="stage==='loading'" class="state-page">
+    <div class="big">💕</div>
+    <van-loading size="24px">正在确认飞书身份...</van-loading>
+    <p class="muted" style="margin-top:18px;">请从「一线牵」机器人进入注册</p>
+  </div>
+
+  <!-- 已注册 -->
+  <div v-else-if="stage==='exists'" class="state-page">
+    <div class="big">✅</div>
+    <h2>你已经注册过啦</h2>
+    <p v-if="existsNick">姓名/昵称：{{ existsNick }}</p>
+    <p>无需重复注册，直接进入一线牵 App 即可</p>
+    <button class="btn-primary" style="margin-top:10px;" @click="goApp">进入一线牵 App</button>
+  </div>
+
+  <!-- 提交成功 -->
+  <div v-else-if="stage==='done'" class="state-page">
+    <div class="big">🎉</div>
+    <h2>资料已提交</h2>
+    <p>请耐心等待人工审核，<br>审核通过后即可使用一线牵 App</p>
+    <button class="btn-primary" @click="goApp">我知道了</button>
+  </div>
+
+  <!-- 注册表单 -->
+  <div v-else>
+    <div class="reg-header">
+      <div class="logo">💞</div>
+      <div class="reg-title">一线牵-注册（新）</div>
+      <div class="reg-intro">- 亲爱的兄弟姐妹，为了更容易找到另一半：请保证以下信息真实可信。<br>- 表单比较长，但你的那个TA，可能很关注这些信息。<br>- 此信息仅用于此App，不会外泄，请放心填写。</div>
+    </div>
+
+    <div class="reg-wrap">
+      <div v-for="f in FIELDS" :key="f.key" class="field">
+        <div class="field-label">
+          <span class="req" v-if="f.required">*</span><span class="idx">{{ f.n }}→</span><span>{{ f.label }}</span>
+        </div>
+        <div class="field-hint" :class="{example: f.example}" v-if="f.hint">{{ f.hint }}</div>
+
+        <!-- 照片 -->
+        <template v-if="f.type==='photo'">
+          <div class="photo-grid">
+            <div class="photo-item" v-for="(p,i) in photos" :key="i">
+              <img :src="p.preview" alt="">
+              <span class="cover-badge" v-if="i===0">封面/第一张</span>
+              <button type="button" class="del" @click="removePhoto(i)">×</button>
+            </div>
+            <label class="photo-add" v-if="photos.length < 9">
+              <div class="plus"><b>＋</b><span>添加本地文件</span><span class="muted">{{ photos.length }}/9（至少3张）</span></div>
+              <input type="file" accept="image/*" multiple @change="onPickPhotos($event)">
+            </label>
+          </div>
+          <div class="field-err" v-if="errors.photo">{{ errors.photo }}</div>
+        </template>
+
+        <!-- 省/市/区 联动 -->
+        <template v-else-if="f.type==='area'">
+          <div class="area-row">
+            <select :class="{invalid: errors[f.key]}" v-model="area[f.key].province" @change="onAreaProvince(f.key)">
+              <option value="">省</option>
+              <option v-for="p in provinces" :key="p" :value="p">{{ p }}</option>
+            </select>
+            <select :class="{invalid: errors[f.key]}" v-model="area[f.key].city" @change="onAreaCity(f.key)">
+              <option value="">市</option>
+              <option v-for="c in cityList(f.key)" :key="c" :value="c">{{ c }}</option>
+            </select>
+            <select v-if="f.levels===3" :class="{invalid: errors[f.key]}" v-model="area[f.key].county">
+              <option value="">区/县</option>
+              <option v-for="d in countyList(f.key)" :key="d" :value="d">{{ d }}</option>
+            </select>
+          </div>
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+
+        <!-- 单选芯片（有/无 等） -->
+        <template v-else-if="f.type==='radio'">
+          <div class="chips">
+            <div class="chip" :class="{on: form[f.key]===opt, 'radio-on': form[f.key]===opt}"
+                 v-for="opt in f.options" :key="opt" @click="pickRadio(f.key,opt)">{{ opt }}</div>
+          </div>
+          <div class="other-note" v-if="form[f.key] && f.note">
+            <input type="text" :placeholder="f.notePlaceholder||'请补充描述'" v-model="form[f.note[form[f.key]]]">
+          </div>
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+
+        <!-- 多选芯片（含“其他”补充） -->
+        <template v-else-if="f.type==='multi'">
+          <div class="chips">
+            <div class="chip" :class="{on: (form[f.key]||[]).includes(opt)}"
+                 v-for="opt in f.options" :key="opt" @click="toggleMulti(f.key,opt)">{{ opt }}</div>
+          </div>
+          <div class="other-note" v-if="f.other && (form[f.key]||[]).includes('其他')">
+            <input type="text" placeholder="请补充描述" v-model="form[f.other]">
+          </div>
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+
+        <!-- 下拉单选 -->
+        <template v-else-if="f.type==='select'">
+          <select :class="{invalid: errors[f.key]}" v-model="form[f.key]">
+            <option value="">请选择选项</option>
+            <option v-for="opt in f.options" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+
+        <!-- 多行文本 -->
+        <template v-else-if="f.type==='textarea'">
+          <textarea :class="{invalid: errors[f.key]}" v-model="form[f.key]" :placeholder="f.placeholder||'请输入内容'"></textarea>
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+
+        <!-- 确认项（小天使） -->
+        <template v-else-if="f.type==='confirm'">
+          <img class="angel-qr" src="angel-qr.png" alt="小天使微信号二维码">
+          <div class="confirm-line">
+            <div class="chip" :class="{on: form[f.key]==='我会记得的'}" @click="toggleConfirm(f.key)">我会记得的</div>
+          </div>
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+
+        <!-- 普通输入（text/tel/number/date） -->
+        <template v-else>
+          <input :type="f.type" :inputmode="f.type==='number'?'numeric':''"
+                 :class="{invalid: errors[f.key]}" v-model="form[f.key]"
+                 :placeholder="f.placeholder||'请输入内容'">
+          <div class="field-err" v-if="errors[f.key]">{{ errors[f.key] }}</div>
+        </template>
+      </div>
+
+      <div style="height:12px;"></div>
+    </div>
+
+    <div class="submit-bar">
+      <div class="inner">
+        <button class="btn-primary" :disabled="submitting" @click="onSubmit">
+          {{ submitting ? '提交中，请稍候…' : '✓ 提交' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="lib/vue.global.prod.js"></script>
+<script src="lib/vant.min.js"></script>
+<script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.26.js"></script>
+<script src="lib/area-data.js?v=1"></script>
+<script src="register.js?v=1"></script>
+</body>
+</html>

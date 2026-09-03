@@ -814,7 +814,10 @@
       </div>
       <div v-if="profilePhotos.length < 9" class="edit-photo-add-btn" @click="pickPhoto">
         <van-icon name="plus"></van-icon>
-        <span>{{ uploadingPhoto ? '上传中…' : '添加照片' }}</span>
+        <span v-if="!uploadingPhoto">添加照片</span>
+        <span v-else-if="uploadStage==='compress'">压缩中 {{ uploadProgress }}%</span>
+        <span v-else-if="uploadStage==='upload'">上传中 {{ uploadProgress }}%</span>
+        <span v-else>处理中…</span>
       </div>
       <div v-else class="edit-photo-limit">最多上传 9 张</div>
       <div v-if="profileData.has_face === false" style="color:#ee0a24; font-size:12px; padding:0 16px 10px; line-height:1.6;">你的照片未检测到清晰人脸，请上传至少一张含正脸的照片，否则无法使用</div>
@@ -1799,6 +1802,8 @@ createApp({
     const savingProfile = ref(false);
     const photoInput = ref(null);
     const uploadingPhoto = ref(false);
+    const uploadProgress = ref(0);
+    const uploadStage = ref(''); // '' | 'compress' | 'upload' | 'process'
     const profilePhotos = ref([]);
     function syncProfilePhotos() {
       // 同步头像（第一张照片）与全局 user，保证保存后首页/消息头像一致
@@ -1845,26 +1850,92 @@ createApp({
       savingProfile.value = false;
     }
     function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
+    // 最佳实践：前端 canvas 预压缩至 1080 + XHR 进度 + 分段文案，HEIC 交由服务端
+    async function compressImage(file, maxWidth=1080, quality=0.82) {
+      // HEIC/HEIF 无法在 canvas 解码，交由服务端 pillow_heif 处理
+      if ((file.type||'').toLowerCase()==='image/heic' || (file.name||'').toLowerCase().endsWith('.heic') || (file.name||'').toLowerCase().endsWith('.heif')) return file;
+      try {
+        const img = await new Promise((res, rej)=>{
+          const u = URL.createObjectURL(file);
+          const im = new Image();
+          im.onload = ()=>{ URL.revokeObjectURL(u); res(im); };
+          im.onerror = ()=>{ URL.revokeObjectURL(u); rej(new Error('图片解码失败')); };
+          im.src = u;
+        });
+        let w = img.naturalWidth, h = img.naturalHeight;
+        if (w<=maxWidth && h<=maxWidth) return file;
+        // 等比缩放至最长边 maxWidth
+        let nw=w, nh=h;
+        if (w>h) { nw=maxWidth; nh=Math.round(h*maxWidth/w); } else { nh=maxWidth; nw=Math.round(w*maxWidth/h); }
+        const canvas = document.createElement('canvas');
+        canvas.width=nw; canvas.height=nh;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, nw, nh);
+        const blob = await new Promise(r=> canvas.toBlob(r, 'image/jpeg', quality));
+        if (!blob || blob.size>=file.size) return file;
+        return new File([blob], (file.name||'photo.jpg').replace(/\.\w+$/, '.jpg'), {type:'image/jpeg'});
+      } catch(e) { return file; }
+    }
+    function uploadWithProgress(url, formData) {
+      return new Promise((resolve, reject)=>{
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        const csrf = (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || '';
+        if (csrf) xhr.setRequestHeader('X-CSRF-Token', csrf);
+        xhr.upload.onprogress = (e)=>{
+          if (e.lengthComputable) {
+            const pct = Math.round(e.loaded*100/e.total);
+            uploadProgress.value = pct;
+          }
+        };
+        xhr.onload = ()=>{
+          try {
+            const ct = xhr.getResponseHeader('Content-Type')||'';
+            const data = ct.includes('application/json') ? JSON.parse(xhr.responseText||'{}') : {};
+            if (xhr.status>=200 && xhr.status<300) resolve(data);
+            else reject(new Error(data.error||'上传失败，请稍后重试'));
+          } catch(err){ reject(err); }
+        };
+        xhr.onerror = ()=> reject(new Error('网络异常，请重试'));
+        xhr.ontimeout = ()=> reject(new Error('上传超时，请重试'));
+        xhr.timeout = 60000;
+        xhr.send(formData);
+      });
+    }
     async function onPhotoChange(e) {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
       if (!file.type || !file.type.startsWith('image/')) { vant.showToast('请选择图片文件'); return; }
       if (file.size > 10 * 1024 * 1024) { vant.showToast('图片不能超过10MB'); return; }
-      uploadingPhoto.value = true;
+      uploadingPhoto.value = true; uploadProgress.value = 0; uploadStage.value = 'compress';
       try {
+        // 1) 前端预压缩（降低上行 3-5 倍，2.5s→0.6s）
+        uploadProgress.value = 30;
+        const compressed = await compressImage(file);
+        uploadProgress.value = 50;
+        uploadStage.value = 'upload';
         const fd = new FormData();
-        fd.append('file', file);
-        const resp = await fetch('/api/profile/photo', { method: 'POST', credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || '' }, body: fd });
-        const contentType = resp.headers.get('Content-Type') || '';
-        const data = contentType.includes('application/json') ? await resp.json() : {};
-        if (!resp.ok) throw new Error(data.error || '上传失败，请稍后重试');
+        fd.append('file', compressed, compressed.name||file.name);
+        // 2) 带进度上传
+        const data = await uploadWithProgress('/api/profile/photo', fd);
+        uploadStage.value = 'process';
+        uploadProgress.value = 90;
         profilePhotos.value = data.photos || [];
         profileData.value.photos = profilePhotos.value;
         if (typeof data.has_face === 'boolean') profileData.value.has_face = data.has_face;
         syncProfilePhotos();
-        vant.showToast('照片已添加');
+        vant.showToast(data.has_face===false ? '已上传，等待人脸检测...' : '照片已添加');
+        uploadProgress.value = 100;
+        // 若服务端仍异步，短轮询一次确保 has_face 最终态
+        if (data.has_face===false) {
+          setTimeout(async()=>{
+            try{ const d=await api('/api/profile'); if(typeof d.has_face==='boolean'){ profileData.value.has_face=d.has_face; } }catch(_){}
+          }, 1500);
+        }
       } catch (err) { vant.showToast(err.message || '上传失败'); }
-      uploadingPhoto.value = false;
+      uploadingPhoto.value = false; uploadStage.value=''; uploadProgress.value=0;
       e.target.value = '';
     }
     async function deletePhoto(i) {
@@ -3927,7 +3998,7 @@ createApp({
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
       showUnsavedConfirm, discardProfileEdit, saveAndLeaveProfileEdit, cancelProfileEditLeave,
-      photoInput, uploadingPhoto, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
+      photoInput, uploadingPhoto, uploadProgress, uploadStage, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,

@@ -101,6 +101,159 @@ _snapshot = {
     "messages": [],
 }
 _snapshot_lock = threading.RLock()
+# 照片操作按用户串行化：内存权威态 + 后台合并写库，避免并发删/传导致旧写覆盖（删图复原、主图错乱）
+_photo_locks = {}
+_photo_locks_lock = threading.Lock()
+def _get_photo_lock(open_id):
+    with _photo_locks_lock:
+        if open_id not in _photo_locks:
+            _photo_locks[open_id] = threading.Lock()
+        return _photo_locks[open_id]
+
+# open_id -> {"tokens": [...], "dirty": bool, "writing": bool, "record_id": str}
+# tokens 为本进程内该用户照片的权威态：上传/删除/设封面读它，快照回灌也以它为准
+_photo_state = {}
+_photo_state_lock = threading.Lock()
+
+class _PhotoOpError(Exception):
+    """照片操作参数不合法（超限/下标越界），返回 400"""
+
+def _photo_get_tokens(open_id, user):
+    """读取用户照片 tokens：优先内存权威态，否则从用户记录读取"""
+    with _photo_state_lock:
+        st = _photo_state.get(open_id)
+        if st is not None:
+            return list(st["tokens"])
+    return bitable.get_attachment_tokens(user.get("fields", {}), F_PHOTO)
+
+def _photo_apply_snapshot(open_id, tokens):
+    """把最新 tokens 写回内存快照主档案（同 open_id 多记录时只动主档），读接口立即可见"""
+    try:
+        with _snapshot_lock:
+            users = _snapshot.get("users", [])
+            matches = [u for u in users
+                       if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id]
+            rec = _pick_primary_user(matches) if matches else None
+            if rec is not None:
+                rec["fields"][F_PHOTO] = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(tokens)]
+    except Exception:
+        pass
+
+def _photo_mutate(open_id, user, mutator):
+    """按用户串行执行 tokens 变换；立即回写快照并调度后台落库。
+    mutator(tokens) -> new_tokens 或 None（表示无变化不落库）"""
+    _plock = _get_photo_lock(open_id)
+    with _plock:
+        with _photo_state_lock:
+            st = _photo_state.get(open_id)
+            if st is None:
+                toks = list(bitable.get_attachment_tokens(user.get("fields", {}), F_PHOTO))
+                st = {"tokens": toks, "dirty": False, "writing": False,
+                      "record_id": user.get("record_id")}
+                _photo_state[open_id] = st
+            else:
+                toks = list(st["tokens"])
+        new_toks = mutator(toks)
+        if new_toks is None:
+            return list(toks)
+        with _photo_state_lock:
+            st = _photo_state.get(open_id)
+            if st is None:
+                st = {"tokens": list(new_toks), "dirty": True, "writing": False,
+                      "record_id": user.get("record_id")}
+                _photo_state[open_id] = st
+            else:
+                st["tokens"] = list(new_toks)
+                st["dirty"] = True
+            start_writer = not st["writing"]
+            if start_writer:
+                st["writing"] = True
+        _photo_apply_snapshot(open_id, new_toks)
+        if start_writer:
+            threading.Thread(target=_photo_writer, args=(open_id,), daemon=True).start()
+        return list(new_toks)
+
+def _photo_writer(open_id):
+    """后台合并写：始终写最新内存态；成功清脏；3 次失败后回退内存到库内真值"""
+    with _photo_state_lock:
+        st = _photo_state.get(open_id)
+        record_id = st.get("record_id") if st else None
+    if not record_id:
+        with _photo_state_lock:
+            st = _photo_state.get(open_id)
+            if st:
+                st["writing"] = False
+        return
+    failures = 0
+    while True:
+        with _photo_state_lock:
+            st = _photo_state.get(open_id)
+            if not st or not st["dirty"]:
+                if st:
+                    st["writing"] = False
+                return
+            toks = list(st["tokens"])
+        attachments = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(toks)]
+        ok = False
+        try:
+            ok = bool(bitable.update_record(USER_TABLE_ID, record_id, {F_PHOTO: attachments}))
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"后台写照片异常 open_id={open_id}: {e}")
+        if ok:
+            failures = 0
+            with _photo_state_lock:
+                st = _photo_state.get(open_id)
+                if st and st["tokens"] == toks:
+                    st["dirty"] = False
+            continue
+        failures += 1
+        if failures < 3:
+            time.sleep(1)
+            continue
+        logging.getLogger(__name__).warning(f"后台写照片最终失败 open_id={open_id}")
+        with _photo_state_lock:
+            st = _photo_state.get(open_id)
+            if st:
+                st["dirty"] = False
+                st["writing"] = False
+        try:
+            refresh_snapshot_table("users")
+        except Exception:
+            pass
+        return
+
+def _photo_reapply_pending():
+    """快照刷新后回灌：脏态以内存权威态覆盖主档案快照；非脏态以主档案库内真值同步权威态。
+    同 open_id 多记录（历史重复注册）时只认主档案，避免其它记录的旧图复活/串档。"""
+    try:
+        with _photo_state_lock:
+            entries = {k: {"tokens": list(v["tokens"]), "dirty": v["dirty"]} for k, v in _photo_state.items()}
+        if not entries:
+            return
+        with _snapshot_lock:
+            by_oid = {}
+            for u in _snapshot.get("users", []):
+                oid = bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID)
+                if oid in entries:
+                    by_oid.setdefault(oid, []).append(u)
+        sync_back = []
+        for oid, recs in by_oid.items():
+            primary = _pick_primary_user(recs)
+            if primary is None:
+                continue
+            toks, dirty = entries[oid]["tokens"], entries[oid]["dirty"]
+            if dirty:
+                primary["fields"][F_PHOTO] = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(toks)]
+            else:
+                sync_back.append((oid, list(bitable.get_attachment_tokens(primary.get("fields", {}), F_PHOTO))))
+        if sync_back:
+            with _photo_state_lock:
+                for oid, db_toks in sync_back:
+                    st = _photo_state.get(oid)
+                    if st and not st["dirty"]:
+                        st["tokens"] = db_toks
+    except Exception:
+        pass
 # 已成功加载过的表：区分「未加载」与「加载后为空」。
 # 飞书表合法地没有记录时（如活动表空档期），空快照是权威结果，不应每次请求回退实时查询。
 _snapshot_loaded = set()
@@ -161,6 +314,7 @@ def refresh_snapshot_table(key):
     except Exception as e:
         logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
     if key == "users":
+        _photo_reapply_pending()
         _rebuild_cards_cache()
 
 def refresh_snapshot_table_async(key):
@@ -3946,10 +4100,7 @@ def _photo_urls(tokens):
 def _write_photos(user, tokens):
     """把一组 file_token 写回「个人照片」字段（多张照片，牵线首页可切换展示）。"""
     attachments = [{"file_token": t, "name": f"photo{i + 1}.jpg"} for i, t in enumerate(tokens)]
-    ok = bitable.update_record(USER_TABLE_ID, user["record_id"], {F_PHOTO: attachments})
-    if ok:
-        refresh_snapshot_table("users")
-    return ok
+    return bool(bitable.update_record(USER_TABLE_ID, user["record_id"], {F_PHOTO: attachments}))
 
 @app.route("/api/profile/photo", methods=["POST"])
 def update_profile_photo():
@@ -3960,16 +4111,15 @@ def update_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    # 快速校验（不加锁）
     user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):
         return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
-
-    tokens = _photo_tokens(user)
+    tokens = _photo_get_tokens(open_id, user)
     if len(tokens) >= MAX_PHOTOS:
         return jsonify({"error": f"最多只能上传 {MAX_PHOTOS} 张照片"}), 400
-
     f = request.files.get("file")
     if not f:
         return jsonify({"error": "未收到图片"}), 400
@@ -3978,10 +4128,8 @@ def update_profile_photo():
         return jsonify({"error": "图片为空"}), 400
     if len(data) > 10 * 1024 * 1024:
         return jsonify({"error": "图片不能超过10MB"}), 400
-    # 视频直接拒绝
     if (f.mimetype or "").startswith("video/") or (f.filename or "").lower().endswith((".mp4",".mov",".avi",".webm")):
         return jsonify({"error": "请上传 JPG/PNG 图片，暂不支持视频"}), 400
-    # HEIC 转 JPEG（iPhone 实况）
     if (f.mimetype == "image/heic" or (f.filename or "").lower().endswith((".heic",".heif"))):
         try:
             import pillow_heif
@@ -4002,9 +4150,9 @@ def update_profile_photo():
         except Exception:
             return jsonify({"error": "HEIC 图片处理失败，请转成 JPG 后重试"}), 400
     try:
-        from PIL import Image  # 函数内局部导入（HEIC 分支之外的 JPEG/PNG 路径也依赖）
+        from PIL import Image
         _prev = Image.MAX_IMAGE_PIXELS
-        Image.MAX_IMAGE_PIXELS = None  # 高像素手机原图（>89M 像素）不应被误拒，展示端会压缩
+        Image.MAX_IMAGE_PIXELS = None
         try:
             Image.open(io.BytesIO(data)).verify()
         finally:
@@ -4014,9 +4162,6 @@ def update_profile_photo():
             "图片上传校验失败 mimetype=%s filename=%s size=%s err=%s",
             f.mimetype, f.filename, len(data), e)
         return jsonify({"error": "文件不是有效图片"}), 400
-
-    # 最佳实践：上传前本地压缩至 1080，减少上行 3-5 倍（原图 3-5MB→150KB，upload 2.5s→0.6s）
-    # HEIC 已在上方分支压缩，此处处理 JPEG/PNG/WEBP
     try:
         if (f.mimetype or "").startswith("image/") and not (f.mimetype == "image/heic" or (f.filename or "").lower().endswith((".heic",".heif"))):
             if f.mimetype not in ("image/gif",) and len(data) > 200*1024:
@@ -4025,11 +4170,9 @@ def update_profile_photo():
                     ext = (f.mimetype or "").split("/")[-1].lower()
                     if ext == "jpeg":
                         ext = "jpg"
-                # _compress_image 会等比缩至 1080 并按大小选 quality 75/85
                 cdata = _compress_image(data, ext)
                 if cdata and len(cdata) < len(data):
                     data = cdata
-                    # 统一转为 jpeg 以省流量
                     if ext != "jpg":
                         f.mimetype = "image/jpeg"
     except Exception:
@@ -4038,36 +4181,16 @@ def update_profile_photo():
     file_token = bitable.upload_attachment(data, filename, f.mimetype or "image/jpeg")
     if not file_token:
         return jsonify({"error": "图片上传失败，请稍后重试"}), 500
-
-    tokens.append(file_token)
-    # 最佳实践：内存快照立即更新 + 异步落库，避免同步 update_record 6s 阻塞接口
-    # 先更新内存快照，保证后续 GET 立即见新图；落库放后台线程
+    # 按用户串行变换 tokens（内存立即生效），落库由后台合并写完成
+    def _apply(toks):
+        if len(toks) >= MAX_PHOTOS:
+            raise _PhotoOpError(f"最多只能上传 {MAX_PHOTOS} 张照片")
+        return toks + [file_token]
     try:
-        with _snapshot_lock:
-            for u in _snapshot.get("users", []):
-                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id:
-                    u["fields"][F_PHOTO] = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(tokens)]
-                    break
-    except Exception:
-        pass
-    # 异步落库
-    def _bg_write():
-        try:
-            _write_photos(user, tokens)
-            refresh_snapshot_table_async("users")
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"后台写照片失败 {e}")
-    try:
-        threading.Thread(target=_bg_write, daemon=True).start()
-    except Exception:
-        # 降级同步
-        if not _write_photos(user, tokens):
-            return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-        try:
-            refresh_snapshot_table_async("users")
-        except Exception:
-            pass
-    # 最佳实践：直接写缓存免下载（省 1.6s），同步人脸保证 has_face 立即准确
+        cur_tokens = _photo_mutate(open_id, user, _apply)
+    except _PhotoOpError as e:
+        return jsonify({"error": str(e)}), 400
+    # 直接写缓存（免飞书下载）
     try:
         ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
         ext = ext_map.get((f.mimetype or "image/jpeg").lower(), "jpg")
@@ -4084,8 +4207,8 @@ def update_profile_photo():
         ensure_face_center(file_token)
     except Exception:
         pass
-    return jsonify({"ok": True, "photos": _photo_urls(tokens),
-                    "has_face": _tokens_has_face(tokens)})
+    return jsonify({"ok": True, "photos": _photo_urls(cur_tokens),
+                    "has_face": _tokens_has_face(cur_tokens)})
 
 @app.route("/api/profile/photo", methods=["DELETE"])
 def delete_profile_photo():
@@ -4098,32 +4221,26 @@ def delete_profile_photo():
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):
         return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
-
     body = request.get_json(silent=True) or {}
     try:
         idx = int(body.get("index", -1))
     except (ValueError, TypeError):
         idx = -1
-
-    tokens = _photo_tokens(user)
-    if idx < 0 or idx >= len(tokens):
-        return jsonify({"error": "照片不存在"}), 400
-    # 记录被删 token 用于清理侧车
-    del_token = tokens[idx] if 0 <= idx < len(tokens) else None
-    tokens.pop(idx)
-    # 内存快照立即更新，保证 GET 立即见效；落库异步（省 6s）
+    del_holder = {}
+    def _apply(toks):
+        if idx < 0 or idx >= len(toks):
+            raise _PhotoOpError("照片不存在")
+        del_holder["token"] = toks[idx]
+        new = list(toks)
+        new.pop(idx)
+        return new
     try:
-        with _snapshot_lock:
-            for u in _snapshot.get("users", []):
-                if bitable.get_field_text(u.get("fields", {}), F_FEISHU_ID) == open_id:
-                    u["fields"][F_PHOTO] = [{"file_token": t, "name": f"photo{i+1}.jpg"} for i, t in enumerate(tokens)]
-                    break
-    except Exception:
-        pass
-    # 清理侧车与缓存（后台）
+        cur_tokens = _photo_mutate(open_id, user, _apply)
+    except _PhotoOpError as e:
+        return jsonify({"error": str(e)}), 400
+    del_token = del_holder.get("token")
     try:
         if del_token:
-            # 同步清理内存与侧车，避免 has_face 误判
             with _face_cache_lock:
                 _face_cache.pop(del_token, None)
             try:
@@ -4134,23 +4251,8 @@ def delete_profile_photo():
                 pass
     except Exception:
         pass
-    def _bg_del():
-        try:
-            _write_photos(user, tokens)
-            refresh_snapshot_table_async("users")
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"后台删图失败 {e}")
-    try:
-        threading.Thread(target=_bg_del, daemon=True).start()
-    except Exception:
-        if not _write_photos(user, tokens):
-            return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-        try:
-            refresh_snapshot_table_async("users")
-        except Exception:
-            pass
-    return jsonify({"ok": True, "photos": _photo_urls(tokens),
-                    "has_face": _tokens_has_face(tokens)})
+    return jsonify({"ok": True, "photos": _photo_urls(cur_tokens),
+                    "has_face": _tokens_has_face(cur_tokens)})
 
 @app.route("/api/profile/photo/cover", methods=["POST"])
 def set_profile_cover():
@@ -4163,21 +4265,24 @@ def set_profile_cover():
         return jsonify({"error": "用户不存在"}), 404
     if _is_observer(user):
         return jsonify(OBSERVER_BLOCKED_MESSAGE), 403
-
     body = request.get_json(silent=True) or {}
     try:
         idx = int(body.get("index", -1))
     except (ValueError, TypeError):
         idx = -1
-
-    tokens = _photo_tokens(user)
-    if idx < 0 or idx >= len(tokens):
-        return jsonify({"error": "照片不存在"}), 400
-    if idx != 0:
-        tokens.insert(0, tokens.pop(idx))
-        if not _write_photos(user, tokens):
-            return jsonify({"error": "资料更新失败，请稍后重试"}), 500
-    return jsonify({"ok": True, "photos": _photo_urls(tokens)})
+    def _apply(toks):
+        if idx < 0 or idx >= len(toks):
+            raise _PhotoOpError("照片不存在")
+        if idx == 0:
+            return None
+        new = list(toks)
+        new.insert(0, new.pop(idx))
+        return new
+    try:
+        cur_tokens = _photo_mutate(open_id, user, _apply)
+    except _PhotoOpError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "photos": _photo_urls(cur_tokens)})
 
 # ========== 我的喜欢 ==========
 

@@ -10,7 +10,7 @@ def generate_h5_url(open_id):
 
 
 def build_main_menu_card(h5_url=None):
-    """构建主菜单卡片（卡片1：一线牵 App + 邀请好友 + 帮助）"""
+    """构建主菜单卡片（卡片1：一线牵 App + 报名活动 + 邀请好友 + 帮助）"""
     app_button = {
         "tag": "button",
         "text": {"tag": "plain_text", "content": "一线牵 App"},
@@ -20,6 +20,17 @@ def build_main_menu_card(h5_url=None):
         app_button["url"] = h5_url
     else:
         app_button["value"] = {"action": "menu_h5"}
+
+    # 「报名活动」直达 H5 活动页（#/activities → 前端落到「活动」tab）
+    activity_button = {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "报名活动"},
+        "type": "primary",
+    }
+    if h5_url:
+        activity_button["url"] = h5_url.split("#")[0] + "#/activities"
+    else:
+        activity_button["value"] = {"action": "menu_h5"}
 
     return {
         "config": {"wide_screen_mode": True},
@@ -45,6 +56,10 @@ def build_main_menu_card(h5_url=None):
                         "value": {"action": "menu_help"}
                     }
                 ]
+            },
+            {
+                "tag": "action",
+                "actions": [activity_button]
             }
         ]
     }

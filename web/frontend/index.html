@@ -3911,12 +3911,14 @@ createApp({
     });
 
     onMounted(() => {
+      // 入口深链：必须在下方 replaceState 清掉 hash 前留存（机器人「报名活动」按钮 → #/activities 直达活动页）
+      const entryHash = window.location.hash;
       try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {
         if (user.value) {
-          const hash = window.location.hash;
-          if (hash === '#/likes') { page.value = 'likes'; }
+          if (entryHash === '#/likes') { page.value = 'likes'; }
+          else if (entryHash === '#/activities') { page.value = 'home'; }
           // cards / likes / activities 已在 doLogin → loadHome 中一次性加载
           setTimeout(()=>{ checkIdValidForPage(page.value); }, 1000);
           setTimeout(()=>{ checkFaceValidForPage(page.value); }, 1200);

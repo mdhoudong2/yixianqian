@@ -1072,12 +1072,12 @@
         <div class="signup-bar">
           <div class="signup-count">已报名 <b>{{ currentActivity.current_signup }}</b>/{{ currentActivity.max_signup || '不限' }}</div>
           <van-button v-if="!isObserver && currentActivity.status==='报名中'" type="primary" color="#ff6b81" size="small"
-            @click="currentActivity.my_signup ? cancelSignup() : doSignup()" :loading="actionLoading">
+            @click="currentActivity.my_signup ? cancelSignup() : onSignupClick()" :loading="actionLoading">
             {{ currentActivity.my_signup ? '取消报名' : '立即报名' }}
           </van-button>
           <van-tag v-else type="warning">{{ currentActivity.status }}</van-tag>
         </div>
-        <van-button v-if="!isObserver && currentActivity.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+        <van-button plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
       </div>
     </div>
     <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中'" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
@@ -1241,6 +1241,17 @@
       </div>
       <div class="signup-sheet-name">{{ s.nickname }}</div>
     </div>
+  </div>
+</van-popup>
+<!-- ========== 报名缴费弹窗 ========== -->
+<van-popup v-model:show="showPayDialog" round :close-on-click-overlay="false" style="width:86%; max-width:340px;">
+  <div style="padding:22px 20px 18px; text-align:center;">
+    <div style="font-size:18px; font-weight:600; color:#323233;">微信缴费</div>
+    <div style="margin:10px 0 4px; font-size:15px; color:#ff4d6a; font-weight:600;">费用：{{ currentActivity && currentActivity.fee > 0 ? currentActivity.fee + '元' : '免费' }}</div>
+    <div style="font-size:12.5px; color:#969799; line-height:1.6; margin-bottom:10px;">请长按下方二维码保存到相册，用微信扫码完成缴费<br>缴费后点击「我已完成缴费」即报名成功</div>
+    <img src="pay-qr.jpg" alt="微信缴费二维码" style="width:220px; max-width:74%; border-radius:10px; border:1px solid #f0f0f0;">
+    <van-button type="primary" color="#ff6b81" block round style="margin-top:16px;" :loading="actionLoading" @click="confirmPay">我已完成缴费</van-button>
+    <div style="margin-top:10px; font-size:13px; color:#969799;" @click="showPayDialog=false">取消</div>
   </div>
 </van-popup>
 <!-- 修改资料未保存提示 -->
@@ -2204,6 +2215,20 @@ createApp({
       if (!noReset.includes(page.value)) activityDetailFrom.value = page.value;
       try { const data = await api('/api/activities/' + id); currentActivity.value = data; currentActivityId.value = id; page.value = 'activity_detail'; }
       catch(e) { vant.showToast(e.message); }
+    }
+    // 报名缴费弹窗：收费活动先展示微信缴费二维码，确认缴费后才真正报名；免费活动直接报名
+    const showPayDialog = ref(false);
+    function onSignupClick() {
+      const fee = Number(currentActivity.value?.fee || 0);
+      if (fee > 0) {
+        showPayDialog.value = true;
+      } else {
+        doSignup();
+      }
+    }
+    async function confirmPay() {
+      showPayDialog.value = false;
+      await doSignup();
     }
     async function doSignup() {
       actionLoading.value = true;
@@ -3995,7 +4020,7 @@ createApp({
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
-      openActivity, doSignup, cancelSignup,
+      openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,

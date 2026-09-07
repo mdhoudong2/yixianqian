@@ -1,4 +1,7 @@
 """用户指令与管理员指令处理（纯逻辑，发送与查询走 clients/queries/store）。"""
+import datetime
+import re
+import time
 from urllib.parse import quote
 
 from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
@@ -315,6 +318,237 @@ def handle_admin_notify(text):
         return "发送失败，用户可能未与机器人对话过"
 
 
+# ========== 活动群发（活动通知 活动ID → 预览 → 确认发送）==========
+# 活动表字段名（与 web/backend/config.py 的 F_ACTIVITY_* 保持一致）
+_A_NAME = "活动名称"
+_A_DESC = "活动描述"
+_A_LOCATION = "活动地点"
+_A_CONDITION = "参与条件"
+_A_FEE = "费用"
+_A_FOOD = "食宿"
+_A_MAX = "报名人数上限"
+_A_CUR = "当前报名人数"
+_A_START = "开始时间"
+_A_END = "结束时间"
+_A_POSTER = "活动海报"
+
+_BROADCAST_PENDING = {}   # activity_id -> 待发送快照（收件人+卡片+时间戳）
+_BROADCAST_TTL = 900      # 预览有效期 15 分钟
+_POSTER_IMG_CACHE = {}    # 海报 file_token -> 飞书 img_key，避免重复上传
+
+
+def _norm_activity_id(text):
+    """从一段文本里提取活动ID并归一化为 A-0005 形态；提取不到返回 ''。"""
+    m = re.search(r"[Aa]-?\s*(\d+)", str(text)) or re.search(r"(\d+)", str(text))
+    return f"A-{int(m.group(1)):04d}" if m else ""
+
+
+def _field_epoch_ms(fields, key):
+    """兼容多种日期返回形态，统一转成毫秒时间戳。"""
+    v = fields.get(key)
+    if isinstance(v, list) and v:
+        v = v[0]
+    if isinstance(v, dict):
+        v = v.get("timestamp", v.get("value"))
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n * 1000 if n < 10 ** 11 else n
+
+
+def _fmt_activity_time(ms):
+    if not ms:
+        return ""
+    try:
+        return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ""
+
+
+def _collect_broadcast_recipients():
+    """收集活动通知收件人：账号状态=单身的在档用户 + 村情六处观察员。
+    按 open_id 去重（同一人既是单身又是观察员只发一次），跳过未绑定飞书/测试假号。
+    返回 [(open_id, 昵称, 角色)]，保持用户表顺序。"""
+    chosen = {}
+    order = []
+
+    def _add(rec, role):
+        fields = rec.get("fields", {})
+        oid = get_field_text(fields, FIELD_FEISHU_ID)
+        if not oid or is_test_fake_openid(oid) or oid in chosen:
+            return
+        chosen[oid] = (get_field_text(fields, FIELD_NICKNAME) or "用户", role)
+        order.append(oid)
+
+    for rec in search_records(USER_TABLE_ID):
+        if get_field_text(rec.get("fields", {}), FIELD_ACCOUNT_STATUS) == "单身":
+            _add(rec, "单身")
+    if OBSERVER_TABLE_ID:
+        for rec in search_records(OBSERVER_TABLE_ID):
+            _add(rec, "观察员")
+    return [(oid, chosen[oid][0], chosen[oid][1]) for oid in order]
+
+
+def _poster_img_key(fields):
+    """把多维表格里的活动海报附件换成飞书卡片可用的 img_key（带缓存）。无海报/失败返回 ''。"""
+    tokens = get_attachment_tokens(fields, _A_POSTER)
+    if not tokens:
+        return ""
+    token = tokens[0]
+    if token in _POSTER_IMG_CACHE:
+        return _POSTER_IMG_CACHE[token]
+    img_key = ""
+    try:
+        data = feishu.download_media(token)
+        if data:
+            img_key = feishu.upload_message_image(data, "activity_poster.jpg") or ""
+    except Exception as e:
+        log(f"活动海报转img_key失败: {e}")
+    _POSTER_IMG_CACHE[token] = img_key
+    return img_key
+
+
+def _num_text(fields, key):
+    """数字字段转简洁字符串（整数不带小数点），空返回 ''。"""
+    n = get_field_number(fields, key)
+    if n is None:
+        return ""
+    try:
+        return str(int(n)) if float(n) == int(n) else str(n)
+    except (TypeError, ValueError):
+        return ""
+
+
+def build_activity_notify_card(activity, img_key):
+    """构建发给用户的活动通知卡片。"""
+    f = activity.get("fields", {})
+    name = get_field_text(f, _A_NAME) or "新活动"
+    lines = []
+    t1 = _fmt_activity_time(_field_epoch_ms(f, _A_START))
+    t2 = _fmt_activity_time(_field_epoch_ms(f, _A_END))
+    if t1:
+        lines.append(f"**🕐 时间：**{t1}" + (f" ～ {t2}" if t2 and t2 != t1 else ""))
+    loc = get_field_text(f, _A_LOCATION)
+    if loc:
+        lines.append(f"**📍 地点：**{loc}")
+    cond = get_field_text(f, _A_CONDITION)
+    if cond:
+        lines.append(f"**🙋 参与条件：**{cond}")
+    fee = _num_text(f, _A_FEE)
+    if fee and fee != "0":
+        lines.append(f"**💰 费用：**{fee}")
+    food = get_field_text(f, _A_FOOD)
+    if food:
+        lines.append(f"**🍚 食宿：**{food}")
+    cur, maxv = _num_text(f, _A_CUR), _num_text(f, _A_MAX)
+    if cur or maxv:
+        lines.append(f"**👥 报名情况：**{cur or '0'}/{maxv or '不限'}")
+
+    elements = []
+    if img_key:
+        elements.append({"tag": "img", "img_key": img_key,
+                         "alt": {"tag": "plain_text", "content": "活动海报"}})
+    if lines:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}})
+    desc = get_field_text(f, _A_DESC)
+    if desc:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": desc}})
+    elements.append({"tag": "hr"})
+    elements.append({
+        "tag": "action",
+        "actions": [{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "查看活动 / 立即报名"},
+            "type": "primary",
+            "url": H5_BASE_URL + "/",
+        }],
+    })
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "🎉 新活动发布｜" + name}, "template": "red"},
+        "elements": elements,
+    }
+
+
+def handle_admin_activity_preview(text, admin_id=None):
+    """第一步：生成群发预览（同时把实际卡片发给管理员本人确认），暂存待发送快照。"""
+    raw = text[len("活动通知"):].strip()
+    aid = _norm_activity_id(raw)
+    if not aid:
+        return "格式：活动通知 活动ID\n例如：活动通知 A-0005"
+    activity = find_activity_by_id(aid)
+    if not activity:
+        return f"未找到活动「{aid}」，请在活动表核对活动ID后重试。"
+    recipients = _collect_broadcast_recipients()
+    if not recipients:
+        return "没有可发送的用户：单身在档用户与村情六处观察员里都没有已绑定飞书的记录。"
+
+    img_key = _poster_img_key(activity.get("fields", {}))
+    card = build_activity_notify_card(activity, img_key)
+    name = get_field_text(activity.get("fields", {}), _A_NAME) or "新活动"
+    n_single = sum(1 for _, _, role in recipients if role == "单身")
+    n_obs = len(recipients) - n_single
+
+    _BROADCAST_PENDING[aid] = {
+        "ts": time.time(), "activity_id": aid, "name": name,
+        "recipients": recipients, "card": card,
+    }
+    # 给管理员本人发一份真实卡片，所见即所得
+    if admin_id:
+        send_card_message(admin_id, card)
+    return (
+        f"已生成「{name}」群发预览，上方卡片就是用户收到的样式。\n"
+        f"收件人：单身 {n_single} 人 ＋ 观察员 {n_obs} 人，合计 {len(recipients)} 人。\n\n"
+        f"确认无误请回复：确认发送 {aid}\n"
+        f"放弃请回复：取消活动通知 {aid}\n"
+        f"（预览 15 分钟内有效；待审核/审核不通过/已脱单/已退出不会收到）"
+    )
+
+
+def consume_activity_pending(text):
+    """第二步（同步调用）：取出并移除待发送快照，防止重复群发。返回 (aid, snapshot)。"""
+    aid = _norm_activity_id(text)
+    if not aid:
+        return "", None
+    snap = _BROADCAST_PENDING.pop(aid, None)
+    # 顺手清理过期快照
+    now = time.time()
+    for k in [k for k, v in _BROADCAST_PENDING.items() if now - v.get("ts", 0) > _BROADCAST_TTL]:
+        _BROADCAST_PENDING.pop(k, None)
+    return aid, snap
+
+
+def execute_activity_broadcast(snapshot):
+    """后台线程：逐个发送活动卡片，限速，最后汇总成功/失败。"""
+    recipients = snapshot["recipients"]
+    card = snapshot["card"]
+    name = snapshot.get("name", "新活动")
+    ok, fails = 0, []
+    for oid, nick, role in recipients:
+        if send_card_message(oid, card):
+            ok += 1
+        else:
+            fails.append(f"{nick}（{role}）")
+        time.sleep(0.12)  # 温和限速，规避飞书发送频控
+    report = f"「{name}」活动群发完成：成功 {ok}/{len(recipients)} 人。"
+    if fails:
+        shown = "、".join(fails[:20])
+        more = f" 等 {len(fails)} 人" if len(fails) > 20 else ""
+        report += (f"\n失败 {len(fails)} 人：{shown}{more}\n"
+                   "（失败多因对方从未与机器人对话或已停用，可用「通知 用户ID 内容」单发补送）")
+    log(f"活动群发完成 {name}: 成功{ok} 失败{len(fails)}")
+    return report
+
+
+def handle_admin_activity_cancel(text):
+    aid = _norm_activity_id(text[len("取消活动通知"):])
+    snap = _BROADCAST_PENDING.pop(aid, None) if aid else None
+    if snap:
+        return f"已取消「{snap.get('name', aid)}」的待发送预览，不会向任何人发送。"
+    return "没有找到该活动待发送的预览（可能已确认发送、已取消或已超过15分钟有效期）。"
+
+
 
 
 def handle_admin_toggle_group_flag(keyword):
@@ -400,6 +634,8 @@ def handle_admin_help():
         "【通过 U-xxx或姓名】审核通过\n"
         "【拒绝 U-xxx或姓名】审核不通过\n"
         "【通知 U-xxx 内容】给用户发消息\n"
+        "【活动通知 A-xxxx】预览新活动群发（单身+观察员）\n"
+        "【确认发送 A-xxxx】按预览向全员群发活动卡片\n"
         "【用户统计】查看统计数据\n\n"
         "【村情六处】\n"
         "【生成村情六处邀请码 N】批量生成村情六处邀请码\n"

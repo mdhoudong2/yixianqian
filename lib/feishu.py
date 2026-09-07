@@ -75,3 +75,44 @@ class FeishuClient:
 
     def send_user_card(self, receive_id, share_open_id):
         return self._send(receive_id, "share_user", {"user_id": share_open_id})
+
+    def download_media(self, file_token):
+        """下载云空间/多维表格附件（drive medias），成功返回字节，失败返回 None。"""
+        token = self.get_tenant_access_token()
+        if not token or not file_token:
+            return None
+        url = f"{API_BASE}/drive/v1/medias/{file_token}/download"
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=self.timeout)
+                if resp.status_code == 200 and resp.content:
+                    return resp.content
+                self.log(f"下载附件失败(第{attempt + 1}次): HTTP {resp.status_code}")
+            except Exception as e:
+                self.log(f"下载附件异常(第{attempt + 1}次): {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+        return None
+
+    def upload_message_image(self, image_bytes, filename="poster.jpg"):
+        """上传消息图片换取 img_key（互动卡片 image 元素需要 img_key，不支持外链 URL）。
+        成功返回 img_key 字符串，失败返回 None。"""
+        token = self.get_tenant_access_token()
+        if not token or not image_bytes:
+            return None
+        url = f"{API_BASE}/im/v1/images"
+        headers = {"Authorization": f"Bearer {token}"}
+        form = {"image_type": (None, "message")}
+        files = {"image": (filename, image_bytes, "image/jpeg")}
+        for attempt in range(3):
+            try:
+                resp = requests.post(url, headers=headers, data=form, files=files, timeout=self.timeout)
+                result = resp.json()
+                if result.get("code") == 0:
+                    return result.get("data", {}).get("image_key")
+                self.log(f"上传消息图片失败(第{attempt + 1}次): {result}")
+            except Exception as e:
+                self.log(f"上传消息图片异常(第{attempt + 1}次): {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+        return None

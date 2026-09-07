@@ -55,6 +55,10 @@ from auto_tasks import (
 from cards import WELCOME_TEXT, send_main_menu_card
 from clients import *
 from commands import (
+    consume_activity_pending,
+    execute_activity_broadcast,
+    handle_admin_activity_cancel,
+    handle_admin_activity_preview,
     handle_admin_approve,
     handle_admin_generate_observer_codes,
     handle_admin_help,
@@ -400,6 +404,21 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
                 reply = handle_admin_reject(keyword)
         elif text.startswith("通知"):
             reply = handle_admin_notify(text)
+        elif text.startswith("活动通知"):
+            reply = "收到，正在生成活动群发预览，请稍候..."
+            _run_admin_task_async(sender_id, "活动通知预览", handle_admin_activity_preview, text, sender_id)
+        elif text.startswith("确认发送"):
+            aid, snapshot = consume_activity_pending(text)
+            if not aid:
+                reply = "格式：确认发送 活动ID，例如 确认发送 A-0005"
+            elif not snapshot:
+                reply = f"没有找到「{aid}」待发送的预览。请先发「活动通知 {aid}」生成预览（预览15分钟内有效）。"
+            else:
+                total = len(snapshot["recipients"])
+                reply = f"开始向 {total} 人群发「{snapshot.get('name', '新活动')}」，发送中请稍候，完成后我会汇报成功/失败结果。"
+                _run_admin_task_async(sender_id, "活动群发", execute_activity_broadcast, snapshot)
+        elif text.startswith("取消活动通知"):
+            reply = handle_admin_activity_cancel(text)
         elif text_lower in ["用户统计", "统计", "stats"]:
             reply = handle_admin_stats()
         elif text_lower in ["管理员帮助", "admin help", "管理帮助"]:

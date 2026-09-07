@@ -1034,24 +1034,6 @@ def format_user_profile(record):
     })
     return data
 
-def _live_signup_count(act_text_id, stored):
-    """当前有效报名人数：报名表快照就绪时实时统计「已报名」条数，
-    口径与机器人 auto_update_activity_signup_count、分组 grouping 完全一致（只数已报名），
-    因此 30s 对账后必然收敛到同一数值，不会出现两套数字；
-    快照未就绪/过期时回退活动表「当前报名人数」存储字段。"""
-    if not act_text_id or not _snap_ready("signups"):
-        return stored
-    try:
-        cnt = 0
-        for s in _snap("signups"):
-            f = s.get("fields", {})
-            if (bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) == act_text_id
-                    and bitable.get_select_value(f, F_SIGNUP_STATUS) == "已报名"):
-                cnt += 1
-        return cnt
-    except Exception:
-        return stored
-
 def format_activity(record):
     """格式化活动信息"""
     fields = record.get("fields", {})
@@ -1064,9 +1046,7 @@ def format_activity(record):
         "location": bitable.get_field_text(fields, F_ACTIVITY_LOCATION),
         "condition": bitable.get_field_text(fields, F_ACTIVITY_CONDITION),
         "max_signup": int(bitable.get_field_number(fields, F_ACTIVITY_MAX_SIGNUP, 0)),
-        "current_signup": _live_signup_count(
-            bitable.get_field_text(fields, F_ACTIVITY_ID),
-            int(bitable.get_field_number(fields, F_ACTIVITY_CURRENT_SIGNUP, 0))),
+        "current_signup": int(bitable.get_field_number(fields, F_ACTIVITY_CURRENT_SIGNUP, 0)),
         "fee": bitable.get_field_number(fields, F_ACTIVITY_FEE, 0),
         "food": bitable.get_field_text(fields, F_ACTIVITY_FOOD),
         "status": bitable.get_select_value(fields, F_ACTIVITY_STATUS),
@@ -2684,10 +2664,6 @@ def signup(activity_id):
         })
     if not signup_record:
         return jsonify({"error": "报名失败，请重试"}), 500
-
-    # 本地快照立即补入新报名，format_activity 的实时人数与 my_signup 即刻生效（不等异步刷新/30s 对账）
-    with _snapshot_lock:
-        _snapshot.setdefault("signups", []).append(signup_record)
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")

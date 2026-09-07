@@ -1035,13 +1035,20 @@ def format_user_profile(record):
     return data
 
 def _live_signup_count(act_text_id, stored):
-    """当前有效报名人数：报名表快照就绪时以实时有效报名（排除「已取消」）为准，
-    避免报名/取消后要等机器人 30s 对账才更新活动表「当前报名人数」；
-    快照未就绪/过期时回退活动表存储字段。"""
+    """当前有效报名人数：报名表快照就绪时实时统计「已报名」条数，
+    口径与机器人 auto_update_activity_signup_count、分组 grouping 完全一致（只数已报名），
+    因此 30s 对账后必然收敛到同一数值，不会出现两套数字；
+    快照未就绪/过期时回退活动表「当前报名人数」存储字段。"""
     if not act_text_id or not _snap_ready("signups"):
         return stored
     try:
-        return len(snap_signups_by_activity(act_text_id))
+        cnt = 0
+        for s in _snap("signups"):
+            f = s.get("fields", {})
+            if (bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) == act_text_id
+                    and bitable.get_select_value(f, F_SIGNUP_STATUS) == "已报名"):
+                cnt += 1
+        return cnt
     except Exception:
         return stored
 

@@ -4845,9 +4845,12 @@ def activity_signups(activity_id):
     gate = account_gate(oid)
     if gate:
         return jsonify(gate[0]), gate[1]
-    # 仅已报名该活动的用户可查看名单
+    # 名单可见范围：已报名该活动的单身用户，或村情六处观察员（观察员只可查看、不能报名）
     _, _text_act_id_chk = snap_resolve_activity(activity_id)
-    if _text_act_id_chk and not bitable.get_user_signup(_text_act_id_chk, oid):
+    _st_self, _ = _account_status(oid)
+    _is_obs_viewer = (g.get("yxq_role") == "observer") or (_st_self == STATUS_OBSERVER)
+    if (not _is_obs_viewer and _text_act_id_chk
+            and not bitable.get_user_signup(_text_act_id_chk, oid)):
         return jsonify({"error": "未报名该活动，无权查看名单"}), 403
     act_record, text_act_id = snap_resolve_activity(activity_id)
     if not act_record:

@@ -41,8 +41,15 @@ def build_main_menu_card(h5_url=None):
         "elements": [
             {
                 "tag": "action",
+                "actions": [app_button]
+            },
+            {
+                "tag": "action",
+                "actions": [activity_button]
+            },
+            {
+                "tag": "action",
                 "actions": [
-                    app_button,
                     {
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": "邀请好友"},
@@ -56,10 +63,6 @@ def build_main_menu_card(h5_url=None):
                         "value": {"action": "menu_help"}
                     }
                 ]
-            },
-            {
-                "tag": "action",
-                "actions": [activity_button]
             }
         ]
     }

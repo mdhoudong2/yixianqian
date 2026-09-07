@@ -1077,7 +1077,7 @@
           </van-button>
           <van-tag v-else type="warning">{{ currentActivity.status }}</van-tag>
         </div>
-        <van-button v-if="isObserver || currentActivity.my_signup" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+        <van-button plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
       </div>
     </div>
     <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中'" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">

@@ -496,11 +496,44 @@ def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id):
 
 
 
+def auto_reconcile_invite_rewards():
+    """邀请奖励补扫（幂等）：覆盖「注册时忘填邀请人ID、事后由管理员在用户表补填」等漏发场景。
+    只处理：账号状态=单身、已绑定飞书、填了邀请人ID、且尚未记过邀请奖励的用户。
+    是否已奖励以 load_invite_rewarded() 为准，reward_inviter 内部也会再次去重。"""
+    items = search_records(USER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]},
+            {"field_name": FIELD_FEISHU_ID, "operator": "isNotEmpty", "value": []},
+            {"field_name": FIELD_INVITER_ID, "operator": "isNotEmpty", "value": []},
+        ]
+    })
+    if not items:
+        return
+    rewarded = load_invite_rewarded()
+    handled = 0
+    for it in items:
+        f = it.get("fields", {})
+        oid = get_field_text(f, FIELD_FEISHU_ID)
+        if not oid or oid in rewarded:
+            continue
+        inviter_id = get_field_text(f, FIELD_INVITER_ID)
+        my_uid = get_field_text(f, "用户ID")
+        if not inviter_id or inviter_id == my_uid:
+            continue  # 空码或自己邀请自己，不奖励
+        nickname = get_field_text(f, FIELD_NICKNAME)
+        reward_inviter(oid, nickname, inviter_id)
+        handled += 1
+    if handled:
+        log(f"邀请奖励补扫完成，本次补发 {handled} 条")
+
+
 def auto_send_view_loop(interval=30):
     log(f"审核通过通知服务已启动，轮询间隔 {interval} 秒")
     while True:
         try:
             auto_send_view_after_approval()
+            auto_reconcile_invite_rewards()
         except Exception as e:
             log(f"审核通过通知循环异常: {e}")
         time.sleep(interval)
@@ -895,21 +928,31 @@ def reconcile_hearts():
 
     fixed = 0
 
-    def _write(rec, expected, tag):
+    def _write(rec, remain, total, tag):
         nonlocal fixed
-        cur = get_field_number(rec.get("fields", {}), FIELD_HEART_REMAIN, None)
-        if cur != expected:
-            update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_REMAIN: expected})
-            fixed += 1
-            log(f"爱心对账[{tag}]: {get_field_text(rec.get('fields', {}), FIELD_NICKNAME)} {cur} → {expected}")
+        f0 = rec.get("fields", {})
+        nick = get_field_text(f0, FIELD_NICKNAME)
+        cur_remain = get_field_number(f0, FIELD_HEART_REMAIN, None)
+        if cur_remain != remain:
+            if update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_REMAIN: remain}):
+                fixed += 1
+                log(f"爱心对账[{tag}]: {nick} 剩余 {cur_remain} → {remain}")
+        # 爱心总量独立写入并容错：字段尚未建立时不影响剩余对账
+        cur_total = get_field_number(f0, FIELD_HEART_TOTAL, None)
+        if cur_total != total:
+            try:
+                update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_TOTAL: total})
+            except Exception as e:
+                log(f"爱心总量写入失败(字段可能未建): {nick} {e}")
 
     for oid, recs in groups.items():
         primary = pick_primary_record(recs)[0]
-        expected = max(0, min(INITIAL_HEARTS + invited_map.get(oid, 0) - active_by_oid.get(oid, 0), MAX_HEARTS))
-        _write(primary, expected, "主档")
+        earned = min(INITIAL_HEARTS + invited_map.get(oid, 0), MAX_HEARTS)  # 累计获得=初始+邀请(封顶)
+        expected = max(0, min(earned - active_by_oid.get(oid, 0), MAX_HEARTS))
+        _write(primary, expected, earned, "主档")
         for r in recs:
             if r.get("record_id") != primary.get("record_id"):
-                _write(r, 0, "副本")
+                _write(r, 0, 0, "副本")
 
     if fixed:
         log(f"爱心对账完成，本次校正 {fixed} 条")

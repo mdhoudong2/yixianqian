@@ -57,6 +57,7 @@ MATCH_TABLE_ID = _cfg_get("MATCH_TABLE_ID", getattr(_cfg, "MATCH_TABLE_ID", "tbl
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
 FIELD_HEART_REMAIN = "爱心剩余"
+FIELD_HEART_TOTAL = "爱心总量"  # 累计获得（初始+邀请奖励，上限30），不随点喜欢扣减
 FIELD_ACCOUNT_STATUS = "账号状态"
 FIELD_GENDER = "性别"
 FIELD_EDUCATION = "学历"

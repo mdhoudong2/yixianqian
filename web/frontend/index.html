@@ -1365,7 +1365,7 @@
   <div class="invite-dialog-body">
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
     <p>邀请好友成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
-    <p>将「我的邀请码」发送给「被邀请人」，注册时填入「邀请人ID」中即可。</p>
+    <p>将下面文字发送给「被邀请人」：</p>
     <div class="invite-link-box">{{ inviteCodeText }}</div>
     <van-button type="primary" color="#ff6b81" block @click="copyInviteCode">复制</van-button>
   </div>
@@ -1733,7 +1733,9 @@ createApp({
     const registerFormUrl = ref(REGISTER_FORM_BASE);
     const inviteCodeText = computed(() => {
       const uid = (user.value && user.value.user_id) || '';
-      return uid ? ('我的邀请码 ' + uid) : '我的邀请码 未获取';
+      return uid
+        ? `注册时，将「${uid}」填入“邀请人ID”表单中即可`
+        : '注册时，将邀请人编号填入“邀请人ID”表单中即可';
     });
 
     // 喜欢我的
@@ -2932,9 +2934,9 @@ createApp({
       }
     }
     function copyInviteCode() {
-      const text = inviteCodeText.value || '';
-      if (!text || text.includes('未获取')) { vant.showToast('暂无邀请码'); return; }
-      copyText(text, '已复制');
+      const uid = (user.value && user.value.user_id) || '';
+      if (!uid) { vant.showToast('暂无邀请码'); return; }
+      copyText(inviteCodeText.value, '已复制');
     }
 
     // 账号状态切换（单身 <-> 已脱单）

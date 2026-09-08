@@ -221,7 +221,8 @@
   /* 邀请好友弹窗 */
   .invite-dialog-body { padding: 16px; }
   .invite-dialog-body p { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 12px; }
-  .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; }
+  .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; white-space: pre-line; }
+  .invite-btn-row { display: flex; gap: 10px; }
   /* 我的页-邀请入口 */
   .invite-close { position: absolute; top: 10px; right: 14px; font-size: 20px; color: #c8c9cc; cursor: pointer; z-index: 2; }
   .profile-cells .van-cell { font-size: 16px; }
@@ -1366,8 +1367,11 @@
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
     <p>邀请好友成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
     <p>将下面文字发送给「被邀请人」：</p>
-    <div class="invite-link-box">{{ inviteCodeText }}</div>
-    <van-button type="primary" color="#ff6b81" block @click="copyInviteCode">复制</van-button>
+    <div class="invite-link-box">{{ inviteShareText }}</div>
+    <div class="invite-btn-row">
+      <van-button type="primary" color="#ff6b81" block @click="copyInviteFull">复制整句</van-button>
+      <van-button plain type="primary" color="#ff6b81" block @click="copyInviteCode">复制邀请码</van-button>
+    </div>
   </div>
 </van-dialog>
 <!-- 筛选弹层 -->
@@ -1731,11 +1735,11 @@ createApp({
     ];
     const REGISTER_FORM_BASE = 'https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf';
     const registerFormUrl = ref(REGISTER_FORM_BASE);
-    const inviteCodeText = computed(() => {
+    const inviteShareText = computed(() => {
       const uid = (user.value && user.value.user_id) || '';
       return uid
-        ? `注册时，将「${uid}」填入“邀请人ID”表单中即可`
-        : '注册时，将邀请人编号填入“邀请人ID”表单中即可';
+        ? `注册时，在“邀请人ID”里填：\n${uid}`
+        : '注册时，在“邀请人ID”里填邀请人编号';
     });
 
     // 喜欢我的
@@ -2933,10 +2937,15 @@ createApp({
         document.body.removeChild(ta);
       }
     }
+    function copyInviteFull() {
+      const uid = (user.value && user.value.user_id) || '';
+      if (!uid) { vant.showToast('暂无邀请码'); return; }
+      copyText(inviteShareText.value, '已复制');
+    }
     function copyInviteCode() {
       const uid = (user.value && user.value.user_id) || '';
       if (!uid) { vant.showToast('暂无邀请码'); return; }
-      copyText(inviteCodeText.value, '已复制');
+      copyText(uid, '邀请码已复制');
     }
 
     // 账号状态切换（单身 <-> 已脱单）
@@ -4060,7 +4069,7 @@ createApp({
       receivedMessagesList, loadingReceivedMessages, openReceivedMessages, refreshReceivedCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewPoster,
-      handleBack, showInviteDialog, inviteCodeText, copyInviteCode,
+      handleBack, showInviteDialog, inviteShareText, copyInviteFull, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,

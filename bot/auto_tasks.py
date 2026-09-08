@@ -481,17 +481,24 @@ def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id):
         return
 
     new_hearts = min(current_hearts + 1, MAX_HEARTS)
-    if update_record(USER_TABLE_ID, inviter_record_id, {FIELD_HEART_REMAIN: new_hearts}):
-        rewarded[invitee_openid] = inviter_openid
-        save_invite_rewarded(rewarded)
-        log(f"邀请奖励: {inviter_nickname} +1爱心 (当前{int(new_hearts)}颗), 被邀请人: {invitee_nickname}")
-        send_text_message(
-            inviter_openid,
-            f"\U0001f389 你的好友「{invitee_nickname}」已注册并审核通过！\n\n"
-            f"你获得了 1颗爱心奖励，当前共有 {int(new_hearts)} 颗爱心。\n"
-            f"继续邀请好友，最多可获得 {MAX_HEARTS} 颗爱心~"
-        )
-        send_main_menu_card(inviter_openid)
+    # 剩余与总量同一笔写入，避免“剩余即时+1、总量等对账25秒”的观感差
+    current_total = get_field_number(inviter_fields, FIELD_HEART_TOTAL, current_hearts)
+    new_total = min(max(current_total, current_hearts) + 1, MAX_HEARTS)
+    upd = {FIELD_HEART_REMAIN: new_hearts, FIELD_HEART_TOTAL: new_total}
+    if not update_record(USER_TABLE_ID, inviter_record_id, upd):
+        # 总量字段可能尚未建立：退回只写剩余（对账循环稍后补总量）
+        if not update_record(USER_TABLE_ID, inviter_record_id, {FIELD_HEART_REMAIN: new_hearts}):
+            return
+    rewarded[invitee_openid] = inviter_openid
+    save_invite_rewarded(rewarded)
+    log(f"邀请奖励: {inviter_nickname} +1爱心 (剩余{int(new_hearts)}/总量{int(new_total)}), 被邀请人: {invitee_nickname}")
+    send_text_message(
+        inviter_openid,
+        f"\U0001f389 你的好友「{invitee_nickname}」已注册并审核通过！\n\n"
+        f"你获得了 1颗爱心奖励，当前共有 {int(new_hearts)} 颗爱心。\n"
+        f"继续邀请好友，最多可获得 {MAX_HEARTS} 颗爱心~"
+    )
+    send_main_menu_card(inviter_openid)
 
 
 

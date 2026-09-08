@@ -1907,8 +1907,8 @@ def user_has_face(user_record, is_observer=False):
         return True
     return _tokens_has_face(bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO))
 
-def _tokens_has_face(tokens, min_area=0.003):
-    """token 列表是否含至少一张「清晰可见」人脸的照片：检出脸且最大脸框面积占比 >= 0.3%。
+def _tokens_has_face(tokens, min_area=0.001):
+    """token 列表是否含至少一张「清晰可见」人脸的照片：检出脸且最大脸框面积占比 >= 0.1%。
     远景小脸/群像中看不清的人脸视为不合格（读缓存，零检测开销）"""
     if not tokens:
         return False

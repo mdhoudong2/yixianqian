@@ -4,11 +4,19 @@
 send_user_card，此处统一实现，消除重复。
 """
 import json
+import threading
 import time
 
 import requests
 
 API_BASE = "https://open.feishu.cn/open-apis"
+
+# 「永久性不可达、重试无意义」的发送错误码：
+# 230013 = Bot has NO availability to this user（用户未添加/已移除机器人，或跨租户对其不可见）
+PERMANENT_SEND_CODES = {230013}
+# 命中永久不可达后的本地退避（秒）：首次 30 分钟，连续失败翻倍，封顶 2 小时；
+# 退避窗口内对该用户的发送直接短路（不发请求、不刷错误日志），到期放一次真实探测，成功即恢复。
+_UNREACH_BACKOFF = [1800, 3600, 7200]
 
 
 class FeishuClient:
@@ -18,6 +26,9 @@ class FeishuClient:
         self.timeout = timeout
         self._logger = logger or (lambda msg: None)
         self._token_cache = {"token": None, "expire_time": 0}
+        # receive_id -> {"next": 下次允许真实发送的时间戳, "fails": 连续不可达次数}
+        self._unreachable = {}
+        self._unreach_lock = threading.Lock()
 
     def log(self, msg):
         try:
@@ -46,7 +57,22 @@ class FeishuClient:
                 time.sleep(2 ** attempt)
         return None
 
+    def _mark_unreachable(self, receive_id, code):
+        """登记一个永久不可达用户：按连续失败次数递增退避，避免对其无限重试刷屏。"""
+        with self._unreach_lock:
+            old = self._unreachable.get(receive_id)
+            fails = (old["fails"] if old else 0) + 1
+            delay = _UNREACH_BACKOFF[min(fails - 1, len(_UNREACH_BACKOFF) - 1)]
+            self._unreachable[receive_id] = {"next": time.time() + delay, "fails": fails}
+        self.log(f"用户暂不可达(code={code})，{delay // 60}分钟内不再重试 …{str(receive_id)[-6:]}（连续第{fails}次）")
+
     def _send(self, receive_id, msg_type, content_obj):
+        # 退避窗口内的永久不可达用户：直接短路，不发请求、不刷失败日志（到期再真实探测一次）
+        now = time.time()
+        with self._unreach_lock:
+            info = self._unreachable.get(receive_id)
+            if info and now < info["next"]:
+                return False
         token = self.get_tenant_access_token()
         if not token:
             return False
@@ -58,8 +84,16 @@ class FeishuClient:
             try:
                 resp = requests.post(url, headers=headers, json=data, timeout=self.timeout)
                 result = resp.json()
-                if result.get("code") == 0:
+                code = result.get("code")
+                if code == 0:
+                    # 发送成功说明已恢复可达，清除退避标记
+                    with self._unreach_lock:
+                        self._unreachable.pop(receive_id, None)
                     return result.get("data", {}).get("message_id", True)
+                if code in PERMANENT_SEND_CODES:
+                    # 永久不可达：重试无意义，登记退避后立即返回（不再×3、不再每30秒刷）
+                    self._mark_unreachable(receive_id, code)
+                    return False
                 self.log(f"发送{msg_type}消息失败(第{attempt + 1}次): {result}")
             except Exception as e:
                 self.log(f"发送{msg_type}消息异常(第{attempt + 1}次): {e}")

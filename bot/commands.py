@@ -2,7 +2,6 @@
 import datetime
 import re
 import time
-from urllib.parse import quote
 
 from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
 from clients import *
@@ -49,9 +48,6 @@ def handle_invite_command(sender_id):
         return "系统未找到你的用户ID，请联系管理员。"
     hearts = get_field_number(user_fields, FIELD_HEART_REMAIN, INITIAL_HEARTS)
 
-    # 生成带邀请人ID预填的注册表单链接
-    invite_link = f"{REGISTER_FORM_URL}?prefill_{quote(FIELD_INVITER_ID)}={quote(str(user_id))}"
-
     # 统计已邀请人数
     rewarded = load_invite_rewarded()
     invite_count = sum(1 for v in rewarded.values() if v == sender_id)
@@ -60,8 +56,9 @@ def handle_invite_command(sender_id):
         f"💕 邀请好友注册，双方都受益！\n\n"
         f"每成功邀请1位好友注册并审核通过，你将获得 1颗爱心（上限{MAX_HEARTS}颗）。\n"
         f"你当前有 {int(hearts)} 颗爱心，已成功邀请 {invite_count} 人。\n\n"
-        f"👇 将下面的链接发给好友，TA通过链接注册即可：\n\n"
-        f"{invite_link}\n\n"
+        f"将下面文字发送给「被邀请人」：\n"
+        f"注册时，在“邀请人ID”里填：\n"
+        f"{user_id}\n\n"
         f"好友注册审核通过后，爱心会自动到账~"
     )
 

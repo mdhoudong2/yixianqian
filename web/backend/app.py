@@ -963,13 +963,17 @@ def format_birthday(fields):
     year, month = int(m.group(1)), int(m.group(2))
     return f"{year % 100:02d}-{month}"
 
+def _record_uid(fields):
+    """记录的对外编号：普通用户用「用户ID」(U-xxx)；村情六处表精简后无该字段，回退「编号」(C-xxx)。"""
+    return bitable.get_field_text(fields, F_USER_ID) or bitable.get_field_text(fields, "编号")
+
 def format_user_brief(record, include_openid=False, full=False):
     """格式化用户信息（卡片展示用，不含敏感信息）"""
     fields = record.get("fields", {})
     photos = bitable.get_attachment_tokens(fields, F_PHOTO)
     photo_url = ("/api/image/" + photos[0] + "?fv10") if photos else ""
     data = {
-        "user_id": bitable.get_field_text(fields, F_USER_ID),
+        "user_id": _record_uid(fields),
         "nickname": bitable.get_field_text(fields, F_NICKNAME),
         "gender": bitable.get_select_value(fields, F_GENDER),
         "height": int(bitable.get_field_number(fields, F_HEIGHT, 0)) or "",
@@ -1999,10 +2003,7 @@ _LAST_ACTIVE_TTL = 600
 _last_active_written = {}
 
 def touch_last_active(open_id, user, role):
-    """后台异步把「最近活跃」写入用户表（按角色选表）。节流防首页刷新刷爆飞书 API。
-    观察员（村情六处）表已精简、无「最近活跃」字段，且观察员不进任何推荐列表，直接跳过。"""
-    if role != "user":
-        return
+    """后台异步把「最近活跃」写入用户/观察员表（按角色选表）。节流防首页刷新刷爆飞书 API。"""
     key = (open_id, role)
     now = time.time()
     if now - _last_active_written.get(key, 0) < _LAST_ACTIVE_TTL:
@@ -3233,7 +3234,7 @@ def create_message():
         F_MSG_TARGET_OID: target,
         F_MSG_AUTHOR_OID: open_id,
         F_MSG_AUTHOR_NICKNAME: bitable.get_field_text(af, F_NICKNAME),
-        F_MSG_AUTHOR_UID: bitable.get_field_text(af, F_USER_ID),
+        F_MSG_AUTHOR_UID: _record_uid(af),
         F_MSG_PARENT_ID: parent_id,
         F_MSG_CONTENT: content,
         F_MSG_CREATED_AT: now_ms,

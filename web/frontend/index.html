@@ -688,12 +688,6 @@
         <span class="row-label">🎁 邀请好友得爱心</span>
         <van-icon name="arrow" color="#c8c9cc" />
       </div>
-      <div class="profile-card-divider"></div>
-      <div class="profile-card-row">
-        <span class="row-label">我的邀请码</span>
-        <span class="invite-code-inline">{{ user.user_id || '未获取' }}</span>
-        <van-button size="mini" plain type="primary" color="#ff6b81" @click="copyInviteCode">复制</van-button>
-      </div>
     </div>
   </div>
   <div style="padding:12px 12px 0;">
@@ -1370,9 +1364,10 @@
 <van-dialog v-model:show="showInviteDialog" title="邀请好友得爱心" :show-confirm-button="false" close-on-click-overlay>
   <div class="invite-dialog-body">
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
-    <p>分享下面链接给好友，TA 通过链接注册成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
-    <div class="invite-link-box">{{ inviteFullText }}</div>
-    <van-button type="primary" color="#ff6b81" block @click="copyInviteLink">复制链接</van-button>
+    <p>邀请好友成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
+    <p>将「我的邀请码」发送给「被邀请人」，注册时填入「邀请人ID」中即可。</p>
+    <div class="invite-link-box">{{ inviteCodeText }}</div>
+    <van-button type="primary" color="#ff6b81" block @click="copyInviteCode">复制</van-button>
   </div>
 </van-dialog>
 <!-- 筛选弹层 -->
@@ -1736,15 +1731,9 @@ createApp({
     ];
     const REGISTER_FORM_BASE = 'https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf';
     const registerFormUrl = ref(REGISTER_FORM_BASE);
-    const inviteLink = computed(() => {
-      const base = registerFormUrl.value || REGISTER_FORM_BASE;
-      if (user.value && user.value.user_id) {
-        return base + '?prefill_' + encodeURIComponent('邀请人ID') + '=' + encodeURIComponent(user.value.user_id);
-      }
-      return base;
-    });
-    const inviteFullText = computed(() => {
-      return "下载飞书App，并注册，在飞书 App 里申请使用'一线牵'机器人，发送给'一线牵'机器人后打开：" + inviteLink.value;
+    const inviteCodeText = computed(() => {
+      const uid = (user.value && user.value.user_id) || '';
+      return uid ? ('我的邀请码 ' + uid) : '我的邀请码 未获取';
     });
 
     // 喜欢我的
@@ -2942,13 +2931,10 @@ createApp({
         document.body.removeChild(ta);
       }
     }
-    function copyInviteLink() {
-      copyText(inviteFullText.value, '链接已复制');
-    }
     function copyInviteCode() {
-      const code = (user.value && user.value.user_id) || '';
-      if (!code) { vant.showToast('暂无邀请码'); return; }
-      copyText(code, '邀请码已复制');
+      const text = inviteCodeText.value || '';
+      if (!text || text.includes('未获取')) { vant.showToast('暂无邀请码'); return; }
+      copyText(text, '已复制');
     }
 
     // 账号状态切换（单身 <-> 已脱单）
@@ -4072,7 +4058,7 @@ createApp({
       receivedMessagesList, loadingReceivedMessages, openReceivedMessages, refreshReceivedCount,
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewPoster,
-      handleBack, showInviteDialog, inviteLink, inviteFullText, copyInviteLink, copyInviteCode,
+      handleBack, showInviteDialog, inviteCodeText, copyInviteCode,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,

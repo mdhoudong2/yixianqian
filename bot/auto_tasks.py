@@ -31,6 +31,15 @@ from lib import storage
 # 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
 _AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
 
+# 村情六处表精简后仅保留的字段白名单：表内多余字段被手动删除后，任何写入都只能命中这些字段，
+# 否则飞书报 FieldNameNotFound 导致观察员注册失败。新增/保留字段时同步维护这里。
+_OBS_PHOTO = "个人照片"
+_OBS_REAL_NAME = "姓名"
+OBSERVER_KEEP_FIELDS = {
+    FIELD_ACCOUNT_STATUS, _OBS_PHOTO, FIELD_FEISHU_ID,
+    FIELD_INVITE_CODE, FIELD_NICKNAME, _OBS_REAL_NAME,
+}
+
 
 def _normalize_text_fields(fields):
     """将文本字段值从API返回的富文本数组转为纯字符串。
@@ -53,10 +62,10 @@ def _move_record_to_observer_table(record_id, fields, open_id):
     返回新 record_id；失败返回 None（保留旧记录，下轮重试）。"""
     if not OBSERVER_TABLE_ID:
         return None
-    move_fields = {k: v for k, v in (fields or {}).items() if k not in _AUTO_FIELD_NAMES}
+    # 仅复制精简白名单内字段；表内已删除的多余字段一律不写，避免 FieldNameNotFound
+    move_fields = {k: v for k, v in (fields or {}).items() if k in OBSERVER_KEEP_FIELDS}
     move_fields = _normalize_text_fields(move_fields)
     move_fields[FIELD_ACCOUNT_STATUS] = STATUS_OBSERVER
-    move_fields[FIELD_HEART_REMAIN] = 0
     move_fields[FIELD_FEISHU_ID] = open_id
     new_rec = create_record(OBSERVER_TABLE_ID, move_fields)
     if not new_rec or not new_rec.get("record_id"):
@@ -245,6 +254,110 @@ def auto_bind_from_creator():
 
 
 
+def auto_bind_observer_direct():
+    """村情六处注册表单直接建在「村情六处表」时的入表处理（不再经用户表搬移）：
+    扫描该表「飞书用户ID为空」的新记录 → 校验/核销邀请码 → 绑定创建人 open_id、
+    置账号状态「村情六处」→ 同账号去重 → 发欢迎语与主菜单。
+    注意：村情六处表必须保留「创建人」字段，否则无法取得提交者身份。"""
+    if not OBSERVER_TABLE_ID:
+        return
+    items = search_records(OBSERVER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "isEmpty", "value": []}]
+    })
+    if not items:
+        return
+
+    existing = search_records(OBSERVER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "isNotEmpty", "value": []}]
+    })
+    existing_oids = {}
+    for e in existing:
+        ef = e.get("fields", {})
+        eoid = get_field_text(ef, FIELD_FEISHU_ID)
+        if eoid:
+            existing_oids[eoid] = get_field_text(ef, FIELD_NICKNAME)
+
+    done = 0
+    for item in items:
+        rid = item.get("record_id")
+        fields = item.get("fields", {})
+        open_id = get_creator_openid(fields)
+        nickname = get_field_text(fields, FIELD_NICKNAME)
+        if not open_id:
+            log("村情六处表新记录缺少「创建人」，无法绑定（请确认该表保留创建人字段），暂跳过")
+            continue
+
+        # 同一飞书账号已注册观察员：删除重复记录并提示
+        if open_id in existing_oids:
+            delete_record(OBSERVER_TABLE_ID, rid)
+            done += 1
+            send_text_message(
+                open_id,
+                f"你已经注册过村情六处啦！姓名：{existing_oids[open_id]}\n\n快去「一线牵 App」中浏览资料。")
+            send_main_menu_card(open_id)
+            continue
+
+        code = "".join((get_field_text(fields, FIELD_INVITE_CODE) or "").split()).upper()
+        codes = load_observer_codes()
+        if not code:
+            delete_record(OBSERVER_TABLE_ID, rid)
+            done += 1
+            send_text_message(open_id, "邀请码为空，请填写管理员发放的邀请码，注册未通过。如有疑问请联系管理员。")
+            continue
+        if code not in codes or codes.get(code, {}).get("used"):
+            delete_record(OBSERVER_TABLE_ID, rid)
+            done += 1
+            msg = "邀请码已被使用" if code in codes else "邀请码错误"
+            send_text_message(open_id, f"{msg}，注册未通过。如有疑问请联系管理员。")
+            continue
+
+        # 原子核销邀请码，核销成功才落库；并发占用则拒绝
+        if not consume_observer_code(code, nickname):
+            delete_record(OBSERVER_TABLE_ID, rid)
+            done += 1
+            send_text_message(open_id, "邀请码已被使用，注册未通过。如有疑问请联系管理员。")
+            continue
+
+        ok = update_record(OBSERVER_TABLE_ID, rid, {
+            FIELD_FEISHU_ID: open_id,
+            FIELD_ACCOUNT_STATUS: STATUS_OBSERVER,
+        })
+        if not ok:
+            # 绑定失败：回滚邀请码，保留记录下轮重试
+            release_observer_code(code)
+            log(f"村情六处直接注册绑定失败，已回滚邀请码: {nickname} code={code}")
+            continue
+
+        existing_oids[open_id] = nickname
+        done += 1
+
+        def _bind(_data, oid=open_id, nn=nickname, r=rid):
+            _data[oid] = {
+                "open_id": oid, "nickname": nn, "record_id": r,
+                "bind_time": time.strftime("%Y-%m-%d %H:%M:%S"), "bind_type": "observer"
+            }
+            return _data
+        update_bindings(_bind)
+
+        send_text_message(
+            open_id,
+            "欢迎你成为一线牵「村情六处」！\U0001f389\n\n"
+            "作为村情六处，你可以：\n"
+            "• 浏览男生/女生资料\n"
+            "• 留言、反馈\n"
+            "• 查看活动\n\n"
+            "（不含点喜欢、报名活动等交友功能）\n\n"
+            "点下方按钮进入一线牵App看看吧："
+        )
+        send_main_menu_card(open_id)
+        log(f"村情六处直接注册成功: {nickname} -> {open_id}")
+
+    if done:
+        log(f"村情六处表直接注册处理完成，本次 {done} 条")
+
+
 def auto_fill_like_links():
     """为缺少「喜欢（可点击）」链接的用户补齐超链接（已填充相同链接的不重复更新）"""
     items = search_records(USER_TABLE_ID)
@@ -282,6 +395,7 @@ def auto_bind_loop(interval=30):
     while True:
         try:
             auto_bind_from_creator()
+            auto_bind_observer_direct()
         except Exception as e:
             log(f"自动绑定循环异常: {e}")
         time.sleep(interval)

@@ -1999,7 +1999,10 @@ _LAST_ACTIVE_TTL = 600
 _last_active_written = {}
 
 def touch_last_active(open_id, user, role):
-    """后台异步把「最近活跃」写入用户/观察员表（按角色选表）。节流防首页刷新刷爆飞书 API。"""
+    """后台异步把「最近活跃」写入用户表（按角色选表）。节流防首页刷新刷爆飞书 API。
+    观察员（村情六处）表已精简、无「最近活跃」字段，且观察员不进任何推荐列表，直接跳过。"""
+    if role != "user":
+        return
     key = (open_id, role)
     now = time.time()
     if now - _last_active_written.get(key, 0) < _LAST_ACTIVE_TTL:

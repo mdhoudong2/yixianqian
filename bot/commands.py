@@ -37,12 +37,11 @@ def handle_register_command(sender_id):
 
 
 def handle_invite_command(sender_id):
-    """邀请好友：生成带邀请人ID的注册链接"""
+    """邀请好友：分两条发送——说明 + 一条可整条复制转发的话术（邀请码内联）。"""
     user_records = find_user_by_openid(sender_id)
     if not user_records:
         return "你还没有注册，无法邀请好友。\n\n发送「注册」先完成注册吧~"
     user_fields = user_records[0].get("fields", {})
-    nickname = get_field_text(user_fields, FIELD_NICKNAME)
     user_id = user_fields.get("用户ID", "")
     if not user_id:
         return "系统未找到你的用户ID，请联系管理员。"
@@ -52,15 +51,19 @@ def handle_invite_command(sender_id):
     rewarded = load_invite_rewarded()
     invite_count = sum(1 for v in rewarded.values() if v == sender_id)
 
-    return (
+    # 第一条：规则说明 + 操作提示
+    tip = (
         f"💕 邀请好友注册，双方都受益！\n\n"
         f"每成功邀请1位好友注册并审核通过，你将获得 1颗爱心（上限{MAX_HEARTS}颗）。\n"
         f"你当前有 {int(hearts)} 颗爱心，已成功邀请 {invite_count} 人。\n\n"
-        f"将下面文字发送给「被邀请人」：\n"
-        f"注册时，在“邀请人ID”里填：\n"
-        f"{user_id}\n\n"
-        f"好友注册审核通过后，爱心会自动到账~"
+        f"👇 长按下面这条消息 → 复制，直接发给好友即可："
     )
+    # 第二条：整条就是可转发话术，自包含、无需选取
+    forward = f"我在一线牵等你～注册时，在“邀请人ID”里填 {user_id} 就可以啦"
+
+    send_text_message(sender_id, tip)
+    send_text_message(sender_id, forward)
+    return None
 
 
 

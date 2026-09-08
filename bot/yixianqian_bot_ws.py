@@ -293,7 +293,7 @@ def do_p2_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerR
             if reply:
                 send_text_message(operator_open_id, reply)
             return P2CardActionTriggerResponse({
-                "toast": {"type": "success", "content": "邀请链接已发送"}
+                "toast": {"type": "success", "content": "邀请话术已发送"}
             })
         elif action == "menu_help":
             send_text_message(operator_open_id, WELCOME_TEXT)

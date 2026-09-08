@@ -1496,7 +1496,7 @@ def _download_and_cache_image(file_token):
     except Exception:
         return False
 
-def warm_image_cache(max_per_run=30):
+def warm_image_cache(max_per_run=60):
     """后台预热：增量下载 + 人脸异步补齐，避免长时间持有锁阻塞快照"""
     tokens = set()
     for u in _snap("users"):
@@ -1519,7 +1519,8 @@ def warm_image_cache(max_per_run=30):
     # 人脸检测异步批量，不阻塞快照循环；每轮先过滤出「未完成检测」的 token 再取前 N，
     # 否则哈希序固定的前 N 个完成后只 continue 不让位，排在后面的新照片永远轮不到
     def _bg_face_batch():
-        pending = []
+        fresh = []  # 从未检测的新图优先，保证新用户分钟级放行
+        stale = []  # 旧版本待重检排后
         for tok in tokens:
             if not tok:
                 continue
@@ -1535,10 +1536,12 @@ def warm_image_cache(max_per_run=30):
                             continue
                     except Exception:
                         pass
-                pending.append(tok)
+                    stale.append(tok)
+                else:
+                    fresh.append(tok)
             except Exception:
                 pass
-        for tok in pending[:max_per_run]:
+        for tok in (fresh + stale)[:max_per_run]:
             try:
                 ensure_face_center(tok)
             except Exception:
@@ -1556,10 +1559,12 @@ _FACE_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fac
 _FACE_MODEL_URL = ("https://github.com/opencv/opencv_zoo/raw/main/models/"
                    "face_detection_yunet/face_detection_yunet_2023mar.onnx")
 _FACE_DIR = os.path.join(IMAGE_CACHE_DIR, ".face")
-_FACE_SIDECAR_VERSION = 10  # 检测参数变更时递增，旧 sidecar 自动重检；v10 黑边回归复检
+_FACE_SIDECAR_VERSION = 11  # 检测参数变更时递增，旧 sidecar 自动重检；v11 分析前 EXIF 方向校正
 
 _face_cache = {}          # token -> [cx, cy]（比例 0~1）；None 表示已检测但无可用人脸
 _face_cache_lock = threading.Lock()
+_face_none_ts = {}          # token -> None 写入时间戳；None 负缓存 60s 后过期重读 sidecar
+_face_detector_lock = threading.Lock()  # YuNet/haar 检测器非线程安全，检测调用串行化
 _face_detector_state = None  # (kind, detector) kind in {"yunet", "haar", "none"}
 
 def _load_face_detector():
@@ -1673,6 +1678,10 @@ def _analyze_photo(img_path):
         except Exception:
             pass
         with Image.open(img_path) as im0:
+            try:
+                im0 = ImageOps.exif_transpose(im0)
+            except Exception:
+                pass
             im0 = im0.convert("RGB")
             w0, h0 = im0.size
             if w0 < 40 or h0 < 40:
@@ -1687,16 +1696,19 @@ def _analyze_photo(img_path):
         tb, bb, lb, rb = _detect_content_margins(gray)
         boxes = []
         if kind == "yunet":
-            det.setInputSize((w, h))
-            _, faces = det.detect(img)
+            with _face_detector_lock:
+                det.setInputSize((w, h))
+                _, faces = det.detect(img)
             if faces is not None:
                 for f in faces:
                     if len(f) >= 4:
                         score = float(f[14]) if len(f) >= 15 else 1.0
                         boxes.append([float(f[0]), float(f[1]), float(f[2]), float(f[3]), score])
         else:
-            for (x, y, bw, bh) in det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
-                                                       minSize=(40, 40)):
+            with _face_detector_lock:
+                haar_rects = det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5,
+                                                  minSize=(40, 40))
+            for (x, y, bw, bh) in haar_rects:
                 boxes.append([float(x), float(y), float(bw), float(bh), 1.0])
         if not boxes:
             return None, [tb, bb], [lb, rb]
@@ -1853,13 +1865,22 @@ def ensure_face_center(token):
         pass
     with _face_cache_lock:
         _face_cache[token] = out
+        if out is None:
+            _face_none_ts[token] = time.time()
+        else:
+            _face_none_ts.pop(token, None)
     return out
 
 def get_face_center(token):
     """读人脸数据（内存 → sidecar → None）。不做实时检测，保证请求路径零开销"""
     with _face_cache_lock:
         if token in _face_cache:
-            return _face_cache[token]
+            _cached = _face_cache[token]
+            if _cached is not None:
+                return _cached
+            # None 负缓存 60s 后过期：sidecar 就绪后自动解封，不必等 worker 重启
+            if time.time() - _face_none_ts.get(token, 0) < 60:
+                return None
     face = None
     try:
         p = _face_sidecar_path(token)
@@ -1873,6 +1894,10 @@ def get_face_center(token):
         face = None
     with _face_cache_lock:
         _face_cache[token] = face
+        if face is None:
+            _face_none_ts[token] = time.time()
+        else:
+            _face_none_ts.pop(token, None)
     return face
 
 def user_has_face(user_record, is_observer=False):
@@ -4243,6 +4268,7 @@ def delete_profile_photo():
         if del_token:
             with _face_cache_lock:
                 _face_cache.pop(del_token, None)
+                _face_none_ts.pop(del_token, None)
             try:
                 p = _face_sidecar_path(del_token)
                 if os.path.exists(p):

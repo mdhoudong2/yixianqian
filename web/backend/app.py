@@ -1327,15 +1327,18 @@ def pass_card_filters(fields, f):
             dv = bitable.get_select_value(fields, F_DRIVING) or "未填"
             if dv not in df:
                 return False
-    # 文本包含匹配
+    # 文本包含匹配（大小写不敏感：昵称/用户ID 可能是英文，对齐前端分组搜索的 toLowerCase 口径）
     for key, fname in [
         ("nickname", F_NICKNAME),
         ("user_id", F_USER_ID),
         ("church", F_CHURCH), ("native_place", F_NATIVE_PLACE), ("city", F_CITY),
         ("industry", F_INDUSTRY),
     ]:
-        if f.get(key) and f[key] not in bitable.get_field_text(fields, fname):
-            return False
+        kw = f.get(key)
+        if kw:
+            val = bitable.get_field_text(fields, fname) or ""
+            if str(kw).casefold() not in val.casefold():
+                return False
     return True
 
 def _has_active_filter(filters):
@@ -4717,12 +4720,42 @@ def get_user_public(openid):
     if not u:
         return jsonify({"error": "用户不存在"}), 404
     fields = u.get("fields", {})
+    target_gender = bitable.get_select_value(fields, F_GENDER)
+    # 「喜欢TA」按钮门禁：仅单身异性、非自己、未喜欢过可点（与 /api/like 的 active_gate/同性/重复校验对齐）。
+    # 前端以 can_like 为准隐藏按钮；报名名单点进同性/自己/观察员/已脱单/已喜欢时一律不展示。
+    me = snap_self_user()
+    me_fields = me.get("fields", {}) if me else {}
+    my_gender = bitable.get_select_value(me_fields, F_GENDER)
+    my_status = bitable.get_select_value(me_fields, F_ACCOUNT_STATUS)
+    is_self = (openid == oid)
+    liked = False
+    try:
+        for l in snap_likes_by_initiator(oid):
+            lf = l.get("fields", {})
+            if bitable.get_select_value(lf, F_LIKE_STATUS) == "已取消":
+                continue
+            if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == openid:
+                liked = True
+                break
+    except Exception:
+        liked = False
+    can_like = (
+        g.get("yxq_role", "user") != "observer"
+        and my_status == "单身"
+        and not is_self
+        and bool(my_gender) and bool(target_gender) and my_gender != target_gender
+        and not liked
+    )
     data = {
         "openid": bitable.get_field_text(fields, F_FEISHU_ID),
+        "user_id": bitable.get_field_text(fields, F_USER_ID),
         "nickname": bitable.get_field_text(fields, F_NICKNAME),
-        "gender": bitable.get_select_value(fields, F_GENDER),
+        "gender": target_gender,
         "photos": ["/api/image/" + t + "?fv10" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
         "display_fields": build_display_fields(fields),
+        "is_self": is_self,
+        "liked": liked,
+        "can_like": can_like,
     }
     return jsonify(data)
 

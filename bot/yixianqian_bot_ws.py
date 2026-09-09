@@ -344,6 +344,18 @@ def do_p2_p2p_chat_create(data) -> None:
 _processed_msg_ids = set()
 _MAX_PROCESSED_IDS = 500
 
+def _reply_inbound(open_id, chat_id, text):
+    """回复用户入站消息：优先用 p2p 单聊 chat_id 发送（规避飞书对部分单聊 open_id 直发的 230101），
+    chat_id 缺失或发送失败时回退 open_id。"""
+    if not text:
+        return False
+    if chat_id:
+        if send_text_message(chat_id, text, receive_id_type="chat_id"):
+            return True
+        log(f"chat_id回复失败，回退open_id: {open_id}")
+    return send_text_message(open_id, text)
+
+
 def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
     event = data.event
     message = event.message
@@ -356,6 +368,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         return
     sender_type = sender.sender_type
     chat_type = message.chat_type
+    chat_id = getattr(message, "chat_id", None)
     message_type = message.message_type
     content = message.content
     msg_id = message.message_id
@@ -375,7 +388,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
     if sender_type != "user":
         return
     if message_type != "text":
-        send_text_message(sender_id, "暂不支持该类型消息，请发送文字指令。\n发送「帮助」查看使用说明。")
+        _reply_inbound(sender_id, chat_id, "暂不支持该类型消息，请发送文字指令。\n发送「帮助」查看使用说明。")
         return
     try:
         content_dict = json.loads(content)
@@ -480,7 +493,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             is_first_time = sender_id not in bindings
             reply = handle_welcome(sender_id, is_first_time)
     if reply:
-        if send_text_message(sender_id, reply):
+        if _reply_inbound(sender_id, chat_id, reply):
             log(f"已回复用户: {sender_id}")
         else:
             log(f"回复失败: {sender_id}")

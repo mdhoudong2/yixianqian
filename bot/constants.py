@@ -132,6 +132,7 @@ INVITE_REWARDED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_invites.json") 
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")  # 共享通知（机器人写，H5读）
 OBSERVER_CODES_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_observer_codes.json")  # 观察员邀请码（管理员批量生成，一次性使用）
 P2P_CHAT_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_p2p_chats.json")  # open_id -> p2p单聊chat_id映射，主动推送优先用chat_id规避230101
+HEART_BONUS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_heart_bonus.json")  # open_id -> 管理员手动加赠爱心数（对账时叠加，不被覆盖）
 
 WS_HEALTH_CHECK_INTERVAL = 60      # 每60秒检查一次
 WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连

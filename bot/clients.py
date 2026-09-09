@@ -1,5 +1,6 @@
 """bot 进程内的共享客户端单例与 API 别名（飞书消息 + 多维表格 + 字段解析）。"""
 from constants import APP_ID, APP_SECRET, BASE_TOKEN
+from store import load_p2p_chats
 
 from lib.bitable_client import (  # noqa: F401 — re-export 供各模块 from clients import * 使用
     BitableClient,
@@ -14,7 +15,6 @@ from lib.bitable_client import (  # noqa: F401 — re-export 供各模块 from c
 )
 from lib.feishu import FeishuClient
 from lib.util import log
-from store import load_p2p_chats
 
 feishu = FeishuClient(APP_ID, APP_SECRET, logger=log)
 bitable = BitableClient(APP_ID, APP_SECRET, BASE_TOKEN, logger=log)

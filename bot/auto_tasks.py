@@ -17,6 +17,7 @@ from queries import (
 from store import (
     add_notification,
     consume_observer_code,
+    load_heart_bonus,
     load_invite_rewarded,
     load_observer_codes,
     release_observer_code,
@@ -911,18 +912,6 @@ def reconcile_hearts():
         if oid:
             active_by_oid[oid] = active_by_oid.get(oid, 0) + 1
 
-    invited_map = {}
-    for inviter_oid in load_invite_rewarded().values():
-        invited_map[inviter_oid] = invited_map.get(inviter_oid, 0) + 1
-
-    # 发布邀请汇总（供 H5 computed_hearts 使用）
-    try:
-        storage.save_json(os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json"),
-                          {"invites": invited_map,
-                           "updated": time.strftime("%Y-%m-%d %H:%M:%S")})
-    except Exception as e:
-        log(f"发布邀请汇总失败: {e}")
-
     groups = {}
     for u in search_records(USER_TABLE_ID):
         uf = u.get("fields", {})
@@ -932,6 +921,43 @@ def reconcile_hearts():
         if not oid:
             continue
         groups.setdefault(oid, []).append(u)
+
+    # 每个 oid 的主档案，以及 编号(U-xxxx) -> 主档oid，用于把“邀请人ID”解析到邀请人
+    primary_by_oid = {oid: pick_primary_record(recs)[0] for oid, recs in groups.items()}
+    uid_to_oid = {}
+    for oid, prec in primary_by_oid.items():
+        uid = get_field_text(prec.get("fields", {}), "用户ID")
+        if uid:
+            uid_to_oid[uid.strip().upper()] = oid
+
+    # 有效邀请数以用户表“当前真实关系”为准：被邀请人主档=单身、填了邀请人编号、非自邀。
+    # 不直接对奖励账本计数，避免身份改绑/删除用户后旧 open_id 残留导致同一人被重复记账（多算爱心）。
+    valid_invites = {}
+    for oid, prec in primary_by_oid.items():
+        pf = prec.get("fields", {})
+        if get_field_text(pf, FIELD_ACCOUNT_STATUS) != "单身":
+            continue  # 仅审核通过为单身的被邀请人计为一次成功邀请
+        inviter_uid = (get_field_text(pf, FIELD_INVITER_ID) or "").strip().upper()
+        my_uid = (get_field_text(pf, "用户ID") or "").strip().upper()
+        if not inviter_uid or inviter_uid == my_uid:
+            continue
+        inviter_oid = uid_to_oid.get(inviter_uid)
+        if inviter_oid:
+            valid_invites[inviter_oid] = valid_invites.get(inviter_oid, 0) + 1
+
+    # 信用合计 = 有效邀请 + 管理员手动加赠（H5 与多维表格统一以此为准）
+    bonus_map = load_heart_bonus()
+    credit_map = {}
+    for oid in set(list(primary_by_oid.keys()) + list(bonus_map.keys())):
+        credit_map[oid] = valid_invites.get(oid, 0) + int(bonus_map.get(oid, 0) or 0)
+
+    # 发布汇总（供 H5 computed_hearts 使用，键名沿用 invites 以兼容前端，值=有效邀请+加赠）
+    try:
+        storage.save_json(os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json"),
+                          {"invites": credit_map,
+                           "updated": time.strftime("%Y-%m-%d %H:%M:%S")})
+    except Exception as e:
+        log(f"发布邀请汇总失败: {e}")
 
     fixed = 0
 
@@ -953,8 +979,8 @@ def reconcile_hearts():
                 log(f"爱心总量写入失败(字段可能未建): {nick} {e}")
 
     for oid, recs in groups.items():
-        primary = pick_primary_record(recs)[0]
-        earned = min(INITIAL_HEARTS + invited_map.get(oid, 0), MAX_HEARTS)  # 累计获得=初始+邀请(封顶)
+        primary = primary_by_oid[oid]
+        earned = min(INITIAL_HEARTS + credit_map.get(oid, 0), MAX_HEARTS)  # 累计获得=初始+有效邀请+加赠(封顶)
         expected = max(0, min(earned - active_by_oid.get(oid, 0), MAX_HEARTS))
         _write(primary, expected, earned, "主档")
         for r in recs:

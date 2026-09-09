@@ -66,6 +66,25 @@ def save_invite_rewarded(data):
     storage.save_json(INVITE_REWARDED_FILE, data)
 
 
+def load_p2p_chats():
+    """加载 open_id -> p2p单聊chat_id 映射，用于主动推送优先走chat_id规避230101"""
+    return storage.load_json(P2P_CHAT_FILE, {})
+
+
+def update_p2p_chat(open_id, chat_id):
+    """加锁原子写入一条 open_id->chat_id 映射（入站消息/进入单聊时调用）"""
+    if not open_id or not chat_id:
+        return
+
+    def _m(data):
+        if data.get(open_id) == chat_id:
+            return None  # 无变化，不写盘
+        data[open_id] = chat_id
+        return data
+
+    storage.update_json(P2P_CHAT_FILE, {}, _m)
+
+
 def add_notification(recipient, ntype, text, key=None, extra=None):
     """写入一条通知（按 key 去重），供 H5 消息页『动态』分区读取"""
     def _add(data):

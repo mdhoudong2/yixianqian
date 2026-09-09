@@ -87,7 +87,7 @@ from grouping import (
     handle_group_submit,
 )
 from queries import find_user_by_openid
-from store import load_bindings, load_welcomed
+from store import load_bindings, load_welcomed, update_p2p_chat
 
 # WebSocket健康检查
 _last_ws_event_time = time.time()
@@ -197,6 +197,8 @@ def do_p2_im_chat_access_event_bot_p2p_chat_entered_v1(data: lark.im.v1.P2ImChat
             return
         user_open_id = operator_id.open_id
         log(f"用户进入单聊: {user_open_id}")
+        # 记住该用户的p2p单聊chat_id，供主动推送优先走chat_id（规避230101）
+        update_p2p_chat(user_open_id, getattr(event, "chat_id", None))
 
         # 检查用户是否已注册
         user_records = find_user_by_openid(user_open_id)
@@ -387,6 +389,8 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         return
     if sender_type != "user":
         return
+    # 记住该用户的p2p单聊chat_id，供主动推送优先走chat_id（规避230101）
+    update_p2p_chat(sender_id, chat_id)
     if message_type != "text":
         _reply_inbound(sender_id, chat_id, "暂不支持该类型消息，请发送文字指令。\n发送「帮助」查看使用说明。")
         return

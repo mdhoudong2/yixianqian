@@ -4534,21 +4534,22 @@ def cancel_like(target_openid):
                 bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
             l.setdefault("fields", {})[F_LIKE_STATUS] = "已取消"
 
-    # 反向切断（后台线程，幂等）
-    def _cancel_reverse():
+    # 反向回落（后台线程，幂等）：只取消自己这一侧；若曾是相互喜欢，
+    # 对方回落为单向喜欢（对方的心意保留），绝不置已取消。
+    def _downgrade_reverse():
         try:
             reverse_likes = bitable.search_records(LIKE_TABLE_ID, [
                 {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [target_openid]},
                 {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]},
-                {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
+                {"field_name": F_LIKE_STATUS, "operator": "is", "value": ["相互喜欢"]}
             ])
             for rl in reverse_likes:
                 bitable.update_record(LIKE_TABLE_ID, rl["record_id"],
-                                      {F_LIKE_STATUS: "已取消"})
+                                      {F_LIKE_STATUS: "单向喜欢"})
         except Exception as e:
-            app.logger.warning(f"反向取消喜欢失败: {e}")
+            app.logger.warning(f"反向回落单向失败: {e}")
 
-    threading.Thread(target=_cancel_reverse, daemon=True).start()
+    threading.Thread(target=_downgrade_reverse, daemon=True).start()
 
     hearts_now = computed_hearts(open_id)
     return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})

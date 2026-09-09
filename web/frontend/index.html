@@ -1204,7 +1204,7 @@
         </div>
       </template>
     </div>
-    <div style="padding:20px 12px;" v-if="userDetail.gender !== user.gender">
+    <div style="padding:20px 12px;" v-if="canLikeUserDetail">
       <van-button color="#ff6b81" block @click="openLikeDialogForUser(userDetail)">💕 喜欢TA</van-button>
     </div>
   </div>
@@ -2054,6 +2054,19 @@ createApp({
     // 他人资料页
     const userDetail = ref(null);
     const userDetailFrom = ref('home');
+    // 他人资料页「喜欢TA」按钮门禁：以后端 can_like 为准（单身异性、非自己、未喜欢过）；
+    // 老数据无该字段时降级为本地判断（观察员/自己/同性/性别缺失一律隐藏）。
+    const canLikeUserDetail = computed(() => {
+      const u = userDetail.value;
+      const me = user.value;
+      if (!u || !me) return false;
+      if (typeof u.can_like === 'boolean') return u.can_like;
+      if (isObserver.value) return false;
+      if (u.is_self) return false;
+      if (u.user_id && me.user_id && u.user_id === me.user_id) return false;
+      if (!u.gender || !me.gender) return false;
+      return u.gender !== me.gender;
+    });
 
     // 触摸滑动（卡片/图片分离）
 
@@ -2921,6 +2934,8 @@ createApp({
       userDetail.value = null;
       try {
         const data = await api('/api/users/' + openid + '/public');
+        // 在途喜欢快照有 60s 滞后：刚喜欢过的人进资料页也隐藏按钮
+        if (data && (data.liked || justLiked.has(openid))) { data.liked = true; data.can_like = false; }
         userDetail.value = data;
       } catch(e) { vant.showToast(e.message); }
     }
@@ -3006,6 +3021,22 @@ createApp({
     }
     function openLikeDialogForUser(u) {
       if (!u || !u.openid) return;
+      if (u.is_self || (u.user_id && user.value && u.user_id === user.value.user_id)) {
+        vant.showToast('不能喜欢自己');
+        return;
+      }
+      if (isObserver.value) {
+        vant.showToast('村情六处仅可浏览，不能喜欢');
+        return;
+      }
+      if (u.gender && user.value && user.value.gender && u.gender === user.value.gender) {
+        vant.showToast('仅限异性之间喜欢');
+        return;
+      }
+      if (u.liked || justLiked.has(u.openid)) {
+        vant.showToast('你已经喜欢过TA了');
+        return;
+      }
       if ((user.value.hearts || 0) <= 0) {
         vant.showToast('爱心已用完，邀请好友可得爱心');
         showInviteDialog.value = true;
@@ -3050,6 +3081,11 @@ createApp({
         const deckCard = cards.value.find(c => c.openid === target.openid);
         if (deckCard) deckCard.liked = true;
         if (currentCard.value && currentCard.value.openid === target.openid) currentCard.value.liked = true;
+        // 资料页（报名名单点进）喜欢成功后立即隐藏「喜欢TA」按钮
+        if (userDetail.value && userDetail.value.openid === target.openid) {
+          userDetail.value.liked = true;
+          userDetail.value.can_like = false;
+        }
         // 优先用后端返回的权威爱心数（含预留/信用口径），无则本地乐观-1
         if (user.value) {
           if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
@@ -4085,7 +4121,7 @@ createApp({
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,
-      userDetail, userDetailFrom, openUserDetail, loadNotifications,
+      userDetail, userDetailFrom, canLikeUserDetail, openUserDetail, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact
     };
   }

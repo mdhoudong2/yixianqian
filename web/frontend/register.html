@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>一线牵 · 注册</title>
+<link rel="icon" href="favicon.svg?v=5" type="image/svg+xml">
+<link rel="stylesheet" href="lib/vant.min.css">
+<style>
+  :root{ --pink:#ff6b81; --pink-soft:#ffe3ea; --ink:#333; --sub:#8a8f99; --line:#f0f0f3; --bg:#f6f7f9; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Helvetica,Arial,sans-serif;
+    font-size:15px; line-height:1.55; }
+  [v-cloak]{ display:none; }
+  .wrap{ max-width:640px; margin:0 auto; padding:0 14px 110px; }
+  .hero{ text-align:center; padding:26px 18px 14px; }
+  .hero .logo{ font-size:40px; }
+  .hero h1{ font-size:21px; margin:8px 0 6px; color:var(--pink); }
+  .hero .desc{ color:var(--sub); font-size:13px; white-space:pre-line; text-align:left;
+    background:#fff; border-radius:12px; padding:12px 14px; margin-top:12px; line-height:1.7; }
+  .field-card{ background:#fff; border-radius:12px; padding:14px; margin-top:12px; }
+  .f-title{ font-size:15px; font-weight:600; margin-bottom:2px; display:flex; align-items:flex-start; }
+  .f-title .req{ color:var(--pink); margin-right:3px; }
+  .f-title .opt{ color:var(--sub); font-weight:400; font-size:12px; margin-left:6px; }
+  .f-desc{ color:var(--sub); font-size:12px; line-height:1.6; margin:2px 0 9px; white-space:pre-line; }
+  .f-desc:empty{ display:none; }
+  /* chip 单/多选 */
+  .chips{ display:flex; flex-wrap:wrap; gap:9px; }
+  .chip{ padding:7px 14px; border-radius:999px; background:#f3f4f7; color:#444; font-size:14px;
+    border:1px solid transparent; user-select:none; transition:all .12s; }
+  .chip.on{ background:var(--pink-soft); color:var(--pink); border-color:var(--pink); font-weight:600; }
+  .chip.block{ flex:1 1 calc(50% - 9px); text-align:center; }
+  /* 输入框 */
+  .van-field{ border:1px solid var(--line); border-radius:10px; padding:2px 10px; }
+  input.native, textarea.native, .fake-input{
+    width:100%; border:1px solid var(--line); border-radius:10px; padding:11px 12px;
+    font-size:15px; background:#fff; color:var(--ink); outline:none; font-family:inherit; }
+  textarea.native{ min-height:88px; resize:vertical; line-height:1.6; }
+  input.native:focus, textarea.native:focus, .fake-input:active{ border-color:var(--pink); }
+  .fake-input{ color:var(--sub); display:flex; justify-content:space-between; align-items:center; }
+  .fake-input.has{ color:var(--ink); }
+  .fake-input .arrow{ color:#c0c4cc; }
+  /* 照片 */
+  .photo-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
+  .photo-cell{ position:relative; aspect-ratio:1; border-radius:10px; overflow:hidden; background:#f1f2f5; }
+  .photo-cell img{ width:100%; height:100%; object-fit:cover; }
+  .photo-cell .mask{ position:absolute; inset:0; background:rgba(0,0,0,.45); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .photo-cell .del{ position:absolute; top:3px; right:3px; width:22px; height:22px; border-radius:50%;
+    background:rgba(0,0,0,.55); color:#fff; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .photo-add{ aspect-ratio:1; border:1px dashed #cfd3dc; border-radius:10px; display:flex;
+    flex-direction:column; align-items:center; justify-content:center; color:#9aa0ab; gap:4px; background:#fafbfc; }
+  .photo-add .plus{ font-size:26px; line-height:1; }
+  .photo-tip{ font-size:12px; color:var(--sub); margin-top:8px; }
+  /* popup 级联 */
+  .pick-list{ max-height:46vh; overflow-y:auto; }
+  .pick-item{ padding:13px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+  .pick-item:active{ background:#f7f8fa; }
+  .pick-crumb{ padding:12px 16px; color:var(--sub); font-size:13px; }
+  .popup-head{ display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .popup-head .act{ color:var(--pink); }
+  .popup-head .ttl{ font-weight:600; }
+  /* 提交栏 */
+  .submit-bar{ position:fixed; left:0; right:0; bottom:0; background:#fff; padding:10px 14px;
+    box-shadow:0 -2px 12px rgba(0,0,0,.05); z-index:50; }
+  .submit-inner{ max-width:640px; margin:0 auto; }
+  .btn-main{ background:var(--pink); border-color:var(--pink); color:#fff; border-radius:999px; font-size:16px; }
+  /* 状态页 */
+  .state-page{ text-align:center; padding:80px 30px; }
+  .state-page .big{ font-size:46px; margin-bottom:14px; }
+  .state-page h2{ font-size:19px; margin:6px 0; }
+  .state-page p{ color:var(--sub); font-size:14px; line-height:1.8; }
+  .inviter-tag{ display:inline-block; background:var(--pink-soft); color:var(--pink); border-radius:8px;
+    padding:2px 8px; font-size:12px; margin-left:6px; }
+</style>
+</head>
+<body>
+<div id="app" v-cloak>
+
+  <!-- 登录/加载中 -->
+  <div class="state-page" v-if="stage==='loading'">
+    <van-loading size="28px" color="#ff6b81">正在确认飞书身份…</van-loading>
+    <p style="margin-top:18px">请稍候，正在为你安全登录</p>
+  </div>
+
+  <!-- 需在飞书内打开 -->
+  <div class="state-page" v-else-if="stage==='needfeishu'">
+    <div class="big">💌</div>
+    <h2>请在飞书 App 中打开本页</h2>
+    <p>为保证你的身份真实可靠，注册需要通过飞书登录。<br>
+       请在「一线牵」机器人中重新进入注册页面。</p>
+    <van-button round block class="btn-main" style="max-width:280px;margin-top:16px" @click="retry">我已在飞书中，重试</van-button>
+  </div>
+
+  <!-- 已注册 -->
+  <div class="state-page" v-else-if="stage==='registered'">
+    <div class="big">✅</div>
+    <h2>你已经注册过啦</h2>
+    <p>无需重复注册，直接进入「一线牵 App」即可。</p>
+  </div>
+
+  <!-- 提交成功 -->
+  <div class="state-page" v-else-if="stage==='done'">
+    <div class="big">🎉</div>
+    <h2>提交成功，正在等待审核</h2>
+    <p>资料已收到，审核通过后「一线牵」机器人会主动通知你。<br>
+       请留意飞书消息，期间无需重复提交。</p>
+  </div>
+
+  <!-- 表单 -->
+  <div class="wrap" v-else>
+    <div class="hero">
+      <div class="logo">💞</div>
+      <h1>一线牵 · 注册</h1>
+      <div class="desc">- 亲爱的兄弟姐妹，为了更容易找到另一半：请保证以下信息真实可信。
+- 表单比较长，但你的那个TA，可能很关注这些信息。
+- 此信息仅用于此App，不会外泄，请放心填写。</div>
+    </div>
+
+    <template v-for="m in meta" :key="m.field">
+      <div class="field-card">
+        <div class="f-title">
+          <span class="req" v-if="m.required">*</span><span>{{ m.title }}</span>
+          <span class="opt" v-if="m.type===4">可多选</span>
+          <span class="inviter-tag" v-if="m.field==='邀请人ID' && form['邀请人ID']">已带入邀请人</span>
+        </div>
+        <div class="f-desc">{{ m.desc }}</div>
+
+        <!-- 照片 -->
+        <div v-if="m.type===17">
+          <div class="photo-grid">
+            <div class="photo-cell" v-for="(p,i) in photos" :key="i">
+              <img :src="p.localUrl" alt="">
+              <div class="mask" v-if="p.status==='uploading'">上传中…</div>
+              <div class="del" @click="removePhoto(i)">×</div>
+            </div>
+            <label class="photo-add" v-if="photos.length<9">
+              <span class="plus">＋</span><span>{{ photos.length }}/9</span>
+              <input type="file" accept="image/*" multiple hidden @change="onPickPhotos($event)">
+            </label>
+          </div>
+          <div class="photo-tip">请上传 3-9 张个人照片，建议上传“横版”照片作为第一张，展示效果更好</div>
+        </div>
+
+        <!-- 省市区级联 -->
+        <div v-else-if="m.widget==='area'">
+          <div class="fake-input" :class="{has:form[m.field]}" @click="openArea(m)">
+            <span>{{ form[m.field] || areaPlaceholder(m) }}</span><span class="arrow">›</span>
+          </div>
+        </div>
+
+        <!-- 日期(原生) -->
+        <input v-else-if="m.type===5" type="date" class="native" v-model="form[m.field]">
+
+        <!-- 单选:性别用两块大按钮 -->
+        <div v-else-if="m.type===3 && m.options.length===2 && m.field==='性别'" class="chips">
+          <div class="chip block" v-for="o in m.options" :key="o"
+               :class="{on:form[m.field]===o}" @click="pickSingle(m,o)">{{ o }}</div>
+        </div>
+        <!-- 单选:承诺勾选项 -->
+        <div v-else-if="m.type===3 && m.options.length===1" class="chips">
+          <div class="chip" :class="{on:form[m.field]===m.options[0]}" @click="togglePromise(m)">{{ '☑ ' + m.options[0] }}</div>
+        </div>
+        <!-- 单选:普通 chip -->
+        <div v-else-if="m.type===3" class="chips">
+          <div class="chip" v-for="o in m.options" :key="o"
+               :class="{on:form[m.field]===o}" @click="pickSingle(m,o)">{{ o }}</div>
+        </div>
+
+        <!-- 多选 -->
+        <div v-else-if="m.type===4" class="chips">
+          <div class="chip" v-for="o in m.options" :key="o"
+               :class="{on:(form[m.field]||[]).indexOf(o)>=0}" @click="toggleMulti(m,o)">{{ o }}</div>
+        </div>
+
+        <!-- 多行文本 -->
+        <textarea v-else-if="m.widget==='textarea'" class="native" v-model="form[m.field]"
+                  :placeholder="'请输入' + m.title"></textarea>
+        <!-- 数字/电话/文本 -->
+        <input v-else class="native"
+               :type="m.type===2?'number':(m.type===13?'tel':'text')"
+               inputmode="text" v-model="form[m.field]" :placeholder="'请输入' + m.title">
+      </div>
+    </template>
+
+    <div style="height:8px"></div>
+  </div>
+
+  <!-- 提交栏 -->
+  <div class="submit-bar" v-if="stage==='form'">
+    <div class="submit-inner">
+      <van-button block round class="btn-main" :loading="submitting" @click="submit">提交注册</van-button>
+    </div>
+  </div>
+
+  <!-- 省/市/区 选择弹层 -->
+  <van-popup v-model:show="areaShow" position="bottom" round>
+    <div class="popup-head">
+      <span class="act" @click="areaBack" v-if="areaStep>0">上一步</span>
+      <span class="ttl">{{ areaTitle }}</span>
+      <span class="act" @click="areaShow=false">取消</span>
+    </div>
+    <div class="pick-crumb">{{ areaCrumb }}</div>
+    <div class="pick-list">
+      <div class="pick-item" v-for="opt in areaOptions" :key="opt" @click="chooseArea(opt)">
+        <span>{{ opt }}</span><span style="color:#c8ccd4">›</span>
+      </div>
+    </div>
+  </van-popup>
+
+</div>
+
+<script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.26.js"></script>
+<script src="lib/vue.global.prod.js"></script>
+<script src="lib/vant.min.js"></script>
+<script src="area.js?v=1"></script>
+<script src="register.meta.js?v=1"></script>
+<script>
+  window.FEISHU_APP_ID = '__FEISHU_APP_ID__';
+</script>
+<script src="register.js?v=2"></script>
+</body>
+</html>

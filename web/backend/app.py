@@ -2192,6 +2192,230 @@ def logout():
     resp.delete_cookie("yxq_session")
     return resp
 
+# ==================== H5 网页版注册（对齐飞书表单「一线牵-注册（新）」） ====================
+# key=用户表真实字段名；type=飞书字段类型(1文本/2数字/3单选/4多选/5日期/13电话/17附件)；
+# required/options 与原表单严格一致，同时作为服务端写入白名单（拒绝任何规则外字段）。
+_REGISTER_RULES = {
+    '个人照片': {"type": 17, "required": True, "options": []},
+    '姓名': {"type": 1, "required": True, "options": []},
+    '昵称': {"type": 1, "required": True, "options": []},
+    '身份证号': {"type": 1, "required": True, "options": []},
+    '性别': {"type": 3, "required": True, "options": ['男性', '女性']},
+    '生日': {"type": 5, "required": True, "options": []},
+    '手机号': {"type": 13, "required": True, "options": []},
+    '微信号': {"type": 1, "required": True, "options": []},
+    '圣名': {"type": 1, "required": True, "options": []},
+    '经常去的教堂': {"type": 1, "required": True, "options": []},
+    '参加的团体': {"type": 1, "required": False, "options": []},
+    '教堂所在市-区': {"type": 1, "required": True, "options": []},
+    '家乡': {"type": 1, "required": True, "options": []},
+    '家庭成员情况': {"type": 1, "required": True, "options": []},
+    '现居/工作城市': {"type": 1, "required": True, "options": []},
+    '身高（cm）': {"type": 2, "required": True, "options": []},
+    '学历': {"type": 3, "required": True, "options": ['大专以下', '大专', '本科', '硕士', '博士']},
+    '从事行业': {"type": 1, "required": True, "options": []},
+    '职位': {"type": 1, "required": True, "options": []},
+    '房产状况': {"type": 3, "required": False, "options": ['有', '无']},
+    '年收入': {"type": 3, "required": False, "options": ['10W以下', '10W - 20W', '20W - 30W', '30W - 50W', '50W以上']},
+    '是否有车': {"type": 3, "required": False, "options": ['有', '无']},
+    '我是一个怎样的人': {"type": 1, "required": True, "options": []},
+    '我是一个怎样的人-性格': {"type": 4, "required": True, "options": ['喜欢安静', '比较主动', '非常自律', '做事严谨', '性格沉稳', '积极乐观', '有始有终', '喜爱冒险', '猎奇', '渴望成功', '理性待事', '正直', '话痨', '善于交际', '容易相处', '有点小幽默', '传统的', '思想前卫', '总是充满热情', '讲究效率', '其他']},
+    '我是一个怎样的人-爱好': {"type": 4, "required": True, "options": ['有氧运动', '听音乐', '看电影', '看书', '手绘', '唱歌', '弹吉他', '弹钢琴', '剧本杀', '狼人杀', '王者荣耀', '吃鸡', '密室逃脱', '爱车一族', '旅游爱好者', '看小说', '拍照片', '养宠物', '做饭', '寻觅美食', '逛博物馆', '游乐场', '蹦迪', '其他']},
+    '我是一个怎样的人-运动': {"type": 4, "required": True, "options": ['篮球', '足球', '乒乓球', '羽毛球', '网球', '台球', '游泳', '跑步', '爬山', '射击', '跳绳', '漂流', '瑜伽', '慢走', '跳舞', '骑行', '攀岩', '蹦床', '滑雪', '冲浪', '滑冰', '跆拳道', '蹦极', '极限运动', '潜水', '其他']},
+    '我是个怎样的人-MBTI人格': {"type": 4, "required": True, "options": ['E', 'I', 'S', 'N', 'T', 'F', 'J', 'P']},
+    '理想中的TA': {"type": 1, "required": True, "options": []},
+    '理想中的TA-性格': {"type": 4, "required": True, "options": ['喜欢安静', '比较主动', '非常自律', '做事严谨', '性格沉稳', '积极乐观', '有始有终', '喜爱冒险', '猎奇', '渴望成功', '理性待事', '正直', '话痨', '善于交际', '容易相处', '有点小幽默', '传统的', '思想前卫', '总是充满热情', '讲究效率', '其他']},
+    '理想中的TA-爱好': {"type": 4, "required": True, "options": ['有氧运动', '听音乐', '看电影', '看书', '手绘', '唱歌', '弹吉他', '弹钢琴', '剧本杀', '狼人杀', '王者荣耀', '吃鸡', '密室逃脱', '爱车一族', '旅游爱好者', '看小说', '拍照片', '养宠物', '做饭', '寻觅美食', '逛博物馆', '游乐场', '蹦迪', '其他']},
+    '理想中的TA-运动': {"type": 4, "required": True, "options": ['篮球', '足球', '乒乓球', '羽毛球', '网球', '台球', '游泳', '跑步', '爬山', '射击', '跳绳', '漂流', '瑜伽', '慢走', '跳舞', '骑行', '攀岩', '蹦床', '滑雪', '冲浪', '滑冰', '跆拳道', '蹦极', '极限运动', '潜水', '其他']},
+    '婚后是否与父母同住': {"type": 3, "required": True, "options": ['独立生活', '与父母住在一起', '根据具体情况而定']},
+    '你结过婚吗？': {"type": 3, "required": True, "options": ['没结过婚', '结过婚']},
+    '您替子女注册吗？': {"type": 3, "required": True, "options": ['是的，我替子女报名，我会让子女注册', '不是，我为自己报名']},
+    '你是怎么知道这个App的？': {"type": 1, "required": True, "options": []},
+    '邀请人ID': {"type": 1, "required": False, "options": []},
+    '记得一定要加小天使👼微信号，并备注“真实姓名”。': {"type": 3, "required": True, "options": ['我会记得的']},
+}
+_REGISTER_PHOTO_MIN = 3
+_REGISTER_PHOTO_MAX = 9
+_REGISTER_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+_REGISTER_VALID_STATUS = ("单身", "待审核", "已脱单")
+_REGISTER_HEART_TOTAL = "爱心总量"
+
+
+def _openid_from_auth_code(code):
+    """飞书 OAuth 授权码 code -> open_id。成功返回 (open_id, '')，失败返回 (None, err)。"""
+    try:
+        tr = requests.post(
+            "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal",
+            json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET}, timeout=10).json()
+        app_token = tr.get("app_access_token", "")
+    except Exception as e:
+        return None, f"app_access_token异常: {e}"
+    if not app_token:
+        return None, "无app_access_token"
+    try:
+        rr = requests.post(
+            "https://open.feishu.cn/open-apis/authen/v1/access_token",
+            headers={"Authorization": f"Bearer {app_token}", "Content-Type": "application/json"},
+            json={"grant_type": "authorization_code", "code": code}, timeout=15).json()
+    except Exception as e:
+        return None, f"换取open_id异常: {e}"
+    if rr.get("code") == 0:
+        return rr.get("data", {}).get("open_id"), ""
+    return None, f"{rr.get('code')} {rr.get('msg')}"
+
+
+def _register_has_user_record(open_id):
+    """该 open_id 是否已有有效普通用户档案（单身/待审核/已脱单）。"""
+    items = bitable.search_records(USER_TABLE_ID, [
+        {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}]) or []
+    for it in items:
+        if bitable.get_select_value(it.get("fields", {}), F_ACCOUNT_STATUS) in _REGISTER_VALID_STATUS:
+            return it
+    return None
+
+
+@app.route("/api/auth/feishu_register", methods=["GET"])
+def feishu_auth_register():
+    """注册页专用免登：换到 open_id 即种会话（不要求已有档案），用于钉死注册身份。"""
+    code = request.args.get("code", "")
+    if not code:
+        return jsonify({"error": "缺少code参数"}), 400
+    open_id, err = _openid_from_auth_code(code)
+    if not open_id:
+        app.logger.warning(f"注册免登失败: {err}")
+        return jsonify({"error": "飞书登录失败，请重试"}), 401
+    existed = bool(_register_has_user_record(open_id))
+    session_id = create_session(open_id, "user")
+    resp = make_response(jsonify({"ok": True, "registered": existed}))
+    resp.set_cookie("yxq_session", session_id, httponly=True, secure=True,
+                    max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
+    return resp
+
+
+_REGISTER_HTML_CACHE = None
+
+
+def _render_register():
+    """读取注册页并注入当前环境飞书 app_id，不缓存。"""
+    global _REGISTER_HTML_CACHE
+    if _REGISTER_HTML_CACHE is None:
+        with open(os.path.join(app.static_folder, "register.html"), "r", encoding="utf-8") as f:
+            _REGISTER_HTML_CACHE = f.read()
+    html = _REGISTER_HTML_CACHE.replace("__FEISHU_APP_ID__", FEISHU_APP_ID)
+    resp = make_response(html)
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+@app.route("/register.html")
+def register_page():
+    return _render_register()
+
+
+@app.route("/api/register/photo", methods=["POST"])
+def register_upload_photo():
+    """注册页单张图片上传：登录后把图片传到多维表格素材库，返回 file_token。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    rl = _rate_limit(40, 60, "regup")
+    if rl:
+        return rl
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "缺少文件"}), 400
+    data = f.read()
+    if not data:
+        return jsonify({"error": "空文件"}), 400
+    if len(data) > _REGISTER_PHOTO_MAX_BYTES:
+        return jsonify({"error": "单张图片需小于10MB"}), 400
+    ctype = f.mimetype or "image/jpeg"
+    if not ctype.startswith("image/"):
+        return jsonify({"error": "仅支持图片文件"}), 400
+    token = bitable.upload_attachment(data, f.filename or "photo.jpg", ctype)
+    if not token:
+        return jsonify({"error": "图片上传失败，请重试"}), 502
+    return jsonify({"ok": True, "file_token": token})
+
+
+@app.route("/api/register", methods=["POST"])
+def submit_register():
+    """H5 注册提交：按表单规则校验并写入用户表（状态=待审核，绑定当前飞书身份）。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录，请先完成飞书登录"}), 401
+    rl = _rate_limit(5, 60, "regsub")
+    if rl:
+        return rl
+    if _register_has_user_record(open_id):
+        return jsonify({"error": "你已经注册过啦，无需重复注册"}), 409
+
+    body = request.get_json(silent=True) or {}
+    fields = {}
+    for name, rule in _REGISTER_RULES.items():
+        typ, req, opts = rule["type"], rule["required"], rule["options"]
+        v = body.get(name, None)
+        if typ == 4:  # 多选 -> 字符串数组
+            vals = [str(x).strip() for x in (v or []) if str(x).strip()]
+            if req and not vals:
+                return jsonify({"error": f"请填写：{name}"}), 400
+            if opts:
+                bad = [x for x in vals if x not in opts]
+                if bad:
+                    return jsonify({"error": f"「{name}」含非法选项"}), 400
+            if vals:
+                fields[name] = vals
+            continue
+        if isinstance(v, str):
+            v = v.strip()
+        empty = v is None or v == "" or v == []
+        if req and empty:
+            return jsonify({"error": f"请填写：{name}"}), 400
+        if empty:
+            continue
+        if typ == 3:  # 单选
+            v = str(v)
+            if opts and v not in opts:
+                return jsonify({"error": f"「{name}」选项非法"}), 400
+            fields[name] = v
+        elif typ == 2:  # 数字
+            try:
+                fields[name] = int(float(v))
+            except Exception:
+                return jsonify({"error": f"「{name}」需为数字"}), 400
+        elif typ == 5:  # 日期：YYYY-MM-DD -> 东八区当天 0 点毫秒
+            try:
+                fields[name] = int(time.mktime(time.strptime(str(v)[:10], "%Y-%m-%d")) * 1000)
+            except Exception:
+                return jsonify({"error": f"「{name}」日期格式有误"}), 400
+        elif typ == 13:  # 电话
+            fields[name] = [{"number": str(v)}]
+        elif typ == 17:  # 附件：file_token 列表
+            fields[name] = [{"file_token": t} for t in v if t]
+        else:  # 文本
+            fields[name] = str(v)
+
+    photo_tokens = [p.get("file_token") for p in fields.get(F_PHOTO, []) if isinstance(p, dict) and p.get("file_token")]
+    if not (_REGISTER_PHOTO_MIN <= len(photo_tokens) <= _REGISTER_PHOTO_MAX):
+        return jsonify({"error": f"请上传 {_REGISTER_PHOTO_MIN}-{_REGISTER_PHOTO_MAX} 张个人照片"}), 400
+    fields[F_PHOTO] = [{"file_token": t, "name": f"photo{i + 1}.jpg"} for i, t in enumerate(photo_tokens)]
+
+    # 系统字段：身份钉死、强制待审核、初始爱心（用户ID/注册时间由表格自动生成，不写）
+    fields[F_FEISHU_ID] = open_id
+    fields[F_ACCOUNT_STATUS] = "待审核"
+    fields.setdefault(F_HEART_REMAIN, INITIAL_HEARTS)
+    fields.setdefault(_REGISTER_HEART_TOTAL, INITIAL_HEARTS)
+    inviter = (fields.get("邀请人ID") or "").upper().strip()
+    if inviter:
+        fields["邀请人ID"] = inviter
+
+    rec = bitable.create_record(USER_TABLE_ID, fields)
+    if not rec:
+        return jsonify({"error": "提交失败，请稍后重试（或联系管理员）"}), 502
+    new_uid = bitable.get_field_text(rec.get("fields", {}), F_USER_ID)
+    app.logger.warning(f"H5注册提交成功: open_id={open_id} uid={new_uid}")
+    return jsonify({"ok": True, "user_id": new_uid})
+
 def _build_self_card(open_id, active_users, msg_counts):
     """观察员预览自己的「普通用户」卡片（别人看我的样子）。
 

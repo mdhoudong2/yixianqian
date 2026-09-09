@@ -3311,8 +3311,18 @@ createApp({
       page.value = 'liked_me';
     }
     async function cancelLike(l) {
+      const limit = (user.value && user.value.cancel_limit) || 3;
+      let rem = (user.value && typeof user.value.cancel_remaining === 'number') ? user.value.cancel_remaining : limit;
+      if (rem <= 0) {
+        vant.showToast('本月取消喜欢已达 ' + limit + ' 次上限，下月1日重置');
+        return;
+      }
       try {
-        await vant.showConfirmDialog({ title: '取消喜欢', message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将在稍后退回。', confirmButtonColor: '#ee0a24' });
+        await vant.showConfirmDialog({
+          title: '取消喜欢',
+          message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将在稍后退回。（本月还可取消 ' + rem + ' 次，每月限 ' + limit + ' 次）',
+          confirmButtonColor: '#ee0a24'
+        });
       } catch(e) { return; }
       // optimistic: immediate UI effect without waiting
       const backupList = [...myLikesList.value];
@@ -3328,7 +3338,9 @@ createApp({
       justLiked.delete(l.openid);
       try {
         const data = await api('/api/like/' + l.openid, { method: 'DELETE' });
-        vant.showToast('已取消喜欢，爱心已退回');
+        if (user.value && typeof data.cancel_remaining === 'number') user.value.cancel_remaining = data.cancel_remaining;
+        const left = typeof data.cancel_remaining === 'number' ? data.cancel_remaining : (rem - 1);
+        vant.showToast('已取消，本月还可取消 ' + left + ' 次');
         if (user.value && typeof data.hearts === 'number') user.value.hearts = data.hearts;
       } catch(e) {
         // rollback on failure

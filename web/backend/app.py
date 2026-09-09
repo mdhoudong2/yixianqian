@@ -36,10 +36,12 @@ from config import *
 
 from lib import storage
 from lib.cancel_quota import (
+    CANCEL_QUOTA_LIMIT,
     QUOTA_EXHAUST_USER_IDS,
-    quota_remaining,
-    record_cancel,
-    seed_cancels,
+    QUOTA_FILE_VERSION,
+    month_remaining,
+    record_month_cancel,
+    seed_exhausted,
 )
 from lib.util import order_cards_seeded
 
@@ -412,10 +414,9 @@ _cancel_quota_seeded = False
 
 
 def _cancel_quota_ensure_seeded():
-    """首建取消配额文件：历史已取消按发起人折算（封顶）+ 名单用户强制写满。
+    """首建配额文件：把名单用户（如高频试探的 U-0009）本月配额直接写满，其余用户本月从 0 开始。
 
-    只在文件不存在时执行一次（跨进程以文件存在为准）；历史表无取消时间，
-    折算记录按“发生在窗口内”计入，最长 7 天后自然过期。失败仅告警，不阻塞。
+    只在文件不存在时执行一次（跨进程以文件存在为准）；失败仅告警，不阻塞。
     """
     global _cancel_quota_seeded
     if _cancel_quota_seeded or os.path.exists(_CANCEL_QUOTA_FILE):
@@ -427,15 +428,7 @@ def _cancel_quota_ensure_seeded():
             return
         _cancel_quota_seeded = True
     try:
-        now = time.time()
-        counts = {}
-        for l in (bitable.raw_search_records(LIKE_TABLE_ID) or []):
-            f = l.get("fields", {}) if isinstance(l, dict) else {}
-            if bitable.get_select_value(f, F_LIKE_STATUS) != "已取消":
-                continue
-            oid = bitable.get_field_text(f, F_LIKE_INITIATOR_OPENID)
-            if oid:
-                counts[oid] = counts.get(oid, 0) + 1
+        ym = time.strftime("%Y-%m")
         force = set()
         for u in (bitable.raw_search_records(USER_TABLE_ID) or []):
             f = u.get("fields", {}) if isinstance(u, dict) else {}
@@ -444,48 +437,70 @@ def _cancel_quota_ensure_seeded():
                 if oid:
                     force.add(oid)
         storage.save_json(_CANCEL_QUOTA_FILE,
-                          {"v": 1, "cancels": seed_cancels(counts, force, now)})
-        app.logger.warning(
-            f"取消配额已初始化：{len(counts)}人有历史取消，强制写满{len(force)}人")
+                          {"v": QUOTA_FILE_VERSION, "months": seed_exhausted(force, ym)})
+        app.logger.warning(f"取消配额已初始化：本月强制写满 {len(force)} 人")
     except Exception as e:
         app.logger.warning(f"取消配额初始化失败（不阻塞）: {e}")
 
 
+def _cancel_quota_rec(open_id):
+    """读取某用户本月配额原始记录（缺省/异常返回 None，按本月 0 次处理）。"""
+    try:
+        data = storage.load_json(_CANCEL_QUOTA_FILE, {}) or {}
+        months = data.get("months", {}) or {}
+        return months.get(open_id)
+    except Exception:
+        return None
+
+
+def cancel_quota_remaining(open_id):
+    """本月剩余可取消次数（管理员不限，返回满额）。"""
+    if open_id in ADMIN_OPEN_IDS:
+        return CANCEL_QUOTA_LIMIT
+    _cancel_quota_ensure_seeded()
+    return month_remaining(_cancel_quota_rec(open_id), time.strftime("%Y-%m"))
+
+
 def _cancel_quota_check(open_id):
-    """滚动 7 天取消限额检查：超限返回 429 响应，否则返回 None（管理員不限）。"""
+    """本月取消限额检查：超限返回 (响应,429)，否则返回 None（管理员不限）。"""
     if open_id in ADMIN_OPEN_IDS:
         return None
     _cancel_quota_ensure_seeded()
     try:
-        data = storage.load_json(_CANCEL_QUOTA_FILE, {}) or {}
-        cancels = data.get("cancels", {}) or {}
-        left = quota_remaining(cancels.get(open_id, []), time.time())
+        left = month_remaining(_cancel_quota_rec(open_id), time.strftime("%Y-%m"))
     except Exception as e:
         app.logger.warning(f"取消配额读取失败（放行）: {e}")
         return None
     if left <= 0:
-        return jsonify({"error": "本週取消喜歡次數已用完（每7天最多3次），如需協助請聯繫管理員"}), 429
+        return jsonify({"error": f"本月取消喜欢已达 {CANCEL_QUOTA_LIMIT} 次上限，下月1日自动重置，如需协助请联系管理员"}), 429
     return None
 
 
 def _cancel_quota_consume(open_id):
-    """取消成功后记一次（管理員不记；失败仅告警，不阻塞）。"""
+    """取消成功后记一次，返回 (本月已用, 本月剩余)；管理员不记。失败仅告警、不阻塞。"""
     if open_id in ADMIN_OPEN_IDS:
-        return
+        return 0, CANCEL_QUOTA_LIMIT
+    ym = time.strftime("%Y-%m")
+    used = {"n": 0}
+
+    def _mut(data):
+        d = data if isinstance(data, dict) else {}
+        months = d.get("months")
+        if not isinstance(months, dict):
+            months = {}
+        _, rec = record_month_cancel(months.get(open_id), ym)
+        months[open_id] = rec
+        d["v"] = QUOTA_FILE_VERSION
+        d["months"] = months
+        used["n"] = rec["n"]
+        return d
+
     try:
-        def _mut(data):
-            d = data if isinstance(data, dict) else {}
-            cancels = d.get("cancels")
-            if not isinstance(cancels, dict):
-                cancels = {}
-            _, lst = record_cancel(cancels.get(open_id, []), time.time())
-            cancels[open_id] = lst
-            d["v"] = 1
-            d["cancels"] = cancels
-            return d
-        storage.update_json(_CANCEL_QUOTA_FILE, {"v": 1, "cancels": {}}, _mut)
+        storage.update_json(_CANCEL_QUOTA_FILE,
+                            {"v": QUOTA_FILE_VERSION, "months": {}}, _mut)
     except Exception as e:
         app.logger.warning(f"取消配额记录失败（不阻塞）: {e}")
+    return used["n"], max(0, CANCEL_QUOTA_LIMIT - used["n"])
 
 # 在途意图（进程级，页面重载不丢失）：
 #   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
@@ -2308,6 +2323,8 @@ def home():
     user_brief["available_roles"] = sorted(roles_of(open_id))
     user_brief["hearts"] = computed_hearts(open_id)
     user_brief["hearts_total"] = hearts_total(open_id)
+    user_brief["cancel_remaining"] = cancel_quota_remaining(open_id)
+    user_brief["cancel_limit"] = CANCEL_QUOTA_LIMIT
     user_brief["has_face"] = user_has_face(user, is_observer)
     return jsonify({
         "user": user_brief,
@@ -2331,6 +2348,8 @@ def user_me():
     brief["available_roles"] = sorted(roles_of(open_id))
     brief["hearts"] = computed_hearts(open_id)
     brief["hearts_total"] = hearts_total(open_id)
+    brief["cancel_remaining"] = cancel_quota_remaining(open_id)
+    brief["cancel_limit"] = CANCEL_QUOTA_LIMIT
     return jsonify(brief)
 
 @app.route("/api/account/status", methods=["POST"])
@@ -4478,7 +4497,7 @@ def my_liked_list():
 
 @app.route("/api/like/<target_openid>", methods=["DELETE"])
 def cancel_like(target_openid):
-    """取消喜欢（v6：定位→spool→立即回包；爱心自动随事件计算恢复；滚动7天最多3次）"""
+    """取消喜欢（v6：定位→spool→立即回包；爱心自动随事件计算恢复；每自然月最多3次）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -4519,7 +4538,7 @@ def cancel_like(target_openid):
     # 按对象幂等入队：worker 落库后或立即找到活跃记录执行取消；响应零等待
     _spool_append({"type": "cancel_pair",
                    "initiator_oid": open_id, "target_oid": target_openid})
-    _cancel_quota_consume(open_id)
+    cancel_used, cancel_left = _cancel_quota_consume(open_id)
     _intent_cancels.setdefault(open_id, []).append((target_openid, time.time()))
     # 消费对应喜欢意图：否则其桥接计数会让取消后仍少显示一颗
     for k in list(_intent_likes):
@@ -4552,7 +4571,9 @@ def cancel_like(target_openid):
     threading.Thread(target=_downgrade_reverse, daemon=True).start()
 
     hearts_now = computed_hearts(open_id)
-    return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now})
+    return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now,
+                    "cancel_used": cancel_used, "cancel_remaining": cancel_left,
+                    "cancel_limit": CANCEL_QUOTA_LIMIT})
 
 
 

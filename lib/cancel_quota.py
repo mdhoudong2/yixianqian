@@ -1,61 +1,55 @@
-"""取消喜欢配额：滚动 7 天最多 3 次。
+"""取消喜欢配额：每自然月最多 3 次（跨月自动重置）。
 
-背景：匿名喜欢 + 相互揭晓机制下，“喜欢→看是否相互→取消”可零成本试探谁喜欢自己。
-本模块只放纯函数（无外部依赖，可单测）；持久化与接口接线见 web/backend/app.py。
+背景：匿名喜欢 + 相互揭晓机制下，“喜欢→看是否相互→取消”可零成本试探谁喜欢自己，
+因此对“取消喜欢”按自然月限次。本模块只放纯函数（无外部依赖，可单测）；
+持久化与接口接线见 web/backend/app.py。
 
-配额文件格式：{"v": 1, "cancels": {open_id: [unix_ts, ...]}}
+配额文件格式：{"v": 2, "months": {open_id: {"ym": "2026-09", "n": 2}}}
 """
 
 CANCEL_QUOTA_LIMIT = 3
-CANCEL_QUOTA_WINDOW_S = 7 * 86400
-QUOTA_FILE_VERSION = 1
+QUOTA_FILE_VERSION = 2
 
-# 目标用户ID：上线时配额直接写满（历史高频喜欢/取消，疑似试探）
+# 目标用户ID：上线时本月配额直接写满（历史高频喜欢/取消，疑似扫池试探）
 QUOTA_EXHAUST_USER_IDS = ("U-0009",)
 
 
-def windowed(records, now, window_s=CANCEL_QUOTA_WINDOW_S):
-    """窗口内的时间戳（过期自动丢弃；容忍 60s 时钟偏移）"""
-    return [ts for ts in (records or []) if now - window_s < ts <= now + 60]
+def normalize(rec, ym):
+    """把记录对齐到指定月份：非本月一律视为本月 0 次。"""
+    if isinstance(rec, dict) and rec.get("ym") == ym:
+        try:
+            n = int(rec.get("n", 0))
+        except Exception:
+            n = 0
+        return {"ym": ym, "n": max(0, n)}
+    return {"ym": ym, "n": 0}
 
 
-def quota_used(records, now, window_s=CANCEL_QUOTA_WINDOW_S):
-    return len(windowed(records, now, window_s))
+def month_used(rec, ym):
+    return normalize(rec, ym)["n"]
 
 
-def quota_remaining(records, now, limit=CANCEL_QUOTA_LIMIT,
-                    window_s=CANCEL_QUOTA_WINDOW_S):
-    return max(0, limit - quota_used(records, now, window_s))
+def month_remaining(rec, ym, limit=CANCEL_QUOTA_LIMIT):
+    return max(0, limit - month_used(rec, ym))
 
 
-def quota_allowed(records, now, limit=CANCEL_QUOTA_LIMIT,
-                  window_s=CANCEL_QUOTA_WINDOW_S):
-    return quota_used(records, now, window_s) < limit
+def month_allowed(rec, ym, limit=CANCEL_QUOTA_LIMIT):
+    return month_used(rec, ym) < limit
 
 
-def record_cancel(records, now, limit=CANCEL_QUOTA_LIMIT,
-                  window_s=CANCEL_QUOTA_WINDOW_S):
-    """记一次取消。返回 (ok, 新列表)：超限时 ok=False 且只做裁剪不追加。"""
-    pruned = windowed(records, now, window_s)
-    if len(pruned) >= limit:
-        return False, pruned
-    return True, pruned + [now]
+def record_month_cancel(rec, ym, limit=CANCEL_QUOTA_LIMIT):
+    """记一次本月取消。返回 (ok, 新记录)：超限时 ok=False 且次数不再增加。"""
+    cur = normalize(rec, ym)
+    if cur["n"] >= limit:
+        return False, cur
+    cur["n"] += 1
+    return True, cur
 
 
-def seed_cancels(initiator_to_count, force_exhausted_oids, now,
-                 limit=CANCEL_QUOTA_LIMIT):
-    """首建配额文件：历史已取消按发起人折算（封顶 limit 次）+ 指定用户强制写满。
-
-    历史表没有取消时间，只能按“发生在窗口内”计入；窗口最长 7 天后自然过期。
-    """
-    cancels = {}
-    for oid, count in (initiator_to_count or {}).items():
-        if not oid:
-            continue
-        n = max(0, min(int(count or 0), limit))
-        if n:
-            cancels[oid] = [now] * n
-    for oid in force_exhausted_oids or ():
+def seed_exhausted(force_oids, ym, limit=CANCEL_QUOTA_LIMIT):
+    """首建配额文件：把指定用户本月配额直接写满（其余用户本月从 0 开始）。"""
+    months = {}
+    for oid in (force_oids or ()):
         if oid:
-            cancels[oid] = [now] * limit
-    return cancels
+            months[oid] = {"ym": ym, "n": limit}
+    return months

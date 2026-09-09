@@ -39,18 +39,18 @@ def is_test_fake_openid(open_id):
     return isinstance(open_id, str) and open_id.startswith("ou_fake_")
 
 
-def send_text_message(receive_id, text):
+def send_text_message(receive_id, text, receive_id_type="open_id"):
     # 假测试账号不发起真实发送，避免 99992351 报错刷屏并阻塞后续消息处理
     if is_test_fake_openid(receive_id):
         return False
-    return feishu.send_text_message(receive_id, text)
+    return feishu.send_text_message(receive_id, text, receive_id_type)
 
 
-def send_card_message(receive_id, card_content):
+def send_card_message(receive_id, card_content, receive_id_type="open_id"):
     """发送交互卡片消息"""
     if is_test_fake_openid(receive_id):
         return False
-    return feishu.send_card_message(receive_id, card_content)
+    return feishu.send_card_message(receive_id, card_content, receive_id_type)
 
 
 def send_user_card(receive_id, share_open_id):

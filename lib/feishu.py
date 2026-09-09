@@ -66,7 +66,7 @@ class FeishuClient:
             self._unreachable[receive_id] = {"next": time.time() + delay, "fails": fails}
         self.log(f"用户暂不可达(code={code})，{delay // 60}分钟内不再重试 …{str(receive_id)[-6:]}（连续第{fails}次）")
 
-    def _send(self, receive_id, msg_type, content_obj):
+    def _send(self, receive_id, msg_type, content_obj, receive_id_type="open_id"):
         # 退避窗口内的永久不可达用户：直接短路，不发请求、不刷失败日志（到期再真实探测一次）
         now = time.time()
         with self._unreach_lock:
@@ -76,7 +76,8 @@ class FeishuClient:
         token = self.get_tenant_access_token()
         if not token:
             return False
-        url = API_BASE + "/im/v1/messages?receive_id_type=open_id"
+        # 入站回复可传 chat_id（p2p 单聊 oc_）以规避飞书对 open_id 直发的 230101 限制；主动推送默认 open_id
+        url = API_BASE + f"/im/v1/messages?receive_id_type={receive_id_type}"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         data = {"receive_id": receive_id, "msg_type": msg_type,
                 "content": json.dumps(content_obj, ensure_ascii=False)}
@@ -101,11 +102,11 @@ class FeishuClient:
                 time.sleep(2 ** attempt)
         return False
 
-    def send_text_message(self, receive_id, text):
-        return self._send(receive_id, "text", {"text": text})
+    def send_text_message(self, receive_id, text, receive_id_type="open_id"):
+        return self._send(receive_id, "text", {"text": text}, receive_id_type)
 
-    def send_card_message(self, receive_id, card_content):
-        return self._send(receive_id, "interactive", card_content)
+    def send_card_message(self, receive_id, card_content, receive_id_type="open_id"):
+        return self._send(receive_id, "interactive", card_content, receive_id_type)
 
     def send_user_card(self, receive_id, share_open_id):
         return self._send(receive_id, "share_user", {"user_id": share_open_id})

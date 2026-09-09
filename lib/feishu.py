@@ -108,8 +108,8 @@ class FeishuClient:
     def send_card_message(self, receive_id, card_content, receive_id_type="open_id"):
         return self._send(receive_id, "interactive", card_content, receive_id_type)
 
-    def send_user_card(self, receive_id, share_open_id):
-        return self._send(receive_id, "share_user", {"user_id": share_open_id})
+    def send_user_card(self, receive_id, share_open_id, receive_id_type="open_id"):
+        return self._send(receive_id, "share_user", {"user_id": share_open_id}, receive_id_type)
 
     def download_media(self, file_token):
         """下载云空间/多维表格附件（drive medias），成功返回字节，失败返回 None。"""

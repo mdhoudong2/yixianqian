@@ -2388,8 +2388,8 @@ def submit_register():
                 fields[name] = int(time.mktime(time.strptime(str(v)[:10], "%Y-%m-%d")) * 1000)
             except Exception:
                 return jsonify({"error": f"「{name}」日期格式有误"}), 400
-        elif typ == 13:  # 电话
-            fields[name] = [{"number": str(v)}]
+        elif typ == 13:  # 电话：飞书写入要求纯字符串（读取时才是 [{"number":...}]）
+            fields[name] = str(v)
         elif typ == 17:  # 附件：file_token 列表
             fields[name] = [{"file_token": t} for t in v if t]
         else:  # 文本

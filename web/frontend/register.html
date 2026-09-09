@@ -71,17 +71,23 @@
   .state-page .big{ font-size:46px; margin-bottom:14px; }
   .state-page h2{ font-size:19px; margin:6px 0; }
   .state-page p{ color:var(--sub); font-size:14px; line-height:1.8; }
+  .dbg{ margin:18px auto 0; max-width:320px; text-align:left; white-space:pre-line;
+    font-size:11px; color:#9aa0ab; background:#f3f4f7; border-radius:8px; padding:8px 10px; word-break:break-all; }
+  #boot-err{ display:none; position:fixed; left:10px; right:10px; top:10px; z-index:999;
+    background:#fff1f3; color:#d6385f; border:1px solid #ffb6c4; border-radius:10px; padding:10px; font-size:12px; white-space:pre-line; }
   .inviter-tag{ display:inline-block; background:var(--pink-soft); color:var(--pink); border-radius:8px;
     padding:2px 8px; font-size:12px; margin-left:6px; }
 </style>
 </head>
 <body>
-<div id="app" v-cloak>
+<div id="boot-err"></div>
+<div id="app">
 
   <!-- 登录/加载中 -->
   <div class="state-page" v-if="stage==='loading'">
     <van-loading size="28px" color="#ff6b81">正在确认飞书身份…</van-loading>
     <p style="margin-top:18px">请稍候，正在为你安全登录</p>
+    <div class="dbg" v-if="dbg.length">{{ dbg.join('\n') }}</div>
   </div>
 
   <!-- 需在飞书内打开 -->
@@ -90,6 +96,8 @@
     <h2>请在飞书 App 中打开本页</h2>
     <p>为保证你的身份真实可靠，注册需要通过飞书登录。<br>
        请在「一线牵」机器人中重新进入注册页面。</p>
+    <p v-if="loginErr" style="color:#e35d76;font-size:12px;margin-top:10px">技术信息：{{ loginErr }}</p>
+    <div class="dbg" v-if="dbg.length">{{ dbg.join('\n') }}</div>
     <van-button round block class="btn-main" style="max-width:280px;margin-top:16px" @click="retry">我已在飞书中，重试</van-button>
   </div>
 
@@ -214,11 +222,11 @@
 <script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.26.js"></script>
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/vant.min.js"></script>
-<script src="area.js?v=1"></script>
-<script src="register.meta.js?v=1"></script>
+<script src="area.js?v=2"></script>
+<script src="register.meta.js?v=2"></script>
 <script>
   window.FEISHU_APP_ID = '__FEISHU_APP_ID__';
 </script>
-<script src="register.js?v=2"></script>
+<script src="register.js?v=3"></script>
 </body>
 </html>

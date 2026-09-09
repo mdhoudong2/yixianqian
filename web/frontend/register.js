@@ -1,6 +1,10 @@
 /* 一线牵 H5 注册页逻辑：字段由 register.meta.js 驱动，严格对齐飞书表单「一线牵-注册（新）」 */
 const { createApp } = Vue;
 
+function getCookie(name){
+  const m = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+  return m ? decodeURIComponent(m[1]) : "";
+}
 // —— 行政区划短名：与表单示例风格一致（广东广州 / 深圳南山）——
 const PROV_FULL = { "广西壮族自治区": "广西", "新疆维吾尔自治区": "新疆", "内蒙古自治区": "内蒙古",
   "宁夏回族自治区": "宁夏", "西藏自治区": "西藏", "香港特别行政区": "香港", "澳门特别行政区": "澳门" };
@@ -8,12 +12,14 @@ function shortProv(n){ if(PROV_FULL[n]) return PROV_FULL[n]; return (n||"").repl
 function shortCity(n){ return (n||"").replace(/市$/, ""); }
 function shortDist(n){ return (n||"").replace(/(区|县|市)$/, ""); }
 
-createApp({
+const app = createApp({
   data(){
     return {
       meta: window.REGISTER_META || [],
       AREA: window.AREA_DATA || {},
       stage: "loading",        // loading | needfeishu | registered | form | done
+      loginErr: "",
+      dbg: [],
       form: {},
       photos: [],
       submitting: false,
@@ -22,7 +28,7 @@ createApp({
       areaMeta: null,
       areaStep: 0,
       areaSel: { prov: "", city: "", dist: "" },
-      csrf: this.readCookie("yxq_csrf") || "",
+      csrf: getCookie("yxq_csrf") || "",
     };
   },
   computed: {
@@ -38,17 +44,13 @@ createApp({
     },
   },
   mounted(){
+    this.log("页面挂载, UA含飞书=" + this.isInFeishu());
     this.initInviter();
     this.bootLogin();
   },
   methods: {
-    readCookie(name){
-      const m = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
-      return m ? decodeURIComponent(m[1]) : "";
-    },
-    isInFeishu(){
-      return /lark|feishu/i.test(navigator.userAgent);
-    },
+    log(m){ const t=new Date().toLocaleTimeString(); this.dbg.push(t+" "+m); console.log("[reg]",m); },
+    isInFeishu(){ return /lark|feishu/i.test(navigator.userAgent); },
     async api(url, opt={}){
       const headers = Object.assign({ "X-Requested-With": "XMLHttpRequest" }, opt.headers || {});
       if(this.csrf) headers["X-CSRF-Token"] = this.csrf;
@@ -58,48 +60,57 @@ createApp({
       if(!resp.ok) throw new Error(data.error || ("请求失败(" + resp.status + ")"));
       return data;
     },
-    // —— 登录（飞书内静默）——
+    // —— 登录（飞书内静默），带 8 秒硬超时，避免永久转圈 ——
     getSilentCode(){
-      return new Promise((resolve)=>{
+      const task = new Promise((resolve)=>{
         let waited = 0;
         const tryGet = ()=>{
           const tt = window.tt || window.h5sdk;
-          if(!tt){ if(waited<3000){ waited+=200; setTimeout(tryGet,200); return; } resolve(null); return; }
+          if(!tt){ if(waited<4000){ waited+=200; setTimeout(tryGet,200); return; } this.log("JSSDK未加载"); resolve({code:null,error:"JSSDK未加载"}); return; }
+          this.log("JSSDK就绪, 有requestAuthCode="+(typeof tt.requestAuthCode)+", requestAccess="+(typeof tt.requestAccess));
+          const done=(c,e)=>{ this.log("免登返回 code="+(c?"有":"无")+(e?(" err="+e):"")); resolve({code:c,error:e}); };
           if(typeof tt.requestAuthCode === "function"){
             tt.requestAuthCode({
               appId: window.FEISHU_APP_ID,
-              success: r=>resolve(r && r.code ? r.code : null),
-              fail: ()=>{
+              success: r=>done(r&&r.code?r.code:null,null),
+              fail: err=>{
+                const es = JSON.stringify(err);
                 if(typeof tt.requestAccess === "function"){
                   tt.requestAccess({ appID: window.FEISHU_APP_ID, scopeList:[],
-                    success:r2=>resolve(r2&&r2.code?r2.code:null), fail:()=>resolve(null) });
-                } else resolve(null);
+                    success:r2=>done(r2&&r2.code?r2.code:null,null),
+                    fail:e2=>done(null,"requestAccess:"+JSON.stringify(e2)) });
+                } else done(null,"requestAuthCode:"+es);
               }
             });
           } else if(typeof tt.requestAccess === "function"){
             tt.requestAccess({ appID: window.FEISHU_APP_ID, scopeList:[],
-              success:r=>resolve(r&&r.code?r.code:null), fail:()=>resolve(null) });
-          } else resolve(null);
+              success:r=>done(r&&r.code?r.code:null,null),
+              fail:e=>done(null,"requestAccess:"+JSON.stringify(e)) });
+          } else done(null,"无可用免登API");
         };
         tryGet();
       });
+      const timeout = new Promise(res=>setTimeout(()=>res({code:null,error:"免登超时(8s)"}),8000));
+      return Promise.race([task, timeout]);
     },
     async bootLogin(){
-      this.stage = "loading";
-      if(!this.isInFeishu()){ this.stage = "needfeishu"; return; }
-      const code = await this.getSilentCode();
-      if(!code){ this.stage = "needfeishu"; return; }
+      this.stage="loading";
+      if(!this.isInFeishu()){ this.loginErr="当前不在飞书环境"; this.stage="needfeishu"; return; }
+      const r = await this.getSilentCode();
+      if(!r || !r.code){ this.loginErr=(r&&r.error)||"未拿到免登code"; this.stage="needfeishu"; return; }
       try{
-        const d = await this.api("/api/auth/feishu_register?code=" + code);
+        this.log("用code换会话 appId="+window.FEISHU_APP_ID);
+        const d = await this.api("/api/auth/feishu_register?code=" + r.code);
+        this.log("换会话成功 registered="+d.registered);
         this.stage = d.registered ? "registered" : "form";
-      }catch(e){ this.stage = "needfeishu"; }
+      }catch(e){ this.loginErr="换会话失败:"+e.message; this.stage="needfeishu"; this.log(this.loginErr); }
     },
-    retry(){ this.bootLogin(); },
+    retry(){ this.log("手动重试"); this.bootLogin(); },
     // —— 邀请人预填 ——
     initInviter(){
       const q = new URLSearchParams(location.search);
       const inv = (q.get("inviter") || q.get("prefill_邀请人ID") || q.get("u") || "").trim().toUpperCase();
-      if(inv) this.form["邀请人ID"] = inv;
+      if(inv){ this.form["邀请人ID"]=inv; this.log("预填邀请人 "+inv); }
     },
     // —— 选择交互 ——
     pickSingle(m, o){ this.form[m.field] = o; },
@@ -138,7 +149,6 @@ createApp({
       if(lv.indexOf("prov")>=0) parts.push(shortProv(s.prov));
       if(lv.indexOf("city")>=0) parts.push(shortCity(s.city));
       if(lv.indexOf("dist")>=0 && s.dist) parts.push(shortDist(s.dist));
-      // 直辖市省市短名相同则去重
       const out=[]; parts.forEach(x=>{ if(x && out[out.length-1]!==x) out.push(x); });
       this.form[this.areaMeta.field] = out.join(" ");
       this.areaShow=false;
@@ -208,4 +218,7 @@ createApp({
       finally{ this.submitting=false; }
     },
   },
-}).use(vant).mount("#app");
+});
+app.config.errorHandler = (err)=>{ try{ console.error(err); document.getElementById("boot-err").style.display="block"; document.getElementById("boot-err").textContent="脚本错误："+(err&&err.message||err); }catch(e){} };
+window.addEventListener("error", e=>{ try{ const d=document.getElementById("boot-err"); if(d){ d.style.display="block"; d.textContent="资源/脚本错误："+(e.message||"")+" @"+(e.filename||""); } }catch(x){} });
+app.use(vant).mount("#app");

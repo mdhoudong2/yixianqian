@@ -1621,7 +1621,11 @@ def _compress_for_delivery(image_bytes, ext):
             img = img.convert("RGB")
         out = io.BytesIO()
         img.save(out, format="JPEG", quality=75 if is_large else 85, optimize=True)
-        return out.getvalue(), "jpg"
+        out_bytes = out.getvalue()
+        # 原本就是 JPEG 且重编码反而更大时，保留原图，不做体积劣化
+        if ext in ("jpg", "jpeg") and len(out_bytes) >= len(image_bytes):
+            return image_bytes, "jpg"
+        return out_bytes, "jpg"
     except Exception:
         return image_bytes, ext
 

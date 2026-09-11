@@ -1567,6 +1567,64 @@ def _compress_image(image_bytes, ext):
     except Exception:
         return image_bytes
 
+def _compress_for_delivery(image_bytes, ext):
+    """下发/缓存专用压缩，返回 (压缩后字节, 实际扩展名)。
+    - gif 原样；视频不走本函数
+    - jpg/jpeg：宽上限1080，>1MB 大图二次压到720宽/q75，其余 q85
+    - png：保留透明通道；无透明的大照片转 JPEG q75（体积远小于PNG且画质足够），小图保留PNG
+    - heic：统一转 JPEG；webp：重编码保持 webp
+    压缩失败时兜底原样返回，避免裂图。"""
+    if ext == "gif":
+        return image_bytes, "gif"
+    try:
+        if ext == "heic":
+            import pillow_heif
+            heif = pillow_heif.open_heif(io.BytesIO(image_bytes))
+            img = Image.frombytes(heif.mode, heif.size, heif.data, "raw", heif.mode, heif.stride)
+        else:
+            img = Image.open(io.BytesIO(image_bytes))
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+        has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+        if img.width > 1080:
+            ratio = 1080.0 / img.width
+            img = img.resize((1080, int(img.height * ratio)), Image.LANCZOS)
+        is_large = len(image_bytes) > 1024 * 1024
+        if ext == "png":
+            if not has_alpha and (is_large or img.width > 720):
+                if img.width > 720:
+                    ratio = 720.0 / img.width
+                    img = img.resize((720, int(img.height * ratio)), Image.LANCZOS)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                out = io.BytesIO()
+                img.save(out, format="JPEG", quality=75, optimize=True)
+                return out.getvalue(), "jpg"
+            if img.mode not in ("RGBA", "LA", "P"):
+                img = img.convert("P", palette=Image.ADAPTIVE, colors=256)
+            out = io.BytesIO()
+            img.save(out, format="PNG", optimize=True)
+            return out.getvalue(), "png"
+        if ext == "webp":
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            out = io.BytesIO()
+            img.save(out, format="WEBP", quality=80, method=4)
+            return out.getvalue(), "webp"
+        # jpeg / heic 统一 JPEG
+        if is_large and img.width > 720:
+            ratio = 720.0 / img.width
+            img = img.resize((720, int(img.height * ratio)), Image.LANCZOS)
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=75 if is_large else 85, optimize=True)
+        return out.getvalue(), "jpg"
+    except Exception:
+        return image_bytes, ext
+
 # ========== 图片缓存预热（后台把快照里的照片/海报提前下载到磁盘，避免首屏等待） ==========
 _image_warm_lock = threading.Lock()
 
@@ -1589,10 +1647,21 @@ def _download_and_cache_image(file_token):
                    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
         ext = ext_map.get(content_type, "jpg")
         if content_type.startswith("video/"):
-            compressed = resp.content
+            compressed, out_ext = resp.content, ext
         else:
-            compressed = _compress_image(resp.content, ext)
-        cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, ext))
+            compressed, out_ext = _compress_for_delivery(resp.content, ext)
+        cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, out_ext))
+        if out_ext != ext:
+            # 格式发生转换（如大 PNG 转 JPEG）时，清掉同 token 旧扩展名缓存，避免残留命中旧大图
+            for _oe in ("jpg", "jpeg", "png", "webp", "heic"):
+                if _oe == out_ext:
+                    continue
+                _old = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, _oe))
+                try:
+                    if os.path.exists(_old):
+                        os.remove(_old)
+                except Exception:
+                    pass
         tmp = cache_path + ".tmp"
         with open(tmp, "wb") as f:
             f.write(compressed)
@@ -2078,18 +2147,32 @@ def proxy_image(file_token):
                    "image/webp": "webp", "image/heic": "heic",
                    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
         ext = ext_map.get(content_type, "jpg")
-        # 视频原样保存，图片再压缩（HEIC 已在 _compress_image 内转 JPEG）
+        # 视频原样下发，图片走下发专用压缩（大 PNG/HEIC 会转 JPEG，返回真实扩展名）
         if content_type.startswith("video/"):
-            compressed = resp.content
+            compressed, out_ext = resp.content, ext
         else:
-            compressed = _compress_image(resp.content, ext)
-        cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, ext))
+            compressed, out_ext = _compress_for_delivery(resp.content, ext)
+        cache_path = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, out_ext))
+        if out_ext != ext:
+            # 格式转换（如大 PNG 转 JPEG）时清掉同 token 旧扩展名缓存
+            for _oe in ("jpg", "jpeg", "png", "webp", "heic"):
+                if _oe == out_ext:
+                    continue
+                _old = os.path.join(IMAGE_CACHE_DIR, "%s.%s" % (file_token, _oe))
+                try:
+                    if os.path.exists(_old):
+                        os.remove(_old)
+                except Exception:
+                    pass
         tmp = cache_path + ".tmp"
         with open(tmp, "wb") as f:
             f.write(compressed)
         os.replace(tmp, cache_path)  # 原子替换，避免与请求线程并发写坏
         etag = _image_etag(cache_path)
-        resp = Response(compressed, content_type=content_type,
+        out_mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                    "gif": "image/gif", "webp": "image/webp", "heic": "image/heic",
+                    "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm"}.get(out_ext, "image/jpeg")
+        resp = Response(compressed, content_type=out_mime,
                         headers={"Cache-Control": "public, max-age=3600"})
         if etag:
             resp.headers["ETag"] = etag

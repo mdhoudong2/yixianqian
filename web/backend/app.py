@@ -25,7 +25,7 @@ from flask import (
     send_from_directory,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from PIL import ImageOps
+from PIL import Image, ImageOps
 
 # 共享库 lib/ 位于仓库根目录（web/backend 的上两级）
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

@@ -37,6 +37,21 @@
   .swipe-card.slide-in-left { animation: slideInLeft 0.28s ease; }
   @keyframes slideInRight { from { transform: translateX(46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
   @keyframes slideInLeft { from { transform: translateX(-46px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
+  /* 牵线左右滑动新手引导（仅首次进入显示一次） */
+  .swipe-guide-mask { position: fixed; inset: 0; z-index: 4000; background: rgba(0,0,0,0.66); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; animation: cardFadeIn 0.2s ease; }
+  .sg-stage { display: flex; align-items: center; gap: 18px; }
+  .sg-chevron { color: #fff; font-size: 40px; line-height: 1; font-weight: 300; opacity: 0.9; }
+  .sg-chevron.l { animation: sgNudgeL 1.3s ease-in-out infinite; }
+  .sg-chevron.r { animation: sgNudgeR 1.3s ease-in-out infinite; }
+  @keyframes sgNudgeL { 0%,100% { transform: translateX(0); opacity:.55; } 50% { transform: translateX(-8px); opacity:1; } }
+  @keyframes sgNudgeR { 0%,100% { transform: translateX(0); opacity:.55; } 50% { transform: translateX(8px); opacity:1; } }
+  .sg-mini-card { width: 132px; height: 172px; border-radius: 14px; background: linear-gradient(160deg,#ff8e9b,#ff6b81); box-shadow: 0 10px 30px rgba(255,107,129,.4); position: relative; overflow: hidden; }
+  .sg-finger { position: absolute; left: 50%; top: 50%; font-size: 40px; margin: -20px 0 0 -20px; animation: sgDrag 1.3s ease-in-out infinite; }
+  @keyframes sgDrag { 0%,100% { transform: translateX(-26px); } 50% { transform: translateX(26px); } }
+  .sg-title { color: #fff; font-size: 21px; font-weight: 600; letter-spacing: 1px; }
+  .sg-desc { color: rgba(255,255,255,0.82); font-size: 14px; margin-top: -12px; text-align: center; line-height: 1.6; }
+  .sg-btn { margin-top: 6px; background: #ff6b81; color: #fff; border: none; border-radius: 999px; padding: 11px 46px; font-size: 16px; box-shadow: 0 6px 18px rgba(255,107,129,.45); }
+  .sg-btn:active { transform: scale(0.97); }
   .card-photo-wrap { position: relative; width: 100%; flex: 0 0 48%; min-height: 200px; background: #f2f3f5; overflow: hidden; touch-action: pan-y; cursor: grab; }
   .card-photo-wrap:active { cursor: grabbing; }
   .card-photo-track { display: flex; width: 100%; height: 100%; transition: transform 0.32s cubic-bezier(0.25,0.46,0.45,0.94); will-change: transform; }
@@ -416,6 +431,16 @@
 <Transition :name="pageTransition" mode="out-in">
 <!-- ========== 牵线页 ========== -->
 <div v-if="page==='cards'" key="cards" class="cards-page">
+  <div v-if="showSwipeGuide" class="swipe-guide-mask" @click="closeSwipeGuide">
+    <div class="sg-stage">
+      <span class="sg-chevron l">‹</span>
+      <div class="sg-mini-card"><span class="sg-finger">👆</span></div>
+      <span class="sg-chevron r">›</span>
+    </div>
+    <div class="sg-title">左右滑动卡片</div>
+    <div class="sg-desc">向左滑，遇见下一位<br>向右滑，回到上一位</div>
+    <button class="sg-btn" @click="closeSwipeGuide">我知道了</button>
+  </div>
   <div v-if="loadingCards" style="display:flex; align-items:center; justify-content:center; height:100%;">
     <van-loading size="24px">加载中...</van-loading>
   </div>
@@ -1586,6 +1611,8 @@ createApp({
     const cards = ref([]);
     const loadingCards = ref(false);
     const cardIndex = ref(0);
+    const showSwipeGuide = ref(false); // 牵线左右滑动新手引导，仅首次显示一次
+    const SWIPE_GUIDE_KEY = 'yxq_swipe_guide_v1';
     const cardsTotal = ref(0);
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
@@ -2221,6 +2248,7 @@ createApp({
       activities.value = data.activities || [];
       triggerPhotoLoading();
       preloadAround();
+      maybeShowSwipeGuide();
     }
 
     // 活动
@@ -2273,6 +2301,22 @@ createApp({
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+    }
+
+    // 牵线左右滑动新手引导（首次进入牵线且有卡片时弹一次，localStorage 记忆；成功翻页或点击后关闭）
+    function maybeShowSwipeGuide() {
+      let seen = false;
+      try { seen = !!localStorage.getItem(SWIPE_GUIDE_KEY); } catch(e) {}
+      if (seen) return;
+      setTimeout(() => {
+        let s = false;
+        try { s = !!localStorage.getItem(SWIPE_GUIDE_KEY); } catch(e) {}
+        if (!s && page.value === 'cards' && cards.value && cards.value.length) showSwipeGuide.value = true;
+      }, 500);
+    }
+    function closeSwipeGuide() {
+      showSwipeGuide.value = false;
+      try { localStorage.setItem(SWIPE_GUIDE_KEY, '1'); } catch(e) {}
     }
 
     // 牵线卡片
@@ -2362,6 +2406,7 @@ createApp({
         cardIndex.value = 0; photoIndex.value = 0;
         triggerPhotoLoading();
         preloadAround();
+        maybeShowSwipeGuide();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
@@ -3670,6 +3715,9 @@ createApp({
     watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
     watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
 
+    // 用户成功左右翻页，说明已学会滑动，自动关闭新手引导
+    watch(cardIndex, () => { if (showSwipeGuide.value) closeSwipeGuide(); });
+
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
       triggerPhotoLoading();
@@ -4083,6 +4131,7 @@ createApp({
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
       openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
+      showSwipeGuide, closeSwipeGuide,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,

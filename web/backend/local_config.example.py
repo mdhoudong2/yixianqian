@@ -18,3 +18,6 @@ ADMIN_OPEN_IDS = ["ou_xxxx"]  # 管理员飞书 open_id 列表
 # H5 前端入口（测试服覆盖为测试域名）
 # H5_BASE_URL = "https://testapp.nantou.love"
 # SERVER_PORT = 8092  # 仅直接 python app.py 调试用；gunicorn 端口由 systemd 的 BIND 环境变量决定
+
+# 照片每日上传上限（默认 10；调整后需重启 H5 服务）
+# PHOTO_DAILY_LIMIT = 10

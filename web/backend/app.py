@@ -44,6 +44,7 @@ from lib.cancel_quota import (
     record_month_cancel,
     seed_exhausted,
 )
+from lib.photo_quota import prune_days, record_upload
 from lib.util import order_cards_seeded
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
@@ -4401,6 +4402,28 @@ def _write_photos(user, tokens):
     attachments = [{"file_token": t, "name": f"photo{i + 1}.jpg"} for i, t in enumerate(tokens)]
     return bool(bitable.update_record(USER_TABLE_ID, user["record_id"], {F_PHOTO: attachments}))
 
+def _photo_quota_take(open_id):
+    """照片上传每日限额：通过则计数 +1 返回 True；超限返回 False（不消耗腾讯额度）。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    taken = {"ok": False}
+
+    def _mutate(data):
+        days = ((data or {}).get("days")) or {}
+        ok, new_rec = record_upload(days.get(open_id), today, PHOTO_DAILY_LIMIT)
+        if not ok:
+            return None
+        days = prune_days(days, today)
+        days[open_id] = new_rec
+        taken["ok"] = True
+        return {"v": 1, "days": days}
+
+    try:
+        storage.update_json(PHOTO_UPLOAD_QUOTA_FILE, {"v": 1, "days": {}}, _mutate)
+    except Exception as e:
+        logging.getLogger(__name__).warning("照片上传限额计数失败: %s", e)
+        return True
+    return taken["ok"]
+
 @app.route("/api/profile/photo", methods=["POST"])
 def update_profile_photo():
     _rl = _rate_limit(limit=10, window=60, key_prefix="photo")
@@ -4476,6 +4499,8 @@ def update_profile_photo():
                         f.mimetype = "image/jpeg"
     except Exception:
         pass
+    if not _photo_quota_take(open_id):
+        return jsonify({"error": f"今日上传照片次数已达上限（{PHOTO_DAILY_LIMIT} 次），请明天再试"}), 429
     tc_result = {"blocked": False, "skipped": "not-run"}
     try:
         tc_result = tencent_face.check_photo(

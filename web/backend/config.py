@@ -306,3 +306,7 @@ REGISTER_FORM_URL = _lc_get("REGISTER_FORM_URL", getattr(_lc, "REGISTER_FORM_URL
 TENCENT_SECRET_ID = _lc_get("TENCENT_SECRET_ID", getattr(_lc, "TENCENT_SECRET_ID", ""))
 TENCENT_SECRET_KEY = _lc_get("TENCENT_SECRET_KEY", getattr(_lc, "TENCENT_SECRET_KEY", ""))
 TENCENT_REGION = _lc_get("TENCENT_REGION", getattr(_lc, "TENCENT_REGION", "ap-guangzhou"))
+
+# 照片每日上传上限（防单账号刷腾讯判定接口额度；跨日自动重置）
+PHOTO_DAILY_LIMIT = int(_lc_get("PHOTO_DAILY_LIMIT", getattr(_lc, "PHOTO_DAILY_LIMIT", 10)))
+PHOTO_UPLOAD_QUOTA_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_photo_uploads.json")

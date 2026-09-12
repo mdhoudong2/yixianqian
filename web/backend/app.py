@@ -1345,7 +1345,7 @@ def pass_card_filters(fields, f):
 
 def _has_active_filter(filters):
     """是否启用了任一筛选条件（列表非空 / 标量非空）。
-    观察员自预览卡片仅在无任何筛选时置顶，否则会混进筛选结果造成「筛 U-0022 却看到自己」。"""
+    本人预览卡片仅在无任何筛选时置顶，否则会混进筛选结果造成「筛 U-0022 却看到自己」。"""
     for v in filters.values():
         if isinstance(v, list):
             if v:
@@ -2583,7 +2583,7 @@ def submit_register():
     return jsonify({"ok": True, "user_id": new_uid})
 
 def _build_self_card(open_id, active_users, msg_counts):
-    """观察员预览自己的「普通用户」卡片（别人看我的样子）。
+    """本人预览自己的「普通用户」卡片（别人看我的样子）。
 
     同一 open_id 下若有单身档案，则把它按卡片同格式拼出，标 is_self=True，
     前端据此展示「这是你」角标并隐藏喜欢/留言等自操作。无单身档案返回 None。
@@ -2618,6 +2618,7 @@ def home():
     my_gender = bitable.get_select_value(user.get("fields", {}), F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
     is_observer = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == STATUS_OBSERVER
+    is_single = bitable.get_select_value(user.get("fields", {}), F_ACCOUNT_STATUS) == "单身"
     # 供前端全局门禁：任何链路进 app 即验（仅普通用户强验身份证，观察员免验）
     try:
         g._id_valid = True if is_observer else bitable.get_id_valid(user.get("fields", {}))
@@ -2665,8 +2666,8 @@ def home():
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
     cards = order_cards(cards, liked_me_openids)
-    # 观察员预览自己的普通用户卡片（别人看我的样子），置顶展示
-    if is_observer:
+    # 本人预览自己的卡片（别人看我的样子），置顶展示（观察员与单身普通用户一致）
+    if is_observer or is_single:
         self_card = _build_self_card(open_id, active_users, msg_counts)
         if self_card:
             cards.insert(0, self_card)
@@ -2944,6 +2945,7 @@ def get_cards():
     my_gender = bitable.get_select_value(user_fields, F_GENDER)
     target_gender = "女性" if my_gender == "男性" else "男性"
     is_observer = bitable.get_select_value(user_fields, F_ACCOUNT_STATUS) == STATUS_OBSERVER
+    is_single = bitable.get_select_value(user_fields, F_ACCOUNT_STATUS) == "单身"
     gender_filter = (request.args.get("gender") or "").strip()  # 仅观察员可用：男性/女性
 
     # 解析筛选参数（全部可选）
@@ -3022,7 +3024,7 @@ def get_cards():
         for l in snap_likes_by_target(open_id)
         if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
     }
-    self_flag = is_observer and not gender_filter and not _has_active_filter(filters)
+    self_flag = (is_observer or is_single) and not gender_filter and not _has_active_filter(filters)
     filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
     key = (open_id, filters_key)
     order, order_ts = _get_session_order(key, cards, liked_me_openids, open_id)

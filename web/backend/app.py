@@ -32,6 +32,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.append(_REPO_ROOT)
 import bitable
+import tencent_face
 from config import *
 
 from lib import storage
@@ -1677,8 +1678,11 @@ def _download_and_cache_image(file_token):
 def warm_image_cache(max_per_run=60):
     """后台预热：增量下载 + 人脸异步补齐，避免长时间持有锁阻塞快照"""
     tokens = set()
+    user_tokens = set()
     for u in _snap("users"):
-        tokens.update(bitable.get_attachment_tokens(u.get("fields", {}), F_PHOTO))
+        _ut = bitable.get_attachment_tokens(u.get("fields", {}), F_PHOTO)
+        user_tokens.update(_ut)
+        tokens.update(_ut)
     for a in _snap("activities"):
         tokens.update(bitable.get_attachment_tokens(a.get("fields", {}), F_ACTIVITY_POSTER))
     # 仅处理未缓存的，限制每轮数量，避免一次性下载数百张阻塞快照循环
@@ -1726,6 +1730,33 @@ def warm_image_cache(max_per_run=60):
                 pass
     try:
         threading.Thread(target=_bg_face_batch, daemon=True).start()
+    except Exception:
+        pass
+    # 宠物/卡通判定：只扫用户照片，每轮最多 20 张，已有 sidecar 的跳过
+    def _bg_tc_batch():
+        processed = 0
+        for tok in user_tokens:
+            if processed >= 20:
+                break
+            if not tok or get_tc_result(tok) is not None:
+                continue
+            cached = _get_cached_image(tok)
+            if not cached:
+                continue
+            try:
+                with open(cached[0], "rb") as f:
+                    data = f.read()
+                res = tencent_face.check_photo(
+                    data, TENCENT_SECRET_ID, TENCENT_SECRET_KEY, TENCENT_REGION)
+                if not res.get("skipped"):
+                    set_tc_result(tok, res)
+                    processed += 1
+                    if res.get("blocked"):
+                        logging.getLogger(__name__).info("照片判定拦截: %s", tok)
+            except Exception:
+                pass
+    try:
+        threading.Thread(target=_bg_tc_batch, daemon=True).start()
     except Exception:
         pass
 
@@ -2085,12 +2116,59 @@ def user_has_face(user_record, is_observer=False):
         return True
     return _tokens_has_face(bitable.get_attachment_tokens(user_record.get("fields", {}), F_PHOTO))
 
+# ========== 宠物/卡通照片判定（腾讯云：图像标签 + 静默活体） ==========
+# 规则：标签命中动物/明确卡通 且 静默活体判定无人脸 -> 该照片不合格；
+# 判定结果写 .tc/<token>.json，has_face 读取时跳过被拦照片。第三方异常一律放行。
+
+_TC_DIR = os.path.join(IMAGE_CACHE_DIR, ".tc")
+_tc_cache = {}
+_tc_cache_lock = threading.Lock()
+
+def _tc_sidecar_path(token):
+    return os.path.join(_TC_DIR, token + ".json")
+
+def get_tc_result(token):
+    """读判定结果（内存 → sidecar → None）。None 表示尚未判定。"""
+    with _tc_cache_lock:
+        if token in _tc_cache:
+            return _tc_cache[token]
+    res = None
+    try:
+        p = _tc_sidecar_path(token)
+        if os.path.exists(p):
+            with open(p) as f:
+                res = json.load(f)
+    except Exception:
+        res = None
+    with _tc_cache_lock:
+        _tc_cache[token] = res
+    return res
+
+def set_tc_result(token, result):
+    try:
+        os.makedirs(_TC_DIR, exist_ok=True)
+        p = _tc_sidecar_path(token)
+        tmp = p + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(result, f, ensure_ascii=False)
+        os.replace(tmp, p)
+    except Exception:
+        pass
+    with _tc_cache_lock:
+        _tc_cache[token] = result
+
+def is_tc_blocked(token):
+    r = get_tc_result(token)
+    return bool(r and r.get("blocked"))
+
 def _tokens_has_face(tokens, min_area=0.001):
     """token 列表是否含至少一张「清晰可见」人脸的照片：检出脸且最大脸框面积占比 >= 0.1%。
-    远景小脸/群像中看不清的人脸视为不合格（读缓存，零检测开销）"""
+    远景小脸/群像中看不清的人脸、以及宠物/卡通判定不合格的照片均视为无效（读缓存，零检测开销）"""
     if not tokens:
         return False
     for t in tokens:
+        if is_tc_blocked(t):
+            continue
         face = get_face_center(t)
         if face and face.get("box"):
             if face["box"][0] * face["box"][1] >= min_area:
@@ -4622,6 +4700,14 @@ def update_profile_photo():
                         f.mimetype = "image/jpeg"
     except Exception:
         pass
+    tc_result = {"blocked": False, "skipped": "not-run"}
+    try:
+        tc_result = tencent_face.check_photo(
+            data, TENCENT_SECRET_ID, TENCENT_SECRET_KEY, TENCENT_REGION)
+    except Exception as e:
+        logging.getLogger(__name__).warning("照片合规判定异常: %s", e)
+    if tc_result.get("blocked"):
+        return jsonify({"error": "照片未通过审核：请上传本人照片，宠物/卡通图片无法通过"}), 400
     filename = (f.filename or "photo.jpg").rsplit("/", 1)[-1] or "photo.jpg"
     file_token = bitable.upload_attachment(data, filename, f.mimetype or "image/jpeg")
     if not file_token:
@@ -4635,6 +4721,8 @@ def update_profile_photo():
         cur_tokens = _photo_mutate(open_id, user, _apply)
     except _PhotoOpError as e:
         return jsonify({"error": str(e)}), 400
+    if not tc_result.get("skipped"):
+        set_tc_result(file_token, tc_result)
     # 直接写缓存（免飞书下载）
     try:
         ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}

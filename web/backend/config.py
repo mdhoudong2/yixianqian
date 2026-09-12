@@ -301,3 +301,8 @@ PUBLIC_QR_CODE = _lc_get("PUBLIC_QR_CODE", getattr(_lc, "PUBLIC_QR_CODE", "qrcod
 
 # 注册表单链接（H5「邀请好友得爱心」邀请链接，测试服在 local_config.py 覆盖为测试表单）
 REGISTER_FORM_URL = _lc_get("REGISTER_FORM_URL", getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf"))
+
+# 腾讯云照片合规判定（图像标签 + 静默活体）：密钥只放 local_config.py，勿入库
+TENCENT_SECRET_ID = _lc_get("TENCENT_SECRET_ID", getattr(_lc, "TENCENT_SECRET_ID", ""))
+TENCENT_SECRET_KEY = _lc_get("TENCENT_SECRET_KEY", getattr(_lc, "TENCENT_SECRET_KEY", ""))
+TENCENT_REGION = _lc_get("TENCENT_REGION", getattr(_lc, "TENCENT_REGION", "ap-guangzhou"))

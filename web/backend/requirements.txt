@@ -6,3 +6,5 @@ itsdangerous
 pillow-heif
 numpy<2
 opencv-python-headless<4.12
+tencentcloud-sdk-python-iai
+tencentcloud-sdk-python-tiia

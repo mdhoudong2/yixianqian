@@ -1073,7 +1073,8 @@ def _record_uid(fields):
 def format_user_brief(record, include_openid=False, full=False):
     """格式化用户信息（卡片展示用，不含敏感信息）"""
     fields = record.get("fields", {})
-    photos = bitable.get_attachment_tokens(fields, F_PHOTO)
+    # 宠物/卡通等被判定不合格的照片不对外展示；无剩余照片的用户会从卡片池过滤
+    photos = [t for t in bitable.get_attachment_tokens(fields, F_PHOTO) if not is_tc_blocked(t)]
     photo_url = ("/api/image/" + photos[0] + "?fv11") if photos else ""
     data = {
         "user_id": _record_uid(fields),
@@ -2429,6 +2430,8 @@ def home():
             brief = format_user_brief(u, include_openid=True, full=True)
             brief["display_fields"] = build_display_fields(fields)
             brief["subtitle"] = build_subtitle(fields)
+        if not brief.get("photos"):
+            continue  # 无头像/照片全不合格：不进入公开卡片
         brief["liked"] = uid in liked_openids
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
@@ -2790,6 +2793,8 @@ def get_cards():
             brief = format_user_brief(u, include_openid=True, full=True)
             brief["display_fields"] = build_display_fields(fields)
             brief["subtitle"] = build_subtitle(fields)
+        if not brief.get("photos"):
+            continue  # 无头像/照片全不合格：不进入公开卡片
         brief["liked"] = uid in liked_openids
         brief["msg_count"] = msg_counts.get(uid, 0)
         cards.append(brief)
@@ -5067,10 +5072,13 @@ def public_users():
     result = []
     for u in all_users:
         fields = u.get("fields", {})
+        photos = [t for t in bitable.get_attachment_tokens(fields, F_PHOTO) if not is_tc_blocked(t)]
+        if not photos:
+            continue
         result.append({
             "nickname": bitable.get_field_text(fields, F_NICKNAME),
             "gender": bitable.get_select_value(fields, F_GENDER),
-            "photos": ["/api/image/" + t + "?fv11" for t in bitable.get_attachment_tokens(fields, F_PHOTO)],
+            "photos": ["/api/image/" + t + "?fv11" for t in photos],
             "display_fields": build_display_fields(fields),
         })
     return jsonify({"users": result})

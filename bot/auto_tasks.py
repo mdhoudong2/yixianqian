@@ -17,7 +17,6 @@ from queries import (
 from store import (
     add_notification,
     consume_observer_code,
-    load_heart_bonus,
     load_invite_rewarded,
     load_observer_codes,
     release_observer_code,
@@ -945,11 +944,17 @@ def reconcile_hearts():
         if inviter_oid:
             valid_invites[inviter_oid] = valid_invites.get(inviter_oid, 0) + 1
 
-    # 信用合计 = 有效邀请 + 管理员手动加赠（H5 与多维表格统一以此为准）
-    bonus_map = load_heart_bonus()
+    # 信用合计 = 有效邀请 + 管理员加赠。
+    # 「管理员加赠」字段是唯一手动奖励入口：管理员直接在用户表填累计奖励数，对账读取叠加、不会覆盖。
+    admin_bonus = {}
+    for oid, prec in primary_by_oid.items():
+        try:
+            admin_bonus[oid] = int(get_field_number(prec.get("fields", {}), FIELD_HEART_BONUS, 0) or 0)
+        except Exception:
+            admin_bonus[oid] = 0
     credit_map = {}
-    for oid in set(list(primary_by_oid.keys()) + list(bonus_map.keys())):
-        credit_map[oid] = valid_invites.get(oid, 0) + int(bonus_map.get(oid, 0) or 0)
+    for oid in primary_by_oid.keys():
+        credit_map[oid] = valid_invites.get(oid, 0) + admin_bonus.get(oid, 0)
 
     # 发布汇总（供 H5 computed_hearts 使用，键名沿用 invites 以兼容前端，值=有效邀请+加赠）
     try:

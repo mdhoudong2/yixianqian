@@ -7,6 +7,7 @@ from cards import generate_h5_url, send_main_menu_card
 from clients import *
 from constants import *
 from queries import (
+    find_activity_by_id,
     find_user_by_id_or_name,
     find_user_by_nickname,
     find_user_by_openid,
@@ -403,6 +404,59 @@ def auto_bind_loop(interval=30):
 
 
 
+def auto_signup_new_user(open_id, nickname):
+    """新用户审核通过后自动报名 AUTO_SIGNUP_ACTIVITY_ID 指定活动（默认 A-0001）。
+
+    幂等：该用户在该活动已有「已报名」记录时跳过，重复调用安全。
+    仅在活动「报名中」且未满员时写入，不绕过活动状态机；其余情况记日志跳过。
+    报名人数由 auto_update_activity_signup_count 每 30 秒对账，此处不写「当前报名人数」。
+    返回 True 表示本次确实创建了报名记录。
+    """
+    if not AUTO_SIGNUP_ACTIVITY_ID:
+        return False
+    activity = find_activity_by_id(AUTO_SIGNUP_ACTIVITY_ID)
+    if not activity:
+        log(f"自动报名跳过：未找到活动 {AUTO_SIGNUP_ACTIVITY_ID}（{nickname}）")
+        return False
+
+    act_fields = activity.get("fields", {})
+    act_id = get_field_text(act_fields, FIELD_ACTIVITY_ID)
+    status = get_select_value(act_fields, FIELD_ACTIVITY_STATUS)
+    if status != "报名中":
+        log(f"自动报名跳过：活动 {act_id} 状态为「{status}」，非报名中（{nickname}）")
+        return False
+
+    # 直接走 bitable 而非 clients.search_records：后者把查询失败转成 []，
+    # 那样飞书瞬时失败会被误判成「未报名」从而写入重复报名记录。
+    existing = bitable.search_records(SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [act_id]},
+            {"field_name": FIELD_SIGNUP_STATUS, "operator": "is", "value": ["已报名"]},
+        ]
+    })
+    if existing is None:
+        log(f"自动报名跳过：报名表查询失败，下轮重试（{nickname}）")
+        return False
+    if any(get_field_text(s.get("fields", {}), FIELD_SIGNUP_OPENID) == open_id for s in existing):
+        return False
+    capacity = get_field_number(act_fields, "报名人数上限", 0)
+    if capacity > 0 and len(existing) >= capacity:
+        log(f"自动报名跳过：活动 {act_id} 已满员 {len(existing)}/{capacity}（{nickname}）")
+        return False
+
+    if create_record(SIGNUP_TABLE_ID, {
+        FIELD_SIGNUP_ACTIVITY_ID: act_id,
+        FIELD_SIGNUP_OPENID: open_id,
+        FIELD_SIGNUP_NICKNAME: nickname,
+        FIELD_SIGNUP_STATUS: "已报名",
+    }):
+        log(f"新用户自动报名成功: {nickname} -> 活动 {act_id}")
+        return True
+    log(f"新用户自动报名失败: {nickname} -> 活动 {act_id}")
+    return False
+
+
 def auto_send_view_after_approval():
     """检测账号状态从待审核变为单身，发送H5链接并处理邀请奖励"""
     items = search_records(USER_TABLE_ID, {
@@ -440,6 +494,10 @@ def auto_send_view_after_approval():
             send_text_message(open_id, message_tail)
             sent_count += 1
             log(f"审核通过通知已发送: {nickname} ({gender})")
+
+            # 自动报名：本函数被 reserve_notified("approval_sent") 逐条去重，
+            # 只有本轮首次通过审核的用户会走到这里，因此部署前已审核的老用户不会被补报名。
+            auto_signup_new_user(open_id, nickname)
 
             inviter_id = get_field_text(fields, FIELD_INVITER_ID)
             if inviter_id:

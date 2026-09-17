@@ -46,3 +46,6 @@ bot/venv
 web/backend/venv
 web/backend/image_cache
 web/backend/face_detection_yunet.onnx
+
+# Claude Code 本地设置（含 API key，不入库）
+.claude/settings.local.json

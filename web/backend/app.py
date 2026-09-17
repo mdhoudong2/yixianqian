@@ -2727,6 +2727,8 @@ def home():
         "likes": {"liked_me": liked_me_list, "mutual": mutual_list},
         "activities": activities,
         "register_form_url": REGISTER_FORM_URL,
+        # 牵线页活动报名引导弹窗的目标活动（按环境下发，测试库与生产库编号不同）
+        "promo_activity_id": PROMO_ACTIVITY_ID,
     })
 
 @app.route("/api/user/me", methods=["GET"])

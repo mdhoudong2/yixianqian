@@ -302,6 +302,10 @@ PUBLIC_QR_CODE = _lc_get("PUBLIC_QR_CODE", getattr(_lc, "PUBLIC_QR_CODE", "qrcod
 # 注册表单链接（H5「邀请好友得爱心」邀请链接，测试服在 local_config.py 覆盖为测试表单）
 REGISTER_FORM_URL = _lc_get("REGISTER_FORM_URL", getattr(_lc, "REGISTER_FORM_URL", "https://lcnz8zx7fjk4.feishu.cn/share/base/form/shrcnbUryFlARPYl8I60aIA4qAf"))
 
+# 牵线页「活动报名引导弹窗」指向的活动ID。活动ID是自动编号字段，测试库与生产库各自独立编号
+# （生产 A-0001 / 测试 A-0011），所以不能在前端硬编码，改由 /api/home 按环境下发。
+PROMO_ACTIVITY_ID = _lc_get("PROMO_ACTIVITY_ID", getattr(_lc, "PROMO_ACTIVITY_ID", "A-0001"))
+
 # 腾讯云照片合规判定（图像标签 + 静默活体）：密钥只放 local_config.py，勿入库
 TENCENT_SECRET_ID = _lc_get("TENCENT_SECRET_ID", getattr(_lc, "TENCENT_SECRET_ID", ""))
 TENCENT_SECRET_KEY = _lc_get("TENCENT_SECRET_KEY", getattr(_lc, "TENCENT_SECRET_KEY", ""))

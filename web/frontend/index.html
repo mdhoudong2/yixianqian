@@ -237,6 +237,10 @@
   .invite-dialog-body { padding: 16px; }
   /* 牵线页活动报名引导弹窗 */
   .promo-dialog-body { padding: 22px 18px; font-size: 15px; color: #323233; line-height: 1.7; text-align: center; }
+  .promo-dialog-poster-wrap { padding: 18px 18px 0; }
+  .promo-dialog-poster { display: block; width: 100%; border-radius: 10px; background: #f2f3f5; }
+  /* 有海报时正文紧跟其后，不留双份上边距 */
+  .promo-dialog-poster-wrap + .promo-dialog-body { padding-top: 12px; }
   .invite-dialog-body p { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 12px; }
   .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; white-space: pre-line; }
   .invite-btn-row { display: flex; gap: 10px; }
@@ -344,6 +348,7 @@
   .van-theme-dark .modal-title, .van-theme-dark .sheet-title, .van-theme-dark .msg-sub-strong,
   .van-theme-dark .candidate-search-input, .van-theme-dark .filter-title,
   .van-theme-dark .promo-dialog-body { color: #f5f5f5; }
+  .van-theme-dark .promo-dialog-poster { background: #2c2c30; }
   .van-theme-dark .activity-desc, .van-theme-dark .msg-message, .van-theme-dark .edit-label,
   .van-theme-dark .round-tab, .van-theme-dark .invite-dialog-body p, .van-theme-dark .filter-tag,
   .van-theme-dark .like-item-msg, .van-theme-dark .modal-body, .van-theme-dark .detail-meta,
@@ -1406,6 +1411,9 @@
 <van-dialog v-model:show="showActivityPromo" confirm-button-text="去报名"
   :show-cancel-button="false" confirm-button-color="#ff6b81" close-on-click-overlay
   @confirm="gotoPromoActivity">
+  <div v-if="promoPoster" class="promo-dialog-poster-wrap">
+    <img :src="promoPoster" class="promo-dialog-poster" alt="" @error="promoPoster = ''">
+  </div>
   <div class="promo-dialog-body">「2026南头堂一线牵」线下活动正在报名，快去报名吧</div>
 </van-dialog>
 <!-- 筛选弹层 -->
@@ -1627,6 +1635,7 @@ createApp({
     // 引导报名的活动ID：由 /api/home 按环境下发（活动ID是自动编号，测试库与生产库编号不同），
     // 未下发时保持空串，此时不弹——避免拿生产活动ID去测试库里空找。
     const promoActivityId = ref('');
+    const promoPoster = ref('');                        // 弹窗顶部活动海报（活动没传海报时为空，只显示文字）
     const cardsTotal = ref(0);
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
@@ -2349,7 +2358,21 @@ createApp({
         const act = (activities.value || []).find(a => a.activity_id === promoActivityId.value);
         if (!act || act.my_signup) return;
         if (act.status !== '报名中') return;
-        showActivityPromo.value = true;
+        const reveal = () => {
+          // 等图期间用户可能已经翻页，落地前再验一次，避免弹在别的页面上
+          if (page.value !== 'cards' || showActivityPromo.value) return;
+          showActivityPromo.value = true;
+        };
+        if (!act.poster) { promoPoster.value = ''; reveal(); return; }
+        // 海报先加载完再弹，避免弹出瞬间图还是空白；最多等 600ms，加载失败就退回纯文字
+        promoPoster.value = act.poster;
+        let settled = false;
+        const settle = () => { if (settled) return; settled = true; reveal(); };
+        const img = new Image();
+        img.onload = settle;
+        img.onerror = () => { promoPoster.value = ''; settle(); };
+        setTimeout(settle, 600);
+        img.src = act.poster;
       }, 800);
     }
     async function gotoPromoActivity() {
@@ -4182,7 +4205,7 @@ createApp({
       openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
-      showActivityPromo, gotoPromoActivity,
+      showActivityPromo, gotoPromoActivity, promoPoster,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,

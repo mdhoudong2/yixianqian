@@ -235,6 +235,8 @@
   .like-realname-warn { color: #ed6a0c; font-size: 12px; line-height: 1.6; margin: 4px 0 10px; background: #fff7e6; border-radius: 6px; padding: 6px 10px; }
   /* 邀请好友弹窗 */
   .invite-dialog-body { padding: 16px; }
+  /* 牵线页活动报名引导弹窗 */
+  .promo-dialog-body { padding: 22px 18px; font-size: 15px; color: #323233; line-height: 1.7; text-align: center; }
   .invite-dialog-body p { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 12px; }
   .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; white-space: pre-line; }
   .invite-btn-row { display: flex; gap: 10px; }
@@ -340,7 +342,8 @@
   .van-theme-dark .multi-option, .van-theme-dark .admin-help-title, .van-theme-dark .admin-help-item,
   .van-theme-dark .signup-sheet-name, .van-theme-dark .filter-label, .van-theme-dark .invite-link-box,
   .van-theme-dark .modal-title, .van-theme-dark .sheet-title, .van-theme-dark .msg-sub-strong,
-  .van-theme-dark .candidate-search-input, .van-theme-dark .filter-title { color: #f5f5f5; }
+  .van-theme-dark .candidate-search-input, .van-theme-dark .filter-title,
+  .van-theme-dark .promo-dialog-body { color: #f5f5f5; }
   .van-theme-dark .activity-desc, .van-theme-dark .msg-message, .van-theme-dark .edit-label,
   .van-theme-dark .round-tab, .van-theme-dark .invite-dialog-body p, .van-theme-dark .filter-tag,
   .van-theme-dark .like-item-msg, .van-theme-dark .modal-body, .van-theme-dark .detail-meta,
@@ -1399,6 +1402,12 @@
     </div>
   </div>
 </van-dialog>
+<!-- 牵线页活动报名引导弹窗：每个会话一次，仅对未报名 PROMO_ACTIVITY_ID 的用户弹（见 maybeShowActivityPromo） -->
+<van-dialog v-model:show="showActivityPromo" confirm-button-text="去报名"
+  :show-cancel-button="false" confirm-button-color="#ff6b81" close-on-click-overlay
+  @confirm="gotoPromoActivity">
+  <div class="promo-dialog-body">「2026南头堂一线牵」线下活动正在报名，快去报名吧</div>
+</van-dialog>
 <!-- 筛选弹层 -->
 <van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
@@ -1613,6 +1622,9 @@ createApp({
     const cardIndex = ref(0);
     const showSwipeGuide = ref(false); // 牵线左右滑动新手引导，仅首次显示一次
     const SWIPE_GUIDE_KEY = 'yxq_swipe_guide_v1';
+    const showActivityPromo = ref(false);               // 牵线页活动报名引导弹窗
+    const ACTIVITY_PROMO_KEY = 'yxq_activity_promo_v1'; // sessionStorage：本会话已弹过
+    const PROMO_ACTIVITY_ID = 'A-0001';                 // 引导报名的活动ID
     const cardsTotal = ref(0);
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
@@ -2249,6 +2261,7 @@ createApp({
       triggerPhotoLoading();
       preloadAround();
       maybeShowSwipeGuide();
+      maybeShowActivityPromo();
     }
 
     // 活动
@@ -2317,6 +2330,28 @@ createApp({
     function closeSwipeGuide() {
       showSwipeGuide.value = false;
       try { localStorage.setItem(SWIPE_GUIDE_KEY, '1'); } catch(e) {}
+      maybeShowActivityPromo(); // 新手引导让位后再补弹活动引导
+    }
+
+    // 牵线页活动报名引导：每个会话弹一次，且只对「未报名 PROMO_ACTIVITY_ID」的用户弹。
+    // 观察员无报名权限、活动不在「报名中」时都不弹（弹了按钮必然报错或文案失实）。
+    function maybeShowActivityPromo() {
+      if (isObserver.value) return;
+      try { if (sessionStorage.getItem(ACTIVITY_PROMO_KEY)) return; } catch(e) {}
+      setTimeout(() => {
+        try { if (sessionStorage.getItem(ACTIVITY_PROMO_KEY)) return; } catch(e) {}
+        if (page.value !== 'cards' || showActivityPromo.value || showSwipeGuide.value) return;
+        const act = (activities.value || []).find(a => a.activity_id === PROMO_ACTIVITY_ID);
+        if (!act || act.my_signup) return;
+        if (act.status !== '报名中') return;
+        showActivityPromo.value = true;
+      }, 800);
+    }
+    async function gotoPromoActivity() {
+      // 先同步关弹窗（watch 会记账本会话已弹 + 回退 overlay 历史），再跳活动详情，
+      // 与 openUserDetail 同款写法：避免「关闭」与「跳页」两个 history 操作互相踩踏。
+      showActivityPromo.value = false;
+      await openActivity(PROMO_ACTIVITY_ID);
     }
 
     // 牵线卡片
@@ -3641,6 +3676,7 @@ createApp({
       if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
       if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
+      if(showActivityPromo.value){ showActivityPromo.value=false; isHandlingPopState=false; return; }
       if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
@@ -3675,7 +3711,7 @@ createApp({
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
-      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); }
+      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
       if (p === 'profile') { checkGroupEntry(); if (user.value && user.value.is_admin) refreshReportedCount(); }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
@@ -3714,6 +3750,14 @@ createApp({
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
     watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
     watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
+    // 活动引导弹窗：关闭动作（确认/点遮罩/返回键）统一记入本会话，保证「每个会话只弹一次」
+    watch(showActivityPromo, (v)=>{
+      if(v && !isHandlingPopState){ pushHistory({overlay:'activityPromo'}); }
+      else if(!v){
+        try { sessionStorage.setItem(ACTIVITY_PROMO_KEY, '1'); } catch(e) {}
+        if(!isHandlingPopState && history.state && history.state.overlay==='activityPromo'){ ignoreNextPop=true; history.back(); }
+      }
+    });
 
     // 用户成功左右翻页，说明已学会滑动，自动关闭新手引导
     watch(cardIndex, () => { if (showSwipeGuide.value) closeSwipeGuide(); });
@@ -4132,6 +4176,7 @@ createApp({
       openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
+      showActivityPromo, gotoPromoActivity,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,

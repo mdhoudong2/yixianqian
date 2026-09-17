@@ -86,6 +86,10 @@ FIELD_SIGNUP_OPENID = "报名人open_id"
 FIELD_SIGNUP_NICKNAME = "报名人昵称"
 FIELD_SIGNUP_STATUS = "状态"
 
+# 新用户审核通过后自动报名的活动ID（如 A-0001）；留空字符串即关闭该功能
+AUTO_SIGNUP_ACTIVITY_ID = _cfg_get(
+    "AUTO_SIGNUP_ACTIVITY_ID", getattr(_cfg, "AUTO_SIGNUP_ACTIVITY_ID", "A-0001"))
+
 FIELD_MATCH_FOR_USER = "推荐给用户"
 FIELD_MATCH_TARGET_USER = "被推荐用户"
 FIELD_MATCH_FOR_OPENID = "推荐给用户open_id"

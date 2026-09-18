@@ -12,14 +12,17 @@ from constants import (
 
 
 def test_field_and_option_literals_match_bitable():
-    """字面量与多维表格「微信缴费」单选字段的实际选项逐字一致。
+    """唯一参与判断的那两个字面量，必须与表单上的字段名/选项文案逐字一致。
 
-    这几个字符串一旦改动（比如有人"顺手"把引号换成英文、或改了措辞），
-    缴费判断会静默失效——所有人都不会被自动报名，且不报错。这个用例负责盯住。
+    它们一旦被改动（比如有人"顺手"把引号换成英文、或改了措辞），缴费判断会静默失效
+    ——所有人都不会被自动报名，且不报错。这个用例负责盯住。
+
+    「只注册App」那个选项不参与比较（非「我已缴费」一律跳过），且生产与测试两个 base
+    的文案本来就不一致，所以只要求它别和「我已缴费」撞车。
     """
     assert FIELD_WECHAT_PAYMENT == "微信缴费"
     assert WECHAT_PAY_PAID == "我已缴费"
-    assert WECHAT_PAY_APP_ONLY == "我只注册‘一线牵App’，不报名线下活动"
+    assert WECHAT_PAY_APP_ONLY and WECHAT_PAY_APP_ONLY != WECHAT_PAY_PAID
 
 
 def test_not_paid_user_is_skipped():

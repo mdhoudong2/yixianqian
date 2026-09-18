@@ -90,6 +90,14 @@ FIELD_SIGNUP_STATUS = "状态"
 AUTO_SIGNUP_ACTIVITY_ID = _cfg_get(
     "AUTO_SIGNUP_ACTIVITY_ID", getattr(_cfg, "AUTO_SIGNUP_ACTIVITY_ID", "A-0001"))
 
+# 注册表单「微信缴费」单选字段：只有明确「我已缴费」才自动报名线下活动，
+# 只注册 App 的人不该被塞进线下活动报名名单。
+# 下方两个字面量与多维表格中的选项文本逐字一致，改选项文案时必须同步改这里
+# （tests/test_auto_signup.py 会盯住它们）。
+FIELD_WECHAT_PAYMENT = "微信缴费"
+WECHAT_PAY_PAID = "我已缴费"                                # 已缴费 -> 自动报名
+WECHAT_PAY_APP_ONLY = "我只注册‘一线牵App’，不报名线下活动"   # 只注册App -> 不自动报名
+
 FIELD_MATCH_FOR_USER = "推荐给用户"
 FIELD_MATCH_TARGET_USER = "被推荐用户"
 FIELD_MATCH_FOR_OPENID = "推荐给用户open_id"

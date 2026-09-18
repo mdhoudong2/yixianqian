@@ -404,8 +404,12 @@ def auto_bind_loop(interval=30):
 
 
 
-def auto_signup_new_user(open_id, nickname):
+def auto_signup_new_user(open_id, nickname, pay_status):
     """新用户审核通过后自动报名 AUTO_SIGNUP_ACTIVITY_ID 指定活动（默认 A-0001）。
+
+    pay_status 为注册表单「微信缴费」字段值：**只有「我已缴费」才报名**。选「只注册
+    App」、字段为空或选项文本对不上，一律不报名——把人塞进线下活动报名名单却让他
+    自己去取消，比漏报名更麻烦，所以这里 fail-closed。
 
     幂等：该用户在该活动已有「已报名」记录时跳过，重复调用安全。
     仅在活动「报名中」且未满员时写入，不绕过活动状态机；其余情况记日志跳过。
@@ -413,6 +417,11 @@ def auto_signup_new_user(open_id, nickname):
     返回 True 表示本次确实创建了报名记录。
     """
     if not AUTO_SIGNUP_ACTIVITY_ID:
+        return False
+    # 缴费判断放最前：不满足就整段跳过，不做任何网络请求
+    if pay_status != WECHAT_PAY_PAID:
+        log(f"自动报名跳过：{nickname}「{FIELD_WECHAT_PAYMENT}」=「{pay_status or '空'}」，"
+            f"非「{WECHAT_PAY_PAID}」")
         return False
     activity = find_activity_by_id(AUTO_SIGNUP_ACTIVITY_ID)
     if not activity:
@@ -497,7 +506,9 @@ def auto_send_view_after_approval():
 
             # 自动报名：本函数被 reserve_notified("approval_sent") 逐条去重，
             # 只有本轮首次通过审核的用户会走到这里，因此部署前已审核的老用户不会被补报名。
-            auto_signup_new_user(open_id, nickname)
+            # 只有注册表单里选了「我已缴费」的才报名，具体判断见 auto_signup_new_user。
+            auto_signup_new_user(
+                open_id, nickname, get_select_value(fields, FIELD_WECHAT_PAYMENT))
 
             inviter_id = get_field_text(fields, FIELD_INVITER_ID)
             if inviter_id:

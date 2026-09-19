@@ -1513,6 +1513,55 @@ def _get_cached_image(file_token):
             return fpath, ct_map.get(ext, "image/jpeg")
     return None
 
+
+# 同 token 图片下载 singleflight：冷缓存时多并发只向飞书下载一次。
+# 背景：单 worker 16 线程，弱网下同一张未缓存图被几十人同时刷出时，
+# N 个线程同时阻塞在飞书下载上，曾拖出 nginx 上游 60s 超时。
+_image_dl_gates = {}
+_image_dl_guard = threading.Lock()
+
+
+def _image_gate_acquire(file_token):
+    """尝试成为下载者：返回 (is_owner, gate)。首个调用者是 owner，其余等待 gate。"""
+    with _image_dl_guard:
+        gate = _image_dl_gates.get(file_token)
+        if gate is None or gate.is_set():
+            gate = threading.Event()
+            _image_dl_gates[file_token] = gate
+            return True, gate
+        return False, gate
+
+
+def _image_gate_release(file_token, gate):
+    """下载结束（无论成败）唤醒等待者并清掉 gate。"""
+    with _image_dl_guard:
+        if _image_dl_gates.get(file_token) is gate:
+            _image_dl_gates.pop(file_token, None)
+    gate.set()
+
+
+def _serve_cached_image(file_token):
+    """命中磁盘缓存则构造响应（含 ETag 协商），未命中返回 None。"""
+    cached = _get_cached_image(file_token)
+    if not cached:
+        return None
+    fpath, content_type = cached
+    etag = _image_etag(fpath)
+    # ETag 协商缓存：内容未变返回 304（几乎零流量），内容变了立即下发新图
+    if etag and request.headers.get("If-None-Match") == etag:
+        resp = make_response("", 304)
+        resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
+        resp.headers["ETag"] = etag
+        return resp
+    resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
+                               mimetype=content_type))
+    # token 寻址（内容变则 token/版本变化）：7 天 immutable，重复浏览零回源；
+    # CDN 边缘同样按此缓存，跨境链路抖动时复看不超时
+    resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
+    if etag:
+        resp.headers["ETag"] = etag
+    return resp
+
 def _compress_image(image_bytes, ext):
     """用 Pillow 压缩图片，返回压缩后的字节。
     - 最大宽度 1080px，等比缩放，不放大
@@ -2197,25 +2246,22 @@ def proxy_image(file_token):
                 return jsonify({"error": "图片不存在"}), 404
     except Exception:
         pass
-    # 1. 检查磁盘缓存（旧的大文件 >1MB 删除，触发重新下载并压缩）
-    cached = _get_cached_image(file_token)
-    if cached:
-        fpath, content_type = cached
-        etag = _image_etag(fpath)
-        # ETag 协商缓存：内容未变返回 304（几乎零流量），内容变了立即下发新图
-        if etag and request.headers.get("If-None-Match") == etag:
-            resp = make_response("", 304)
-            resp.headers["Cache-Control"] = "public, max-age=3600"
-            resp.headers["ETag"] = etag
-            return resp
-        resp = make_response(send_from_directory(IMAGE_CACHE_DIR, os.path.basename(fpath),
-                                   mimetype=content_type))
-        resp.headers["Cache-Control"] = "public, max-age=3600"
-        if etag:
-            resp.headers["ETag"] = etag
+    # 1. 磁盘缓存命中直接返回（含 ETag 协商）
+    resp = _serve_cached_image(file_token)
+    if resp is not None:
         return resp
 
-    # 2. 从飞书下载并压缩后缓存
+    # 2. 从飞书下载并压缩后缓存（同 token 并发只下一次，防线程池被打满）
+    is_owner, gate = _image_gate_acquire(file_token)
+    if not is_owner:
+        gate.wait(25)
+        resp = _serve_cached_image(file_token)
+        if resp is not None:
+            return resp
+        # 首个下载者失败或超时：自己接力再试一次；若仍有人在下，直接 500 让前端重试
+        is_owner, gate = _image_gate_acquire(file_token)
+        if not is_owner:
+            return jsonify({"error": "图片加载失败"}), 500
     token = bitable.get_token()
     if not token:
         return jsonify({"error": "服务异常"}), 500
@@ -2257,12 +2303,14 @@ def proxy_image(file_token):
                     "gif": "image/gif", "webp": "image/webp", "heic": "image/heic",
                     "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm"}.get(out_ext, "image/jpeg")
         resp = Response(compressed, content_type=out_mime,
-                        headers={"Cache-Control": "public, max-age=3600"})
+                        headers={"Cache-Control": "public, max-age=604800, immutable"})
         if etag:
             resp.headers["ETag"] = etag
         return resp
     except Exception:
         return jsonify({"error": "图片加载失败"}), 500
+    finally:
+        _image_gate_release(file_token, gate)
 
 # ========== 认证接口 ==========
 

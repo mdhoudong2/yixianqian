@@ -467,7 +467,7 @@
         <div v-if="currentPhotoList.length" class="card-photo-track" :style="{ transform: 'translateX(-' + photoIndex * 100 + '%)' }">
           <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt=""
             :style="photoPositions[i] ? { objectPosition: photoPositions[i] } : null"
-            @load="onPhotoLoad($event); recalcPhotoPosition($event, i)" @error="onPhotoError">
+            @load="onPhotoLoad($event); recalcPhotoPosition($event, i)" @error="onPhotoError($event); retryImg($event, 2)">
         </div>
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
@@ -663,7 +663,7 @@
   <van-empty v-else-if="!activities.length" description="暂无进行中的活动"></van-empty>
   <div v-else>
     <div v-for="act in activities" :key="act.record_id" class="activity-card" @click="openActivity(act.record_id)">
-      <img v-if="act.poster" :src="act.poster" class="activity-poster" alt="" loading="lazy" decoding="async">
+      <img v-if="act.poster" :src="act.poster" class="activity-poster" alt="" loading="lazy" decoding="async" @error="retryImg($event, 2, ()=>{act.poster=''})">
       <div class="activity-body">
         <h3>{{ act.name }}</h3>
         <div class="activity-meta">
@@ -701,7 +701,7 @@
       </svg>
     </div>
     <div class="avatar">
-      <img v-if="user.photo" :src="user.photo" alt="" @error="user.photo=''">
+      <img v-if="user.photo" :src="user.photo" alt="" @error="retryImg($event, 2, ()=>{user.photo=''})">
       <template v-else>{{ user.gender==='男性' ? '👨' : '👩' }}</template>
     </div>
     <div class="profile-name-row">
@@ -912,7 +912,7 @@
     <div v-else>
       <div v-for="l in myLikesList" :key="l.openid" class="like-item">
         <div class="like-item-avatar">
-          <img v-if="l.photo" :src="l.photo" alt="" @error="l.photo=''" loading="lazy" decoding="async">
+          <img v-if="l.photo" :src="l.photo" alt="" @error="retryImg($event, 2, ()=>{l.photo=''})" loading="lazy" decoding="async">
           <template v-else>{{ l.gender==='男性' ? '👨' : '👩' }}</template>
         </div>
         <div class="like-item-info">
@@ -1168,7 +1168,7 @@
         :class="{selected: isSelected(c.openid)}"
         @click="toggleChoice(c)">
         <div class="signup-sheet-avatar" style="margin-right:12px;">
-          <img v-if="c.photo" :src="c.photo" alt="" @error="c.photo=''" loading="lazy" decoding="async">
+          <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
           <template v-else>{{ c.user_id || '👤' }}</template>
         </div>
         <div class="group-candidate-info">
@@ -1265,7 +1265,7 @@
     <van-empty v-else-if="!signupList.length" description="暂无报名" image-size="50"></van-empty>
     <div v-else v-for="s in signupList" :key="s.openid" class="signup-sheet-item" @click="openUserDetail(s.openid)">
       <div class="signup-sheet-avatar">
-        <img v-if="s.photo" :src="s.photo" alt="" @error="s.photo=''" loading="lazy" decoding="async">
+        <img v-if="s.photo" :src="s.photo" alt="" @error="retryImg($event, 2, ()=>{s.photo=''})" loading="lazy" decoding="async">
         <template v-else>{{ s.gender==='男性' ? '👨' : '👩' }}</template>
       </div>
       <div class="signup-sheet-name">{{ s.nickname }}</div>
@@ -1412,7 +1412,7 @@
   :show-cancel-button="false" confirm-button-color="#ff6b81" close-on-click-overlay
   @confirm="gotoPromoActivity">
   <div v-if="promoPoster" class="promo-dialog-poster-wrap">
-    <img :src="promoPoster" class="promo-dialog-poster" alt="" @error="promoPoster = ''">
+    <img :src="promoPoster" class="promo-dialog-poster" alt="" @error="retryImg($event, 2, ()=>{promoPoster=''})">
   </div>
   <div class="promo-dialog-body">「2026南头堂一线牵」线下活动正在报名，快去报名吧</div>
 </van-dialog>
@@ -2534,6 +2534,28 @@ createApp({
       cardsLoadingMore.value = false;
     }
     function onPhotoError() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
+    // 弱网图片自愈：加载失败自动重试（逐次加 _r 穿透坏缓存），仍失败才执行 done（如清空占位）
+    function retryImg(e, tries, done) {
+      try {
+        const el = e && e.target;
+        const max = (typeof tries === 'number' && tries >= 0) ? tries : 2;
+        if (el && el.getAttribute) {
+          const n = parseInt(el.dataset.yxqRetry || '0', 10) || 0;
+          if (n < max) {
+            el.dataset.yxqRetry = String(n + 1);
+            const src = el.getAttribute('src') || '';
+            if (src) {
+              const base = src.replace(/[?&]_r=[^&]*/g, '').replace(/[?&]$/, '');
+              const sep = base.indexOf('?') >= 0 ? '&' : '?';
+              const tag = base + sep + '_r=' + Date.now() + '' + n;
+              setTimeout(() => { el.src = tag; }, 400 * (n + 1));
+              return;
+            }
+          }
+        }
+      } catch (_) { /* 降级：直接执行 done */ }
+      if (done) done();
+    }
     // —— 卡片滑动（仅下半区） ——
     let cardTouchStartX = 0, cardTouchStartY = 0, cardTouchIgnore = false;
     function onCardTouchStart(e) {
@@ -4234,7 +4256,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
-      onPhotoError, onPhotoLoad, photoPositions, recalcPhotoPosition,
+      onPhotoError, onPhotoLoad, retryImg, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       myMessagesList, loadingMyMessages, openMyMessages, deleteMyMessage, refreshMyMessagesCount,
       receivedMessagesList, loadingReceivedMessages, openReceivedMessages, refreshReceivedCount,

@@ -2104,6 +2104,7 @@ createApp({
     // 他人资料页
     const userDetail = ref(null);
     const userDetailFrom = ref('home');
+    const userDetailFromSheet = ref(false); // 是否从报名名单弹层进入他人资料页，用于返回时重开名单
     // 他人资料页「喜欢TA」按钮门禁：以后端 can_like 为准（单身异性、非自己、未喜欢过）；
     // 老数据无该字段时降级为本地判断（观察员/自己/同性/性别缺失一律隐藏）。
     const canLikeUserDetail = computed(() => {
@@ -3059,6 +3060,9 @@ createApp({
       loadingSignups.value = false;
     }
     async function openUserDetail(openid) {
+      // 先记下来路：关闭名单弹层与跳资料页会同时触发 watcher，同时 push+back 会互相踩踏，
+      // 由名单 watcher 凭此标记跳过 back（只保留资料页的 push），栈保持 [详情, 名单, 资料] 供返回重开名单
+      userDetailFromSheet.value = true;
       signupSheetShow.value = false;
       userDetailFrom.value = 'activity_detail';
       page.value = 'user_detail';
@@ -3742,6 +3746,15 @@ createApp({
       }
       // 子页回退：优先用 state.page，否则按 parent 映射
       const st = e.state;
+      // 从报名名单进他人资料页：上一条历史是名单弹层，回到活动详情并重开名单（即上一界面）；
+      // 重开时屏蔽 watcher 的重复 push（当前已在名单历史条目上），下一 tick 再恢复
+      if(page.value === 'user_detail' && userDetailFromSheet.value && st && st.overlay === 'signupSheet'){
+        userDetailFromSheet.value = false;
+        page.value = 'activity_detail';
+        signupSheetShow.value = true;
+        nextTick(() => { isHandlingPopState = false; });
+        return;
+      }
       if(st && st.page && st.page !== page.value){
         page.value = st.page;
         isHandlingPopState=false; return;
@@ -3799,7 +3812,7 @@ createApp({
     watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
-    watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
+    watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet' && !(page.value==='user_detail' && userDetailFromSheet.value)){ ignoreNextPop=true; history.back(); } });
     watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
     // 活动引导弹窗：关闭动作（确认/点遮罩/返回键）统一记入本会话，保证「每个会话只弹一次」
     watch(showActivityPromo, (v)=>{
@@ -4266,7 +4279,7 @@ createApp({
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,
-      userDetail, userDetailFrom, canLikeUserDetail, openUserDetail, loadNotifications,
+      userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact
     };
   }

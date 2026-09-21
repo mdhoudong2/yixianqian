@@ -33,7 +33,7 @@ def _user(rid, nick, oid, gender, hobbies):
 def _run(monkeypatch, tmp_path, users, existing):
     created = []
 
-    def fake_search(table_id, filter_conditions=None):
+    def fake_search(table_id, filter_conditions=None, *args, **kwargs):
         if table_id == at.USER_TABLE_ID:
             return users
         if table_id == at.MATCH_TABLE_ID:

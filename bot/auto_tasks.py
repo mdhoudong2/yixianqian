@@ -1377,16 +1377,22 @@ def auto_generate_match_recommendations():
     for item in active_users:
         fields = item.get("fields", {})
         nickname = get_field_text(fields, FIELD_NICKNAME)
-        if not nickname:
+        open_id = get_field_text(fields, FIELD_FEISHU_ID)
+        if not nickname or not open_id:
+            # 无昵称或未绑定飞书（无 open_id）无法触达：既不为其生成，也不被推荐他人，避免幽灵行
             continue
         users.append({
             "nickname": nickname, "record_id": item.get("record_id"),
-            "open_id": get_field_text(fields, FIELD_FEISHU_ID),
+            "open_id": open_id,
             FIELD_GENDER: get_field_text(fields, FIELD_GENDER),
             FIELD_EDUCATION: get_field_text(fields, FIELD_EDUCATION),
             "hobbies": get_multi_select_value(fields, FIELD_SELF_HOBBIES)
         })
-    existing_recommendations = search_records(MATCH_TABLE_ID)
+    # 去重只需双方昵称+双方 open_id 四列：5 万行全字段扫描太重，只取这四列
+    existing_recommendations = search_records(
+        MATCH_TABLE_ID, None, 100,
+        [FIELD_MATCH_FOR_OPENID, FIELD_MATCH_TARGET_OPENID,
+         FIELD_MATCH_FOR_USER, FIELD_MATCH_TARGET_USER])
     existing_pairs = set()
     for rec in existing_recommendations:
         rec_fields = rec.get("fields", {})

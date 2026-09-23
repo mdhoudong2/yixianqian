@@ -467,7 +467,7 @@
         <div v-if="currentPhotoList.length" class="card-photo-track" :style="{ transform: 'translateX(-' + photoIndex * 100 + '%)' }">
           <img v-for="(p,i) in currentPhotoList" :key="i" :src="p" class="card-photo-item" alt=""
             :style="photoPositions[i] ? { objectPosition: photoPositions[i] } : null"
-            @load="onPhotoLoad($event); recalcPhotoPosition($event, i)" @error="onPhotoError">
+            @load="onPhotoLoad($event); recalcPhotoPosition($event, i)" @error="onPhotoError($event); retryImg($event, 2)">
         </div>
         <div v-else class="card-photo-placeholder">{{ currentCard.gender==='男性' ? '👨' : '👩' }}</div>
         <div class="photo-dots" v-if="currentCard.photos && currentCard.photos.length > 1">
@@ -664,7 +664,7 @@
   <van-empty v-else-if="!activities.length" description="暂无进行中的活动"></van-empty>
   <div v-else>
     <div v-for="act in activities" :key="act.record_id" class="activity-card" @click="openActivity(act.record_id)">
-      <img v-if="act.poster" :src="act.poster" class="activity-poster" alt="" loading="lazy" decoding="async">
+      <img v-if="act.poster" :src="act.poster" class="activity-poster" alt="" loading="lazy" decoding="async" @error="retryImg($event, 2, ()=>{act.poster=''})">
       <div class="activity-body">
         <h3>{{ act.name }}</h3>
         <div class="activity-meta">
@@ -702,7 +702,7 @@
       </svg>
     </div>
     <div class="avatar">
-      <img v-if="user.photo" :src="user.photo" alt="" @error="user.photo=''">
+      <img v-if="user.photo" :src="user.photo" alt="" @error="retryImg($event, 2, ()=>{user.photo=''})">
       <template v-else>{{ user.gender==='男性' ? '👨' : '👩' }}</template>
     </div>
     <div class="profile-name-row">
@@ -919,7 +919,7 @@
     <div v-else>
       <div v-for="l in myLikesList" :key="l.openid" class="like-item">
         <div class="like-item-avatar">
-          <img v-if="l.photo" :src="l.photo" alt="" @error="l.photo=''" loading="lazy" decoding="async">
+          <img v-if="l.photo" :src="l.photo" alt="" @error="retryImg($event, 2, ()=>{l.photo=''})" loading="lazy" decoding="async">
           <template v-else>{{ l.gender==='男性' ? '👨' : '👩' }}</template>
         </div>
         <div class="like-item-info">
@@ -1174,7 +1174,7 @@
         :class="{selected: isSelected(c.openid)}"
         @click="toggleChoice(c)">
         <div class="signup-sheet-avatar" style="margin-right:12px;">
-          <img v-if="c.photo" :src="c.photo" alt="" @error="c.photo=''" loading="lazy" decoding="async">
+          <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
           <template v-else>{{ c.user_id || '👤' }}</template>
         </div>
         <div class="group-candidate-info">
@@ -1271,7 +1271,7 @@
     <van-empty v-else-if="!signupList.length" description="暂无报名" image-size="50"></van-empty>
     <div v-else v-for="s in signupList" :key="s.openid" class="signup-sheet-item" @click="openUserDetail(s.openid)">
       <div class="signup-sheet-avatar">
-        <img v-if="s.photo" :src="s.photo" alt="" @error="s.photo=''" loading="lazy" decoding="async">
+        <img v-if="s.photo" :src="s.photo" alt="" @error="retryImg($event, 2, ()=>{s.photo=''})" loading="lazy" decoding="async">
         <template v-else>{{ s.gender==='男性' ? '👨' : '👩' }}</template>
       </div>
       <div class="signup-sheet-name">{{ s.nickname }}</div>
@@ -1427,7 +1427,7 @@
   :show-cancel-button="false" confirm-button-color="#ff6b81" close-on-click-overlay
   @confirm="gotoPromoActivity">
   <div v-if="promoPoster" class="promo-dialog-poster-wrap">
-    <img :src="promoPoster" class="promo-dialog-poster" alt="" @error="promoPoster = ''">
+    <img :src="promoPoster" class="promo-dialog-poster" alt="" @error="retryImg($event, 2, ()=>{promoPoster=''})">
   </div>
   <div class="promo-dialog-body">「2026南头堂一线牵」线下活动正在报名，快去报名吧</div>
 </van-dialog>
@@ -2119,6 +2119,7 @@ createApp({
     // 他人资料页
     const userDetail = ref(null);
     const userDetailFrom = ref('home');
+    const userDetailFromSheet = ref(false); // 是否从报名名单弹层进入他人资料页，用于返回时重开名单
     // 他人资料页「喜欢TA」按钮门禁：以后端 can_like 为准（单身异性、非自己、未喜欢过）；
     // 老数据无该字段时降级为本地判断（观察员/自己/同性/性别缺失一律隐藏）。
     const canLikeUserDetail = computed(() => {
@@ -2550,6 +2551,28 @@ createApp({
       cardsLoadingMore.value = false;
     }
     function onPhotoError() { clearTimeout(photoLoadingTimer); photoLoading.value = false; }
+    // 弱网图片自愈：加载失败自动重试（逐次加 _r 穿透坏缓存），仍失败才执行 done（如清空占位）
+    function retryImg(e, tries, done) {
+      try {
+        const el = e && e.target;
+        const max = (typeof tries === 'number' && tries >= 0) ? tries : 2;
+        if (el && el.getAttribute) {
+          const n = parseInt(el.dataset.yxqRetry || '0', 10) || 0;
+          if (n < max) {
+            el.dataset.yxqRetry = String(n + 1);
+            const src = el.getAttribute('src') || '';
+            if (src) {
+              const base = src.replace(/[?&]_r=[^&]*/g, '').replace(/[?&]$/, '');
+              const sep = base.indexOf('?') >= 0 ? '&' : '?';
+              const tag = base + sep + '_r=' + Date.now() + '' + n;
+              setTimeout(() => { el.src = tag; }, 400 * (n + 1));
+              return;
+            }
+          }
+        }
+      } catch (_) { /* 降级：直接执行 done */ }
+      if (done) done();
+    }
     // —— 卡片滑动（仅下半区） ——
     let cardTouchStartX = 0, cardTouchStartY = 0, cardTouchIgnore = false;
     function onCardTouchStart(e) {
@@ -3053,6 +3076,9 @@ createApp({
       loadingSignups.value = false;
     }
     async function openUserDetail(openid) {
+      // 先记下来路：关闭名单弹层与跳资料页会同时触发 watcher，同时 push+back 会互相踩踏，
+      // 由名单 watcher 凭此标记跳过 back（只保留资料页的 push），栈保持 [详情, 名单, 资料] 供返回重开名单
+      userDetailFromSheet.value = true;
       signupSheetShow.value = false;
       userDetailFrom.value = 'activity_detail';
       page.value = 'user_detail';
@@ -3727,6 +3753,15 @@ createApp({
       }
       // 子页回退：优先用 state.page，否则按 parent 映射
       const st = e.state;
+      // 从报名名单进他人资料页：上一条历史是名单弹层，回到活动详情并重开名单（即上一界面）；
+      // 重开时屏蔽 watcher 的重复 push（当前已在名单历史条目上），下一 tick 再恢复
+      if(page.value === 'user_detail' && userDetailFromSheet.value && st && st.overlay === 'signupSheet'){
+        userDetailFromSheet.value = false;
+        page.value = 'activity_detail';
+        signupSheetShow.value = true;
+        nextTick(() => { isHandlingPopState = false; });
+        return;
+      }
       if(st && st.page && st.page !== page.value){
         page.value = st.page;
         isHandlingPopState=false; return;
@@ -3784,7 +3819,7 @@ createApp({
     watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
-    watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet'){ ignoreNextPop=true; history.back(); } });
+    watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet' && !(page.value==='user_detail' && userDetailFromSheet.value)){ ignoreNextPop=true; history.back(); } });
     watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
     // 活动引导弹窗：关闭动作（确认/点遮罩/返回键）统一记入本会话，保证「每个会话只弹一次」
     watch(showActivityPromo, (v)=>{
@@ -4241,7 +4276,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, myGender,
       groupSelectFrom, groupResultFrom,
       goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
-      onPhotoError, onPhotoLoad, photoPositions, recalcPhotoPosition,
+      onPhotoError, onPhotoLoad, retryImg, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       myMessagesList, loadingMyMessages, openMyMessages, deleteMyMessage, refreshMyMessagesCount,
       receivedMessagesList, loadingReceivedMessages, openReceivedMessages, refreshReceivedCount,
@@ -4251,7 +4286,7 @@ createApp({
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,
-      userDetail, userDetailFrom, canLikeUserDetail, openUserDetail, loadNotifications,
+      userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact
     };
   }

@@ -1497,3 +1497,148 @@ def weekly_recommend_loop(interval=300):
         except Exception as e:
             log(f"推荐位生成循环异常: {e}")
         time.sleep(interval)
+
+
+def calculate_match_score(user_a, user_b):
+    score = 0
+    reasons = []
+    def _hobby_set(val):
+        if isinstance(val, str):
+            return set(h.strip() for h in val.replace("，", ",").split(",") if h.strip())
+        if isinstance(val, list):
+            return set(str(v) for v in val if v)
+        return set()
+    hobbies_a = _hobby_set(user_a.get("hobbies"))
+    hobbies_b = _hobby_set(user_b.get("hobbies"))
+    if hobbies_a and hobbies_b:
+        common = hobbies_a & hobbies_b
+        total = hobbies_a | hobbies_b
+        hobby_score = int(len(common) / len(total) * 40) if total else 0
+        score += hobby_score
+        if common:
+            reasons.append(f"共同兴趣：{'、'.join(list(common)[:3])}")
+    else:
+        score += 10
+    # 年龄维度已移除（用户表已删「年龄」字段），不再参与匹配评分
+    edu_order = {"高中及以下": 1, "大专": 2, "本科": 3, "硕士": 4, "博士": 5}
+    edu_a = edu_order.get(user_a.get(FIELD_EDUCATION, ""), 0)
+    edu_b = edu_order.get(user_b.get(FIELD_EDUCATION, ""), 0)
+    if edu_a and edu_b:
+        edu_diff = abs(edu_a - edu_b)
+        if edu_diff == 0:
+            score += 20
+            reasons.append("学历相当")
+        elif edu_diff == 1:
+            score += 15
+        elif edu_diff == 2:
+            score += 8
+        else:
+            score += 3
+    else:
+        score += 8
+    score += 15
+    return min(score, 100), reasons
+
+
+
+
+def auto_generate_match_recommendations():
+    today = time.strftime("%Y-%m-%d")
+    match_log_file = os.path.join(SHARED_DATA_DIR, "yixianqian_match_log.json")
+    match_log = storage.load_json(match_log_file, {})
+    if match_log.get("last_generate_date") == today:
+        return
+    active_users = search_records(USER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]}]
+    })
+    if len(active_users) < 2:
+        return
+    users = []
+    for item in active_users:
+        fields = item.get("fields", {})
+        nickname = get_field_text(fields, FIELD_NICKNAME)
+        open_id = get_field_text(fields, FIELD_FEISHU_ID)
+        if not nickname or not open_id:
+            # 无昵称或未绑定飞书（无 open_id）无法触达：既不为其生成，也不被推荐他人，避免幽灵行
+            continue
+        users.append({
+            "nickname": nickname, "record_id": item.get("record_id"),
+            "open_id": open_id,
+            FIELD_GENDER: get_field_text(fields, FIELD_GENDER),
+            FIELD_EDUCATION: get_field_text(fields, FIELD_EDUCATION),
+            "hobbies": get_multi_select_value(fields, FIELD_SELF_HOBBIES)
+        })
+    # 去重只需双方昵称+双方 open_id 四列：5 万行全字段扫描太重，只取这四列
+    existing_recommendations = search_records(
+        MATCH_TABLE_ID, None, 100,
+        [FIELD_MATCH_FOR_OPENID, FIELD_MATCH_TARGET_OPENID,
+         FIELD_MATCH_FOR_USER, FIELD_MATCH_TARGET_USER])
+    existing_pairs = set()
+    for rec in existing_recommendations:
+        rec_fields = rec.get("fields", {})
+        for_openid = get_field_text(rec_fields, FIELD_MATCH_FOR_OPENID)
+        target_openid = get_field_text(rec_fields, FIELD_MATCH_TARGET_OPENID)
+        if for_openid and target_openid:
+            existing_pairs.add((for_openid, target_openid))
+        for_user = get_field_text(rec_fields, FIELD_MATCH_FOR_USER)
+        target_user = get_field_text(rec_fields, FIELD_MATCH_TARGET_USER)
+        if for_user and target_user:
+            existing_pairs.add((for_user, target_user))
+    generated_count = 0
+    for user in users:
+        candidates = [u for u in users
+                      if u[FIELD_GENDER] != user[FIELD_GENDER]
+                      and (u["open_id"] or u["nickname"]) != (user["open_id"] or user["nickname"])]
+        if not candidates:
+            continue
+        scored_candidates = []
+        for candidate in candidates:
+            if (user["open_id"], candidate["open_id"]) in existing_pairs:
+                continue
+            if (user["nickname"], candidate["nickname"]) in existing_pairs:
+                continue
+            score, reasons = calculate_match_score(user, candidate)
+            scored_candidates.append((score, candidate, reasons))
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        for score, candidate, reasons in scored_candidates[:3]:
+            reason_text = f"匹配度{score}分"
+            if reasons:
+                reason_text += "，" + "；".join(reasons)
+            create_record(MATCH_TABLE_ID, {
+                FIELD_MATCH_FOR_USER: user["nickname"],
+                FIELD_MATCH_TARGET_USER: candidate["nickname"],
+                FIELD_MATCH_FOR_OPENID: user["open_id"],
+                FIELD_MATCH_TARGET_OPENID: candidate["open_id"],
+                FIELD_MATCH_REASON: reason_text,
+                FIELD_MATCH_STATUS: "待查看"
+            })
+            generated_count += 1
+            log(f"数字红娘推荐: {user['nickname']} -> {candidate['nickname']} ({score}分)")
+    match_log["last_generate_date"] = today
+    match_log["last_generate_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    match_log["generated_count"] = generated_count
+    storage.save_json(match_log_file, match_log)
+    if generated_count > 0:
+        log(f"数字红娘推荐生成完成，本次生成 {generated_count} 条")
+
+
+
+
+def auto_generate_match_loop(interval=3600):
+    """数字红娘推荐：**代码保留，但 v7 起不再注册调度**（见 yixianqian_bot_ws.py
+    的 start_worker_threads）。
+
+    理由：推荐表只写不读（web/ 与 lib/ 里没有任何读取方），却是 RecordExceedLimit
+    的来源；牵线页的「推荐位」已由 generate_weekly_recommendations 取代。
+    函数和它的单测都留着，重启调度只需把这行加回去——不是 bug，别当 bug 修。
+    """
+    log(f"数字红娘推荐服务已启动，检查间隔 {interval} 秒")
+    while True:
+        try:
+            auto_generate_match_recommendations()
+        except Exception as e:
+            log(f"数字红娘推荐循环异常: {e}")
+        time.sleep(interval)
+
+

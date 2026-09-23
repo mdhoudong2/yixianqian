@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """月度额度体系端到端自动验证（v7 模型：匿名每月 10 颗，实名每月 1 次 + 永久名额）。
 
-在测试环境运行：
-    cd /opt/yixianqian-test/bot && ./venv/bin/python /opt/yixianqian-test/scripts/dev/e2e_hearts.py
+在测试环境运行（要用 H5 的 venv：脚本签 session cookie 依赖 itsdangerous，
+bot 的 venv 里没有）：
+    cd /opt/yixianqian-test/bot && YIXIANQIAN_ENV=test \\
+        /opt/yixianqian-test/web/backend/venv/bin/python \\
+        /opt/yixianqian-test/scripts/dev/e2e_hearts.py
 
 断言清单：
   A. 起始额度与机器人对账一致（匿名 = 10 − 本月已用；实名 = 1 + 永久名额 − 本月已用）
@@ -26,16 +29,17 @@ sys.path.insert(0, "/opt/yixianqian-test/web/backend")
 sys.path.insert(0, "/opt/yixianqian-test/scripts/dev")
 
 from _prod_guard import guard  # noqa: E402
+
 guard(os.path.basename(__file__))
 
+import local_config as lc  # noqa: E402
 import requests  # noqa: E402
+from clients import create_record, delete_record, search_records  # noqa: E402
+from constants import LIKE_TABLE_ID, USER_TABLE_ID  # noqa: E402
 from itsdangerous import URLSafeTimedSerializer  # noqa: E402
 
-from constants import USER_TABLE_ID, LIKE_TABLE_ID  # noqa: E402
-from clients import search_records, create_record, delete_record  # noqa: E402
-from lib.bitable_client import get_field_text  # noqa: E402
 from lib import quota  # noqa: E402
-import local_config as lc  # noqa: E402
+from lib.bitable_client import get_field_text  # noqa: E402
 
 HOST = "https://testapp.nantou.love"
 HIS_OID = "ou_ec5d70f07daf238e81ac466a1c553aae"  # 猴哥猴哥
@@ -59,6 +63,11 @@ def sess_cookie():
     return {"yxq_session": s.dumps(HIS_OID)}
 
 
+# develop 的 P0 加固要求写接口带自定义头（跨站表单发不出这个头）。真实前端一直带着，
+# 脚本也得带，否则所有 POST/DELETE 一律 403「CSRF校验失败」。
+WRITE_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
 def get_quota(cookies):
     """返回 (anon_left, real_left)。机器人快照 + 在途意图合出来的展示值。"""
     r = requests.get(f"{HOST}/api/user/me", cookies=cookies, timeout=20)
@@ -66,8 +75,27 @@ def get_quota(cookies):
     return j.get("anon_left"), j.get("real_left")
 
 
+# /api/like 有 10 次 / 60 秒的限流（app.py 的 _rate_limit(10, 60, "like")）。
+# 本脚本要连点十几次，不让路就会被 429 打回来——那看起来和「额度用尽」一模一样，
+# 是假红。这里记下自己的调用时刻，快撞线就等窗口滑过去。
+_LIKE_LIMIT, _LIKE_WINDOW = 10, 60
+_like_calls = []
+
+
+def _pace_like():
+    while True:
+        now = time.time()
+        while _like_calls and now - _like_calls[0] > _LIKE_WINDOW:
+            _like_calls.pop(0)
+        if len(_like_calls) < _LIKE_LIMIT:
+            _like_calls.append(now)
+            return
+        time.sleep(_like_calls[0] + _LIKE_WINDOW - now + 1)
+
+
 def like(cookies, target, like_type="匿名", note=""):
-    r = requests.post(f"{HOST}/api/like", cookies=cookies, timeout=20,
+    _pace_like()
+    r = requests.post(f"{HOST}/api/like", cookies=cookies, timeout=20, headers=WRITE_HEADERS,
                       json={"target_openid": target, "like_type": like_type, "message": note})
     j = r.json()
     return r.status_code, j.get("anon_left"), j.get("real_left"), j
@@ -155,7 +183,8 @@ def main():
           f"(status={st}, anon_left={a2})")
 
     # E. 取消喜欢已整个下线：路由不存在 → 404（不是 400/405）
-    r = requests.delete(f"{HOST}/api/like/{TARGETS[0]}", cookies=ck, timeout=20)
+    r = requests.delete(f"{HOST}/api/like/{TARGETS[0]}", cookies=ck, timeout=20,
+                        headers=WRITE_HEADERS)
     check("E.取消喜欢接口已下线", r.status_code == 404, f"(status={r.status_code})")
 
     # F. 一路点到被拒为止。不假设起始额度就是满的——本月已用几次也算数

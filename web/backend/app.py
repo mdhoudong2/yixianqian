@@ -3495,6 +3495,15 @@ def like_user():
     q = quota_view(open_id)
     this_month = quota.month_key()
     triples = _like_triples_for(open_id, likes_snap)
+    # TEMP-DIAG 排查「多算一条」用，定位完立刻删
+    logging.getLogger(__name__).warning(
+        "TEMP-DIAG anon_left=%s triples=%s snap_targets=%s intent_targets=%s",
+        quota.anon_left(triples, this_month), len(triples),
+        sorted(bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
+               for l in likes_snap
+               if bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID) == open_id),
+        sorted(str(it.get("target")) for it in _intent_likes.values()
+               if it.get("oid") == open_id))
     if like_type == LIKE_TYPE_REAL:
         if q["real_left"] <= 0:
             return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400

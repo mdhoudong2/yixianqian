@@ -35,15 +35,7 @@ import bitable
 import tencent_face
 from config import *
 
-from lib import storage
-from lib.cancel_quota import (
-    CANCEL_QUOTA_LIMIT,
-    QUOTA_EXHAUST_USER_IDS,
-    QUOTA_FILE_VERSION,
-    month_remaining,
-    record_month_cancel,
-    seed_exhausted,
-)
+from lib import quota, storage
 from lib.photo_quota import prune_days, record_upload
 from lib.util import order_cards_seeded
 
@@ -408,107 +400,16 @@ _spool_lock = threading.Lock()
 _spool_queue = []
 _SPOOL_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_spool.jsonl")
 _SPOOL_DEAD = os.path.join(SHARED_DATA_DIR, "yixianqian_spool_failed.log")
-_BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")
+_BALANCE_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json")  # 遗留 v6 邀请账本，v7 起不再读
+_QUOTA_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_quota.json")
 _REPORTED_HISTORY_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_reported_history.json")
-_CANCEL_QUOTA_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_cancel_quota.json")
-_cancel_quota_seed_lock = threading.Lock()
-_cancel_quota_seeded = False
-
-
-def _cancel_quota_ensure_seeded():
-    """首建配额文件：把名单用户（如高频试探的 U-0009）本月配额直接写满，其余用户本月从 0 开始。
-
-    只在文件不存在时执行一次（跨进程以文件存在为准）；失败仅告警，不阻塞。
-    """
-    global _cancel_quota_seeded
-    if _cancel_quota_seeded or os.path.exists(_CANCEL_QUOTA_FILE):
-        _cancel_quota_seeded = True
-        return
-    with _cancel_quota_seed_lock:
-        if _cancel_quota_seeded or os.path.exists(_CANCEL_QUOTA_FILE):
-            _cancel_quota_seeded = True
-            return
-        _cancel_quota_seeded = True
-    try:
-        ym = time.strftime("%Y-%m")
-        force = set()
-        for u in (bitable.raw_search_records(USER_TABLE_ID) or []):
-            f = u.get("fields", {}) if isinstance(u, dict) else {}
-            if bitable.get_field_text(f, F_USER_ID) in QUOTA_EXHAUST_USER_IDS:
-                oid = bitable.get_field_text(f, F_FEISHU_ID)
-                if oid:
-                    force.add(oid)
-        storage.save_json(_CANCEL_QUOTA_FILE,
-                          {"v": QUOTA_FILE_VERSION, "months": seed_exhausted(force, ym)})
-        app.logger.warning(f"取消配额已初始化：本月强制写满 {len(force)} 人")
-    except Exception as e:
-        app.logger.warning(f"取消配额初始化失败（不阻塞）: {e}")
-
-
-def _cancel_quota_rec(open_id):
-    """读取某用户本月配额原始记录（缺省/异常返回 None，按本月 0 次处理）。"""
-    try:
-        data = storage.load_json(_CANCEL_QUOTA_FILE, {}) or {}
-        months = data.get("months", {}) or {}
-        return months.get(open_id)
-    except Exception:
-        return None
-
-
-def cancel_quota_remaining(open_id):
-    """本月剩余可取消次数（管理员不限，返回满额）。"""
-    if open_id in ADMIN_OPEN_IDS:
-        return CANCEL_QUOTA_LIMIT
-    _cancel_quota_ensure_seeded()
-    return month_remaining(_cancel_quota_rec(open_id), time.strftime("%Y-%m"))
-
-
-def _cancel_quota_check(open_id):
-    """本月取消限额检查：超限返回 (响应,429)，否则返回 None（管理员不限）。"""
-    if open_id in ADMIN_OPEN_IDS:
-        return None
-    _cancel_quota_ensure_seeded()
-    try:
-        left = month_remaining(_cancel_quota_rec(open_id), time.strftime("%Y-%m"))
-    except Exception as e:
-        app.logger.warning(f"取消配额读取失败（放行）: {e}")
-        return None
-    if left <= 0:
-        return jsonify({"error": f"本月取消喜欢已达 {CANCEL_QUOTA_LIMIT} 次上限，下月1日自动重置，如需协助请联系管理员"}), 429
-    return None
-
-
-def _cancel_quota_consume(open_id):
-    """取消成功后记一次，返回 (本月已用, 本月剩余)；管理员不记。失败仅告警、不阻塞。"""
-    if open_id in ADMIN_OPEN_IDS:
-        return 0, CANCEL_QUOTA_LIMIT
-    ym = time.strftime("%Y-%m")
-    used = {"n": 0}
-
-    def _mut(data):
-        d = data if isinstance(data, dict) else {}
-        months = d.get("months")
-        if not isinstance(months, dict):
-            months = {}
-        _, rec = record_month_cancel(months.get(open_id), ym)
-        months[open_id] = rec
-        d["v"] = QUOTA_FILE_VERSION
-        d["months"] = months
-        used["n"] = rec["n"]
-        return d
-
-    try:
-        storage.update_json(_CANCEL_QUOTA_FILE,
-                            {"v": QUOTA_FILE_VERSION, "months": {}}, _mut)
-    except Exception as e:
-        app.logger.warning(f"取消配额记录失败（不阻塞）: {e}")
-    return used["n"], max(0, CANCEL_QUOTA_LIMIT - used["n"])
+# yixianqian_cancel_quota.json 是 v6「每月限取消 3 次」的账本，取消功能已下线，
+# 文件留在磁盘上不动（回滚时还用得上），代码不再读写。
 
 # 在途意图（进程级，页面重载不丢失）：
-#   _intent_likes    oid -> [(temp_key, ts)]  喜欢已受理、尚未在快照可见（TTL 20s，快照15s周期+余量）
-#   _intent_cancels  oid -> [(record_id, ts)] 取消已受理、快照可能仍显示单身（TTL 60s）
-_intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…}
-_intent_cancels = {}  # oid -> [(target_openid, ts)]
+#   _intent_likes  oid -> [(temp_key, ts)]  喜欢已受理、机器人那 25 秒还没算进去
+# _intent_cancels 已随取消功能一起删除。
+_intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…, "type":…, "month":…}
 
 def _intent_prune():
     now = time.time()
@@ -516,53 +417,229 @@ def _intent_prune():
         # 保留 120s，覆盖快照最长 90s 过期窗口，避免 60-90s 间隙计数回退
         if now - _intent_likes[k]["ts"] > 120:
             _intent_likes.pop(k, None)
-    for k in list(_intent_cancels):
-        _intent_cancels[k] = [(a, b) for a, b in _intent_cancels[k] if now - b < 90]
 
 def _intent_complete(temp_key):
     """worker 落库成功后消费该意图，避免与快照计数双算"""
     _intent_likes.pop(temp_key, None)
 
-def _balances_file():
-    """机器人对账循环写入的邀请奖励汇总（事件溯源中邀请是外部事件，由机器人发布）"""
+# ==================== 月度额度（v7） ====================
+# 机器人是唯一权威：reconcile_hearts 每 25 秒全量重算并发布 _QUOTA_FILE。
+# H5 只读，**绝不再自己算月份**——两处独立算月份在跨月那一刻必然打架
+# （机器人说 10 颗、H5 说 0 颗），而且用户看到的是哪一边全凭运气。
+#
+# H5 唯一负责的是「在途意图」：用户刚点下去、记录还没落库那几秒，权威值还是旧的。
+# 没有这层桥接，用户点完看到的额度会先跳回去再跳回来。
+
+_quota_cache_lock = threading.Lock()
+_quota_cache = {"key": None, "data": None}
+_quota_alert_ts = [0.0]
+
+
+def _quota_file():
+    """读机器人发布的额度快照。按 (mtime, size) 缓存，避免每个请求都解析一遍 JSON。"""
     try:
-        return storage.load_json(_BALANCE_FILE, {"invites": {}}) or {"invites": {}}
+        st = os.stat(_QUOTA_FILE)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    with _quota_cache_lock:
+        if _quota_cache["key"] == key:
+            return _quota_cache["data"]
+    try:
+        data = storage.load_json(_QUOTA_FILE, None)
     except Exception:
-        return {"invites": {}}
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("quota"), dict):
+        return None
+    with _quota_cache_lock:
+        _quota_cache["key"] = key
+        _quota_cache["data"] = data
+    return data
+
+
+def _alert_quota_missing(reason):
+    """额度读不到时通知管理员，10 分钟最多一条。
+
+    不能静默归零：那会让全站用户同时变成「0 颗爱心」，看起来像数据被清了。
+    """
+    now = time.time()
+    if now - _quota_alert_ts[0] < 600:
+        return
+    _quota_alert_ts[0] = now
+    app.logger.warning(f"额度快照不可用，已退化读用户表字段: {reason}")
+    try:
+        for admin_oid in ADMIN_OPEN_IDS:
+            send_text_message(admin_oid, f"⚠️ H5 读不到额度快照（{reason}），已退化读用户表字段。请检查机器人 reconcile_hearts 是否在跑。")
+    except Exception as e:
+        app.logger.warning(f"额度告警发送失败: {e}")
+
+
+def _quota_from_record(open_id):
+    """退化路径：直接读用户表字段（同样是机器人对账写的，只是没有「本月」上下文）。"""
+    u = snap_find_user_by_openid(open_id)
+    f = (u or {}).get("fields", {})
+    if not f:
+        return None
+    permanent = bitable.get_field_number(f, F_INVITE_QUOTA, 0) or 0
+    anon_total = bitable.get_field_number(f, F_HEART_REMAIN_TOTAL, MONTHLY_ANON_HEARTS)
+    return {
+        "anon_left": bitable.get_field_number(f, F_HEART_REMAIN, MONTHLY_ANON_HEARTS),
+        "anon_total": anon_total or MONTHLY_ANON_HEARTS,
+        "real_left": bitable.get_field_number(f, F_REAL_REMAIN, MONTHLY_REAL_HEARTS),
+        "real_total": bitable.get_field_number(f, F_REAL_TOTAL, MONTHLY_REAL_HEARTS + permanent),
+        "real_permanent": permanent,
+    }
+
+
+def _like_month(fields):
+    """喜欢的归属月份：优先显式字段（受理时刻钉死），回退创建时间的 %Y-%m。
+
+    与 bot/auto_tasks.py: `_like_month` 同一口径。绝不能只用创建时间——那记的是
+    spool 落库那一刻，23:59 点的喜欢会算进下个月、白耗上个月的额度。
+    """
+    m = bitable.get_field_text(fields, F_LIKE_MONTH)
+    if m:
+        return m
+    created = bitable.get_datetime_value(fields, F_LIKE_CREATED_AT)
+    return created[:7] if created else ""
+
+
+# 在途意图桥接窗口。机器人的全量对账 25 秒一轮，spool 落库遇退避重试可能几十秒，
+# 60 秒足够覆盖两者；窗口之后的账一律以机器人权威值为准。
+# 没有这个上限就必须回答「这条意图机器人到底看没看见」——答不准就会双扣或漏扣，
+# 而用户连点时真正需要的是「0 秒反馈」，60 秒完全够。
+_INTENT_BRIDGE_SECONDS = 60
+
+
+def _intent_spent(open_id):
+    """在途喜欢要扣的额度 (匿名, 实名)。"""
+    _intent_prune()
+    now = time.time()
+    anon = real = 0
+    for it in _intent_likes.values():
+        if it["oid"] != open_id or now - it["ts"] > _INTENT_BRIDGE_SECONDS:
+            continue
+        if it.get("type") == LIKE_TYPE_REAL:
+            real += 1
+        else:
+            anon += 1
+    return anon, real
+
+
+def quota_view(open_id):
+    """本月额度视图（权威值 + 在途修正）。返回 anon_left/anon_total/real_left/real_total/real_permanent。"""
+    data = _quota_file()
+    q = (data or {}).get("quota", {}).get(open_id)
+    if q is None:
+        # 文件在但没这个人：刚注册还没进对账，或纯观察员。退回读表格字段。
+        q = _quota_from_record(open_id)
+        if q is None:
+            # 两条路都读不到。**故意放宽而不是拦死**：拦死会让全站用户点不了喜欢，
+            # 而放宽最多是这一轮没计量，机器人下一轮对账就会把账算回来。
+            _alert_quota_missing(f"open_id={open_id} 既不在快照也不在用户表")
+            q = {"anon_left": MONTHLY_ANON_HEARTS, "anon_total": MONTHLY_ANON_HEARTS,
+                 "real_left": MONTHLY_REAL_HEARTS, "real_total": MONTHLY_REAL_HEARTS,
+                 "real_permanent": 0}
+
+    spent_anon, spent_real = _intent_spent(open_id)
+    anon_total = int(q.get("anon_total") or MONTHLY_ANON_HEARTS)
+    real_total = int(q.get("real_total") or MONTHLY_REAL_HEARTS)
+    return {
+        "anon_left": max(0, int(q.get("anon_left", anon_total)) - spent_anon),
+        "anon_total": anon_total,
+        "real_left": max(0, int(q.get("real_left", real_total)) - spent_real),
+        "real_total": real_total,
+        "real_permanent": int(q.get("real_permanent") or 0),
+    }
+
+
+def attach_quota(brief, open_id):
+    """把额度写进 API 返回体。
+
+    `hearts`/`hearts_total` 是 v6 的旧键名，现在等于匿名额度。留着是因为前端是
+    CDN 引的静态 index.html，浏览器可能还缓存着旧版本——旧前端读不到新键会显示空白，
+    读到旧键至少数字是对的。新前端请用 anon_*/real_*。"""
+    q = quota_view(open_id)
+    brief["anon_left"] = q["anon_left"]
+    brief["anon_total"] = q["anon_total"]
+    brief["real_left"] = q["real_left"]
+    brief["real_total"] = q["real_total"]
+    brief["real_permanent"] = q["real_permanent"]
+    brief["hearts"] = q["anon_left"]
+    brief["hearts_total"] = q["anon_total"]
+    return brief
+
 
 def computed_hearts(open_id):
-    """爱心数 = 初始 + 邀请奖励 − 有效喜欢数（快照 + 在途意图修正）。
-    纯计算，零表读、零延迟、零竞争；对自己操作 0 秒精确。"""
-    _intent_prune()
-    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
-    cnt = 0
-    for l in _snap("likes"):
-        f = l.get("fields", {})
-        if bitable.get_field_text(f, F_LIKE_INITIATOR_OPENID) != open_id:
-            continue
-        if bitable.get_select_value(f, F_LIKE_STATUS) == "已取消":
-            continue
-        if bitable.get_field_text(f, F_LIKE_TARGET_OPENID) in cancel_targets:
-            continue
-        cnt += 1
-    snap_rids = set()
-    for l in _snap("likes"):
-        if l.get("record_id"):
-            snap_rids.add(l.get("record_id"))
-    extra = 0
-    for it in _intent_likes.values():
-        if it["oid"] != open_id:
-            continue
-        rid = it.get("rid")
-        if rid is None or rid not in snap_rids:
-            extra += 1  # 未落库 / 已落库但快照未见：均需桥接计数
-    invites = _balances_file().get("invites", {}).get(open_id, 0)
-    return max(0, min(MAX_HEARTS, INITIAL_HEARTS + invites - cnt - extra))
+    """本月的匿名剩余额度。保留这个函数名是因为调用点很多，语义已经变了：
+    它不再自己算「初始 + 邀请 − 已用」，只做「读权威值 + 在途修正」。"""
+    return quota_view(open_id)["anon_left"]
+
 
 def hearts_total(open_id):
-    """爱心总额 = 初始 + 邀请奖励（上限 MAX_HEARTS），不含已使用"""
-    invites = _balances_file().get("invites", {}).get(open_id, 0)
-    return min(MAX_HEARTS, INITIAL_HEARTS + invites)
+    """本月匿名总额度（固定 10，月初补满、不累积）。"""
+    return quota_view(open_id)["anon_total"]
+
+
+# ==================== 牵线页「推荐位」 ====================
+# 与额度同一套分工：机器人每周算好名单发布到 _RECOMMEND_FILE，H5 只读。
+# 文件里的 pinned/algo 是**隐私数据**（pinned 等于「谁暗恋你」）——这里只取
+# 拼好的 list 和它的生成时刻，其余字段一个字都不许往外发。
+
+_RECOMMEND_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_weekly_recommend.json")
+_recommend_cache_lock = threading.Lock()
+_recommend_cache = {"key": None, "data": None}
+
+
+def _recommend_file():
+    """读机器人发布的推荐位名单。同样按 (mtime, size) 缓存。
+
+    读不到时返回 None（而不是空名单）：旧前端不认 recommended 字段，退化成
+    「没有推荐位」是安全的——绝不能反过来，凭空标记一批卡片为推荐。
+    """
+    try:
+        st = os.stat(_RECOMMEND_FILE)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    with _recommend_cache_lock:
+        if _recommend_cache["key"] == key:
+            return _recommend_cache["data"]
+    try:
+        data = storage.load_json(_RECOMMEND_FILE, None)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("users"), dict):
+        return None
+    with _recommend_cache_lock:
+        _recommend_cache["key"] = key
+        _recommend_cache["data"] = data
+    return data
+
+
+def recommend_view(open_id):
+    """返回 (推荐位 open_id 列表, 名单版本号)。没有名单就是 ([], "")。
+
+    版本号取**这个人自己的**名单内容，不是文件的时间戳：换一批推荐位要重建
+    卡片顺序（否则新必显的人会被旧顺序压在几十张之后，用户根本翻不到），
+    但别人的名单变了不该打乱我的翻页顺序。
+    """
+    data = _recommend_file() or {}
+    entry = (data.get("users") or {}).get(open_id) or {}
+    lst = entry.get("list")
+    if not isinstance(lst, list):
+        return [], ""
+    lst = [o for o in lst if isinstance(o, str) and o]
+    return lst, "|".join(lst)
+
+
+def mark_recommended(brief, recommended_oids):
+    """给卡片打「推荐」角标。只打标，不带任何理由——角标一旦写出理由，
+    用户就会去猜没被打标的人差在哪，而真正的理由（有人暗恋你）绝不能露。"""
+    if brief.get("openid") in recommended_oids:
+        brief["recommended"] = True
+    return brief
+
 
 def snap_find_user_by_openid(open_id):
     """快照优先、实时兜底；同号多档统一解析到主档案（用户表 + 村情六处独立表）。
@@ -649,24 +726,27 @@ _card_order_cache = {}
 _card_order_lock = threading.Lock()
 
 
-def _get_session_order(key, cards, liked_me_openids, open_id):
+def _get_session_order(key, cards, liked_me_openids, open_id, pinned_openids=None,
+                       rec_ver=""):
+    # rec_ver（这个人推荐位名单的版本）比对放在缓存值里，**不进 key**：进了 key
+    # 的话每周新一批名单都会留下一批再也用不到的死条目，而这张表从不淘汰。
     now = time.time()
     with _card_order_lock:
         hit = _card_order_cache.get(key)
-    if hit and now - hit.get("created", 0) < _SESSION_ORDER_TTL:
+    if hit and hit.get("rec_ver", "") == rec_ver and now - hit.get("created", 0) < _SESSION_ORDER_TTL:
         order = hit["order"]
         current_oids = {c.get("openid", "") for c in cards}
         order = [o for o in order if o in current_oids]
         new_oids = [c.get("openid", "") for c in cards if c.get("openid", "") not in order]
         order = order + new_oids
         with _card_order_lock:
-            _card_order_cache[key] = {"order": order, "created": hit["created"]}
+            _card_order_cache[key] = {"order": order, "created": hit["created"], "rec_ver": rec_ver}
         return order, hit["created"]
     seed_str = f"{open_id}|{_uuid.uuid4().hex}"
-    ordered = order_cards_seeded(cards, liked_me_openids, seed_str)
+    ordered = order_cards_seeded(cards, liked_me_openids, seed_str, pinned_openids)
     oids = [c.get("openid", "") for c in ordered]
     with _card_order_lock:
-        _card_order_cache[key] = {"order": oids, "created": now}
+        _card_order_cache[key] = {"order": oids, "created": now, "rec_ver": rec_ver}
     return oids, now
 
 
@@ -1083,7 +1163,7 @@ def format_user_brief(record, include_openid=False, full=False):
         "height": int(bitable.get_field_number(fields, F_HEIGHT, 0)) or "",
         "education": bitable.get_select_value(fields, F_EDUCATION),
         "hobbies": "、".join(bitable.get_multi_select_value(fields, F_SELF_HOBBIES)),
-        "hearts": bitable.get_field_number(fields, F_HEART_REMAIN, INITIAL_HEARTS),
+        "hearts": bitable.get_field_number(fields, F_HEART_REMAIN, MONTHLY_ANON_HEARTS),
         "account_status": bitable.get_select_value(fields, F_ACCOUNT_STATUS),
         "is_observer": bitable.get_select_value(fields, F_ACCOUNT_STATUS) == STATUS_OBSERVER,
         "photo": photo_url,
@@ -1218,15 +1298,31 @@ def build_subtitle(fields):
         parts.append(city)
     return " · ".join(parts)
 
-def order_cards(cards, liked_me_openids):
+def order_cards(cards, liked_me_openids, pinned_openids=None):
     """牵线卡片排序：整副牌随机打乱，避免按用户ID连号泄露身份。
 
     喜欢我的人不集中放在最前，而是随机前移到前 30% 区域（随机散落、位置随机），
     既能被较快翻到，又不会因「前几张/前10张都是喜欢我的人」暴露是谁。
+
+    `pinned_openids`（推荐位）例外：按机器人生成的顺序原样置顶。这批人本来就在
+    liked_me_openids 里，先摘出去再散落，免得同一张卡出现两次。规则与
+    lib.util.order_cards_seeded 一致，只是那边的随机源是种子化的。
     """
+    head, head_oids = [], set()
+    if pinned_openids:
+        by_oid = {}
+        for c in cards:
+            by_oid.setdefault(c.get("openid"), c)
+        for oid in pinned_openids:
+            card = by_oid.get(oid)
+            if card is not None and oid not in head_oids:
+                head.append(card)
+                head_oids.add(oid)
+        if head:
+            cards = [c for c in cards if c.get("openid") not in head_oids]
     if not cards or not liked_me_openids:
         random.shuffle(cards)
-        return cards
+        return cards if not head else head + cards
     liked = [c for c in cards if c.get("openid") in liked_me_openids]
     others = [c for c in cards if c.get("openid") not in liked_me_openids]
     random.shuffle(liked)
@@ -1246,7 +1342,7 @@ def order_cards(cards, liked_me_openids):
             oi += 1
     rest = liked[li:] + others[oi:]
     random.shuffle(rest)
-    return front + rest
+    return head + front + rest
 
 def _coerce_filter_num(v):
     """筛选数值参数安全转 float：None/空/非数值（含 bool/nan/inf）一律视为未填。
@@ -2405,7 +2501,6 @@ _REGISTER_PHOTO_MIN = 3
 _REGISTER_PHOTO_MAX = 9
 _REGISTER_PHOTO_MAX_BYTES = 10 * 1024 * 1024
 _REGISTER_VALID_STATUS = ("单身", "待审核", "已脱单")
-_REGISTER_HEART_TOTAL = "爱心总量"
 
 
 def _openid_from_auth_code(code):
@@ -2567,11 +2662,11 @@ def submit_register():
         return jsonify({"error": f"请上传 {_REGISTER_PHOTO_MIN}-{_REGISTER_PHOTO_MAX} 张个人照片"}), 400
     fields[F_PHOTO] = [{"file_token": t, "name": f"photo{i + 1}.jpg"} for i, t in enumerate(photo_tokens)]
 
-    # 系统字段：身份钉死、强制待审核、初始爱心（用户ID/注册时间由表格自动生成，不写）
+    # 系统字段：身份钉死、强制待审核（用户ID/注册时间由表格自动生成，不写）
+    # 不再写爱心字段：v7 起额度由机器人的 reconcile_hearts 全量对账生成，
+    # 它是唯一写者。这里写死一个数只会被下一轮对账覆盖，还会在覆盖前显示错的额。
     fields[F_FEISHU_ID] = open_id
     fields[F_ACCOUNT_STATUS] = "待审核"
-    fields.setdefault(F_HEART_REMAIN, INITIAL_HEARTS)
-    fields.setdefault(_REGISTER_HEART_TOTAL, INITIAL_HEARTS)
     inviter = (fields.get("邀请人ID") or "").upper().strip()
     if inviter:
         fields["邀请人ID"] = inviter
@@ -2627,10 +2722,10 @@ def home():
         g._id_valid = True
 
     # 卡片（不含筛选，默认展示全部异性；观察员展示全部单身用户，男女均可浏览）
-    # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
+    # 只排除仍然有效的喜欢目标；匿名喜欢满 3 个月作废后，对方会重新回到卡片池
     liked_openids = {bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
                      for l in snap_likes_by_initiator(open_id)
-                     if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"}
+                     if bitable.like_is_active(l.get("fields", {}))}
     # 留言数：一次性按目标 open_id 计数（排除已删除，举报后仍计数待管理员处理）
     msg_counts = {}
     for m in _snap("messages"):
@@ -2666,9 +2761,13 @@ def home():
     liked_me_openids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in liked_me
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
+        if bitable.like_is_active(l.get("fields", {}))
     }
-    cards = order_cards(cards, liked_me_openids)
+    pinned_openids, _rec_ver = recommend_view(open_id)
+    recommended_oids = set(pinned_openids)
+    for c in cards:
+        mark_recommended(c, recommended_oids)
+    cards = order_cards(cards, liked_me_openids, pinned_openids)
     # 本人预览自己的卡片（别人看我的样子），置顶展示（观察员与单身普通用户一致）
     if is_observer or is_single:
         self_card = _build_self_card(open_id, active_users, msg_counts)
@@ -2682,14 +2781,14 @@ def home():
     i_liked_targets = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
         for l in i_liked
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
+        if bitable.like_is_active(l.get("fields", {}))
     }
     liked_me_list = []
     mutual_list = []
     for like in liked_me:
         fields = like.get("fields", {})
         status = bitable.get_select_value(fields, F_LIKE_STATUS)
-        if status == "已取消":
+        if not bitable.like_is_active(fields):
             continue
         initiator_oid = bitable.get_field_text(fields, F_LIKE_INITIATOR_OPENID)
         is_mutual = initiator_oid in i_liked_targets or status == "相互喜欢"
@@ -2715,10 +2814,7 @@ def home():
     user_brief = format_user_brief(user)
     user_brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     user_brief["available_roles"] = sorted(roles_of(open_id))
-    user_brief["hearts"] = computed_hearts(open_id)
-    user_brief["hearts_total"] = hearts_total(open_id)
-    user_brief["cancel_remaining"] = cancel_quota_remaining(open_id)
-    user_brief["cancel_limit"] = CANCEL_QUOTA_LIMIT
+    attach_quota(user_brief, open_id)
     user_brief["has_face"] = user_has_face(user, is_observer)
     return jsonify({
         "user": user_brief,
@@ -2742,10 +2838,7 @@ def user_me():
     brief = format_user_brief(user)
     brief["is_admin"] = open_id in ADMIN_OPEN_IDS
     brief["available_roles"] = sorted(roles_of(open_id))
-    brief["hearts"] = computed_hearts(open_id)
-    brief["hearts_total"] = hearts_total(open_id)
-    brief["cancel_remaining"] = cancel_quota_remaining(open_id)
-    brief["cancel_limit"] = CANCEL_QUOTA_LIMIT
+    attach_quota(brief, open_id)
     return jsonify(brief)
 
 @app.route("/api/account/status", methods=["POST"])
@@ -2981,11 +3074,11 @@ def get_cards():
     all_users = snap_active_users()
 
     # 获取我已经喜欢过的人（从快照，实时性靠写操作后定向刷新）
-    # 只排除「未取消」的喜欢目标，取消喜欢后目标应重新回到卡片池
+    # 只排除仍然有效的喜欢目标；匿名喜欢满 3 个月作废后，对方会重新回到卡片池
     liked_openids = {
         bitable.get_field_text(like.get("fields", {}), F_LIKE_TARGET_OPENID)
         for like in snap_likes_by_initiator(open_id)
-        if bitable.get_select_value(like.get("fields", {}), F_LIKE_STATUS) != "已取消"
+        if bitable.like_is_active(like.get("fields", {}))
     }
 
     # 留言数：一次性按目标 open_id 计数（排除已删除，举报后仍计数待管理员处理）
@@ -3029,12 +3122,19 @@ def get_cards():
     liked_me_openids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in snap_likes_by_target(open_id)
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
+        if bitable.like_is_active(l.get("fields", {}))
     }
+    # 推荐位：置顶的是机器人生成的那一批（必显在前）。名单换版时必须重建顺序，
+    # 否则新必显的人会被旧的会话顺序压在几十张后面，用户根本翻不到。
+    pinned_openids, rec_ver = recommend_view(open_id)
+    recommended_oids = set(pinned_openids)
+    for c in cards:
+        mark_recommended(c, recommended_oids)
     self_flag = (is_observer or is_single) and not gender_filter and not _has_active_filter(filters)
     filters_key = json.dumps(filters, sort_keys=True, ensure_ascii=False) + "|" + (gender_filter or "")
     key = (open_id, filters_key)
-    order, order_ts = _get_session_order(key, cards, liked_me_openids, open_id)
+    order, order_ts = _get_session_order(key, cards, liked_me_openids, open_id,
+                                         pinned_openids, rec_ver)
     by_oid = {c.get("openid"): c for c in cards}
     self_card = None
     if self_flag:
@@ -3061,12 +3161,8 @@ def get_cards():
 
     return jsonify({"cards": page, "total": total, "offset": offset, "limit": limit, "version": int(order_ts)})
 
-# 进程内「点喜欢预留」计数：create 后、likes 快照刷新前的时间窗内，
-# 快照看不到最新记录，用预留数兜底防双花；TTL 取机器人扣减周期，过期自然清零
-_like_reserves = {}
-_recent_cancels = {}  # record_id -> ts：取消意图已发出、表/快照尚未更新的宽限豁免
-
-
+# _like_reserves / _recent_cancels 是 v6 的预留计数与取消宽限豁免，均已随
+# 「额度改由机器人权威发布 + 在途意图桥接」的改造删除，无调用方。
 
 
 def _spool_append(op):
@@ -3088,10 +3184,12 @@ def _spool_rewrite():
     os.replace(tmp, _SPOOL_FILE)
 
 def _spool_process(op):
-    """幂等执行：喜欢=先查同向活跃记录再建；取消=按 record_id 置已取消（天然幂等）"""
+    """幂等执行：喜欢=先查同向活跃记录再建；取消类操作=空转（功能已下线）。"""
     t = op.get("type")
     try:
         if t == "like":
+            # 正向白名单列出「还算数的状态」，不要写成 isNot 被驳回——那样以后
+            # 新增任何状态都会被当成有效，重复检查静默失效、同一对用户记两次额度。
             dup = bitable.search_records(LIKE_TABLE_ID, {
                 "conjunction": "and",
                 "conditions": [
@@ -3099,7 +3197,8 @@ def _spool_process(op):
                      "value": [op.get("initiator_oid")]},
                     {"field_name": F_LIKE_TARGET_OPENID, "operator": "is",
                      "value": [op.get("target_oid")]},
-                    {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]},
+                    {"field_name": F_LIKE_STATUS, "operator": "is",
+                     "value": list(LIKE_STATUS_ACTIVE)},
                 ]})
             if dup:
                 # 幂等命中：登记已有记录 rid，供桥接计数
@@ -3113,26 +3212,15 @@ def _spool_process(op):
                 if e:
                     e["rid"] = r.get("record_id")
             return bool(r)
-        if t == "cancel":
-            return bitable.update_record(LIKE_TABLE_ID, op["record_id"],
-                                         {F_LIKE_STATUS: "已取消"}) is not None
+        if t in ("cancel", "cancel_pair"):
+            # 取消喜欢已下线。这两个分支**必须保留并直接返回 True**，不能删：
+            # 服务器 spool 文件和历史死信里还躺着 v6 遗留的取消指令，
+            # 分支一删它们就变成「未知操作」→ 进死信 → 每 5 分钟给全体管理员发一次告警，
+            # 而且是永久循环。空转即幂等消费掉它们。
+            return True
         if t == "status":
             return bitable.update_record(USER_TABLE_ID, op["record_id"],
                                          {F_ACCOUNT_STATUS: op["to_status"]}) is not None
-        if t == "cancel_pair":
-            rows = bitable.search_records(LIKE_TABLE_ID, {
-                "conjunction": "and",
-                "conditions": [
-                    {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is",
-                     "value": [op.get("initiator_oid")]},
-                    {"field_name": F_LIKE_TARGET_OPENID, "operator": "is",
-                     "value": [op.get("target_oid")]},
-                    {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]},
-                ]})
-            for row in rows:
-                bitable.update_record(LIKE_TABLE_ID, row["record_id"],
-                                      {F_LIKE_STATUS: "已取消"})
-            return True  # 幂等：找不到即视为已完成
     except Exception:
         return False
     return False
@@ -3247,9 +3335,9 @@ def like_user():
     data = request.get_json() or {}
     target_openid = data.get("target_openid", "")
     message = data.get("message", "")
-    like_type = data.get("like_type", "匿名")
-    if like_type not in ("匿名", "实名"):
-        like_type = "匿名"
+    like_type = data.get("like_type", LIKE_TYPE_ANON)
+    if like_type not in (LIKE_TYPE_ANON, LIKE_TYPE_REAL):
+        like_type = LIKE_TYPE_ANON
 
     if not target_openid:
         return jsonify({"error": "缺少目标用户"}), 400
@@ -3270,18 +3358,20 @@ def like_user():
     if my_gender == target_gender:
         return jsonify({"error": "仅限异性之间喜欢"}), 400
 
-    # 重复/相互检查（快照 + 取消意图豁免）
+    # 重复检查：只挡「还有效」的喜欢。用正向白名单 is_like_active，不要写成
+    # != "被驳回" 这种否定式——以后再加状态（比如到期作废）时否定式会静默放行，
+    # 结果就是同一对用户被重复计一次额度，还不报错。
+    # 匿名喜欢满 3 个月作废后，这里自动放行，用户可以重新喜欢同一个人。
     _intent_prune()
-    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
     already = False
     likes_snap = _snap("likes")
     for l in likes_snap:
         lf = l.get("fields", {})
         if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
             continue
-        if bitable.get_select_value(lf, F_LIKE_STATUS) == "已取消":
-            continue
-        if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) in cancel_targets:
+        if not quota.is_like_active(bitable.get_select_value(lf, F_LIKE_STATUS),
+                                    bitable.get_field_text(lf, F_LIKE_TYPE) or quota.LIKE_TYPE_ANON,
+                                    _like_month(lf)):
             continue
         if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
             already = True
@@ -3294,27 +3384,26 @@ def like_user():
     if not likes_snap and bitable.find_like(open_id, target_openid):
         return jsonify({"error": "你已经喜欢过TA了"}), 400
 
-    # 爱心充足性：事件计算值（含在途意图，天然防双花）
-    if computed_hearts(open_id) <= 0:
-        return jsonify({"error": "爱心不足，无法喜欢"}), 400
-
-    # 实名喜欢：按自然月限一次（不可取消，用完锁定）
-    if like_type == "实名":
-        if any(it.get("oid") == open_id and it.get("type") == "实名"
-               for it in _intent_likes.values()):
-            return jsonify({"error": "本月已使用过实名喜欢，每月仅一次机会"}), 400
-        this_month = time.strftime("%Y-%m")
+    # 额度充足性：两池分开判。实名不占匿名那 10 颗，所以不能只看一个数。
+    q = quota_view(open_id)
+    if like_type == LIKE_TYPE_REAL:
+        if q["real_left"] <= 0:
+            return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
+        # 第二道防线：机器人挂掉时 quota.json 会一直停在旧值，上面那道就失效了。
+        # 用与机器人同一套口径再查一遍快照（归属月份优先，回退创建时间）。
+        this_month = quota.month_key()
         for l in likes_snap:
             lf = l.get("fields", {})
             if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
                 continue
-            if bitable.get_select_value(lf, F_LIKE_STATUS) == "已取消":
+            if bitable.get_select_value(lf, F_LIKE_STATUS) not in LIKE_STATUS_ACTIVE:
                 continue
-            if bitable.get_field_text(lf, F_LIKE_TYPE) != "实名":
+            if bitable.get_field_text(lf, F_LIKE_TYPE) != LIKE_TYPE_REAL:
                 continue
-            created = bitable.get_datetime_value(lf, F_LIKE_CREATED_AT)
-            if created and created[:7] == this_month:
+            if _like_month(lf) == this_month:
                 return jsonify({"error": "本月已使用过实名喜欢，每月仅一次机会"}), 400
+    elif q["anon_left"] <= 0:
+        return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
 
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)
     like_fields = {
@@ -3328,6 +3417,13 @@ def like_user():
     }
     if has_like_type_field:
         like_fields[F_LIKE_TYPE] = like_type
+    # 受理时刻钉死的归属月份。机器人对账、H5 的实名月度判定、3 个月到期判定
+    # 全部只读它——都不许自己再取一次 wall clock，否则跨月那 60 秒必然打架。
+    # 必须走 quota.month_key()（钉死 Asia/Shanghai），不能用 time.strftime——
+    # 后者跟的是系统时区，机器换时区就会和机器人的月份对不上。
+    this_month = quota.month_key()
+    if bitable.field_exists(LIKE_TABLE_ID, F_LIKE_MONTH):
+        like_fields[F_LIKE_MONTH] = this_month
     if bitable.field_exists(LIKE_TABLE_ID, F_LIKE_INITIATOR_GENDER):
         like_fields[F_LIKE_INITIATOR_GENDER] = my_gender
     if bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TARGET_GENDER):
@@ -3339,10 +3435,11 @@ def like_user():
     _spool_append({"type": "like", "temp_key": temp_key,
                    "initiator_oid": open_id, "target_oid": target_openid,
                    "fields": like_fields})
-    _intent_likes[temp_key] = {"oid": open_id, "target": target_openid, "ts": time.time(), "type": like_type}
+    _intent_likes[temp_key] = {"oid": open_id, "target": target_openid, "ts": time.time(),
+                               "type": like_type, "month": this_month}
 
-    hearts_now = computed_hearts(open_id)
-    return jsonify({"ok": True, "mutual": False, "message": "喜欢成功", "hearts": hearts_now})
+    return jsonify({"ok": True, "mutual": False, "message": "喜欢成功",
+                    **attach_quota({}, open_id)})
 
 
 
@@ -3492,7 +3589,7 @@ def my_likes():
     i_liked_targets = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
         for l in i_liked
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
+        if bitable.like_is_active(l.get("fields", {}))
     }
 
     liked_me_list = []
@@ -3500,7 +3597,7 @@ def my_likes():
     for like in liked_me:
         fields = like.get("fields", {})
         status = bitable.get_select_value(fields, F_LIKE_STATUS)
-        if status == "已取消":
+        if not bitable.like_is_active(fields):
             continue
         initiator_oid = bitable.get_field_text(fields, F_LIKE_INITIATOR_OPENID)
         like_type = bitable.get_field_text(fields, F_LIKE_TYPE)
@@ -4856,7 +4953,7 @@ def set_profile_cover():
 
 @app.route("/api/likes/mine", methods=["GET"])
 def my_liked_list():
-    """我喜欢的人列表（可取消喜欢）"""
+    """我喜欢的人列表"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -4867,16 +4964,13 @@ def my_liked_list():
     _intent_prune()
     my_likes = snap_likes_by_initiator(open_id)
     # 在途意图补齐：快照尚未见的新 like 应立即出现在“我喜欢”列表，否则消息页计数与列表均滞后 60s
-    cancel_targets = {t for t, _ in _intent_cancels.get(open_id, [])}
-    # 过滤已取消的快照
-    my_likes = [l for l in my_likes if bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) not in cancel_targets]
     # 合并在途
-    existing_targets = {bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) for l in my_likes if bitable.get_select_value(l.get("fields",{}), F_LIKE_STATUS) != "已取消"}
+    existing_targets = {bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) for l in my_likes}
     for it in list(_intent_likes.values()):
         if it.get("oid") != open_id:
             continue
         tgt = it.get("target")
-        if not tgt or tgt in existing_targets or tgt in cancel_targets:
+        if not tgt or tgt in existing_targets:
             continue
         # 合成一条 like 供展示（复用真实目标用户信息）
         tgt_user = snap_find_user_by_openid(tgt)
@@ -4898,14 +4992,14 @@ def my_liked_list():
     liked_me_oids = {
         bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID)
         for l in liked_me
-        if bitable.get_select_value(l.get("fields", {}), F_LIKE_STATUS) != "已取消"
+        if bitable.like_is_active(l.get("fields", {}))
     }
 
     result = []
     for like in my_likes:
         fields = like.get("fields", {})
         status = bitable.get_select_value(fields, F_LIKE_STATUS)
-        if status == "已取消":
+        if not bitable.like_is_active(fields):
             continue
         target_oid = bitable.get_field_text(fields, F_LIKE_TARGET_OPENID)
         is_mutual = target_oid in liked_me_oids or status == "相互喜欢"
@@ -4928,86 +5022,8 @@ def my_liked_list():
         result.append(brief)
     return jsonify({"likes": result})
 
-@app.route("/api/like/<target_openid>", methods=["DELETE"])
-def cancel_like(target_openid):
-    """取消喜欢（v6：定位→spool→立即回包；爱心自动随事件计算恢复；每自然月最多3次）"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = active_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-    _rl = _cancel_quota_check(open_id)
-    if _rl:
-        return _rl
-
-    _intent_prune()
-    cancel_rids = {rid for rid, _ in _intent_cancels.get(open_id, [])}
-    existing = None
-    for l in _snap("likes"):
-        if l.get("record_id") in cancel_rids:
-            continue
-        f = l.get("fields", {})
-        if (bitable.get_field_text(f, F_LIKE_INITIATOR_OPENID) == open_id
-                and bitable.get_field_text(f, F_LIKE_TARGET_OPENID) == target_openid
-                and bitable.get_select_value(f, F_LIKE_STATUS) != "已取消"):
-            existing = l
-            break
-    pending_like = any(it["oid"] == open_id and it["target"] == target_openid
-                       for it in _intent_likes.values())
-    if not existing and not pending_like:
-        existing = bitable.find_like(open_id, target_openid)
-    if not existing and not pending_like:
-        return jsonify({"error": "未找到喜欢记录"}), 404
-
-    # 实名喜欢不可取消（每月仅一次，用完锁定）
-    if existing and bitable.get_field_text(existing.get("fields", {}), F_LIKE_TYPE) == "实名":
-        return jsonify({"error": "实名喜欢不可取消"}), 400
-    if pending_like and any(it.get("oid") == open_id and it.get("target") == target_openid
-                            and it.get("type") == "实名" for it in _intent_likes.values()):
-        return jsonify({"error": "实名喜欢不可取消"}), 400
-
-    rid = existing["record_id"] if existing else None
-    # 按对象幂等入队：worker 落库后或立即找到活跃记录执行取消；响应零等待
-    _spool_append({"type": "cancel_pair",
-                   "initiator_oid": open_id, "target_oid": target_openid})
-    cancel_used, cancel_left = _cancel_quota_consume(open_id)
-    _intent_cancels.setdefault(open_id, []).append((target_openid, time.time()))
-    # 消费对应喜欢意图：否则其桥接计数会让取消后仍少显示一颗
-    for k in list(_intent_likes):
-        it = _intent_likes[k]
-        if it.get("oid") == open_id and it.get("target") == target_openid:
-            _intent_likes.pop(k, None)
-
-    # 本地快照即时置灰：保证紧随其后的 /api/cards 立即把对方放回卡片池
-    for l in _snapshot.get("likes", []):
-        lf = l.get("fields", {})
-        if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) == open_id and \
-                bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == target_openid:
-            l.setdefault("fields", {})[F_LIKE_STATUS] = "已取消"
-
-    # 反向回落（后台线程，幂等）：只取消自己这一侧；若曾是相互喜欢，
-    # 对方回落为单向喜欢（对方的心意保留），绝不置已取消。
-    def _downgrade_reverse():
-        try:
-            reverse_likes = bitable.search_records(LIKE_TABLE_ID, [
-                {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [target_openid]},
-                {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]},
-                {"field_name": F_LIKE_STATUS, "operator": "is", "value": ["相互喜欢"]}
-            ])
-            for rl in reverse_likes:
-                bitable.update_record(LIKE_TABLE_ID, rl["record_id"],
-                                      {F_LIKE_STATUS: "单向喜欢"})
-        except Exception as e:
-            app.logger.warning(f"反向回落单向失败: {e}")
-
-    threading.Thread(target=_downgrade_reverse, daemon=True).start()
-
-    hearts_now = computed_hearts(open_id)
-    return jsonify({"ok": True, "message": "已取消喜欢", "hearts": hearts_now,
-                    "cancel_used": cancel_used, "cancel_remaining": cancel_left,
-                    "cancel_limit": CANCEL_QUOTA_LIMIT})
-
+# DELETE /api/like/<openid>（取消喜欢）已于 v7 下线：喜欢的有效期改为制度性的
+# ——匿名喜欢 3 个月后自动失效并返还额度，实名喜欢永久保留。用户不再能手动撤销。
 
 
 # ========== 我的活动 ==========
@@ -5162,7 +5178,7 @@ def get_user_public(openid):
     try:
         for l in snap_likes_by_initiator(oid):
             lf = l.get("fields", {})
-            if bitable.get_select_value(lf, F_LIKE_STATUS) == "已取消":
+            if not bitable.like_is_active(lf):
                 continue
             if bitable.get_field_text(lf, F_LIKE_TARGET_OPENID) == openid:
                 liked = True

@@ -12,7 +12,7 @@ import logging
 import os
 
 # 单 worker 多线程：快照缓存在进程内共享，多 worker 会各自持有快照副本，
-# 造成「切换状态后另一 worker 门禁漏拦」「取消喜欢后卡片池短暂不更新」等竞态。
+# 造成「切换状态后另一 worker 门禁漏拦」「喜欢后卡片池短暂不更新」等竞态。
 # 当前用户量级下单 worker + 8 线程吞吐足够，且后台快照轮询配额减半。
 workers = 1
 threads = 16

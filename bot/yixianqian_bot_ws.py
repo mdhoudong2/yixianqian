@@ -46,11 +46,11 @@ from auto_tasks import (
     auto_detect_mutual_like_loop,
     auto_fill_like_loop,
     auto_fill_signup_loop,
-    auto_generate_match_loop,
     auto_notify_signup_loop,
     auto_send_view_loop,
     auto_update_activity_signup_loop,
     reconcile_hearts_loop,
+    weekly_recommend_loop,
 )
 from cards import WELCOME_TEXT, send_main_menu_card
 from clients import *
@@ -537,7 +537,7 @@ def start_worker_threads():
         ("报名信息填充", auto_fill_signup_loop, 20),
         ("报名通知", auto_notify_signup_loop, 30),
         ("活动报名更新", auto_update_activity_signup_loop, 30),
-        ("数字红娘推荐", auto_generate_match_loop, 3600),
+        ("每周推荐位", weekly_recommend_loop, 300),
     ]
     for name, func, interval in threads_config:
         t = threading.Thread(target=func, args=(interval,), daemon=True, name=name)

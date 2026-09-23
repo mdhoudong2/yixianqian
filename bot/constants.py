@@ -56,13 +56,26 @@ MATCH_TABLE_ID = _cfg_get("MATCH_TABLE_ID", getattr(_cfg, "MATCH_TABLE_ID", "tbl
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
-FIELD_HEART_REMAIN = "爱心剩余"
-FIELD_HEART_TOTAL = "爱心总量"  # 累计获得（初始+邀请奖励，上限30），不随点喜欢扣减
-FIELD_HEART_BONUS = "管理员加赠"  # 管理员手动奖励的累计爱心数（可直接在多维表格编辑，对账时叠加，不被覆盖）
+# ==================== 月度额度（v7） ====================
+# 模型见 lib/quota.py 顶部注释。一句话：匿名每月 10 颗、月初补满、不累积；
+# 实名每月 1 次 + 邀请/加赠得来的永久名额，不占那 10 颗。
+FIELD_HEART_REMAIN = "爱心剩余"  # 本月剩余匿名额度
+FIELD_HEART_TOTAL = "爱心总量"   # 本月匿名额度，固定 = lib.quota.MONTHLY_ANON_HEARTS
+FIELD_HEART_BONUS = "管理员加赠"  # 管理员手动加赠的「永久实名名额」（表格里直接填，对账叠加、不被覆盖）
+FIELD_INVITE_QUOTA = "邀请名额"   # 邀请好友获得的永久实名名额（对账按「有效邀请」推导，非奖励账本）
+FIELD_REAL_TOTAL = "实名总量"     # 实名总额度 = 1 + 邀请名额 + 管理员加赠
+FIELD_REAL_REMAIN = "实名剩余"    # 本月剩余实名次数
 FIELD_ACCOUNT_STATUS = "账号状态"
 FIELD_GENDER = "性别"
 FIELD_EDUCATION = "学历"
 FIELD_SELF_HOBBIES = "我是一个怎样的人-爱好"
+# 推荐算法（lib/recommend.py:match_score）用的相似度维度。字段名必须与
+# web/backend/config.py 里的 F_* 逐字一致——两边读同一张表。
+FIELD_SELF_TRAITS = "我是一个怎样的人-性格"
+FIELD_SELF_SPORTS = "我是一个怎样的人-运动"
+FIELD_MBTI = "我是个怎样的人-MBTI人格"
+FIELD_CITY = "现居/工作城市"
+FIELD_CHURCH = "经常去的教堂"
 FIELD_CREATOR = "创建人"
 
 FIELD_LIKE_INITIATOR = "发起用户昵称"
@@ -75,6 +88,11 @@ FIELD_LIKE_TARGET_OPENID = "目标用户open_id"
 FIELD_LIKE_INITIATOR_ID = "发起用户ID"
 FIELD_LIKE_TARGET_ID = "目标用户ID"
 FIELD_LIKE_TYPE = "喜欢类型"  # 匿名/实名
+# 受理时刻钉死的 %Y-%m。绝不能改用「创建时间」自动字段来判月份：那记的是
+# spool worker 落库那一刻，可能比用户点击晚几秒到几分钟，23:59 点的喜欢会算进下个月。
+FIELD_LIKE_MONTH = "归属月份"
+# 自动字段，仅作「归属月份」缺失时的回退。注意它是记录落库时刻，不是用户点击时刻。
+FIELD_LIKE_CREATED_AT = "创建时间"
 
 FIELD_ACTIVITY_ID = "活动ID"
 FIELD_ACTIVITY_NAME = "活动名称"
@@ -131,8 +149,6 @@ FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同�
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
 FIELD_INVITE_CODE = "邀请码"  # 观察员注册表单的邀请码字段
 STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身看热闹，限权）
-INITIAL_HEARTS = 3
-MAX_HEARTS = 30
 # H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://testapp.nantou.love
 H5_BASE_URL = _cfg_get("H5_BASE_URL", getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love"))
 
@@ -148,7 +164,13 @@ INVITE_REWARDED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_invites.json") 
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")  # 共享通知（机器人写，H5读）
 OBSERVER_CODES_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_observer_codes.json")  # 观察员邀请码（管理员批量生成，一次性使用）
 P2P_CHAT_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_p2p_chats.json")  # open_id -> p2p单聊chat_id映射，主动推送优先用chat_id规避230101
-HEART_BONUS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_heart_bonus.json")  # open_id -> 管理员手动加赠爱心数（对账时叠加，不被覆盖）
+# 机器人对账发布、H5 只读的月度额度快照。键是 open_id，值是
+# {anon_left, anon_total, real_left, real_total, real_permanent, ym}
+QUOTA_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_quota.json")
+# 机器人每周生成、H5 只读的「推荐位」名单。键是 open_id，值见
+# bot.auto_tasks.generate_weekly_recommendations。**只在服务端流转**：
+# 里面的 pinned 字段就是「谁暗恋你」，绝不能原样发给浏览器。
+RECOMMEND_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_weekly_recommend.json")
 
 WS_HEALTH_CHECK_INTERVAL = 60      # 每60秒检查一次
 WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连

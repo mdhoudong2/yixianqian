@@ -1,12 +1,17 @@
 """一线牵 H5 配置"""
 
 import os
+import sys
 
 # 仓库根目录（web/backend 的上两级）
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if REPO_ROOT not in sys.path:
+    sys.path.append(REPO_ROOT)
 
 # 飞书应用配置（生产版，密钥见 local_config.py 或 ENV）
 import local_config as _lc
+
+from lib import quota  # noqa: E402 — 依赖上面的 sys.path 注入
 
 
 def _lc_get(name, default=None):
@@ -84,7 +89,13 @@ F_PHOTO = "个人照片"
 F_WECHAT = "微信号"
 F_PHONE = "手机号"
 F_ID_CARD = "身份证号"
-F_HEART_REMAIN = "爱心剩余"
+# 月度额度字段（v7）。语义见 lib/quota.py：「爱心」现在是每月 10 颗的匿名额度，
+# 不再是可累积的余额。写入只由机器人 reconcile_hearts 负责，H5 只读。
+F_HEART_REMAIN = "爱心剩余"        # 本月剩余匿名额度
+F_HEART_REMAIN_TOTAL = "爱心总量"  # 本月匿名额度，固定 10
+F_INVITE_QUOTA = "邀请名额"        # 邀请获得的永久实名名额
+F_REAL_TOTAL = "实名总量"          # 1 + 邀请名额 + 管理员加赠
+F_REAL_REMAIN = "实名剩余"         # 本月剩余实名次数
 F_ACCOUNT_STATUS = "账号状态"
 STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身看热闹，仅浏览/留言/反馈/查看活动）
 F_REGISTER_TIME = "注册时间"
@@ -215,7 +226,9 @@ F_LIKE_TARGET_OPENID = "目标用户open_id"
 F_LIKE_INITIATOR_ID = "发起用户ID"
 F_LIKE_TARGET_ID = "目标用户ID"
 F_LIKE_TYPE = "喜欢类型"
-F_LIKE_CREATED_AT = "创建时间"
+F_LIKE_CREATED_AT = "创建时间"  # 自动字段，记的是 spool 落库时刻，不是用户点击时刻
+# 受理时刻钉死的 %Y-%m。配额检查/计数/到期判定一律只读它。
+F_LIKE_MONTH = "归属月份"
 F_LIKE_INITIATOR_GENDER = "发起用户性别"
 F_LIKE_TARGET_GENDER = "目标用户性别"
 
@@ -275,9 +288,12 @@ F_SG_CREATED_AT = "提交时间"
 # 管理员open_id（敏感，配置于 local_config.py；此处留空回退）
 ADMIN_OPEN_IDS = _lc_list("ADMIN_OPEN_IDS", getattr(_lc, "ADMIN_OPEN_IDS", []))
 
-# 爱心配置
-INITIAL_HEARTS = 3
-MAX_HEARTS = 30
+# 月度额度（数值定义在 lib/quota.py，bot 与 H5 共用同一份，避免两处各写一个 10）
+MONTHLY_ANON_HEARTS = quota.MONTHLY_ANON_HEARTS
+MONTHLY_REAL_HEARTS = quota.MONTHLY_REAL_HEARTS
+LIKE_TYPE_ANON = quota.LIKE_TYPE_ANON
+LIKE_TYPE_REAL = quota.LIKE_TYPE_REAL
+LIKE_STATUS_ACTIVE = quota.LIKE_STATUS_ACTIVE
 
 # 服务配置
 SERVER_HOST = "0.0.0.0"

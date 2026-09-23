@@ -1,5 +1,4 @@
-"""后台轮询任务：自动绑定 / 审核通知 / 喜欢处理 / 报名处理 / 数字红娘推荐。"""
-import os
+"""后台轮询任务：自动绑定 / 审核通知 / 喜欢处理 / 报名处理 / 每周推荐位。"""
 import time
 
 import requests
@@ -27,7 +26,7 @@ from store import (
     update_bindings,
 )
 
-from lib import storage
+from lib import quota, recommend, storage
 
 # 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
 _AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
@@ -163,7 +162,8 @@ def auto_bind_from_creator():
             send_main_menu_card(open_id)
             continue
 
-        # 观察员注册：有效码走限权分支（跳过人工审核），爱心置 0（观察员无喜欢/报名权限，不参与爱心账）
+        # 观察员注册：有效码走限权分支（跳过人工审核）。观察员无喜欢/报名权限，
+        # 不参与额度账，reconcile_hearts 会跳过他们。
         if is_observer:
             # 原子消耗邀请码（未用→已用）；已被并发占用则拒绝，杜绝一码多用
             if not consume_observer_code(invite_code, nickname):
@@ -223,10 +223,8 @@ def auto_bind_from_creator():
         update_fields_bind = {}
         if current_status != "已脱单":
             update_fields_bind[FIELD_ACCOUNT_STATUS] = "待审核"
-        # 设置初始爱心（仅字段为空时兜底写3；表格默认值已设为3，此处不覆盖）
-        existing_hearts = get_field_number(fields, FIELD_HEART_REMAIN, -1)
-        if existing_hearts < 0:
-            update_fields_bind[FIELD_HEART_REMAIN] = INITIAL_HEARTS
+        # 不再在这里写爱心字段：v7 起额度由 reconcile_hearts 全量对账（每 25 秒），
+        # 它是唯一写者。表格里字段自带的默认值会在下一轮对账时被改写为真实值。
         if update_fields_bind:
             update_record(USER_TABLE_ID, record_id, update_fields_bind)
 
@@ -495,8 +493,9 @@ def auto_send_view_after_approval():
             "去一线牵App，开始牵线吧："
         )
         message_tail = (
-            f"初始有 {INITIAL_HEARTS} 颗爱心，邀请好友注册可获得更多爱心（上限{MAX_HEARTS}颗）。\n\n"
-            f"祝你早日找到天主给你准备的另一半！\U0001f495"
+            "每月有 10 颗匿名喜欢额度（月初补满），另有每月 1 次实名喜欢。\n"
+            "邀请好友注册，可永久增加实名喜欢名额。\n\n"
+            "祝你早日找到天主给你准备的另一半！\U0001f495"
         )
         if send_text_message(open_id, message_head):
             send_main_menu_card(open_id)
@@ -523,49 +522,37 @@ def auto_send_view_after_approval():
 
 
 def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id):
-    """邀请人奖励：被邀请人审核通过后，给邀请人+1爱心（上限30）"""
+    """邀请人奖励：被邀请人审核通过后，通知邀请人「永久实名名额 +1」。
+
+    v7 起这里**只发通知，不写任何额度字段**——名额由 reconcile_hearts 每 25 秒
+    按「有效邀请」推导，是唯一权威。这里若再 +1，就变成两个写者，且一旦被邀请人
+    后来脱单（掉出有效邀请）就对不上了。名称里的 reward 是历史包袱，实际是通知。
+    """
     rewarded = load_invite_rewarded()
     if invitee_openid in rewarded:
         return
 
     inviter_records = find_user_by_id_or_name(inviter_user_id)
     if not inviter_records:
-        log(f"邀请奖励：未找到邀请人 {inviter_user_id}")
+        log(f"邀请通知：未找到邀请人 {inviter_user_id}")
         return
     inviter = inviter_records[0]
     inviter_fields = inviter.get("fields", {})
     inviter_openid = get_field_text(inviter_fields, FIELD_FEISHU_ID)
     inviter_nickname = get_field_text(inviter_fields, FIELD_NICKNAME)
-    inviter_record_id = inviter.get("record_id")
 
     if not inviter_openid:
-        log(f"邀请奖励：邀请人 {inviter_nickname} 未绑定飞书")
+        log(f"邀请通知：邀请人 {inviter_nickname} 未绑定飞书")
         return
 
-    current_hearts = get_field_number(inviter_fields, FIELD_HEART_REMAIN, INITIAL_HEARTS)
-    if current_hearts >= MAX_HEARTS:
-        log(f"邀请奖励：{inviter_nickname} 爱心已达上限 {MAX_HEARTS}")
-        rewarded[invitee_openid] = inviter_openid
-        save_invite_rewarded(rewarded)
-        return
-
-    new_hearts = min(current_hearts + 1, MAX_HEARTS)
-    # 剩余与总量同一笔写入，避免“剩余即时+1、总量等对账25秒”的观感差
-    current_total = get_field_number(inviter_fields, FIELD_HEART_TOTAL, current_hearts)
-    new_total = min(max(current_total, current_hearts) + 1, MAX_HEARTS)
-    upd = {FIELD_HEART_REMAIN: new_hearts, FIELD_HEART_TOTAL: new_total}
-    if not update_record(USER_TABLE_ID, inviter_record_id, upd):
-        # 总量字段可能尚未建立：退回只写剩余（对账循环稍后补总量）
-        if not update_record(USER_TABLE_ID, inviter_record_id, {FIELD_HEART_REMAIN: new_hearts}):
-            return
     rewarded[invitee_openid] = inviter_openid
     save_invite_rewarded(rewarded)
-    log(f"邀请奖励: {inviter_nickname} +1爱心 (剩余{int(new_hearts)}/总量{int(new_total)}), 被邀请人: {invitee_nickname}")
+    log(f"邀请通知: {inviter_nickname} 实名名额 +1, 被邀请人: {invitee_nickname}")
     send_text_message(
         inviter_openid,
         f"\U0001f389 你的好友「{invitee_nickname}」已注册并审核通过！\n\n"
-        f"你获得了 1颗爱心奖励，当前共有 {int(new_hearts)} 颗爱心。\n"
-        f"继续邀请好友，最多可获得 {MAX_HEARTS} 颗爱心~"
+        f"你获得了 1 个实名喜欢名额（永久有效），已自动发放至账户。\n"
+        f"继续邀请好友，名额可无限累加~"
     )
     send_main_menu_card(inviter_openid)
 
@@ -657,13 +644,13 @@ def auto_fill_like_initiator():
         elif target_nickname:
             target_records = find_user_by_nickname(target_nickname)
         if len(target_records) > 1:
-            # 昵称兜底命中多条：无法确认目标，置已取消并告知发起人，避免静默喜欢到同名他人
+            # 昵称兜底命中多条：无法确认目标，置被驳回并告知发起人，避免静默喜欢到同名他人
             update_record(LIKE_TABLE_ID, record_id, {
                 FIELD_LIKE_INITIATOR: initiator_nickname,
                 FIELD_LIKE_INITIATOR_OPENID: initiator_openid,
                 FIELD_LIKE_INITIATOR_ID: str(initiator_user_id) if initiator_user_id else "",
                 FIELD_LIKE_TARGET: target_nickname,
-                FIELD_LIKE_STATUS: "已取消",
+                FIELD_LIKE_STATUS: quota.LIKE_STATUS_REJECTED,
             })
             log(f"同名昵称无法定位目标已拦截: {initiator_nickname} -> {target_nickname}")
             send_text_message(
@@ -686,10 +673,12 @@ def auto_fill_like_initiator():
                 "conditions": [
                     {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [initiator_openid]},
                     {"field_name": FIELD_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]},
-                    {"field_name": FIELD_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
+                    {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": list(quota.LIKE_STATUS_ACTIVE)}
                 ]
             })
-            is_duplicate = any(r.get("record_id") != record_id for r in existing)
+            # 状态白名单还挡不住「匿名已满 3 个月作废」——那种情况下用户应该可以重新喜欢
+            is_duplicate = any(r.get("record_id") != record_id and like_is_active(r.get("fields", {}))
+                               for r in existing)
 
         # 不能喜欢自己
         is_self_like = initiator_openid and target_openid and initiator_openid == target_openid
@@ -705,7 +694,7 @@ def auto_fill_like_initiator():
             update_fields[FIELD_LIKE_TARGET_OPENID] = target_openid
 
         if is_duplicate:
-            update_fields[FIELD_LIKE_STATUS] = "已取消"
+            update_fields[FIELD_LIKE_STATUS] = quota.LIKE_STATUS_REJECTED
             if update_record(LIKE_TABLE_ID, record_id, update_fields):
                 filled_count += 1
                 log(f"重复喜欢已拦截: {initiator_nickname} -> {target_nickname}")
@@ -714,7 +703,7 @@ def auto_fill_like_initiator():
                     f"你已经喜欢过「{target_nickname}」了，无需重复操作~"
                 )
         elif is_self_like:
-            update_fields[FIELD_LIKE_STATUS] = "已取消"
+            update_fields[FIELD_LIKE_STATUS] = quota.LIKE_STATUS_REJECTED
             if update_record(LIKE_TABLE_ID, record_id, update_fields):
                 log(f"自喜欢已拦截: {initiator_nickname}")
                 send_text_message(initiator_openid, "不能喜欢自己哦~")
@@ -722,6 +711,10 @@ def auto_fill_like_initiator():
             current_status = get_field_text(fields, FIELD_LIKE_STATUS)
             if not current_status:
                 update_fields[FIELD_LIKE_STATUS] = "单向喜欢"
+            # 这里**故意不补写「归属月份」**：走表单提交的喜欢，创建时间就是用户
+            # 填表那一刻，回退口径本来就准。而本函数可能滞后到跨月才处理完，
+            # 那时补写反而会把 8/31 的喜欢记成 9 月。H5 那条路不同——它的创建时间是
+            # spool 落库时刻、可能晚几分钟，所以由 H5 在受理时就把月份钉死。
             if update_record(LIKE_TABLE_ID, record_id, update_fields):
                 filled_count += 1
                 log(f"填充喜欢记录成功: {initiator_nickname}({initiator_user_id}) -> {target_nickname}({target_user_id})")
@@ -965,26 +958,41 @@ def auto_detect_mutual_like_loop(interval=30):
 
 
 def reconcile_hearts():
-    """爱心对账（v6 事件溯源，余额唯一写者）：
-    期望值 = 初始 + 邀请奖励 − 有效喜欢数（状态≠已取消）。
+    """额度对账（v7，月度额度唯一写者）：
+
+        匿名剩余 = 10 + 本月满期退回 − 本月发起的有效匿名喜欢
+        实名剩余 = 1 + 永久名额 − 本月发起的有效实名喜欢
+        永久名额 = 有效邀请 + 管理员加赠
+
     同 open_id 多档案：只对主档案记账（单身优先/用户ID最小），副本强制 0。
-    同时把邀请奖励汇总发布到共享文件，供 H5 端计算显示。
+    同时把每人额度发布到共享文件，供 H5 直接读——H5 不再自己算月份，
+    否则两处独立算月份在跨月那一刻必然对不上。
     """
-    likes = search_records(LIKE_TABLE_ID)
-    active_by_oid = {}
-    for l in likes:
+    ym = quota.month_key()
+
+    likes_by_oid = {}
+    month_unreadable = 0
+    for l in search_records(LIKE_TABLE_ID):
         f = l.get("fields", {})
-        if get_field_text(f, FIELD_LIKE_STATUS) == "已取消":
-            continue
         oid = get_field_text(f, FIELD_LIKE_INITIATOR_OPENID)
-        if oid:
-            active_by_oid[oid] = active_by_oid.get(oid, 0) + 1
+        if not oid:
+            continue
+        month = like_month(f)
+        if not month:
+            # lib.quota.is_like_active 会把读不到月份的记录保守保留（不作废）。
+            # 记数告警：一直读不到说明字段名对不上或时间字段被改，额度会虚高。
+            month_unreadable += 1
+        status = get_field_text(f, FIELD_LIKE_STATUS)
+        like_type = get_field_text(f, FIELD_LIKE_TYPE) or quota.LIKE_TYPE_ANON
+        likes_by_oid.setdefault(oid, []).append((status, like_type, month))
+    if month_unreadable:
+        log(f"额度对账警告：{month_unreadable} 条喜欢读不到归属月份，已按「不作废」保守处理")
 
     groups = {}
     for u in search_records(USER_TABLE_ID):
         uf = u.get("fields", {})
         if get_field_text(uf, FIELD_ACCOUNT_STATUS) == STATUS_OBSERVER:
-            continue  # 观察员不参与爱心账，跳过（否则对账会把观察员爱心写回初始值）
+            continue  # 观察员不参与额度账，跳过（否则对账会给观察员也写一份额度）
         oid = get_field_text(uf, FIELD_FEISHU_ID)
         if not oid:
             continue
@@ -999,7 +1007,7 @@ def reconcile_hearts():
             uid_to_oid[uid.strip().upper()] = oid
 
     # 有效邀请数以用户表“当前真实关系”为准：被邀请人主档=单身、填了邀请人编号、非自邀。
-    # 不直接对奖励账本计数，避免身份改绑/删除用户后旧 open_id 残留导致同一人被重复记账（多算爱心）。
+    # 不直接对奖励账本计数，避免身份改绑/删除用户后旧 open_id 残留导致同一人被重复记账（多算名额）。
     valid_invites = {}
     for oid, prec in primary_by_oid.items():
         pf = prec.get("fields", {})
@@ -1013,65 +1021,88 @@ def reconcile_hearts():
         if inviter_oid:
             valid_invites[inviter_oid] = valid_invites.get(inviter_oid, 0) + 1
 
-    # 信用合计 = 有效邀请 + 管理员加赠。
+    # 永久名额 = 有效邀请 + 管理员加赠。
     # 「管理员加赠」字段是唯一手动奖励入口：管理员直接在用户表填累计奖励数，对账读取叠加、不会覆盖。
+    # v7 起它的语义从「加爱心」改成「加永久实名名额」——名额无上限，所以这里也不封顶。
     admin_bonus = {}
     for oid, prec in primary_by_oid.items():
         try:
             admin_bonus[oid] = int(get_field_number(prec.get("fields", {}), FIELD_HEART_BONUS, 0) or 0)
         except Exception:
             admin_bonus[oid] = 0
-    credit_map = {}
-    for oid in primary_by_oid.keys():
-        credit_map[oid] = valid_invites.get(oid, 0) + admin_bonus.get(oid, 0)
 
-    # 发布汇总（供 H5 computed_hearts 使用，键名沿用 invites 以兼容前端，值=有效邀请+加赠）
+    quota_map = {}
+    for oid in primary_by_oid:
+        recs_l = likes_by_oid.get(oid, [])
+        permanent = valid_invites.get(oid, 0) + admin_bonus.get(oid, 0)
+        quota_map[oid] = {
+            "anon_left": quota.anon_left(recs_l, ym),
+            "anon_total": quota.MONTHLY_ANON_HEARTS,
+            "real_left": quota.real_left(recs_l, permanent, ym),
+            "real_total": quota.real_total(permanent),
+            "real_permanent": permanent,
+            "ym": ym,
+        }
+
+    # 发布额度快照，H5 直接读——H5 不再自己算月份，否则两处独立算月份在跨月那一刻必然对不上。
+    # 写失败不阻断下面的表格回写：表格才是权威，H5 读不到会退回看表格字段。
     try:
-        storage.save_json(os.path.join(SHARED_DATA_DIR, "yixianqian_balances.json"),
-                          {"invites": credit_map,
-                           "updated": time.strftime("%Y-%m-%d %H:%M:%S")})
+        storage.save_json(QUOTA_FILE, {"ym": ym, "quota": quota_map, "updated": quota.stamp()})
     except Exception as e:
-        log(f"发布邀请汇总失败: {e}")
+        log(f"发布额度快照失败: {e}")
+
+    # 新字段可能还没在表格里建，或者建错了类型。两种情况都会让整笔 update 被飞书拒掉，
+    # 连带把同一次 PUT 里的「爱心剩余」也挡在外面——额度对账就整个静默失效了。
+    # 所以先探一次（有 5 分钟缓存，每人只探一次），只写确实存在且为「数字」的字段。
+    wanted = (FIELD_INVITE_QUOTA, FIELD_REAL_TOTAL, FIELD_REAL_REMAIN)
+    unusable = [f for f in wanted if not field_is_number(USER_TABLE_ID, f)]
+    if unusable:
+        log(f"额度对账提示：用户表字段 {unusable} 不存在或不是「数字」类型，"
+            f"本次不写这几列；在表格里补建/改对类型后自动生效")
 
     fixed = 0
 
-    def _write(rec, remain, total, tag):
+    def _write(rec, vals, tag):
         nonlocal fixed
         f0 = rec.get("fields", {})
-        nick = get_field_text(f0, FIELD_NICKNAME)
-        cur_remain = get_field_number(f0, FIELD_HEART_REMAIN, None)
-        if cur_remain != remain:
-            if update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_REMAIN: remain}):
-                fixed += 1
-                log(f"爱心对账[{tag}]: {nick} 剩余 {cur_remain} → {remain}")
-        # 爱心总量独立写入并容错：字段尚未建立时不影响剩余对账
-        cur_total = get_field_number(f0, FIELD_HEART_TOTAL, None)
-        if cur_total != total:
-            try:
-                update_record(USER_TABLE_ID, rec.get("record_id"), {FIELD_HEART_TOTAL: total})
-            except Exception as e:
-                log(f"爱心总量写入失败(字段可能未建): {nick} {e}")
+        upd = {k: v for k, v in vals.items() if get_field_number(f0, k, None) != v}
+        if not upd:
+            return
+        if update_record(USER_TABLE_ID, rec.get("record_id"), upd):
+            fixed += 1
+            nick = get_field_text(f0, FIELD_NICKNAME)
+            log(f"额度对账[{tag}]: {nick} " + "、".join(f"{k}={v}" for k, v in upd.items()))
 
     for oid, recs in groups.items():
-        primary = primary_by_oid[oid]
-        earned = min(INITIAL_HEARTS + credit_map.get(oid, 0), MAX_HEARTS)  # 累计获得=初始+有效邀请+加赠(封顶)
-        expected = max(0, min(earned - active_by_oid.get(oid, 0), MAX_HEARTS))
-        _write(primary, expected, earned, "主档")
+        q = quota_map.get(oid) or {}
+        vals = {
+            FIELD_HEART_REMAIN: q.get("anon_left", 0),
+            FIELD_HEART_TOTAL: q.get("anon_total", quota.MONTHLY_ANON_HEARTS),
+        }
+        if FIELD_INVITE_QUOTA not in unusable:
+            vals[FIELD_INVITE_QUOTA] = valid_invites.get(oid, 0)
+        if FIELD_REAL_TOTAL not in unusable:
+            vals[FIELD_REAL_TOTAL] = q.get("real_total", quota.MONTHLY_REAL_HEARTS)
+        if FIELD_REAL_REMAIN not in unusable:
+            vals[FIELD_REAL_REMAIN] = q.get("real_left", 0)
+        _write(primary_by_oid[oid], vals, "主档")
+        # 同一 open_id 的副本档案强制归零，否则重复注册的人拿两份额度
+        zero = dict.fromkeys(vals, 0)
         for r in recs:
-            if r.get("record_id") != primary.get("record_id"):
-                _write(r, 0, 0, "副本")
+            if r.get("record_id") != primary_by_oid[oid].get("record_id"):
+                _write(r, zero, "副本")
 
     if fixed:
-        log(f"爱心对账完成，本次校正 {fixed} 条")
+        log(f"额度对账完成，本次校正 {fixed} 条")
 
 
 def reconcile_hearts_loop(interval=25):
-    log(f"爱心对账服务已启动，轮询间隔 {interval} 秒")
+    log(f"额度对账服务已启动，轮询间隔 {interval} 秒")
     while True:
         try:
             reconcile_hearts()
         except Exception as e:
-            log(f"爱心对账循环异常: {e}")
+            log(f"额度对账循环异常: {e}")
         time.sleep(interval)
 
 
@@ -1161,13 +1192,17 @@ def auto_notify_signup():
     liked_by_initiator = {}  # initiator_oid -> [(target_oid, status), ...]
     for like in search_records(LIKE_TABLE_ID, {
         "conjunction": "and",
-        "conditions": [{"field_name": FIELD_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}]
+        "conditions": [{"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": list(quota.LIKE_STATUS_ACTIVE)}]
     }):
         lf = like.get("fields", {})
         init_oid = get_field_text(lf, FIELD_LIKE_INITIATOR_OPENID)
         tgt_oid = get_field_text(lf, FIELD_LIKE_TARGET_OPENID)
         status = get_field_text(lf, FIELD_LIKE_STATUS)
         if not init_oid or not tgt_oid:
+            continue
+        # 上面只挡了状态，还要挡「匿名满 3 个月已作废」——否则会给一条早失效的
+        # 喜欢发活动通知，对方收到一条查无此人的「有人喜欢你」。
+        if not like_is_active(lf):
             continue
         likers_by_target.setdefault(tgt_oid, []).append((init_oid, status))
         liked_by_initiator.setdefault(init_oid, []).append((tgt_oid, status))
@@ -1318,134 +1353,147 @@ def auto_update_activity_signup_loop(interval=30):
 
 
 
-def calculate_match_score(user_a, user_b):
-    score = 0
-    reasons = []
-    def _hobby_set(val):
-        if isinstance(val, str):
-            return set(h.strip() for h in val.replace("，", ",").split(",") if h.strip())
-        if isinstance(val, list):
-            return set(str(v) for v in val if v)
-        return set()
-    hobbies_a = _hobby_set(user_a.get("hobbies"))
-    hobbies_b = _hobby_set(user_b.get("hobbies"))
-    if hobbies_a and hobbies_b:
-        common = hobbies_a & hobbies_b
-        total = hobbies_a | hobbies_b
-        hobby_score = int(len(common) / len(total) * 40) if total else 0
-        score += hobby_score
-        if common:
-            reasons.append(f"共同兴趣：{'、'.join(list(common)[:3])}")
-    else:
-        score += 10
-    # 年龄维度已移除（用户表已删「年龄」字段），不再参与匹配评分
-    edu_order = {"高中及以下": 1, "大专": 2, "本科": 3, "硕士": 4, "博士": 5}
-    edu_a = edu_order.get(user_a.get(FIELD_EDUCATION, ""), 0)
-    edu_b = edu_order.get(user_b.get(FIELD_EDUCATION, ""), 0)
-    if edu_a and edu_b:
-        edu_diff = abs(edu_a - edu_b)
-        if edu_diff == 0:
-            score += 20
-            reasons.append("学历相当")
-        elif edu_diff == 1:
-            score += 15
-        elif edu_diff == 2:
-            score += 8
-        else:
-            score += 3
-    else:
-        score += 8
-    score += 15
-    return min(score, 100), reasons
-
-
-
-
-def auto_generate_match_recommendations():
-    today = time.strftime("%Y-%m-%d")
-    match_log_file = os.path.join(SHARED_DATA_DIR, "yixianqian_match_log.json")
-    match_log = storage.load_json(match_log_file, {})
-    if match_log.get("last_generate_date") == today:
-        return
-    active_users = search_records(USER_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]}]
+def _profile_of(fields):
+    """用户表一行 → 打分用的资料 dict（键与 lib.recommend.match_score 对齐）。"""
+    return recommend.prepare_profile({
+        "hobbies": get_multi_select_value(fields, FIELD_SELF_HOBBIES),
+        "sports": get_multi_select_value(fields, FIELD_SELF_SPORTS),
+        "traits": get_multi_select_value(fields, FIELD_SELF_TRAITS),
+        "education": get_field_text(fields, FIELD_EDUCATION),
+        "mbti": get_multi_select_value(fields, FIELD_MBTI),
+        "city": get_field_text(fields, FIELD_CITY),
+        "church": get_field_text(fields, FIELD_CHURCH),
     })
-    if len(active_users) < 2:
+
+
+def _opposite_gender(gender):
+    """只有明确填了「男性」/「女性」的人才进候选池，性别不详的一律不推。"""
+    return {"男性": "女性", "女性": "男性"}.get(gender, "")
+
+
+def _single_users_by_openid():
+    """在册单身用户，按 open_id 归并后取主档。
+
+    必须归并：同一个人重复注册会有多条档案，不归并就会「自己推荐自己」
+    （同样的资料相似度 100 分，稳稳排在第一）。
+    """
+    records = search_records(USER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]}],
+    })
+    grouped = {}
+    for item in records:
+        oid = get_field_text(item.get("fields", {}), FIELD_FEISHU_ID)
+        if oid:
+            grouped.setdefault(oid, []).append(item)
+    return {oid: pick_primary_record(recs)[0] for oid, recs in grouped.items()}
+
+
+def _like_index():
+    """返回 (谁喜欢我, 我喜欢过谁)，键都是 open_id。
+
+    「谁喜欢我」只收**仍然有效**的匿名单向喜欢（3 个月到期的由 like_is_active
+    判定，失效的静默出局、不需要任何清理任务）。相互喜欢不算必显——那已经不是
+    秘密了，两个人早就收到通知在聊了。
+    """
+    to_me, by_me = {}, {}
+    for item in search_records(LIKE_TABLE_ID):
+        f = item.get("fields", {})
+        if not like_is_active(f):
+            continue
+        src = get_field_text(f, FIELD_LIKE_INITIATOR_OPENID)
+        dst = get_field_text(f, FIELD_LIKE_TARGET_OPENID)
+        if not src or not dst:
+            continue
+        by_me.setdefault(src, set()).add(dst)
+        if get_select_value(f, FIELD_LIKE_STATUS) != quota.LIKE_STATUS_SINGLE:
+            continue
+        if (get_field_text(f, FIELD_LIKE_TYPE) or quota.LIKE_TYPE_ANON) != quota.LIKE_TYPE_ANON:
+            continue
+        # 排序键：(归属月份, 落库时间)。同一个月的按落库先后排，最近的在前。
+        to_me.setdefault(dst, []).append(
+            ((like_month(f), get_datetime_value(f, FIELD_LIKE_CREATED_AT) or ""), src))
+    return to_me, by_me
+
+
+def generate_weekly_recommendations():
+    """生成牵线页「推荐位」名单（选人规则见 lib/recommend.py）。
+
+    每周换一批：保留 4 个、替换 3 个；必显（匿名喜欢你的人）永远在内、永远排最前。
+    名单只发到 RECOMMEND_FILE 给 H5 读，**一个字都不写多维表格**——原来的数字红娘
+    推荐表就是被这个循环灌爆的（只增不减，撞 RecordExceedLimit），而且 web 侧
+    从来没读过它，是纯死数据。
+
+    文件里的 `pinned` 就是「谁暗恋你」，只允许在服务端流转，绝不能原样发给浏览器。
+    """
+    started = time.time()
+    wk = recommend.week_key()
+    prev_doc = storage.load_json(RECOMMEND_FILE, {}) or {}
+    prev_users = prev_doc.get("users") or {}
+    # 不是同一周才轮到换人；同周只做「剔除失效 + 补空位」，不整批换。
+    new_week = prev_doc.get("week") != wk
+
+    primary = _single_users_by_openid()
+    profiles, genders = {}, {}
+    for oid, rec in primary.items():
+        f = rec.get("fields", {})
+        profiles[oid] = _profile_of(f)
+        genders[oid] = get_field_text(f, FIELD_GENDER)
+
+    no_gender = sum(1 for oid in profiles if not genders.get(oid))
+    if no_gender:
+        log(f"推荐位提示：{no_gender} 位单身用户没填性别，本次不进候选池")
+
+    to_me, by_me = _like_index()
+
+    users = {}
+    for oid, prof in profiles.items():
+        opposite = _opposite_gender(genders.get(oid))
+        if not opposite:
+            continue
+        # 必显：匿名喜欢我的异性单身用户，最近的在最前。数据有问题（自己推自己、
+        # 同一人重复记录）的在这里一并挡掉，宁可少一个也不能推出乱子。
+        pinned, seen = [], {oid}
+        for _key, src in sorted(to_me.get(oid, []), key=lambda x: x[0], reverse=True):
+            if src in seen or genders.get(src) != opposite:
+                continue
+            seen.add(src)
+            pinned.append(src)
+
+        mine = by_me.get(oid, set())
+        scored = sorted(
+            ((recommend.match_score(prof, profiles[c])[0], c) for c in profiles
+             if c not in seen and c not in mine and genders.get(c) == opposite),
+            # 同分按 open_id 定序。不这么办的话，sorted 的输出依赖字典顺序，
+            # 同一批人会无缘无故换位置，「保留 4 个」就没意义了。
+            key=lambda x: (-x[0], x[1]))
+
+        prev_algo = (prev_users.get(oid) or {}).get("algo") or []
+        algo = recommend.next_algo(prev_algo, [c for _s, c in scored], pinned, new_week)
+        lst = recommend.build_list(pinned, algo)
+        if not lst:
+            continue
+        _, pinned_slots, _ = recommend.build_slots(len(pinned))
+        users[oid] = {"list": lst, "algo": algo, "pinned": pinned[:pinned_slots]}
+
+    if users == prev_users and not new_week:
+        return  # 没变化就不写文件、不刷日志：这个循环 5 分钟跑一次，安静点
+    try:
+        storage.save_json(RECOMMEND_FILE, {
+            "week": wk, "updated": quota.stamp(), "users": users})
+    except Exception as e:
+        log(f"发布推荐位名单失败: {e}")
         return
-    users = []
-    for item in active_users:
-        fields = item.get("fields", {})
-        nickname = get_field_text(fields, FIELD_NICKNAME)
-        if not nickname:
-            continue
-        users.append({
-            "nickname": nickname, "record_id": item.get("record_id"),
-            "open_id": get_field_text(fields, FIELD_FEISHU_ID),
-            FIELD_GENDER: get_field_text(fields, FIELD_GENDER),
-            FIELD_EDUCATION: get_field_text(fields, FIELD_EDUCATION),
-            "hobbies": get_multi_select_value(fields, FIELD_SELF_HOBBIES)
-        })
-    existing_recommendations = search_records(MATCH_TABLE_ID)
-    existing_pairs = set()
-    for rec in existing_recommendations:
-        rec_fields = rec.get("fields", {})
-        for_openid = get_field_text(rec_fields, FIELD_MATCH_FOR_OPENID)
-        target_openid = get_field_text(rec_fields, FIELD_MATCH_TARGET_OPENID)
-        if for_openid and target_openid:
-            existing_pairs.add((for_openid, target_openid))
-        for_user = get_field_text(rec_fields, FIELD_MATCH_FOR_USER)
-        target_user = get_field_text(rec_fields, FIELD_MATCH_TARGET_USER)
-        if for_user and target_user:
-            existing_pairs.add((for_user, target_user))
-    generated_count = 0
-    for user in users:
-        candidates = [u for u in users
-                      if u[FIELD_GENDER] != user[FIELD_GENDER]
-                      and (u["open_id"] or u["nickname"]) != (user["open_id"] or user["nickname"])]
-        if not candidates:
-            continue
-        scored_candidates = []
-        for candidate in candidates:
-            if (user["open_id"], candidate["open_id"]) in existing_pairs:
-                continue
-            if (user["nickname"], candidate["nickname"]) in existing_pairs:
-                continue
-            score, reasons = calculate_match_score(user, candidate)
-            scored_candidates.append((score, candidate, reasons))
-        scored_candidates.sort(key=lambda x: x[0], reverse=True)
-        for score, candidate, reasons in scored_candidates[:3]:
-            reason_text = f"匹配度{score}分"
-            if reasons:
-                reason_text += "，" + "；".join(reasons)
-            create_record(MATCH_TABLE_ID, {
-                FIELD_MATCH_FOR_USER: user["nickname"],
-                FIELD_MATCH_TARGET_USER: candidate["nickname"],
-                FIELD_MATCH_FOR_OPENID: user["open_id"],
-                FIELD_MATCH_TARGET_OPENID: candidate["open_id"],
-                FIELD_MATCH_REASON: reason_text,
-                FIELD_MATCH_STATUS: "待查看"
-            })
-            generated_count += 1
-            log(f"数字红娘推荐: {user['nickname']} -> {candidate['nickname']} ({score}分)")
-    match_log["last_generate_date"] = today
-    match_log["last_generate_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    match_log["generated_count"] = generated_count
-    storage.save_json(match_log_file, match_log)
-    if generated_count > 0:
-        log(f"数字红娘推荐生成完成，本次生成 {generated_count} 条")
+    log(f"推荐位{'轮换' if new_week else '刷新'}完成：{len(users)} 人，"
+        f"必显 {sum(len(u['pinned']) for u in users.values())} 个，"
+        f"耗时 {time.time() - started:.1f} 秒")
 
 
-
-
-def auto_generate_match_loop(interval=3600):
-    log(f"数字红娘推荐服务已启动，检查间隔 {interval} 秒")
+def weekly_recommend_loop(interval=300):
+    log(f"推荐位服务已启动，检查间隔 {interval} 秒")
     while True:
         try:
-            auto_generate_match_recommendations()
+            generate_weekly_recommendations()
         except Exception as e:
-            log(f"数字红娘推荐循环异常: {e}")
+            log(f"推荐位生成循环异常: {e}")
         time.sleep(interval)
-
-
-

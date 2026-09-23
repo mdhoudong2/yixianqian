@@ -1,7 +1,16 @@
 """bot 进程内的共享客户端单例与 API 别名（飞书消息 + 多维表格 + 字段解析）。"""
-from constants import APP_ID, APP_SECRET, BASE_TOKEN
+from constants import (
+    APP_ID,
+    APP_SECRET,
+    BASE_TOKEN,
+    FIELD_LIKE_CREATED_AT,
+    FIELD_LIKE_MONTH,
+    FIELD_LIKE_STATUS,
+    FIELD_LIKE_TYPE,
+)
 from store import load_p2p_chats
 
+from lib import quota
 from lib.bitable_client import (  # noqa: F401 — re-export 供各模块 from clients import * 使用
     BitableClient,
     get_attachment_tokens,
@@ -32,6 +41,32 @@ delete_record = bitable.delete_record
 batch_create_records = bitable.batch_create_records
 batch_delete_records = bitable.batch_delete_records
 field_exists = bitable.field_exists
+field_is_number = bitable.field_is_number
+
+
+def like_month(fields):
+    """喜欢的归属月份：优先显式字段（受理时刻钉死），回退创建时间的 %Y-%m。
+
+    绝不能只用创建时间——那记的是 spool 落库那一刻，可能比用户点击晚几秒到
+    几分钟，23:59 点的喜欢会算进下个月、白耗上个月的额度。
+    """
+    m = get_field_text(fields, FIELD_LIKE_MONTH)
+    if m:
+        return m
+    created = get_datetime_value(fields, FIELD_LIKE_CREATED_AT)
+    return created[:7] if created else ""
+
+
+def like_is_active(fields):
+    """这条喜欢现在还算数吗？口径唯一来源 lib.quota.is_like_active。
+
+    全站读喜欢状态的地方都该走这里，不要各写各的 `!= "被驳回"`：
+    否定式会把「以后新增的任何状态」都当成有效，静默多算额度、多算配对。
+    """
+    return quota.is_like_active(
+        get_select_value(fields, FIELD_LIKE_STATUS),
+        get_field_text(fields, FIELD_LIKE_TYPE) or quota.LIKE_TYPE_ANON,
+        like_month(fields))
 
 
 def is_test_fake_openid(open_id):

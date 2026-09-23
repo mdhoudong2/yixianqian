@@ -15,6 +15,8 @@ from store import (
     unreserve_notified,
 )
 
+from lib.quota import MONTHLY_REAL_HEARTS
+
 
 def handle_register_command(sender_id):
     """发送注册表单链接"""
@@ -45,17 +47,19 @@ def handle_invite_command(sender_id):
     user_id = user_fields.get("用户ID", "")
     if not user_id:
         return "系统未找到你的用户ID，请联系管理员。"
-    hearts = get_field_number(user_fields, FIELD_HEART_REMAIN, INITIAL_HEARTS)
-
-    # 统计已邀请人数
+    # 永久实名名额以用户表字段为准（对账写入）；字段还没建时退回用通知账本计数
+    permanent = get_field_number(user_fields, FIELD_INVITE_QUOTA, None)
     rewarded = load_invite_rewarded()
     invite_count = sum(1 for v in rewarded.values() if v == sender_id)
+    if permanent is None:
+        permanent = invite_count
 
     # 第一条：规则说明 + 操作提示
     tip = (
         f"💕 邀请好友注册，双方都受益！\n\n"
-        f"每成功邀请1位好友注册并审核通过，你将获得 1颗爱心（上限{MAX_HEARTS}颗）。\n"
-        f"你当前有 {int(hearts)} 颗爱心，已成功邀请 {invite_count} 人。\n\n"
+        f"每成功邀请 1 位好友注册并审核通过，你的「实名喜欢」名额永久 +1，没有上限。\n"
+        f"你当前有 {int(permanent)} 个永久实名名额（含邀请所得与管理员加赠），"
+        f"已成功邀请 {invite_count} 人。\n\n"
         f"👇 长按下面这条消息 → 复制，直接发给好友即可："
     )
     # 第二条：整条就是可转发话术，自包含、无需选取
@@ -93,13 +97,15 @@ def handle_status_command(sender_id):
     user_fields = user_records[0].get("fields", {})
     nickname = get_field_text(user_fields, FIELD_NICKNAME)
     status = get_field_text(user_fields, FIELD_ACCOUNT_STATUS)
-    hearts = get_field_number(user_fields, FIELD_HEART_REMAIN, INITIAL_HEARTS)
+    anon_left = get_field_number(user_fields, FIELD_HEART_REMAIN, 0)
+    real_left = get_field_number(user_fields, FIELD_REAL_REMAIN, MONTHLY_REAL_HEARTS)
 
     lines = [
         "你的账号状态：\n",
         f"昵称：{nickname}",
         f"状态：{status}",
-        f"爱心剩余：{int(hearts)}",
+        f"匿名喜欢剩余：{int(anon_left)} 颗（每月 10 颗，月初补满）",
+        f"实名喜欢剩余：{int(real_left)} 次",
         ""
     ]
     if status == "待审核":

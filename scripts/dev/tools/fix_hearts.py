@@ -7,13 +7,15 @@ sys.path.insert(0, os.path.dirname(_D))
 from _prod_guard import guard
 guard(os.path.basename(__file__))
 # -*- coding: utf-8 -*-
-"""爱心数据诊断（只读，不修改任何数据）
+"""额度字段诊断（只读，不修改任何数据）
 
 用法:
-  python3 fix_hearts.py     # 只统计「爱心剩余」分布与字段状态
+  python3 fix_hearts.py     # 统计「爱心剩余」分布与账号状态分布
 
-注意：经排查，「爱心剩余」字段数据是正确的（30=上限/老用户，3=初始，
-2/1=喜欢扣减后的正常值），不存在需要批量修正的基数错误。
+v7 起「爱心剩余」= 本月剩余匿名额度，取值范围 0..10（= lib.quota.MONTHLY_ANON_HEARTS），
+每月月初由机器人 reconcile_hearts 补满、不累积。**看到大于 10 的值就说明
+对账没跑或跑的还是旧代码**——旧模型是初始 3 颗、上限 30。
+
 本脚本仅作只读诊断，不提供任何写操作。
 """
 import sys
@@ -31,7 +33,8 @@ BASE_URL = "https://open.feishu.cn/open-apis"
 USER_TABLE_ID = "tblsecbZZv0thaPe"
 FIELD_HEART = "爱心剩余"
 FIELD_STATUS = "账号状态"
-MAX_HEARTS = 30
+# 本月匿名额度上限（lib.quota.MONTHLY_ANON_HEARTS）。超出即为旧模型的残留。
+ANON_MAX = 10
 
 _token = {"token": None, "expire": 0}
 
@@ -106,9 +109,13 @@ def main():
         dist[h] = dist.get(h, 0) + 1
         status_dist[str(status)] = status_dist.get(str(status), 0) + 1
 
-    print("爱心分布：")
+    print("本月匿名额度（爱心剩余）分布：")
     for k in sorted(dist, key=lambda x: (x is None, x or 0)):
-        print(f"  爱心={k}: {dist[k]} 人")
+        print(f"  {k}: {dist[k]} 人")
+    over = sum(v for k, v in dist.items() if k is not None and k > ANON_MAX)
+    if over:
+        print(f"\n⚠️  {over} 人的额度超过本月上限 {ANON_MAX}——"
+              f"说明机器人对账没跑，或跑的仍是旧版（初始 3 颗、上限 30）。")
     print("\n账号状态分布：")
     for k, v in sorted(status_dist.items()):
         print(f"  {k}: {v} 人")

@@ -85,24 +85,8 @@ def update_p2p_chat(open_id, chat_id):
     storage.update_json(P2P_CHAT_FILE, {}, _m)
 
 
-def load_heart_bonus():
-    """加载管理员手动加赠的爱心数 {open_id: bonus_count}，对账时叠加到初始+邀请之上"""
-    return storage.load_json(HEART_BONUS_FILE, {})
-
-
-def add_heart_bonus(open_id, delta):
-    """给某 open_id 累加 delta 颗手动加赠（可为负），加锁原子写，返回加赠后的总数"""
-    result = [0]
-
-    def _m(data):
-        cur = int(data.get(open_id, 0))
-        cur = max(0, cur + int(delta))
-        data[open_id] = cur
-        result[0] = cur
-        return data
-
-    storage.update_json(HEART_BONUS_FILE, {}, _m)
-    return result[0]
+# load_heart_bonus / add_heart_bonus 已删除：管理员加赠不再走这个独立账本，
+# 而是直接填用户表的「管理员加赠」字段，由 reconcile_hearts 读取叠加。
 
 
 def add_notification(recipient, ntype, text, key=None, extra=None):

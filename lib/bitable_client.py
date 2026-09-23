@@ -248,26 +248,43 @@ class BitableClient:
                 self.log(f"批量删除记录异常(table={table_id},批{i // batch_size + 1}): {e}")
         return deleted
 
-    def field_exists(self, table_id, field_name):
-        """判断表里是否存在某字段（带缓存）。schema 变更前的防御。"""
+    def field_type(self, table_id, field_name):
+        """字段类型码（带缓存）；字段不存在返回 None；探测失败返回 -1（不确定）。
+
+        为什么要看类型而不只是「在不在」：飞书写入是**整笔**的，一个字段类型
+        不符（比如该是「数字」却建成了「文本」）会让整个 PUT 被拒（TextFieldConvFail），
+        一起提交的正常字段也跟着写不进去。2026-09 的额度对账就踩过这个坑。
+        """
         now = time.time()
         key = (table_id, field_name)
         cached = self._field_cache.get(key)
         if cached and cached[1] > now:
             return cached[0]
-        exists = True  # 查询失败时假定存在，避免误伤正常写入
+        ftype = -1  # 查询失败：不确定。按「可用」处理，避免一次抖动就长期不写
         url = f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}/fields"
         try:
-            resp = _http.get(url, headers=self._headers(), params={"page_size": 100},
+            resp = _http.get(url, headers=self._headers(), params={"page_size": 200},
                                 timeout=self.timeout)
             result = resp.json()
             if result.get("code") == 0:
                 items = result.get("data", {}).get("items", [])
-                exists = any(f.get("field_name") == field_name for f in items)
+                ftype = next((f.get("type") for f in items
+                              if f.get("field_name") == field_name), None)
         except Exception:
             pass
-        self._field_cache[key] = (exists, now + 300)
-        return exists
+        self._field_cache[key] = (ftype, now + 300)
+        return ftype
+
+    def field_exists(self, table_id, field_name):
+        """判断表里是否存在某字段（带缓存）。schema 变更前的防御。"""
+        return self.field_type(table_id, field_name) is not None
+
+    def field_is_number(self, table_id, field_name):
+        """字段存在、且确实是「数字」类型（type=2）吗？探测失败时返回 True。
+
+        给「按数字写入、类型填错会连累整笔 PUT」的调用方用。
+        """
+        return self.field_type(table_id, field_name) in (2, -1)
 
     def upload_attachment(self, file_bytes, file_name, content_type="application/octet-stream"):
         """上传附件到多维表格，返回 file_token（附件字段写入 [{"file_token": token}]）。"""

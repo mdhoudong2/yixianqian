@@ -12,6 +12,7 @@ if _REPO_ROOT not in sys.path:
 
 from config import *
 
+from lib import quota
 from lib.bitable_client import (  # noqa: F401 — re-export for app.py via bitable.*
     BitableClient,
     get_attachment_tokens,
@@ -105,14 +106,42 @@ def get_user_signup(activity_id, open_id):
 
 # ========== 喜欢相关 ==========
 
+def like_month(fields):
+    """喜欢的归属月份：优先显式字段（受理时刻钉死），回退创建时间的 %Y-%m。
+
+    与 bot/auto_tasks.py 的 _like_month 同口径。绝不能只用创建时间——那记的是
+    spool 落库那一刻，23:59 点的喜欢会算进下个月、白耗上个月的额度。
+    """
+    m = get_field_text(fields, F_LIKE_MONTH)
+    if m:
+        return m
+    created = get_datetime_value(fields, F_LIKE_CREATED_AT)
+    return created[:7] if created else ""
+
+
+def like_is_active(fields):
+    """这条喜欢现在还算数吗？口径唯一来源 lib.quota.is_like_active。
+
+    全站读喜欢状态的地方都该走这里，不要各写各的 `!= "被驳回"`：
+    否定式会把「以后新增的任何状态」都当成有效，静默多算额度、多算配对。
+    """
+    return quota.is_like_active(
+        get_select_value(fields, F_LIKE_STATUS),
+        get_field_text(fields, F_LIKE_TYPE) or quota.LIKE_TYPE_ANON,
+        like_month(fields))
+
+
 def find_like(initiator_openid, target_openid):
-    """查找喜欢记录（仅活跃状态：单向/相互；忽略已取消）"""
+    """查找仍然有效的喜欢记录（单向/相互，且匿名未满 3 个月）"""
     items = search_records(LIKE_TABLE_ID, [
         {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [initiator_openid]},
         {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]},
-        {"field_name": F_LIKE_STATUS, "operator": "isNot", "value": ["已取消"]}
+        {"field_name": F_LIKE_STATUS, "operator": "is", "value": list(LIKE_STATUS_ACTIVE)},
     ])
-    return items[0] if items else None
+    for it in items:
+        if like_is_active(it.get("fields", {})):
+            return it
+    return None
 
 
 # ========== 分组相关 ==========

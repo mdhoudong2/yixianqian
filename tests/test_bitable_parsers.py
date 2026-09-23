@@ -71,3 +71,38 @@ def test_get_phone_value_forms():
     assert bc.get_phone_value({"电话": "13900000000"}, "电话") == "13900000000"
     assert bc.get_phone_value({"电话": {"number": "13700000000"}}, "电话") == "13700000000"
     assert bc.get_phone_value({}, "电话", "无") == "无"
+
+
+# ==================== 字段类型探测 ====================
+# 这两条锁住的是「探测失败时怎么办」：飞书写入是整笔的，一个字段类型不符会让
+# 同一次 PUT 里的正常字段一起写不进去，所以这里既不能漏判也不能误判。
+
+class _TypeStub:
+    """只把 field_type 换掉，测 field_exists / field_is_number 的判定逻辑。"""
+
+    field_exists = bc.BitableClient.field_exists
+    field_is_number = bc.BitableClient.field_is_number
+
+    def __init__(self, ftype):
+        self._ftype = ftype
+
+    def field_type(self, table_id, field_name):
+        return self._ftype
+
+
+def test_field_exists_needs_a_real_type():
+    assert _TypeStub(2).field_exists("t", "f") is True
+    assert _TypeStub(1).field_exists("t", "f") is True
+    assert _TypeStub(None).field_exists("t", "f") is False
+
+
+def test_field_is_number_accepts_only_number():
+    """数字字段放行；文本字段挡住（就是它让整笔 PUT 挂掉的）。"""
+    assert _TypeStub(2).field_is_number("t", "f") is True
+    assert _TypeStub(1).field_is_number("t", "f") is False
+    assert _TypeStub(None).field_is_number("t", "f") is False
+
+
+def test_field_is_number_is_optimistic_when_probe_fails():
+    """探测失败返回 -1（不确定）时按可用处理：一次网络抖动不该让我们长期不写。"""
+    assert _TypeStub(-1).field_is_number("t", "f") is True

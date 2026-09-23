@@ -455,7 +455,7 @@
   <template v-else>
     <div class="card-top-left">
       <div class="card-counter">{{ cards.length ? (cardsStart + cardIndex + 1) + ' / ' + (cardsTotal || cards.length) : '0 / 0' }}</div>
-      <div class="hearts-badge" v-if="!isObserver">💕 {{ user.hearts }}</div>
+      <div class="hearts-badge" v-if="!isObserver">💕 匿名 {{ user.anon_left }} · 实名 {{ user.real_left }}</div>
     </div>
     <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
     <van-empty v-if="!cards.length" :description="hasActiveFilter ? '没有符合筛选条件的人，试试调整筛选' : '暂时没有可推荐的人了～'"></van-empty>
@@ -477,6 +477,7 @@
           <div class="card-overlay-box">
             <div class="card-overlay-text">
               <div v-if="currentCard.is_self" style="margin-bottom:6px;"><span style="background:#ff6b81;color:#fff;font-size:11px;padding:3px 9px;border-radius:999px;">这是你 · 他人视角</span></div>
+              <div v-else-if="currentCard.recommended" style="margin-bottom:6px;"><span style="background:#ffb020;color:#fff;font-size:11px;padding:3px 9px;border-radius:999px;">推荐</span></div>
               <div class="card-name">{{ currentCard.nickname }}
                 <span class="gender-icon">{{ currentCard.gender==='男性' ? '♂' : '♀' }}</span>
               </div>
@@ -713,13 +714,19 @@
   <div style="padding:12px 12px 0;" v-if="!isObserver">
     <div class="profile-card">
       <div class="profile-card-row">
-        <span class="row-label">💕 爱心</span>
-        <span class="hearts-total">共 {{ user.hearts_total || 3 }} 颗</span>
-        <span class="hearts-left">剩 {{ user.hearts }} 颗</span>
+        <span class="row-label">💕 匿名喜欢</span>
+        <span class="hearts-total">共 {{ user.anon_total || 10 }} 颗</span>
+        <span class="hearts-left">剩 {{ user.anon_left }} 颗</span>
+      </div>
+      <div class="profile-card-divider"></div>
+      <div class="profile-card-row">
+        <span class="row-label">💌 实名喜欢</span>
+        <span class="hearts-total">共 {{ user.real_total || 1 }} 次</span>
+        <span class="hearts-left">剩 {{ user.real_left }} 次</span>
       </div>
       <div class="profile-card-divider"></div>
       <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
-        <span class="row-label">🎁 邀请好友得爱心</span>
+        <span class="row-label">🎁 邀请好友得实名名额</span>
         <van-icon name="arrow" color="#c8c9cc" />
       </div>
     </div>
@@ -920,7 +927,6 @@
           <div class="like-item-meta">{{ l.age ? l.age+'岁' : '' }} {{ l.church ? '· '+l.church : '' }}</div>
           <div class="like-item-msg" v-if="l.mutual && l.message">附言：{{ l.message }}</div>
         </div>
-        <van-button v-if="!l.mutual && l.like_type !== '实名'" size="mini" plain type="danger" @click="cancelLike(l)">取消喜欢</van-button>
       </div>
     </div>
   </div>
@@ -1337,14 +1343,22 @@
   :before-close="onLikeDialogBeforeClose">
   <div class="like-dialog-body">
     <div class="like-notes">
-      <div class="like-note-highlight" v-if="likeType==='匿名'">对方会收到一条「匿名喜欢」通知</div>
-      <div class="like-note-highlight" v-else>对方会收到一条实名通知，会知道你喜欢TA。每月只有一次实名喜欢的机会哦！</div>
+      <div class="like-note-highlight" v-if="likeType==='匿名'">
+        对方会收到一条「匿名喜欢」通知。匿名喜欢 3 个月后自动失效，名额届时返还。
+      </div>
+      <div class="like-note-highlight" v-else>
+        对方会收到通知，并知道是你喜欢TA，<b>发出后不可撤回</b>。
+      </div>
       <div>· 如果对方也喜欢你，就会自动获得对方的联系方式</div>
       <div>· 如果一方报名了某个活动，会相互收到通知</div>
     </div>
     <van-radio-group v-model="likeType" direction="horizontal" style="padding: 0 0 8px;">
-      <van-radio name="匿名">匿名喜欢</van-radio>
-      <van-radio name="实名">实名喜欢</van-radio>
+      <van-radio name="匿名" :disabled="(user.anon_left || 0) <= 0">
+        匿名喜欢（剩 {{ user.anon_left || 0 }} 颗）
+      </van-radio>
+      <van-radio name="实名" :disabled="(user.real_left || 0) <= 0">
+        实名喜欢（剩 {{ user.real_left || 0 }} 次）
+      </van-radio>
     </van-radio-group>
     <van-field v-model="likeMessage" type="textarea" rows="3" autosize
       placeholder="为什么关注TA？（必填，须10字以上。单向喜欢不发送，相互喜欢后会发给TA。）" class="like-textarea"></van-field>
@@ -1394,11 +1408,12 @@
       placeholder="请写下你的建议或遇到的问题（必填）" class="like-textarea" />
   </div>
 </van-dialog>
-<!-- 邀请好友得爱心弹窗 -->
-<van-dialog v-model:show="showInviteDialog" title="邀请好友得爱心" :show-confirm-button="false" close-on-click-overlay>
+<!-- 邀请好友得实名名额弹窗 -->
+<van-dialog v-model:show="showInviteDialog" title="邀请好友得实名名额" :show-confirm-button="false" close-on-click-overlay>
   <div class="invite-dialog-body">
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
-    <p>邀请好友成功，你即可获得 <b>1 颗</b> 爱心（上限 30 颗）。</p>
+    <p>邀请好友成功并审核通过，你的<b>实名喜欢名额永久 +1</b>，没有上限。</p>
+    <p style="color:#969799; font-size:13px;">你当前永久名额：{{ user.real_permanent || 0 }} 个</p>
     <p>将下面文字发送给「被邀请人」：</p>
     <div class="invite-link-box">{{ inviteShareText }}</div>
     <div class="invite-btn-row">
@@ -2205,7 +2220,8 @@ createApp({
       try {
         const data = await api('/api/auth/feishu?code=' + code);
         user.value = data.user;
-        user.value.hearts = data.user.hearts || 0;
+        user.value.anon_left = data.user.anon_left || 0;
+        user.value.real_left = data.user.real_left || 0;
         window.history.replaceState({}, '', window.location.pathname);
         await loadHome();
         restoreDeck();
@@ -3117,14 +3133,17 @@ createApp({
         vant.showToast('你已经喜欢过TA了');
         return;
       }
-      if ((user.value.hearts || 0) <= 0) {
-        vant.showToast('爱心已用完，邀请好友可得爱心');
+      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加邀请得来的永久名额）。
+      // 只有两池都空才拦——只看匿名会把有实名名额的用户挡在门外。
+      if ((user.value.anon_left || 0) <= 0 && (user.value.real_left || 0) <= 0) {
+        vant.showToast('本月喜欢额度已用完，邀请好友可得实名名额');
         showInviteDialog.value = true;
         return;
       }
       likeTarget.value = { openid: currentCard.value.openid, nickname: currentCard.value.nickname };
       likeMessage.value = '';
-      likeType.value = '匿名';
+      // 匿名额度用完就直接落在实名上，免得用户点了个禁用的单选框、卡在发送按钮
+      likeType.value = (user.value.anon_left || 0) > 0 ? '匿名' : '实名';
       likeDialogTitle.value = '送给「' + currentCard.value.nickname + '」一颗爱心';
       showLikeDialog.value = true;
     }
@@ -3146,14 +3165,17 @@ createApp({
         vant.showToast('你已经喜欢过TA了');
         return;
       }
-      if ((user.value.hearts || 0) <= 0) {
-        vant.showToast('爱心已用完，邀请好友可得爱心');
+      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加邀请得来的永久名额）。
+      // 只有两池都空才拦——只看匿名会把有实名名额的用户挡在门外。
+      if ((user.value.anon_left || 0) <= 0 && (user.value.real_left || 0) <= 0) {
+        vant.showToast('本月喜欢额度已用完，邀请好友可得实名名额');
         showInviteDialog.value = true;
         return;
       }
       likeTarget.value = { openid: u.openid, nickname: u.nickname };
       likeMessage.value = '';
-      likeType.value = '匿名';
+      // 匿名额度用完就直接落在实名上，免得用户点了个禁用的单选框、卡在发送按钮
+      likeType.value = (user.value.anon_left || 0) > 0 ? '匿名' : '实名';
       likeDialogTitle.value = '送给「' + u.nickname + '」一颗爱心';
       showLikeDialog.value = true;
     }
@@ -3167,6 +3189,21 @@ createApp({
         if ([...msg].length < 10) {
           vant.showToast('附言需10字以上');
           return false;
+        }
+        // 实名喜欢二次确认：发出去就收不回来了，必须让用户明确知道这一点。
+        // 匿名不需要——它 3 个月后自动失效，代价是可逆的。
+        if (likeType.value === '实名') {
+          try {
+            await vant.showConfirmDialog({
+              title: '确认使用实名喜欢？',
+              message: 'TA 会收到通知，并且知道是你喜欢TA。\n\n实名喜欢发出后不可撤回，本月名额不会返还。',
+              confirmButtonText: '确认发送',
+              cancelButtonText: '再想想',
+              confirmButtonColor: '#ff6b81'
+            });
+          } catch (e) {
+            return false;  // 用户点了「再想想」，不关弹窗、不发送
+          }
         }
         await doLike();
       }
@@ -3195,10 +3232,18 @@ createApp({
           userDetail.value.liked = true;
           userDetail.value.can_like = false;
         }
-        // 优先用后端返回的权威爱心数（含预留/信用口径），无则本地乐观-1
+        // 后端返回的是权威额度（已含在途意图）。回退分支按两池分开乐观扣。
         if (user.value) {
-          if (typeof data.hearts === 'number') user.value.hearts = data.hearts;
-          else user.value.hearts = Math.max(0, (user.value.hearts || 1) - 1);
+          if (typeof data.anon_left === 'number') {
+            user.value.anon_left = data.anon_left;
+            user.value.real_left = data.real_left;
+            user.value.real_total = data.real_total;
+            user.value.real_permanent = data.real_permanent;
+          } else if (likeType.value === '实名') {
+            user.value.real_left = Math.max(0, (user.value.real_left || 1) - 1);
+          } else {
+            user.value.anon_left = Math.max(0, (user.value.anon_left || 1) - 1);
+          }
         }
         // 乐观更新消息页计数与列表，配合后端在途意图，避免 60s 快照滞后
         myLikesCount.value = (myLikesCount.value || 0) + 1;
@@ -3388,13 +3433,15 @@ createApp({
     }
 
     // 消息
-    // 静默对账：机器人延迟扣/退爱心，切页时轻量刷新本人余额（不阻塞界面）
+    // 静默对账：额度由机器人每 25 秒重算，切页时轻量刷新（不阻塞界面）
     async function syncMe() {
       if (!user.value) return;
       try {
         const me = await api('/api/user/me');
-        if (me && typeof me.hearts === 'number') user.value.hearts = me.hearts;
-        if (me && typeof me.hearts_total === 'number') user.value.hearts_total = me.hearts_total;
+        if (!me) return;
+        for (const k of ['anon_left', 'anon_total', 'real_left', 'real_total', 'real_permanent']) {
+          if (typeof me[k] === 'number') user.value[k] = me[k];
+        }
       } catch (e) {}
     }
     async function loadLikes() {
@@ -3455,48 +3502,8 @@ createApp({
       loadLikes();
       page.value = 'liked_me';
     }
-    async function cancelLike(l) {
-      const limit = (user.value && user.value.cancel_limit) || 3;
-      let rem = (user.value && typeof user.value.cancel_remaining === 'number') ? user.value.cancel_remaining : limit;
-      if (rem <= 0) {
-        vant.showToast('本月取消喜欢已达 ' + limit + ' 次上限，下月1日重置');
-        return;
-      }
-      try {
-        await vant.showConfirmDialog({
-          title: '取消喜欢',
-          message: '确定取消喜欢 ' + l.nickname + ' 吗？爱心将在稍后退回。（本月还可取消 ' + rem + ' 次，每月限 ' + limit + ' 次）',
-          confirmButtonColor: '#ee0a24'
-        });
-      } catch(e) { return; }
-      // optimistic: immediate UI effect without waiting
-      const backupList = [...myLikesList.value];
-      const backupCount = myLikesCount.value;
-      const backupHearts = user.value ? user.value.hearts : null;
-      const deckCard = cards.value.find(c => c.openid === l.openid);
-      const backupLiked = deckCard ? deckCard.liked : null;
-      const backupJustLiked = justLiked.has(l.openid);
-      myLikesList.value = myLikesList.value.filter(x => x.openid !== l.openid);
-      myLikesCount.value = myLikesList.value.length;
-      if (user.value) user.value.hearts = Math.min(30, (user.value.hearts || 0) + 1);
-      if (deckCard) deckCard.liked = false;
-      justLiked.delete(l.openid);
-      try {
-        const data = await api('/api/like/' + l.openid, { method: 'DELETE' });
-        if (user.value && typeof data.cancel_remaining === 'number') user.value.cancel_remaining = data.cancel_remaining;
-        const left = typeof data.cancel_remaining === 'number' ? data.cancel_remaining : (rem - 1);
-        vant.showToast('已取消，本月还可取消 ' + left + ' 次');
-        if (user.value && typeof data.hearts === 'number') user.value.hearts = data.hearts;
-      } catch(e) {
-        // rollback on failure
-        myLikesList.value = backupList;
-        myLikesCount.value = backupCount;
-        if (user.value && backupHearts !== null) user.value.hearts = backupHearts;
-        if (deckCard && backupLiked !== null) deckCard.liked = backupLiked;
-        if (backupJustLiked) justLiked.add(l.openid);
-        vant.showToast(e.message || '取消失败');
-      }
-    }
+    // 取消喜欢已下线：喜欢的有效期是制度性的（匿名 3 个月自动失效、实名永久），
+    // 不由用户手动撤销。相关入口和接口都已删除，这里不再保留空壳函数。
 
     // 我的活动
     async function openMyActivities() {
@@ -4223,7 +4230,7 @@ createApp({
       reportedMessages, loadingReported, reportedCount, openReportedMessages, loadReportedMessages, handleReported,
       showSuggestionDialog, suggestionType, suggestionText, openSuggestionDialog, onSuggestionBeforeClose,
       likesData, loadingLikes, loadMyLikesCount, notifications,
-      myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe, cancelLike,
+      myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe,
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
       profileData, openProfileDetail,

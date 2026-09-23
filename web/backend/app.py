@@ -418,9 +418,64 @@ def _intent_prune():
         if now - _intent_likes[k]["ts"] > 120:
             _intent_likes.pop(k, None)
 
-def _intent_complete(temp_key):
-    """worker 落库成功后消费该意图，避免与快照计数双算"""
-    _intent_likes.pop(temp_key, None)
+def _like_triples_for(open_id, likes_snap):
+    """本人发起的所有喜欢 → (状态, 喜欢类型, 归属月份) 三元组列表。
+
+    额度门禁一律拿这个结果喂 lib.quota.anon_left / real_left，**不要在这里
+    再写一遍「本月已用几条」**。H5 自己算一遍口径就是第二份真相，满 3 个月
+    退额、跨月这些边界迟早跟机器人对不上——而机器人是唯一权威。
+
+    **故意不过滤有效性**，全部原样交出去：机器人对账（auto_tasks.reconcile_hearts）
+    也是这么喂的，过滤是 lib.quota 的活。这里自作聪明加一道 is_like_active，
+    恰好会把「满 3 个月、正要退一颗」的那条滤掉——而 anon_left 退额正是靠它，
+    用户的额度就凭空少一颗且不报错。有效性判断只允许有一处。
+
+    数据源是「快照 ∪ 在途意图」，按 (目标, 归属月份) 去重：
+
+    - 只信快照不行：likes 快照 20 秒才刷一轮，用户 1 秒内连点两次时，
+      第二次请求看到的比真实值少 1——那一条已受理、已落库，只是快照没刷新，
+      额度就被双击超发。
+    - 只信在途意图也不行：意图 60 秒后就不算了，而机器人对账可能还没轮到这人。
+    - 所以两者相加也不行：快照迟早会看见同一条记录，相加会算两次，
+      反而提前一两点把用户挡在门外。去重才是既不多算也不少算的那个。
+
+    按 (目标, 月份) 而不是只按目标去重：同一个人上个月喜欢过、这个月又重新
+    喜欢，是两条独立的记录——只按目标去重会把上个月那条吞掉，到期该退的额度
+    就退不出来了。
+    """
+    _intent_prune()
+    seen = {}
+
+    def _add(key, triple):
+        """同一 (目标, 月份) 只留一条。撞车时让「有效」的那条胜出。
+
+        撞车有两种真实来路：被驳回之后又重新喜欢成功了；意图里还是单向、
+        表里已经因为对方回喜欢变成了相互。都是同一条喜欢的两个版本。
+        留错了要么多算一颗额度、要么少算一条记录，两个方向都会让用户看到
+        一个解释不通的数字。
+        """
+        prev = seen.get(key)
+        if (prev is not None and prev[0] in quota.LIKE_STATUS_ACTIVE
+                and triple[0] not in quota.LIKE_STATUS_ACTIVE):
+            return
+        seen[key] = triple
+
+    for l in likes_snap:
+        lf = l.get("fields", {})
+        if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
+            continue
+        month = _like_month(lf)
+        _add((bitable.get_field_text(lf, F_LIKE_TARGET_OPENID), month),
+             (bitable.get_select_value(lf, F_LIKE_STATUS),
+              bitable.get_field_text(lf, F_LIKE_TYPE) or LIKE_TYPE_ANON,
+              month))
+    for it in _intent_likes.values():
+        if it.get("oid") != open_id:
+            continue
+        month = it.get("month") or ""
+        _add((it.get("target"), month),
+             (quota.LIKE_STATUS_SINGLE, it.get("type") or LIKE_TYPE_ANON, month))
+    return list(seen.values())
 
 # ==================== 月度额度（v7） ====================
 # 机器人是唯一权威：reconcile_hearts 每 25 秒全量重算并发布 _QUOTA_FILE。
@@ -3433,44 +3488,24 @@ def like_user():
         return jsonify({"error": "你已经喜欢过TA了"}), 400
 
     # 额度充足性：两池分开判。实名不占匿名那 10 颗，所以不能只看一个数。
+    #
+    # 两道防线都必须有，而且**第二道必须独立于机器人**：机器人是权威，但它的
+    # quota.json 一轮全量重算可能滞后很久（首轮几十分钟），停在旧值时上面那道
+    # 就等于没拦。第二道直接从表里的喜欢记录重算，口径交给 lib.quota。
     q = quota_view(open_id)
+    this_month = quota.month_key()
+    triples = _like_triples_for(open_id, likes_snap)
     if like_type == LIKE_TYPE_REAL:
         if q["real_left"] <= 0:
             return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
-        # 第二道防线：机器人挂掉时 quota.json 会一直停在旧值，上面那道就失效了。
-        # 用与机器人同一套口径再查一遍快照（归属月份优先，回退创建时间）。
-        this_month = quota.month_key()
-        for l in likes_snap:
-            lf = l.get("fields", {})
-            if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
-                continue
-            if bitable.get_select_value(lf, F_LIKE_STATUS) not in LIKE_STATUS_ACTIVE:
-                continue
-            if bitable.get_field_text(lf, F_LIKE_TYPE) != LIKE_TYPE_REAL:
-                continue
-            if _like_month(lf) == this_month:
-                return jsonify({"error": "本月已使用过实名喜欢，每月仅一次机会"}), 400
+        # permanent 要用机器人算出的名额：邀请/加赠得来的实名名额是永久的，
+        # 不能一看到「本月用过实名」就拦——那会把有名额的用户也挡在门外。
+        if quota.real_left(triples, q["real_permanent"], this_month) <= 0:
+            return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
     else:
         if q["anon_left"] <= 0:
             return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
-        # 匿名同样要有第二道防线，口径与上面实名那道一致。
-        # 少了这道，机器人对账一旦没跟上（首轮全量重算要几十分钟），quota.json 会一直
-        # 停在旧值，额度看着怎么点都用不完——在途意图只保留 120 秒，拦不住。
-        # likes 快照 20 秒刷一次，比机器人那份新得多，这里以它为准。
-        this_month = quota.month_key()
-        used_anon = 0
-        for l in likes_snap:
-            lf = l.get("fields", {})
-            if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
-                continue
-            if bitable.get_select_value(lf, F_LIKE_STATUS) not in LIKE_STATUS_ACTIVE:
-                continue
-            # 没写「喜欢类型」的存量行按匿名算（与 lib.quota 缺省口径一致）
-            if (bitable.get_field_text(lf, F_LIKE_TYPE) or LIKE_TYPE_ANON) != LIKE_TYPE_ANON:
-                continue
-            if _like_month(lf) == this_month:
-                used_anon += 1
-        if used_anon >= MONTHLY_ANON_HEARTS:
+        if quota.anon_left(triples, this_month) <= 0:
             return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
 
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)

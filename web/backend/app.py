@@ -3450,8 +3450,28 @@ def like_user():
                 continue
             if _like_month(lf) == this_month:
                 return jsonify({"error": "本月已使用过实名喜欢，每月仅一次机会"}), 400
-    elif q["anon_left"] <= 0:
-        return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
+    else:
+        if q["anon_left"] <= 0:
+            return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
+        # 匿名同样要有第二道防线，口径与上面实名那道一致。
+        # 少了这道，机器人对账一旦没跟上（首轮全量重算要几十分钟），quota.json 会一直
+        # 停在旧值，额度看着怎么点都用不完——在途意图只保留 120 秒，拦不住。
+        # likes 快照 20 秒刷一次，比机器人那份新得多，这里以它为准。
+        this_month = quota.month_key()
+        used_anon = 0
+        for l in likes_snap:
+            lf = l.get("fields", {})
+            if bitable.get_field_text(lf, F_LIKE_INITIATOR_OPENID) != open_id:
+                continue
+            if bitable.get_select_value(lf, F_LIKE_STATUS) not in LIKE_STATUS_ACTIVE:
+                continue
+            # 没写「喜欢类型」的存量行按匿名算（与 lib.quota 缺省口径一致）
+            if (bitable.get_field_text(lf, F_LIKE_TYPE) or LIKE_TYPE_ANON) != LIKE_TYPE_ANON:
+                continue
+            if _like_month(lf) == this_month:
+                used_anon += 1
+        if used_anon >= MONTHLY_ANON_HEARTS:
+            return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
 
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)
     like_fields = {

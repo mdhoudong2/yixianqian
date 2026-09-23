@@ -12,13 +12,14 @@ bot 的 venv 里没有）：
   B. 匿名喜欢成功：响应 anon_left 立即 -1（0 秒精确，不等机器人那 25 秒）
   C. 重复喜欢同一人：400
   D. 连点第二人：anon_left 再 -1（含在途意图，防双花）
-  E. 取消喜欢接口已下线：DELETE /api/like/<oid> → 404
-  F. 10 颗用完后第 11 次被拒：400
-  G. 对账收敛：35 秒后表内「爱心剩余」= 计算真值（无抖动）
+  E. 取消喜欢接口已下线：DELETE /api/like/<oid> → 404/405
+  F. 10 颗用完后第 11 次被拒：400，且原因确实是额度
+  G. 对账收敛：表内「爱心剩余」= 计算真值（轮询，见 G_WAIT）
   H. 实名喜欢：real_left -1，且 anon_left 不变（实名不占匿名那 10 颗）
   I. 本月实名机会用完后再点实名：400
 退出码：0=全部通过；1=存在失败。
 """
+import json
 import os
 import sys
 import time
@@ -43,10 +44,17 @@ from lib.bitable_client import get_field_text  # noqa: E402
 
 HOST = "https://testapp.nantou.love"
 HIS_OID = "ou_ec5d70f07daf238e81ac466a1c553aae"  # 猴哥猴哥
-# 匿名额度是 10 颗，验证「用完被拒」需要 10 个不同的目标（同一人只能喜欢一次）
-TARGETS = [f"ou_e2e_t{i}" for i in range(1, 11)]
+# 匿名额度是 10 颗，验证「用完被拒」需要 11 个目标（同一人只能喜欢一次，
+# 多出来的那一个专门用来撞「超额被拒」）
+TARGETS = [f"ou_e2e_t{i}" for i in range(1, 12)]
 BEFORE = "ou_e2e_before"  # 第一个实名喜欢的目标
 AFTER = "ou_e2e_after"    # 第二个实名喜欢的目标（验证名额用尽）
+SPARE = "ou_e2e_spare"    # F2 专用：从没喜欢过，被拒只可能是因为额度
+# 机器人发给 H5 的额度快照。G 用它区分「还没轮到这个人」和「算错了」。
+QUOTA_FILE = "/opt/yixianqian-test/data/yixianqian_quota.json"
+# G 轮询上限（秒）。机器人一轮全量重算要给每个「有变化」的用户回写一次表格，
+# 测试库有 1000+ 压测用户，首轮能跑几十分钟——所以不能只等 35 秒就判红。
+G_WAIT = 180
 
 FAILURES = []
 
@@ -134,6 +142,15 @@ def table_real_remain():
     return None
 
 
+def bot_anon_left():
+    """机器人快照里本人的匿名剩余。读不到返回 None（文件还没生成也算）。"""
+    try:
+        with open(QUOTA_FILE, encoding="utf-8") as f:
+            return (json.load(f).get("quota", {}).get(HIS_OID) or {}).get("anon_left")
+    except Exception:
+        return None
+
+
 def cleanup():
     """清掉本脚本造的所有记录。测试目标用固定 open_id 前缀，重跑即幂等。"""
     for l in search_records(LIKE_TABLE_ID):
@@ -141,7 +158,7 @@ def cleanup():
         blob = str(f.get("目标用户open_id", "")) + str(f.get("发起用户open_id", ""))
         if "ou_e2e_" in blob:
             delete_record(LIKE_TABLE_ID, l["record_id"])
-    for oid in TARGETS + [BEFORE, AFTER]:
+    for oid in TARGETS + [BEFORE, AFTER, SPARE]:
         for u in search_records(USER_TABLE_ID, {"conjunction": "and", "conditions": [
                 {"field_name": "飞书用户ID", "operator": "is", "value": [oid]}]}):
             delete_record(USER_TABLE_ID, u["record_id"])
@@ -149,7 +166,7 @@ def cleanup():
 
 def main():
     cleanup()
-    for oid in TARGETS + [BEFORE, AFTER]:
+    for oid in TARGETS + [BEFORE, AFTER, SPARE]:
         create_record(USER_TABLE_ID, {"昵称": f"E2E-{oid[-2:]}", "飞书用户ID": oid,
                                       "账号状态": "单身", "性别": "女性"})
     time.sleep(16)  # 等 users/likes 快照刷新
@@ -182,12 +199,15 @@ def main():
     check("D.第二人anon_left再-1", st == 200 and a2 == expect_anon0 - 2,
           f"(status={st}, anon_left={a2})")
 
-    # E. 取消喜欢已整个下线：路由不存在 → 404（不是 400/405）
+    # E. 取消喜欢已整个下线。实测是 405 而不是 404：app.py 有个 /<path:path> 的
+    # catch-all（只允许 GET），DELETE 在方法检查阶段就被挡下，走不到它内部的
+    # abort(404)。两者都说明「没有任何路由能处理取消」，断言二者皆可。
     r = requests.delete(f"{HOST}/api/like/{TARGETS[0]}", cookies=ck, timeout=20,
                         headers=WRITE_HEADERS)
-    check("E.取消喜欢接口已下线", r.status_code == 404, f"(status={r.status_code})")
+    check("E.取消喜欢接口已下线", r.status_code in (404, 405), f"(status={r.status_code})")
 
-    # F. 一路点到被拒为止。不假设起始额度就是满的——本月已用几次也算数
+    # F. 一路点到被拒为止。不假设起始额度就是满的——本月已用几次也算数。
+    # TARGETS 故意比额度多一个，所以这里一定会撞上拒绝。
     ok, rejected_on = 2, None
     for t in TARGETS[2:]:
         st, _a, _r, _body = like(ck, t)
@@ -199,17 +219,26 @@ def main():
     check("F1.额度耗尽时总量正好 MONTHLY_ANON_HEARTS",
           ok + used_anon == quota.MONTHLY_ANON_HEARTS,
           f"(本次成功 {ok} 次 + 本月原有 {used_anon} 次)")
-    rejected_on = rejected_on or BEFORE
-    st, _, _, body = like(ck, rejected_on)
-    check("F2.额度耗尽后匿名喜欢被拒", st == 400,
+    check("F1b.额度耗尽时确实撞到了拒绝", rejected_on is not None,
+          f"(目标 {len(TARGETS)} 个 > 额度 {quota.MONTHLY_ANON_HEARTS} 颗，应当撞上)")
+
+    # F2 用从没碰过的目标。拿刚被拒的那个再点一次是不行的——400 可能只是
+    # 「重复喜欢」，那样额度即使完全失效这条也会假绿；这里还要求原因里带「额度」。
+    st, _, _, body = like(ck, SPARE)
+    check("F2.额度耗尽后匿名喜欢被拒", st == 400 and "额度" in (body.get("error") or ""),
           f"(status={st}, msg={body.get('error')})")
 
-    # G. 对账收敛：等机器人跑完一轮，表内字段 = 计算真值
-    time.sleep(35)
+    # G. 对账收敛：等机器人重算并回写表内字段。轮询而不是死等，超时把机器人快照
+    # 一起打出来——「快照对了但表没写」是回写滞后，「快照也没对」才是算错了。
     expect_anon = max(0, quota.MONTHLY_ANON_HEARTS - his_month_likes(quota.LIKE_TYPE_ANON))
-    heart_remain = table_heart_remain()
+    heart_remain = None
+    for _ in range(max(1, G_WAIT // 10)):
+        time.sleep(10)
+        heart_remain = table_heart_remain()
+        if heart_remain == expect_anon:
+            break
     check("G.匿名额度对账收敛且无抖动", heart_remain == expect_anon,
-          f"(表内={heart_remain}, 计算={expect_anon})")
+          f"(表内={heart_remain}, 计算={expect_anon}, 机器人快照={bot_anon_left()})")
 
     # H. 实名喜欢：扣实名的账，不占匿名那 10 颗
     anon_before, real_before = get_quota(ck)

@@ -559,30 +559,23 @@ def _like_month(fields):
     return created[:7] if created else ""
 
 
-# 在途意图桥接窗口。机器人的全量对账 25 秒一轮，spool 落库遇退避重试可能几十秒，
-# 60 秒足够覆盖两者；窗口之后的账一律以机器人权威值为准。
-# 没有这个上限就必须回答「这条意图机器人到底看没看见」——答不准就会双扣或漏扣，
-# 而用户连点时真正需要的是「0 秒反馈」，60 秒完全够。
-_INTENT_BRIDGE_SECONDS = 60
+def quota_view(open_id, likes_snap=None):
+    """本月额度视图。返回 anon_left/anon_total/real_left/real_total/real_permanent。
 
+    两个来源，取**更保守**的那个：
 
-def _intent_spent(open_id):
-    """在途喜欢要扣的额度 (匿名, 实名)。"""
-    _intent_prune()
-    now = time.time()
-    anon = real = 0
-    for it in _intent_likes.values():
-        if it["oid"] != open_id or now - it["ts"] > _INTENT_BRIDGE_SECONDS:
-            continue
-        if it.get("type") == LIKE_TYPE_REAL:
-            real += 1
-        else:
-            anon += 1
-    return anon, real
+    - 机器人发布的权威值（quota.json）：全量、准，但可能滞后一整轮对账；
+    - 本地按 lib.quota 口径重算（likes 快照 ∪ 在途意图）：最快，覆盖
+      「用户刚点下去、机器人还没算到」的那几颗，保证点完立刻有反馈。
 
+    **必须取 min，绝不能相加。** 相加等于两套计数各算一遍：机器人一旦追上
+    （quota.json 里已经扣掉了这几颗），在途意图还要再扣一次，就成了重复扣——
+    用户明明还有额度却点不动。2026-09 测试服 E2E 第 10 次点击被误拒就是这么来的：
+    quota.json 已算到 1 颗，9 条意图还没出 60 秒窗口，1 − 9 → 0。
 
-def quota_view(open_id):
-    """本月额度视图（权威值 + 在途修正）。返回 anon_left/anon_total/real_left/real_total/real_permanent。"""
+    相加的另一个方向也一样危险：机器人没追上时只信它，用户点完看到的额度
+    会先跳回去再跳回来。取 min 两个方向都对。
+    """
     data = _quota_file()
     q = (data or {}).get("quota", {}).get(open_id)
     if q is None:
@@ -596,15 +589,19 @@ def quota_view(open_id):
                  "real_left": MONTHLY_REAL_HEARTS, "real_total": MONTHLY_REAL_HEARTS,
                  "real_permanent": 0}
 
-    spent_anon, spent_real = _intent_spent(open_id)
     anon_total = int(q.get("anon_total") or MONTHLY_ANON_HEARTS)
     real_total = int(q.get("real_total") or MONTHLY_REAL_HEARTS)
+    permanent = int(q.get("real_permanent") or 0)
+    triples = _like_triples_for(open_id, _snap("likes") if likes_snap is None else likes_snap)
+    ym = quota.month_key()
     return {
-        "anon_left": max(0, int(q.get("anon_left", anon_total)) - spent_anon),
+        "anon_left": max(0, min(int(q.get("anon_left", anon_total)),
+                                quota.anon_left(triples, ym))),
         "anon_total": anon_total,
-        "real_left": max(0, int(q.get("real_left", real_total)) - spent_real),
+        "real_left": max(0, min(int(q.get("real_left", real_total)),
+                                quota.real_left(triples, permanent, ym))),
         "real_total": real_total,
-        "real_permanent": int(q.get("real_permanent") or 0),
+        "real_permanent": permanent,
     }
 
 
@@ -3492,29 +3489,16 @@ def like_user():
     # 两道防线都必须有，而且**第二道必须独立于机器人**：机器人是权威，但它的
     # quota.json 一轮全量重算可能滞后很久（首轮几十分钟），停在旧值时上面那道
     # 就等于没拦。第二道直接从表里的喜欢记录重算，口径交给 lib.quota。
-    q = quota_view(open_id)
-    this_month = quota.month_key()
-    triples = _like_triples_for(open_id, likes_snap)
-    # TEMP-DIAG 排查「多算一条」用，定位完立刻删
-    logging.getLogger(__name__).warning(
-        "TEMP-DIAG anon_left=%s triples=%s snap_targets=%s intent_targets=%s",
-        quota.anon_left(triples, this_month), len(triples),
-        sorted(bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID)
-               for l in likes_snap
-               if bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID) == open_id),
-        sorted(str(it.get("target")) for it in _intent_likes.values()
-               if it.get("oid") == open_id))
+    # quota_view 内部已经把「机器人权威值」和「本地按 lib.quota 重算
+    # （快照 ∪ 在途意图）」取过 min 了，这里直接判即可。
+    # **不要在此处再算一遍额度**：这个文件曾经在三个地方各数各的，
+    # 于是三处之间的缝正好凑出「双击能超发一颗」和「机器人追上后误拒一颗」两个 bug。
+    q = quota_view(open_id, likes_snap)
     if like_type == LIKE_TYPE_REAL:
         if q["real_left"] <= 0:
             return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
-        # permanent 要用机器人算出的名额：邀请/加赠得来的实名名额是永久的，
-        # 不能一看到「本月用过实名」就拦——那会把有名额的用户也挡在门外。
-        if quota.real_left(triples, q["real_permanent"], this_month) <= 0:
-            return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
     else:
         if q["anon_left"] <= 0:
-            return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
-        if quota.anon_left(triples, this_month) <= 0:
             return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
 
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)

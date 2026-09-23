@@ -18,7 +18,8 @@ _WEB_BACKEND = os.path.join(
 if _WEB_BACKEND not in sys.path:
     sys.path.insert(0, _WEB_BACKEND)
 
-from app import _intent_likes, _like_triples_for  # noqa: E402
+import app  # noqa: E402
+from app import _intent_likes, _like_triples_for, quota_view  # noqa: E402
 from config import (  # noqa: E402
     F_LIKE_INITIATOR_OPENID,
     F_LIKE_MONTH,
@@ -151,6 +152,53 @@ def test_real_name_likes_do_not_eat_anonymous_quota():
     snap = [_record("ou_t1", like_type="实名"), _record("ou_t2", like_type="实名")]
     triples = _like_triples_for(ME, snap)
     assert quota.anon_left(triples, THIS_MONTH) == 10
+
+
+def _authority(anon_left=10, real_left=1, permanent=0):
+    """把机器人发布的额度快照钉成指定值。"""
+    app._quota_file = lambda: {"quota": {ME: {
+        "anon_left": anon_left, "anon_total": 10,
+        "real_left": real_left, "real_total": 1 + permanent,
+        "real_permanent": permanent}}}
+
+
+def test_quota_view_never_double_counts_once_the_bot_has_caught_up(monkeypatch):
+    """机器人已经扣掉这几颗、在途意图却还没过期时，不能再扣第二次。
+
+    这是 E2E 里第 10 次点击被误拒的直接原因：quota.json 已经算到只剩 1 颗，
+    9 条意图还在窗口内，相加得 1 − 9 → 0，于是把还有额度的用户拦在门外。
+    """
+    monkeypatch.setattr(app, "_quota_file", lambda: {"quota": {ME: {
+        "anon_left": 1, "anon_total": 10, "real_left": 1, "real_total": 1,
+        "real_permanent": 0}}})
+    snap = [_record(f"ou_t{i}") for i in range(9)]
+    for i in range(9):
+        _intent_likes[f"k{i}"] = _intent(f"ou_t{i}")
+
+    assert quota_view(ME, snap)["anon_left"] == 1
+
+
+def test_quota_view_still_gives_zero_second_feedback_before_the_bot_catches_up(monkeypatch):
+    """反过来那一半也要成立：机器人还没追上时，刚点下去的那一颗要立刻体现。
+
+    只信权威值的话，用户点完看到的额度会先跳回去、等机器人对账再跳回来。
+    """
+    monkeypatch.setattr(app, "_quota_file", lambda: {"quota": {ME: {
+        "anon_left": 10, "anon_total": 10, "real_left": 1, "real_total": 1,
+        "real_permanent": 0}}})
+    _intent_likes["k0"] = _intent("ou_t0")  # 刚受理，表里还没有
+
+    assert quota_view(ME, [])["anon_left"] == 9
+
+
+def test_quota_view_real_left_keeps_permanent_invite_slots(monkeypatch):
+    """实名那道也不能被「本月已用过」一刀切：永久名额要算进去。"""
+    monkeypatch.setattr(app, "_quota_file", lambda: {"quota": {ME: {
+        "anon_left": 10, "anon_total": 10, "real_left": 3, "real_total": 3,
+        "real_permanent": 2}}})
+    snap = [_record("ou_t1", like_type="实名")]
+
+    assert quota_view(ME, snap)["real_left"] == 2
 
 
 def test_real_left_counts_permanent_invite_slots():

@@ -1284,7 +1284,7 @@
     <div style="font-size:18px; font-weight:600; color:#323233;">微信缴费</div>
     <div style="margin:10px 0 4px; font-size:15px; color:#ff4d6a; font-weight:600;">费用：{{ currentActivity && currentActivity.fee > 0 ? currentActivity.fee + '元' : '免费' }}</div>
     <div style="font-size:12.5px; color:#969799; line-height:1.6; margin-bottom:10px;">请长按下方二维码保存到相册，用微信扫码完成缴费<br>缴费后点击「我已完成缴费」即报名成功</div>
-    <img src="pay-qr.jpg" alt="微信缴费二维码" style="width:220px; max-width:74%; border-radius:10px; border:1px solid #f0f0f0;">
+    <img src="pay-qr.jpg?v=2" alt="微信缴费二维码" style="width:220px; max-width:74%; border-radius:10px; border:1px solid #f0f0f0;">
     <van-button type="primary" color="#ff6b81" block round style="margin-top:16px;" :loading="actionLoading" @click="confirmPay">我已完成缴费</van-button>
     <div style="margin-top:10px; font-size:13px; color:#969799;" @click="showPayDialog=false">取消</div>
   </div>

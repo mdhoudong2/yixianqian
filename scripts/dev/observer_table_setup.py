@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import requests
 import local_config as _cfg
 
+from _prod_guard import guard
+
 APP_ID = getattr(_cfg, "FEISHU_APP_ID", None) or getattr(_cfg, "APP_ID", None)
 APP_SECRET = getattr(_cfg, "FEISHU_APP_SECRET", None) or getattr(_cfg, "APP_SECRET", None)
 BASE_TOKEN = _cfg.BASE_TOKEN
@@ -165,6 +167,7 @@ if __name__ == "__main__":
     if cmd == "fields":
         cmd_fields()
     elif cmd == "create":
+        guard("observer_table_setup.py create")
         cmd_create()
     elif cmd == "migrate":
         dry = "--dry" in argv
@@ -172,6 +175,8 @@ if __name__ == "__main__":
         if not tid:
             print("用法: migrate <表ID> [--dry]")
             sys.exit(1)
+        if not dry:
+            guard("observer_table_setup.py migrate")
         cmd_migrate(tid, dry)
     else:
         print(__doc__)

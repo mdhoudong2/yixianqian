@@ -28,8 +28,12 @@ data/*
 
 # 备份与打包
 *.bak
+*.bak_*
+*.bak-*
 *.bak_h5
 *.tar.gz
+*.tgz
+*.tar
 
 # 系统/杂项
 picture/

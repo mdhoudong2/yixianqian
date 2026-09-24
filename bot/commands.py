@@ -3,6 +3,7 @@ import datetime
 import re
 import time
 
+from auto_tasks import auto_signup_new_user, reward_inviter
 from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
 from clients import *
 from constants import *
@@ -253,6 +254,15 @@ def handle_admin_approve(keyword):
             )
             if not send_text_message(open_id, user_msg):
                 unreserve_notified("approval_sent", record_id)
+            else:
+                # 与轮询路径（auto_send_view_after_approval）对齐：轮询端看到
+                # approval_sent 已被本函数占用会整条跳过，自动报名与邀请奖励
+                # 只有在这里补上，否则「管理员回复通过」这条主路径永远不触发它们。
+                auto_signup_new_user(
+                    open_id, nickname, get_select_value(fields, FIELD_WECHAT_PAYMENT))
+                inviter_id = get_field_text(fields, FIELD_INVITER_ID)
+                if inviter_id:
+                    reward_inviter(open_id, nickname, inviter_id)
 
         return f"已审核通过：{uid} {nickname}\n已发送审核通过通知和App链接给TA。"
     else:

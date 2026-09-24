@@ -161,6 +161,7 @@ NOTIFIED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notified.json")  # 记
 WELCOMED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_welcomed.json")  # 记录已发送进入欢迎消息的用户open_id，避免重复
 MENU_CARD_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_menu_card.json")  # 记录上次发送菜单卡片的时间，用于节流
 INVITE_REWARDED_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_invites.json")  # 记录已奖励的邀请关系
+INVITE_RETRY_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_invite_retry.json")  # 邀请人解析失败后的重试节流时间戳
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")  # 共享通知（机器人写，H5读）
 OBSERVER_CODES_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_observer_codes.json")  # 观察员邀请码（管理员批量生成，一次性使用）
 P2P_CHAT_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_p2p_chats.json")  # open_id -> p2p单聊chat_id映射，主动推送优先用chat_id规避230101

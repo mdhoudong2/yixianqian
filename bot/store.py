@@ -66,6 +66,44 @@ def save_invite_rewarded(data):
     storage.save_json(INVITE_REWARDED_FILE, data)
 
 
+# 邀请人解析失败后的重试节流（秒）：6 小时才重试一次
+INVITE_RETRY_INTERVAL = 6 * 3600
+# 节流记录保留天数（超过就修剪，避免文件无限增长）
+INVITE_RETRY_KEEP_DAYS = 30
+
+
+def invite_retry_due(invitee_openid, now=None):
+    """邀请人解析失败后的负缓存节流：未满 INVITE_RETRY_INTERVAL 秒返回 False。
+
+    被邀请人填的邀请人ID 可能是「没有/不知道」这类永远解析不到用户的垃圾值。
+    没有节流时补扫每 30 秒重查一次——生产实测每 45 秒一整轮、每天 2000+ 行
+    日志、白烧飞书查询配额（2026-09-24 审查）。节流只影响重试频率，不影响
+    正确性：管理员事后把邀请人ID 改对，最多等一个节流窗口就会补发。
+    """
+    if not invitee_openid:
+        return False
+    now = time.time() if now is None else now
+    allowed = [False]
+
+    def _m(data):
+        try:
+            last = float(data.get(invitee_openid, 0) or 0)
+        except (TypeError, ValueError):
+            last = 0.0
+        if now - last < INVITE_RETRY_INTERVAL:
+            return None  # 还在节流窗口内，放弃写入
+        data[invitee_openid] = now
+        cutoff = now - INVITE_RETRY_KEEP_DAYS * 86400
+        for k in [k for k, v in list(data.items())
+                  if not isinstance(v, (int, float)) or v < cutoff]:
+            data.pop(k, None)
+        allowed[0] = True
+        return data
+
+    storage.update_json(INVITE_RETRY_FILE, {}, _m)
+    return allowed[0]
+
+
 def load_p2p_chats():
     """加载 open_id -> p2p单聊chat_id 映射，用于主动推送优先走chat_id规避230101"""
     return storage.load_json(P2P_CHAT_FILE, {})

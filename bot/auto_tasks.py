@@ -17,6 +17,7 @@ from queries import (
 from store import (
     add_notification,
     consume_observer_code,
+    invite_retry_due,
     load_invite_rewarded,
     load_observer_codes,
     release_observer_code,
@@ -585,10 +586,14 @@ def auto_reconcile_invite_rewards():
         if not inviter_id or inviter_id == my_uid:
             continue  # 空码或自己邀请自己，不奖励
         nickname = get_field_text(f, FIELD_NICKNAME)
+        # 节流：邀请人ID 是「没有/不知道」这类解析不到的垃圾值时，别每 30 秒重查一遍。
+        # 成功记入 INVITE_REWARDED_FILE 后本函数不会再处理该用户，节流只约束失败重试。
+        if not invite_retry_due(oid):
+            continue
         reward_inviter(oid, nickname, inviter_id)
         handled += 1
     if handled:
-        log(f"邀请奖励补扫完成，本次补发 {handled} 条")
+        log(f"邀请奖励补扫完成，本次处理 {handled} 条")
 
 
 def auto_send_view_loop(interval=30):
@@ -898,7 +903,7 @@ def auto_detect_mutual_like():
                 if info["initiator_openid"]:
                     msg_a = (
                         f"🎉 好消息！你们相互喜欢了！\n\n"
-                        f"{target} 也喜欢你~\n\n"
+                        f"{info['target_name']} 也喜欢你~\n\n"
                         f"TA当初点爱心时说：\n"
                         f"「{reverse_info['message']}」\n\n"
                         f"你点爱心时说：\n"
@@ -915,7 +920,7 @@ def auto_detect_mutual_like():
                 if reverse_info["initiator_openid"]:
                     msg_b = (
                         f"🎉 好消息！你们相互喜欢了！\n\n"
-                        f"{initiator} 也喜欢你~\n\n"
+                        f"{info['initiator_name']} 也喜欢你~\n\n"
                         f"TA当初点爱心时说：\n"
                         f"「{info['message']}」\n\n"
                         f"你点爱心时说：\n"
@@ -975,7 +980,14 @@ def reconcile_hearts():
 
     likes_by_oid = {}
     month_unreadable = 0
-    for l in search_records(LIKE_TABLE_ID):
+    # 直接走 bitable（raw）：失败返回 None，与「一条喜欢都没有」([]) 必须分清。
+    # 把失败当空表会让全站额度被回填成满值：表格字段被改回 10 颗、quota.json
+    # 也发布成满值，H5 的 min() 才勉强兜住——绝不能依赖下游兜底。
+    all_likes = bitable.search_records(LIKE_TABLE_ID)
+    if all_likes is None:
+        log("额度对账跳过：喜欢表查询失败，保留上一轮结果（避免把全站额度回填成满值）")
+        return
+    for l in all_likes:
         f = l.get("fields", {})
         oid = get_field_text(f, FIELD_LIKE_INITIATOR_OPENID)
         if not oid:
@@ -991,8 +1003,13 @@ def reconcile_hearts():
     if month_unreadable:
         log(f"额度对账警告：{month_unreadable} 条喜欢读不到归属月份，已按「不作废」保守处理")
 
+    # 用户表同理：查不到就整轮跳过，否则快照文件会被写成空 quota、表格副本零值也没法对账。
+    all_users = bitable.search_records(USER_TABLE_ID)
+    if all_users is None:
+        log("额度对账跳过：用户表查询失败，保留上一轮结果")
+        return
     groups = {}
-    for u in search_records(USER_TABLE_ID):
+    for u in all_users:
         uf = u.get("fields", {})
         if get_field_text(uf, FIELD_ACCOUNT_STATUS) == STATUS_OBSERVER:
             continue  # 观察员不参与额度账，跳过（否则对账会给观察员也写一份额度）
@@ -1307,10 +1324,15 @@ def auto_update_activity_signup_count():
     if not activities:
         return
     # 一次性查所有已报名记录并按活动ID统计，避免按活动数N+1查询
-    all_signups = search_records(SIGNUP_TABLE_ID, {
+    # raw 查询：失败(None)不能当「没人报名」，否则会把所有活动人数清零、
+    # 满员活动退回「报名中」造成超收。
+    all_signups = bitable.search_records(SIGNUP_TABLE_ID, {
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_SIGNUP_STATUS, "operator": "is", "value": ["已报名"]}]
     })
+    if all_signups is None:
+        log("活动报名人数更新跳过：报名表查询失败，保留原值")
+        return
     signup_count_by_act = {}
     for s in all_signups:
         sf = s.get("fields", {})
@@ -1386,10 +1408,12 @@ def _single_users_by_openid():
     必须归并：同一个人重复注册会有多条档案，不归并就会「自己推荐自己」
     （同样的资料相似度 100 分，稳稳排在第一）。
     """
-    records = search_records(USER_TABLE_ID, {
+    records = bitable.search_records(USER_TABLE_ID, {
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_ACCOUNT_STATUS, "operator": "is", "value": ["单身"]}],
     })
+    if records is None:
+        return None  # 查询失败：调用方整轮跳过，别把推荐位写空
     grouped = {}
     for item in records:
         oid = get_field_text(item.get("fields", {}), FIELD_FEISHU_ID)
@@ -1406,7 +1430,10 @@ def _like_index():
     秘密了，两个人早就收到通知在聊了。
     """
     to_me, by_me = {}, {}
-    for item in search_records(LIKE_TABLE_ID):
+    all_likes = bitable.search_records(LIKE_TABLE_ID)
+    if all_likes is None:
+        return None, None  # 查询失败：调用方整轮跳过，别把「必显」洗掉
+    for item in all_likes:
         f = item.get("fields", {})
         if not like_is_active(f):
             continue
@@ -1443,6 +1470,9 @@ def generate_weekly_recommendations():
     new_week = prev_doc.get("week") != wk
 
     primary = _single_users_by_openid()
+    if primary is None:
+        log("推荐位跳过：用户表查询失败，保留上一轮名单")
+        return
     profiles, genders = {}, {}
     for oid, rec in primary.items():
         f = rec.get("fields", {})
@@ -1454,6 +1484,9 @@ def generate_weekly_recommendations():
         log(f"推荐位提示：{no_gender} 位单身用户没填性别，本次不进候选池")
 
     to_me, by_me = _like_index()
+    if to_me is None:
+        log("推荐位跳过：喜欢表查询失败，保留上一轮名单")
+        return
 
     users = {}
     for oid, prof in profiles.items():

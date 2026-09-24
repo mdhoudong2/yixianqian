@@ -78,6 +78,8 @@ def _run(monkeypatch, users, likes, prev=None, week="2026-W38"):
         raise AssertionError(f"推荐位不该查这张表: {table_id}")
 
     monkeypatch.setattr(at, "search_records", fake_search)
+    # 失效防护改走 raw 客户端（要区分「查询失败」与「空表」），一并 patch：
+    monkeypatch.setattr(at.bitable, "search_records", fake_search)
     monkeypatch.setattr(at.storage, "load_json", lambda path, default=None:
                         prev if prev is not None else default)
     monkeypatch.setattr(at.storage, "save_json", lambda path, data: saved.update(data))

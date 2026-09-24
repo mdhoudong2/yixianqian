@@ -133,10 +133,12 @@ def like_is_active(fields):
 
 def find_like(initiator_openid, target_openid):
     """查找仍然有效的喜欢记录（单向/相互，且匿名未满 3 个月）"""
+    # 状态白名单交给下面的 like_is_active：飞书单选框 operator=is 的 value 只能一个值，
+    # 塞 list(LIKE_STATUS_ACTIVE) 会被判 InvalidFilter(1254018)，而本模块把查询失败
+    # 转成空列表——重复喜欢拦截就静默失效了。
     items = search_records(LIKE_TABLE_ID, [
         {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [initiator_openid]},
         {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]},
-        {"field_name": F_LIKE_STATUS, "operator": "is", "value": list(LIKE_STATUS_ACTIVE)},
     ])
     for it in items:
         if like_is_active(it.get("fields", {})):

@@ -3288,18 +3288,22 @@ def _spool_process(op):
     t = op.get("type")
     try:
         if t == "like":
-            # 正向白名单列出「还算数的状态」，不要写成 isNot 被驳回——那样以后
-            # 新增任何状态都会被当成有效，重复检查静默失效、同一对用户记两次额度。
-            dup = bitable.search_records(LIKE_TABLE_ID, {
+            # 查重只按 (发起人, 目标) 查，状态白名单在本地过：飞书单选框
+            # operator=is 的 value 只能一个值，塞 list(LIKE_STATUS_ACTIVE) 会被判
+            # InvalidFilter(1254018) → 查询失败 → 幂等静默失效。
+            # 必须用 raw_search_records：查询失败(None) 与「没有重复」([]) 要分清，
+            # 失败时返回 False 交给 spool 重试，绝不能按「查不到=没重复」去建记录。
+            dup = bitable.raw_search_records(LIKE_TABLE_ID, {
                 "conjunction": "and",
                 "conditions": [
                     {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is",
                      "value": [op.get("initiator_oid")]},
                     {"field_name": F_LIKE_TARGET_OPENID, "operator": "is",
                      "value": [op.get("target_oid")]},
-                    {"field_name": F_LIKE_STATUS, "operator": "is",
-                     "value": list(LIKE_STATUS_ACTIVE)},
                 ]})
+            if dup is None:
+                return False
+            dup = [d for d in dup if bitable.like_is_active(d.get("fields", {}))]
             if dup:
                 # 幂等命中：登记已有记录 rid，供桥接计数
                 e = _intent_likes.get(op.get("temp_key"))

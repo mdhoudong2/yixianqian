@@ -666,14 +666,17 @@ def auto_fill_like_initiator():
             target_user_id = target_fields.get("用户ID", target_user_id)
 
         # 防重复：用open_id检查（单向喜欢或相互喜欢都算重复）
+        # 状态条件**不能写进查询**：飞书单选框 operator=is 只接受一个值，
+        # 塞 list(LIKE_STATUS_ACTIVE) 会被判 InvalidFilter(1254018)，查询失败又被
+        # clients.search_records 转成空表——去重就永远不生效。状态白名单与
+        # 「匿名满 3 个月作废」统一交给下面的 like_is_active 过滤。
         is_duplicate = False
         if initiator_openid and target_openid:
             existing = search_records(LIKE_TABLE_ID, {
                 "conjunction": "and",
                 "conditions": [
                     {"field_name": FIELD_LIKE_INITIATOR_OPENID, "operator": "is", "value": [initiator_openid]},
-                    {"field_name": FIELD_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]},
-                    {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": list(quota.LIKE_STATUS_ACTIVE)}
+                    {"field_name": FIELD_LIKE_TARGET_OPENID, "operator": "is", "value": [target_openid]}
                 ]
             })
             # 状态白名单还挡不住「匿名已满 3 个月作废」——那种情况下用户应该可以重新喜欢
@@ -1190,9 +1193,15 @@ def auto_notify_signup():
 
     likers_by_target = {}    # target_oid -> [(liker_oid, status), ...]
     liked_by_initiator = {}  # initiator_oid -> [(target_oid, status), ...]
+    # 状态白名单拆成 or 两个单值条件：飞书单选框 operator=is 的 value 只能一个值，
+    # 写成 list(LIKE_STATUS_ACTIVE) 会被判 InvalidFilter(1254018) → 查询失败当空表 →
+    # 两类报名通知全体静默不发送。3 个月到期过滤由下面的 like_is_active 负责。
     for like in search_records(LIKE_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": list(quota.LIKE_STATUS_ACTIVE)}]
+        "conjunction": "or",
+        "conditions": [
+            {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["单向喜欢"]},
+            {"field_name": FIELD_LIKE_STATUS, "operator": "is", "value": ["相互喜欢"]}
+        ]
     }):
         lf = like.get("fields", {})
         init_oid = get_field_text(lf, FIELD_LIKE_INITIATOR_OPENID)

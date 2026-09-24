@@ -410,13 +410,17 @@ _REPORTED_HISTORY_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_reported_hist
 #   _intent_likes  oid -> [(temp_key, ts)]  喜欢已受理、机器人那 25 秒还没算进去
 # _intent_cancels 已随取消功能一起删除。
 _intent_likes = {}    # temp_key -> {"oid":…, "target":…, "ts":…, "type":…, "month":…}
+# 在途意图的读/改/写都在同一把锁内：16 线程下边迭代边 pop 会抛
+# RuntimeError(dictionary changed size)，门禁判断与登记也必须原子（见 like_user）。
+_intent_lock = threading.RLock()
 
 def _intent_prune():
     now = time.time()
-    for k in list(_intent_likes):
-        # 保留 120s，覆盖快照最长 90s 过期窗口，避免 60-90s 间隙计数回退
-        if now - _intent_likes[k]["ts"] > 120:
-            _intent_likes.pop(k, None)
+    with _intent_lock:
+        for k in list(_intent_likes):
+            # 保留 120s，覆盖快照最长 90s 过期窗口，避免 60-90s 间隙计数回退
+            if now - _intent_likes[k]["ts"] > 120:
+                _intent_likes.pop(k, None)
 
 def _like_triples_for(open_id, likes_snap):
     """本人发起的所有喜欢 → (状态, 喜欢类型, 归属月份) 三元组列表。
@@ -469,7 +473,9 @@ def _like_triples_for(open_id, likes_snap):
              (bitable.get_select_value(lf, F_LIKE_STATUS),
               bitable.get_field_text(lf, F_LIKE_TYPE) or LIKE_TYPE_ANON,
               month))
-    for it in _intent_likes.values():
+    with _intent_lock:
+        intent_items = list(_intent_likes.values())
+    for it in intent_items:
         if it.get("oid") != open_id:
             continue
         month = it.get("month") or ""
@@ -774,9 +780,20 @@ def _cached_brief(oid):
 # 顺序在会话内（30分钟）完全稳定：users 快照刷新不重排——否则用户滑到后段时
 # 顺序突变，出现「跳回看过的卡片」的错觉。新增用户追加到尾部，删除用户原地剔除。
 _SESSION_ORDER_TTL = 1800
+# 条目上限：key 含客户端任意的筛选参数组合，不设上限时单账号能造出无限条目
+# （每条还存全部候选头像 openid），把单 worker 的内存撑爆。
+_SESSION_ORDER_MAX = 2000
 _card_order_cache = {}
 _card_order_lock = threading.Lock()
 
+
+def _trim_card_order_cache_locked():
+    """调用方须持有 _card_order_lock：超上限时按创建时间淘汰最旧的一批。"""
+    if len(_card_order_cache) <= _SESSION_ORDER_MAX:
+        return
+    oldest = sorted(_card_order_cache.items(), key=lambda kv: kv[1].get("created", 0))
+    for k, _ in oldest[: len(_card_order_cache) - _SESSION_ORDER_MAX]:
+        _card_order_cache.pop(k, None)
 
 def _get_session_order(key, cards, liked_me_openids, open_id, pinned_openids=None,
                        rec_ver=""):
@@ -793,12 +810,14 @@ def _get_session_order(key, cards, liked_me_openids, open_id, pinned_openids=Non
         order = order + new_oids
         with _card_order_lock:
             _card_order_cache[key] = {"order": order, "created": hit["created"], "rec_ver": rec_ver}
+            _trim_card_order_cache_locked()
         return order, hit["created"]
     seed_str = f"{open_id}|{_uuid.uuid4().hex}"
     ordered = order_cards_seeded(cards, liked_me_openids, seed_str, pinned_openids)
     oids = [c.get("openid", "") for c in ordered]
     with _card_order_lock:
         _card_order_cache[key] = {"order": oids, "created": now, "rec_ver": rec_ver}
+        _trim_card_order_cache_locked()
     return oids, now
 
 
@@ -1662,6 +1681,32 @@ def _get_cached_image(file_token):
     return None
 
 
+def _image_cached(file_token):
+    """缓存里是否有该 token（目录异常时视为没有，不往外抛）。"""
+    try:
+        return _get_cached_image(file_token) is not None
+    except Exception:
+        return False
+
+
+def _purge_image_cache(file_token):
+    """删除该 token 的全部磁盘缓存（删照片时调用，避免旧 URL 继续可读）。"""
+    try:
+        for fname in os.listdir(IMAGE_CACHE_DIR):
+            if fname.startswith(file_token + "."):
+                try:
+                    os.remove(os.path.join(IMAGE_CACHE_DIR, fname))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    try:
+        with _tc_cache_lock:
+            _tc_cache.pop(file_token, None)
+    except NameError:  # 定义顺序兜底：极端导入顺序下 _tc_cache 尚未建立
+        pass
+
+
 # 同 token 图片下载 singleflight：冷缓存时多并发只向飞书下载一次。
 # 背景：单 worker 16 线程，弱网下同一张未缓存图被几十人同时刷出时，
 # N 个线程同时阻塞在飞书下载上，曾拖出 nginx 上游 60s 超时。
@@ -2388,12 +2433,16 @@ def proxy_image(file_token):
         for a in _snap("activities"):
             allowed.update(bitable.get_attachment_tokens(a.get("fields", {}), F_ACTIVITY_POSTER))
         # 放行已缓存的（历史可见）避免冷启动误拦
-        if file_token not in allowed and not _get_cached_image(file_token):
+        if file_token not in allowed and not _image_cached(file_token):
             # 管理员放行
             if g.yxq_open_id not in ADMIN_OPEN_IDS:
                 return jsonify({"error": "图片不存在"}), 404
-    except Exception:
-        pass
+    except Exception as e:
+        # fail-closed：白名单算不出来时，除管理员外只放行已缓存的图。
+        # 以前这里是 pass（fail-open），快照里一条脏数据就能让任意 token 可下载。
+        app.logger.warning(f"图片白名单计算失败，仅放行已缓存/管理员: {e}")
+        if g.yxq_open_id not in ADMIN_OPEN_IDS and not _image_cached(file_token):
+            return jsonify({"error": "图片不存在"}), 404
     # 1. 磁盘缓存命中直接返回（含 ETag 协商）
     resp = _serve_cached_image(file_token)
     if resp is not None:
@@ -3128,6 +3177,9 @@ def cancel_signup(activity_id):
 @app.route("/api/cards", methods=["GET"])
 def get_cards():
     """获取推荐的异性卡片"""
+    _rl = _rate_limit(limit=60, window=60, key_prefix="cards")
+    if _rl:
+        return _rl
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -3483,27 +3535,12 @@ def like_user():
     if already:
         return jsonify({"error": "你已经喜欢过TA了"}), 400
     # 在途意图查重：快照尚未见新记录时，同目标连点直接拦截
-    if any(it["target"] == target_openid for it in _intent_likes.values() if it["oid"] == open_id):
-        return jsonify({"error": "你已经喜欢过TA了"}), 400
+    with _intent_lock:
+        if any(it["target"] == target_openid for it in _intent_likes.values()
+               if it["oid"] == open_id):
+            return jsonify({"error": "你已经喜欢过TA了"}), 400
     if not likes_snap and bitable.find_like(open_id, target_openid):
         return jsonify({"error": "你已经喜欢过TA了"}), 400
-
-    # 额度充足性：两池分开判。实名不占匿名那 10 颗，所以不能只看一个数。
-    #
-    # 两道防线都必须有，而且**第二道必须独立于机器人**：机器人是权威，但它的
-    # quota.json 一轮全量重算可能滞后很久（首轮几十分钟），停在旧值时上面那道
-    # 就等于没拦。第二道直接从表里的喜欢记录重算，口径交给 lib.quota。
-    # quota_view 内部已经把「机器人权威值」和「本地按 lib.quota 重算
-    # （快照 ∪ 在途意图）」取过 min 了，这里直接判即可。
-    # **不要在此处再算一遍额度**：这个文件曾经在三个地方各数各的，
-    # 于是三处之间的缝正好凑出「双击能超发一颗」和「机器人追上后误拒一颗」两个 bug。
-    q = quota_view(open_id, likes_snap)
-    if like_type == LIKE_TYPE_REAL:
-        if q["real_left"] <= 0:
-            return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
-    else:
-        if q["anon_left"] <= 0:
-            return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
 
     has_like_type_field = bitable.field_exists(LIKE_TABLE_ID, F_LIKE_TYPE)
     like_fields = {
@@ -3531,12 +3568,32 @@ def like_user():
     if message:
         like_fields[F_LIKE_MESSAGE] = message
 
+    # 额度充足性：两池分开判。实名不占匿名那 10 颗，所以不能只看一个数。
+    #
+    # 两道防线都必须有，而且**第二道必须独立于机器人**：机器人是权威，但它的
+    # quota.json 一轮全量重算可能滞后很久（首轮几十分钟），停在旧值时上面那道
+    # 就等于没拦。第二道直接从表里的喜欢记录重算，口径交给 lib.quota。
+    # quota_view 内部已经把「机器人权威值」和「本地按 lib.quota 重算
+    # （快照 ∪ 在途意图）」取过 min 了，这里直接判即可。
+    # **不要在此处再算一遍额度**：这个文件曾经在三个地方各数各的，
+    # 于是三处之间的缝正好凑出「双击能超发一颗」和「机器人追上后误拒一颗」两个 bug。
+    # 判断与意图登记必须原子（同一把 _intent_lock）：分开做的话，同一用户两个并发
+    # 请求会各自基于同一份旧快照通过检查、双双放行——又是一次双击超发。
     temp_key = _uuid.uuid4().hex
-    _spool_append({"type": "like", "temp_key": temp_key,
-                   "initiator_oid": open_id, "target_oid": target_openid,
-                   "fields": like_fields})
-    _intent_likes[temp_key] = {"oid": open_id, "target": target_openid, "ts": time.time(),
-                               "type": like_type, "month": this_month}
+    with _intent_lock:
+        q = quota_view(open_id, likes_snap)
+        if like_type == LIKE_TYPE_REAL:
+            if q["real_left"] <= 0:
+                return jsonify({"error": "本月实名喜欢机会已用完（每月 1 次，月初重置）"}), 400
+        else:
+            if q["anon_left"] <= 0:
+                return jsonify({"error": "本月匿名喜欢额度已用完（每月 10 颗，月初补满）"}), 400
+        _spool_append({"type": "like", "temp_key": temp_key,
+                       "initiator_oid": open_id, "target_oid": target_openid,
+                       "fields": like_fields})
+        _intent_likes[temp_key] = {"oid": open_id, "target": target_openid,
+                                   "ts": time.time(), "type": like_type,
+                                   "month": this_month}
 
     return jsonify({"ok": True, "mutual": False, "message": "喜欢成功",
                     **attach_quota({}, open_id)})
@@ -5005,6 +5062,9 @@ def delete_profile_photo():
     del_token = del_holder.get("token")
     try:
         if del_token:
+            # 除了人脸缓存，磁盘图片缓存也要删：白名单对「已缓存」放行，
+            # 不删的话删掉的照片在缓存存活期内仍可被旧 URL 下载。
+            _purge_image_cache(del_token)
             with _face_cache_lock:
                 _face_cache.pop(del_token, None)
                 _face_none_ts.pop(del_token, None)
@@ -5066,7 +5126,9 @@ def my_liked_list():
     # 在途意图补齐：快照尚未见的新 like 应立即出现在“我喜欢”列表，否则消息页计数与列表均滞后 60s
     # 合并在途
     existing_targets = {bitable.get_field_text(l.get("fields",{}), F_LIKE_TARGET_OPENID) for l in my_likes}
-    for it in list(_intent_likes.values()):
+    with _intent_lock:
+        intent_items = list(_intent_likes.values())
+    for it in intent_items:
         if it.get("oid") != open_id:
             continue
         tgt = it.get("target")

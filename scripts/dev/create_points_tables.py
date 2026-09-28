@@ -170,8 +170,9 @@ def _create_table(name, field_defs, apply_changes):
     if not apply_changes:
         print(f"⬜ 「{name}」不存在")
         return ""
+    # 只传 name：带上 default_view_name 会被飞书判成 WrongRequestBody(1254001)。
     r = requests.post(f"{BASE_URL}/bitable/v1/apps/{BASE_TOKEN}/tables", headers=_h(),
-                      json={"table": {"name": name, "default_view_name": "表格"}})
+                      json={"table": {"name": name}})
     data = r.json()
     if data.get("code") != 0:
         print(f"❌ 建表失败 {name}：{json.dumps(data, ensure_ascii=False)}")

@@ -807,7 +807,7 @@
       </div>
       <div class="profile-card-divider"></div>
       <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
-        <span class="row-label">🎁 邀请好友得实名名额</span>
+        <span class="row-label">🎁 邀请好友得麦穗</span>
         <van-icon name="arrow" color="#c8c9cc" />
       </div>
     </div>
@@ -1545,12 +1545,12 @@
       placeholder="请写下你的建议或遇到的问题（必填）" class="like-textarea" />
   </div>
 </van-dialog>
-<!-- 邀请好友得实名名额弹窗 -->
-<van-dialog v-model:show="showInviteDialog" title="邀请好友得实名名额" :show-confirm-button="false" close-on-click-overlay>
+<!-- 邀请好友得麦穗弹窗 -->
+<van-dialog v-model:show="showInviteDialog" title="邀请好友得麦穗" :show-confirm-button="false" close-on-click-overlay>
   <div class="invite-dialog-body" style="max-height:72vh; overflow-y:auto; -webkit-overflow-scrolling:touch;">
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
-    <p>邀请好友成功并审核通过，你的<b>实名喜欢名额永久 +1</b>，没有上限。</p>
-    <p style="color:#969799; font-size:13px;">你当前永久名额：{{ user.real_permanent || 0 }} 个</p>
+    <p>好友注册并审核通过，你就能得<b>麦穗</b>：她成为单身 20 穗、他成为单身 15 穗，没有上限。</p>
+    <p style="color:#969799; font-size:13px;">满 7 天、对方账号正常才到账；到账前显示「待确认」，可继续累积。</p>
     <p>将下面文字发送给「被邀请人」：</p>
     <div class="invite-link-box">{{ inviteShareText }}</div>
     <div class="invite-btn-row">
@@ -3692,10 +3692,10 @@ createApp({
         vant.showToast('你已经喜欢过TA了');
         return;
       }
-      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加邀请得来的永久名额）。
+      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加管理员加赠和麦穗兑换来的名额）。
       // 只有两池都空才拦——只看匿名会把有实名名额的用户挡在门外。
       if ((user.value.anon_left || 0) <= 0 && (user.value.real_left || 0) <= 0) {
-        vant.showToast('本月喜欢额度已用完，邀请好友可得实名名额');
+        vant.showToast('本月喜欢额度已用完，邀请好友得麦穗，麦穗可换实名喜欢');
         showInviteDialog.value = true;
         return;
       }
@@ -3724,10 +3724,10 @@ createApp({
         vant.showToast('你已经喜欢过TA了');
         return;
       }
-      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加邀请得来的永久名额）。
+      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加管理员加赠和麦穗兑换来的名额）。
       // 只有两池都空才拦——只看匿名会把有实名名额的用户挡在门外。
       if ((user.value.anon_left || 0) <= 0 && (user.value.real_left || 0) <= 0) {
-        vant.showToast('本月喜欢额度已用完，邀请好友可得实名名额');
+        vant.showToast('本月喜欢额度已用完，邀请好友得麦穗，麦穗可换实名喜欢');
         showInviteDialog.value = true;
         return;
       }

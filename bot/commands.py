@@ -10,7 +10,6 @@ from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 from store import (
     generate_observer_codes,
-    load_invite_rewarded,
     load_observer_codes,
     reserve_notified,
     unreserve_notified,
@@ -40,7 +39,12 @@ def handle_register_command(sender_id):
 
 
 def handle_invite_command(sender_id):
-    """邀请好友：分两条发送——说明 + 一条可整条复制转发的话术（邀请码内联）。"""
+    """邀请好友：分两条发送——说明 + 一条可整条复制转发的话术（邀请码内联）。
+
+    v7 起奖励是**麦穗**（她注册 20 穗、他注册 15 穗），7 天确认期满对方账号
+    正常才到账。所以这里不再读「邀请名额」字段——那个字段已经没人写了，读出来
+    是陈年旧数；进度改从麦穗账本拿。
+    """
     user_records = find_user_by_openid(sender_id)
     if not user_records:
         return "你还没有注册，无法邀请好友。\n\n发送「注册」先完成注册吧~"
@@ -48,19 +52,29 @@ def handle_invite_command(sender_id):
     user_id = user_fields.get("用户ID", "")
     if not user_id:
         return "系统未找到你的用户ID，请联系管理员。"
-    # 永久实名名额以用户表字段为准（对账写入）；字段还没建时退回用通知账本计数
-    permanent = get_field_number(user_fields, FIELD_INVITE_QUOTA, None)
-    rewarded = load_invite_rewarded()
-    invite_count = sum(1 for v in rewarded.values() if v == sender_id)
-    if permanent is None:
-        permanent = invite_count
+
+    from lib import points_config, points_invite
+    her = int(points_config.get("invite_reward_female"))
+    him = int(points_config.get("invite_reward_male"))
+    days = int(points_config.get("invite_confirm_days"))
+    # 账本读不到（比如还没建库）就少说两句，别把「邀请」这条路整个堵死。
+    try:
+        prog = points_invite.progress(sender_id)
+        progress_line = (
+            f"你已经邀请 {prog['total']} 位好友，"
+            f"其中 {prog['pending_points']} 穗待确认、{prog['finalized_points']} 穗已到账。\n"
+        )
+    except Exception:                                    # noqa: BLE001
+        progress_line = ""
 
     # 第一条：规则说明 + 操作提示
     tip = (
         f"💕 邀请好友注册，双方都受益！\n\n"
-        f"每成功邀请 1 位好友注册并审核通过，你的「实名喜欢」名额永久 +1，没有上限。\n"
-        f"你当前有 {int(permanent)} 个永久实名名额（含邀请所得与管理员加赠），"
-        f"已成功邀请 {invite_count} 人。\n\n"
+        f"每成功邀请 1 位好友注册并审核通过：\n"
+        f"  · 她成为单身 → 你得 {her} 穗\n"
+        f"  · 他成为单身 → 你得 {him} 穗\n"
+        f"满 {days} 天、对方账号正常就自动到账（期间对方被封禁则不发）。\n"
+        f"{progress_line}\n"
         f"👇 长按下面这条消息 → 复制，直接发给好友即可："
     )
     # 第二条：整条就是可转发话术，自包含、无需选取

@@ -495,7 +495,9 @@ def auto_send_view_after_approval():
         )
         message_tail = (
             "每月有 10 颗匿名喜欢额度（月初补满），另有每月 1 次实名喜欢。\n"
-            "邀请好友注册，可永久增加实名喜欢名额。\n\n"
+            f"邀请好友注册，可得麦穗（她 {_invite_reward('female')} 穗 / "
+            f"他 {_invite_reward('male')} 穗），麦穗能换额外实名喜欢、优先报名、"
+            f"心愿名额、红娘推荐、活动费用减免。\n\n"
             "祝你早日找到天主给你准备的另一半！\U0001f495"
         )
         if send_text_message(open_id, message_head):
@@ -523,6 +525,16 @@ def auto_send_view_after_approval():
         log(f"审核通过通知轮询完成，本次发送 {sent_count} 条")
 
 
+
+
+def _invite_reward(gender):
+    """邀请奖励穗数，从配置读——文案里的数字必须跟着配置走，否则管理员改完配置，
+    通知里还写着老数字。读不到就退回按性别硬编码的常量。"""
+    key = "invite_reward_male" if gender == "男" else "invite_reward_female"
+    try:
+        return int(points_config.get(key))
+    except Exception:                                    # noqa: BLE001
+        return points_invite.reward_amount(gender)
 
 
 def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id,

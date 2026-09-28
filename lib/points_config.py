@@ -59,7 +59,9 @@ SPECS = {
 
     "matchmaker_deadline_days": {
         "default": 14, "label": "红娘推荐处理期限（天）", "min": 1, "max": 365},
-    "wish_condition_max_len": {
+    # 需求里「填条件」的是红娘推荐（≤200 字）；心愿只是指定一个人，没有条件框。
+    # 这个键一开始叫 wish_condition_max_len，名字对不上它管的事，已改。
+    "matchmaker_condition_max_len": {
         "default": 200, "label": "红娘推荐条件字数上限", "min": 1, "max": 2000},
 }
 

@@ -17,20 +17,30 @@ def _write(dirpath, name, sql):
     (dirpath / name).write_text(sql, encoding="utf-8")
 
 
+def _all_versions():
+    """lib/migrations/ 下所有版本号。
+
+    这几条测试断言的是「发现到的迁移一条不落都应用了」，所以期望值从目录里
+    现算，而不是写死 [1]——写死的话每加一个迁移文件都要来改测试，改的时候
+    手一滑把断言改成 `== []` 也没人拦得住。
+    """
+    return [v for v, _, _ in points_db._discover()]
+
+
 def test_a_fresh_database_gets_every_table(points_db):
     conn = points_db.connection()
     got = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     assert {"ledger", "redemptions", "invites",
             "historical_participants", "config"} <= got
-    assert points_db.applied_versions() == [1]
+    assert points_db.applied_versions() == _all_versions()
 
 
 def test_migrate_is_idempotent(points_db):
     assert points_db.migrate() == 0            # 进程内已迁移过
     assert points_db.close_all() is None
     assert points_db.migrate() == 0            # 换一条连接再看一遍库里也记着
-    assert points_db.applied_versions() == [1]
+    assert points_db.applied_versions() == _all_versions()
 
 
 def test_only_one_schema_migrations_row_per_version(points_db):
@@ -39,7 +49,7 @@ def test_only_one_schema_migrations_row_per_version(points_db):
         points_db.migrate()
     rows = points_db.connection().execute(
         "SELECT version FROM schema_migrations").fetchall()
-    assert [r["version"] for r in rows] == [1]
+    assert [r["version"] for r in rows] == _all_versions()
 
 
 def test_migrations_run_in_version_order_and_only_once(tmp_path, monkeypatch):
@@ -110,6 +120,41 @@ def test_a_failed_migration_is_not_recorded(tmp_path, monkeypatch):
         points_db.migrate()
     points_db.close_all()
     assert points_db.applied_versions() == [1]   # 002 没被记上
+
+
+def test_a_new_migration_upgrades_an_existing_database(tmp_path, monkeypatch):
+    """已上线的库只跑了 001，新的 002 要能干净地补上去、且不动原有数据。
+
+    这条比「全新库能建起来」更要紧：测试服与生产服的库都是先有 001、后来才
+    长出 002 的，而 ALTER TABLE 在已有数据的表上跑和在空表上跑不是一回事。
+    """
+    real_dir = points_db.MIGRATIONS_DIR
+    first_version, first_name, first_path = points_db._discover()[0]
+
+    old = tmp_path / "old"
+    old.mkdir()
+    with open(first_path, encoding="utf-8") as f:
+        _write(old, first_name, f.read())
+    monkeypatch.setattr(points_db, "MIGRATIONS_DIR", str(old))
+
+    db = str(tmp_path / "upgrade.db")
+    points_db.set_db_path(db)
+    assert points_db.migrate() == 1
+    points_db.connection().execute(
+        "INSERT INTO ledger(user_oid, delta, balance_after, kind, created_at)"
+        " VALUES('ou_a', 20, 20, 'admin', '2026-01-01 00:00:00')")
+    points_db.close_all()
+
+    # 把迁移目录换回真的（多出 002），相当于在已有库上发一次版
+    monkeypatch.setattr(points_db, "MIGRATIONS_DIR", real_dir)
+    points_db.set_db_path(db)
+    assert points_db.migrate() == len(_all_versions()) - 1
+
+    conn = points_db.connection()
+    assert conn.execute("SELECT delta FROM ledger").fetchone()["delta"] == 20
+    assert first_version in points_db.applied_versions()
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(redemptions)")}
+    assert "ref_id" in cols
 
 
 def test_switching_database_does_not_reuse_the_old_connection(tmp_path, monkeypatch):

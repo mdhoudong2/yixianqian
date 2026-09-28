@@ -297,8 +297,13 @@ def redeem_priority(user_oid, activity, *, request_key="", conn=None):
                        reason=f"兑换优先报名名额：{act.title}")
 
 
-def redeem_wish(user_oid, activity, target_oid, *, request_key="", conn=None):
-    """心愿名额（30 穗）。报名成功后指定 1 位 App 用户。
+def redeem_wish(user_oid, activity, target_oid, *, signed_up=True, request_key="",
+                conn=None):
+    """心愿名额（30 穗）。**报名成功后**指定 1 位 App 用户。
+
+    自己报没报名由调用方查好、以 `signed_up` 传进来（本模块不碰飞书）。不在
+    这里查是因为它是个业务资格，得排在「表单没填完」「余额不够」后面——顺序
+    错了，用户会先被告知「你还没报名」，填好对方名字再点一次才发现钱也不够。
 
     「对方不被告知」是产品规则，这里只保证不往 `target_oid` 那边写任何东西——
     通知一律不发，跟这里无关。对方到活动开始还没报名就退穗，见
@@ -317,6 +322,9 @@ def redeem_wish(user_oid, activity, target_oid, *, request_key="", conn=None):
         key = _new_key(c, ITEM_WISH, user_oid, act.id, request_key)
         _precheck(c, key, ITEM_WISH)
         _require_balance(c, user_oid, ITEM_WISH)
+        # 自己不在场的活动，心愿没人能安排，30 穗会白花（对方报了名就不退穗）
+        if not signed_up:
+            raise ItemUnavailable(f"先报名「{act.title}」，才能在这场活动上许愿")
         return _create(c, user_oid, ITEM_WISH, cost=cost_of(ITEM_WISH),
                        ref_type=ITEM_WISH, ref_id=act.id,
                        params={"activity_id": act.id, "title": act.title,

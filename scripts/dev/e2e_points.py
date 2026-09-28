@@ -310,6 +310,19 @@ def test_activity_items(c):
     r = redeem_post(c, {"item": "wish", "activity_record_id": "rec不存在"})
     check("E5 活动不存在 → 404", r.status_code == 404, f"实际 {r.status_code}")
 
+    # E7 自己没报名就不许许愿。这条要真的去查报名表，写错字段名就会「谁都能许愿」
+    # ——单测里报名表是桩，桩不会告诉你字段名错了。
+    act = find_activity("报名中")
+    if act:
+        _cancel_signup(get_field_text(act["fields"], "活动ID"))
+        fund(points_redeem.cost_of(points_redeem.ITEM_WISH))
+        r = redeem_post(c, {"item": "wish", "activity_record_id": act["record_id"],
+                            "target_open_id": "ou_e2e_someone_else"})
+        check("E7 没报名不能许愿", r.status_code == 400 and "先报名" in r.json().get(
+            "error", ""), str(r.json())[:100])
+    else:
+        print("[SKIP] E7 测试服里没有「报名中」的活动，没法验这条")
+
     test_priority_wiring(c)
 
 

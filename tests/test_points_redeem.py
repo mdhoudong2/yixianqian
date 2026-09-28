@@ -258,6 +258,26 @@ def test_a_wish_cannot_be_designated_to_yourself(points_db):
         points_redeem.redeem_wish(USER, _act(), USER)
 
 
+def test_a_wish_needs_my_own_signup(points_db):
+    """自己没报名这场活动 → 不许许愿（人不在场，30 穗会白花）。"""
+    _fund(points_db)
+    with pytest.raises(points_redeem.ItemUnavailable, match="先报名"):
+        points_redeem.redeem_wish(USER, _act(), OTHER, signed_up=False)
+    assert points.balance(USER) == 1000         # 一分没扣
+
+
+def test_the_signup_gate_is_checked_after_the_form_and_the_balance(points_db):
+    """顺序有意义：没填完 / 没钱时，说的不该是「你还没报名」。
+
+    两句都对，但顺序反了会让人先跑去报名，回来再填一次才发现还差一步。
+    """
+    with pytest.raises(points_redeem.ItemUnavailable, match="指定一位"):
+        points_redeem.redeem_wish(USER, _act(), "", signed_up=False)   # 也没钱
+    _fund(points_db, 1)                        # 有 1 穗，不够 30
+    with pytest.raises(points.InsufficientBalance):
+        points_redeem.redeem_wish(USER, _act(), OTHER, signed_up=False)
+
+
 def test_a_wish_remembers_who_was_designated(points_db):
     _fund(points_db)
     order = points_redeem.redeem_wish(USER, _act(), OTHER)

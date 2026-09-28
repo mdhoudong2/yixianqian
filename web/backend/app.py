@@ -3559,8 +3559,12 @@ def points_redeem_create():
         elif item == points_redeem.ITEM_PRIORITY:
             order = points_redeem.redeem_priority(open_id, act, request_key=request_key)
         elif item == points_redeem.ITEM_WISH:
+            # 「报名成功后指定」：心愿是给同桌安排用的，自己不在场就没有意义。
+            # 查一次实表而不是快照——刚报完名的人正好走到这一步，快照要等异步
+            # 刷新才会带上他，会把他误拒。查到的结果交给 lib 决定什么时候用。
             order = points_redeem.redeem_wish(
                 open_id, act, str(body.get("target_open_id") or "").strip(),
+                signed_up=bool(bitable.get_user_signup(act["id"], open_id)),
                 request_key=request_key)
         elif item == points_redeem.ITEM_MATCHMAKER:
             order = points_redeem.redeem_matchmaker(

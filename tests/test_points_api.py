@@ -46,6 +46,9 @@ def client(monkeypatch):
     monkeypatch.setattr(app, "quota_view", lambda oid, likes_snap=None: {
         "anon_left": 10, "anon_total": 10, "real_left": 1, "real_total": 1,
         "real_permanent": 0})
+    # 心愿要查「我报没报名」。默认「报了」，各用例按需覆盖成 None。
+    monkeypatch.setattr(app.bitable, "get_user_signup",
+                        lambda aid, oid: {"record_id": "rec_signup", "fields": {}})
     # 限流计数器是模块级的，跨用例累加。不清的话，跑得越多越容易撞上 429，
     # 而那是测试自己制造的假失败。
     app._rate_store.clear()
@@ -346,6 +349,45 @@ def test_wish_must_name_a_target_and_not_yourself(client, points_db, monkeypatch
                "target_open_id": ME}).get_json()
     assert "自己" in d["error"]
     assert client.get("/api/points/me").get_json()["balance"] == 200
+
+
+def test_wish_needs_my_own_signup(client, points_db, monkeypatch):
+    """规则是「报名成功后指定」：人不在场，心愿没人能安排，30 穗会白花。"""
+    _activity(monkeypatch)
+    _fund(100)
+    monkeypatch.setattr(app.bitable, "get_user_signup", lambda aid, oid: None)
+
+    d = _post(client, "/api/points/redeem",
+              {"item": "wish", "activity_record_id": "rec_act",
+               "target_open_id": OTHER}).get_json()
+    assert "先报名" in d["error"]
+    assert client.get("/api/points/me").get_json()["balance"] == 100
+
+
+def test_wish_form_errors_win_over_the_signup_gate(client, points_db, monkeypatch):
+    """没填对方是谁、又没报名时，先说的是「填完」，不是「你还没报名」。
+
+    两句都对，但顺序反了会让人先跑去报名，回来再填一次才发现还差一步。
+    """
+    _activity(monkeypatch)
+    _fund(100)
+    monkeypatch.setattr(app.bitable, "get_user_signup", lambda aid, oid: None)
+
+    d = _post(client, "/api/points/redeem",
+              {"item": "wish", "activity_record_id": "rec_act"}).get_json()
+    assert "指定一位" in d["error"]
+
+
+def test_wish_works_once_i_am_signed_up(client, points_db, monkeypatch):
+    """这个用例同时钉住「查的是实表不是快照」：快照可以空着，报名记录必须读得到。"""
+    _activity(monkeypatch)
+    _fund(100)
+    monkeypatch.setattr(app, "_snap", lambda name: [])
+    monkeypatch.setattr(app, "snap_signup", lambda aid, oid: None)   # 快照说没有
+    d = _post(client, "/api/points/redeem",
+              {"item": "wish", "activity_record_id": "rec_act",
+               "target_open_id": OTHER}).get_json()
+    assert d["ok"] and d["balance"] == 70
 
 
 # ---------------------------------------------------------------- 报名 + 费用减免

@@ -1643,9 +1643,13 @@
 
       <template v-if="redeemNeedsActivity">
         <div class="redeem-form-label">选择活动</div>
-        <div v-if="!activities.length" class="redeem-form-tip">暂无可选活动，请先去活动页看看</div>
+        <!-- 心愿只列自己报了名的活动：规则是「报名成功后指定」，列出来再拒绝
+             只会让人白填一遍对方的名字 -->
+        <div v-if="!redeemActivityOptions.length" class="redeem-form-tip">
+          {{ redeemItem.item === 'wish' ? '你还没报名任何活动，先报名再来许愿' : '暂无可选活动，请先去活动页看看' }}
+        </div>
         <div v-else>
-          <div v-for="a in activities" :key="a.record_id" class="picker-option"
+          <div v-for="a in redeemActivityOptions" :key="a.record_id" class="picker-option"
             :class="{active: redeemActivityId === a.record_id}" @click="redeemActivityId = a.record_id">
             {{ a.name }}<span style="color:#969799; font-size:12px; margin-left:6px;">{{ a.status }}</span>
           </div>
@@ -2177,6 +2181,12 @@ createApp({
     const REDEEM_PANEL_EXCLUDE = ['fee_discount'];
     const redeemPanelItems = computed(() => (pointsRules.value.items || []).filter(it => !REDEEM_PANEL_EXCLUDE.includes(it.item)));
     const redeemNeedsActivity = computed(() => !!(redeemItem.value && REDEEM_ACTIVITY_ITEMS.includes(redeemItem.value.item)));
+    // 心愿限定「自己报了名的活动」（接口也会拦，这里只是别让人白填一遍）。
+    // 其余活动类兑换项照旧全列——优先名额在没报名时用才是它的意义。
+    const redeemActivityOptions = computed(() => {
+      if (redeemItem.value && redeemItem.value.item === 'wish') return activities.value.filter(a => a.my_signup);
+      return activities.value;
+    });
 
     // 幂等键：兑换接口按 request_key 去重，连点/超时重试不会重复扣穗。
     // crypto.randomUUID 只在安全上下文可用（部分飞书 WebView 里没有），取不到就退回 Math.random 拼 32 位十六进制。
@@ -4826,7 +4836,7 @@ createApp({
       loadingPoints, pointsLoaded, loadPoints, openPoints, loadPointsBalance,
       pointsRules, pointsRulesLoaded, loadPointsRules, showPointsRules, openPointsRules,
       showRedeemPanel, redeemItem, redeemActivityId, redeemTarget, redeemCondition, redeemSubmitting,
-      redeemNeedsActivity, redeemPanelItems, matchmakerConditionMax, openRedeemPanel, closeRedeemPanel,
+      redeemNeedsActivity, redeemActivityOptions, redeemPanelItems, matchmakerConditionMax, openRedeemPanel, closeRedeemPanel,
       pickRedeemItem, submitRedeem, newRequestKey,
       wishQuery, wishTargets, loadingWishTargets, loadWishTargets, pickWishTarget, clearWishTarget,
       showRedemptions, redemptionsList, loadingRedemptions, redemptionsLoaded, openRedemptions,

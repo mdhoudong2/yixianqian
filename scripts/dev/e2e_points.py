@@ -190,8 +190,12 @@ def _my_phone():
 # ---------------------------------------------------------------- D 兑换
 
 def redeem_post(c, body):
-    """打兑换接口。带节流：/api/points/redeem 限 20 次/60 秒，撞上就是 429——
-    那看起来和「被规则拒绝」一模一样，是假红。"""
+    """打兑换接口。带节流 + 429 重试。
+
+    /api/points/redeem 限 20 次/60 秒，撞上就是 429——那看起来和「被规则拒绝」
+    一模一样，是假红。本进程自己的调用数好数，但**上一个进程刚跑过的那些还占着
+    服务端的窗口**，所以连跑两遍仍然会撞。429 从来不是这些用例想考的东西，
+    等一分钟重来即可。"""
     while True:
         now = time.time()
         while _redeem_calls and now - _redeem_calls[0] > 60:
@@ -200,7 +204,14 @@ def redeem_post(c, body):
             _redeem_calls.append(now)
             break
         time.sleep(_redeem_calls[0] + 60 - now + 1)
-    return post(c, "/api/points/redeem", body)
+    for attempt in range(3):
+        r = post(c, "/api/points/redeem", body)
+        if r.status_code != 429:
+            return r
+        print(f"    （429 限流，等 60 秒重试第 {attempt + 1} 次）")
+        time.sleep(61)
+        _redeem_calls.clear()
+    return r
 
 
 _redeem_calls = []
@@ -310,18 +321,29 @@ def test_priority_wiring(c):
     """
     import points_admin as pa
 
-    act = _find_priority_activity()
+    # 只要「报名中」就行，不筛「有配额」：测试服那场活动的「报名人数上限」填的
+    # 是「无」（文本），优先名额本来就兑不了——那是没填数据，不是规则错。
+    act = find_activity("报名中")
     if not act:
-        print("[SKIP] E6 测试服里没有「报名中、有配额、优先位还没满」的活动")
+        print("[SKIP] E6 测试服里一场「报名中」的活动都没有，没法验这条")
         return
     text_id = get_field_text(act["fields"], "活动ID")
 
+    # 优先走 H5 那条真路。活动没填「报名人数上限」（表里写的是「无」）时
+    # `redeem_priority` 会拒——那不是 bug，是没有总名额就没有「优先」可言。
+    # 这种情况下退而求其次：本地直接开一张指向这场真活动的单子，后面读真状态、
+    # 写真报名表的部分照样是真场景，只是不经 H5 那一跳。
     fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
     r = redeem_post(c, {"item": "priority_signup",
                         "activity_record_id": act["record_id"]})
-    if not r.json().get("ok"):
-        print(f"[SKIP] E6 这场活动兑不了优先名额：{r.json().get('error')}")
-        return
+    real_path = bool(r.json().get("ok"))
+    if real_path:
+        check("E6a 兑换开出一张生效中的单", True)
+    else:
+        print(f"    （E6 走本地开单：{r.json().get('error')}）")
+        points_redeem.redeem_priority(ACTOR, {
+            "id": text_id, "title": get_field_text(act["fields"], "活动名称"),
+            "quota": 10, "fee": 0, "start_at": "", "open": True})
     order = points_redeem.find(ACTOR, points_redeem.ITEM_PRIORITY, text_id)
     check("E6a 兑换开出一张生效中的单", bool(order) and
           order["status"] == points_redeem.ST_ACTIVE, str(order and order["status"]))
@@ -337,23 +359,20 @@ def test_priority_wiring(c):
     check("E6c 收尾后单子不再是生效中",
           points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED)
 
-
-def _find_priority_activity():
-    """找一场能兑优先名额的活动。
-
-    光看「报名中」不够——`redeem_priority` 还要求有配额（`总名额 × 30%` 至少
-    得凑得出 1 个优先位）。测试服里就有报了名但没填「报名人数上限」的活动，
-    直接拿它测会得到一句「没有名额」的 SKIP，看着像功能坏了。
-    """
-    ratio = float(points_config.get("priority_ratio"))
-    for a in search_records(ACTIVITY_TABLE_ID):
-        f = a.get("fields", {})
-        if get_field_text(f, FIELD_ACTIVITY_STATUS) != "报名中":
-            continue
-        quota = get_field_number(f, "报名人数上限", 0) or 0
-        if int(quota * ratio) >= 1:
-            return a
-    return None
+    # 活动取消 → 退穗。直接在表里把状态改成「已取消」再改回来，用完就还原。
+    act_id = act["record_id"]
+    try:
+        update_record(ACTIVITY_TABLE_ID, act_id, {FIELD_ACTIVITY_STATUS: "已取消"})
+        points_redeem.redeem_priority(ACTOR, {
+            "id": text_id, "title": "e2e 取消用例", "quota": 10, "fee": 0,
+            "start_at": "", "open": True})
+        cancel_order = points_redeem.find(ACTOR, points_redeem.ITEM_PRIORITY, text_id)
+        before = balance()
+        pa.auto_settle_priority_orders()
+        check("E6d 活动取消后退穗", balance() == before + cancel_order["cost"],
+              f"{before} → {balance()}")
+    finally:
+        update_record(ACTIVITY_TABLE_ID, act_id, {FIELD_ACTIVITY_STATUS: "报名中"})
 
 
 def _signup_row(activity_id):

@@ -328,31 +328,31 @@ def test_priority_wiring(c):
         print("[SKIP] E6 测试服里一场「报名中」的活动都没有，没法验这条")
         return
     text_id = get_field_text(act["fields"], "活动ID")
+    act_id = act["record_id"]
+
+    # 先把上一轮跑崩留下的生效单子退掉。**一张没退掉的生效单子会一直挂在机器人
+    # 循环里**，30 秒后把人报上名；而且「每人每场一次」的幂等键还占着，这一轮
+    # 连单子都开不出来，报的错跟被测的行为毫无关系。
+    _refund_my_priority_orders()
 
     # 优先走 H5 那条真路。活动没填「报名人数上限」（表里写的是「无」）时
     # `redeem_priority` 会拒——那不是 bug，是没有总名额就没有「优先」可言。
     # 这种情况下退而求其次：本地直接开一张指向这场真活动的单子，后面读真状态、
     # 写真报名表的部分照样是真场景，只是不经 H5 那一跳。
-    fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
-    r = redeem_post(c, {"item": "priority_signup",
-                        "activity_record_id": act["record_id"]})
-    real_path = bool(r.json().get("ok"))
-    if real_path:
-        check("E6a 兑换开出一张生效中的单", True)
-    else:
-        print(f"    （E6 走本地开单：{r.json().get('error')}）")
-        points_redeem.redeem_priority(ACTOR, {
-            "id": text_id, "title": get_field_text(act["fields"], "活动名称"),
-            "quota": 10, "fee": 0, "start_at": "", "open": True})
-    order = points_redeem.find(ACTOR, points_redeem.ITEM_PRIORITY, text_id)
-    check("E6a 兑换开出一张生效中的单", bool(order) and
-          order["status"] == points_redeem.ST_ACTIVE, str(order and order["status"]))
-
-    # 从这里往下都靠 finally 收尾：**一张没退掉的生效单子会一直挂在机器人循环
-    # 里**，30 秒后把人报上名，之后每轮 E2E 都会读到这条谁也说不清的报名记录。
-    # 中间任何一步抛异常（哪怕只是断言写错）都得先把单子收掉。
-    act_id = act["record_id"]
     try:
+        fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
+        r = redeem_post(c, {"item": "priority_signup",
+                            "activity_record_id": act_id})
+        if not r.json().get("ok"):
+            print(f"    （E6 走本地开单：{r.json().get('error')}）")
+            points_redeem.redeem_priority(ACTOR, {
+                "id": text_id, "title": get_field_text(act["fields"], "活动名称"),
+                "quota": 10, "fee": 0, "start_at": "", "open": True})
+        order = points_redeem.find(ACTOR, points_redeem.ITEM_PRIORITY, text_id)
+        check("E6a 兑换开出一张生效中的单", bool(order) and
+              order["status"] == points_redeem.ST_ACTIVE,
+              str(order and order["status"]))
+
         auto_tasks.auto_settle_priority_orders()
         check("E6b 结算真的把他报上了名", _signup_row(text_id) is not None,
               f"活动 {text_id}")
@@ -374,10 +374,16 @@ def test_priority_wiring(c):
               f"{before} → {balance()}")
     finally:
         update_record(ACTIVITY_TABLE_ID, act_id, {FIELD_ACTIVITY_STATUS: "报名中"})
-        for o in points_redeem.list_for(ACTOR, item=points_redeem.ITEM_PRIORITY):
-            if o["status"] == points_redeem.ST_ACTIVE:
-                points_redeem.refund(o["id"], reason="e2e 收尾")
+        _refund_my_priority_orders()
         _cancel_signup(text_id)
+
+
+def _refund_my_priority_orders():
+    """退掉我名下所有还生效的优先名额单子。E6 开头和结尾各来一次。"""
+    for o in points_redeem.list_for(ACTOR, item=points_redeem.ITEM_PRIORITY):
+        if o["status"] == points_redeem.ST_ACTIVE:
+            points_redeem.refund(o["id"], reason="e2e 收尾")
+            print(f"    （退掉遗留的生效单 #{o['id']}，{o['cost']} 穗）")
 
 
 def _signup_row(activity_id):

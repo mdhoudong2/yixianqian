@@ -158,9 +158,20 @@ def discounted_fee(fee, rate=None):
 # ---------------------------------------------------------------- 核心
 
 def _new_key(c, item, user_oid, ref, request_key):
-    """构造幂等键。ref 有值时（活动类）用它，否则靠请求号。"""
+    """构造幂等键。ref 有值时（活动类）用它，否则靠请求号。
+
+    活动类的键固定成 `redeem:<项>:<人>:<活动>`，这就是「每人每场一次」的落点：
+    重复提交撞上同一把键，报「已经开过单」。但**退过穗的不算**——报名写库失败
+    会退穗（见 H5 报名路由），那笔退款留着的话，用户在同一场活动上再也用不了
+    这一项了，而他的问题只是一次网络抖动。所以按已退款单数往下顺延一个序号。
+    """
     if ref:
-        return f"redeem:{item}:{user_oid}:{ref}"
+        base = f"redeem:{item}:{user_oid}:{ref}"
+        n = c.execute(
+            "SELECT count(*) AS n FROM redemptions WHERE user_oid=? AND item=?"
+            " AND ref_id=? AND refund_key IS NOT NULL",
+            (user_oid, item, str(ref))).fetchone()["n"]
+        return base if not n else f"{base}#{int(n) + 1}"
     token = str(request_key or "").strip()
     if not token:
         # 没有请求号：按 (用户, 兑换项) 下已有单数往下排。键仍然唯一（数只增
@@ -235,8 +246,9 @@ def _precheck(c, key, item):
 def redeem_real_like(user_oid, *, request_key="", conn=None):
     """额外实名喜欢（20 穗）。不过期，用掉不退穗。
 
-    换来的是一次**永久**实名名额，和「邀请得来的永久名额」「管理员加赠」是
-    同一个池子——`lib/quota.real_left` 天生就是「先用免费的、再用名额」。
+    换来的是一次**永久**实名名额，和「管理员加赠」是同一个池子——
+    `lib/quota.real_left` 天生就是「先用每月免费的、再用永久名额」。
+    （v7 起邀请奖励改发麦穗，不再直接换名额，所以那个池子只剩这两个来源。）
     """
     with points_db.transaction(conn) as c:
         key = _new_key(c, ITEM_REAL_LIKE, user_oid, "", request_key)
@@ -461,6 +473,24 @@ def by_activity(activity_id, item=None, statuses=None, conn=None):
         sql += " AND status IN (%s)" % ",".join("?" * len(statuses))
         args.extend(statuses)
     sql += " ORDER BY id"
+    with points_db.transaction(conn) as c:
+        rows = c.execute(sql, args).fetchall()
+    return [_decorate(dict(r)) for r in rows]
+
+
+def all_orders(item, statuses=None, limit=200, conn=None):
+    """全站某个兑换项的单子（不分人）。给机器人往多维表格补单据用。
+
+    和 `list_for` 的区别就是不分人——同一件事按人查要遍历全表用户，
+    按项查一条 SQL 就够。
+    """
+    sql = "SELECT * FROM redemptions WHERE item=?"
+    args = [item]
+    if statuses:
+        sql += " AND status IN (%s)" % ",".join("?" * len(statuses))
+        args.extend(statuses)
+    sql += " ORDER BY id LIMIT ?"
+    args.append(int(limit))
     with points_db.transaction(conn) as c:
         rows = c.execute(sql, args).fetchall()
     return [_decorate(dict(r)) for r in rows]

@@ -391,6 +391,26 @@ def claw_back_for_invitee(invitee_oid, reason="确认期内被封禁", conn=None
 
 # ---------------------------------------------------------------- 查询（H5 / 机器人）
 
+def open_invites_for(invitee_oid, conn=None):
+    """这个人名下还在确认期内的邀请（谁邀请的他、能拿多少穗）。
+
+    给「被邀请人封禁 → 通知邀请人奖励没了」用：光知道作废了几条不够，
+    还得知道该去告诉谁。`claw_back_for_invitee` 只回收、不回报，所以单列一个查询。
+    """
+    if not invitee_oid:
+        return []
+    with points_db.transaction(conn) as c:
+        rows = c.execute("SELECT id, inviter_oid, gender, invitee_phone FROM invites"
+                         " WHERE invitee_oid=? AND status=?",
+                         (invitee_oid, STATUS_CONFIRMED)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["reward"] = reward_amount(d["gender"])
+        out.append(d)
+    return out
+
+
 def progress(inviter_oid, conn=None):
     """邀请进度。`pending_points` 只算已经知道性别的（已「单身」的那些）——
     还没注册的人不知道性别，硬按某一档估会让数字来回跳。"""

@@ -93,8 +93,9 @@ F_ID_CARD = "身份证号"
 # 不再是可累积的余额。写入只由机器人 reconcile_hearts 负责，H5 只读。
 F_HEART_REMAIN = "爱心剩余"        # 本月剩余匿名额度
 F_HEART_REMAIN_TOTAL = "爱心总量"  # 本月匿名额度，固定 10
-F_INVITE_QUOTA = "邀请名额"        # 邀请获得的永久实名名额
-F_REAL_TOTAL = "实名总量"          # 1 + 邀请名额 + 管理员加赠
+F_INVITE_QUOTA = "邀请名额"        # 【v7 起退役】邀请不再发实名名额，改发麦穗
+F_PERMANENT_BONUS = "管理员加赠"   # 管理员手动填的永久实名名额，对账叠加
+F_REAL_TOTAL = "实名总量"          # 1 + 管理员加赠 + 麦穗兑换的额外实名喜欢
 F_REAL_REMAIN = "实名剩余"         # 本月剩余实名次数
 F_ACCOUNT_STATUS = "账号状态"
 STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身看热闹，仅浏览/留言/反馈/查看活动）

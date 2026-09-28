@@ -409,20 +409,16 @@ def get_date_value(fields, key, default=""):
     return get_datetime_value(fields, key, default)
 
 
-def get_datetime_value(fields, key, default=""):
-    """获取 DateTime 字段值，返回 %Y-%m-%d。
+def get_timestamp(fields, key, default=None):
+    """获取 DateTime 字段的 Unix 秒时间戳（读不到则返回 default）。
 
-    兼容 Feishu Bitable 日期的多种返回形态：
-    - 列表 [{ "timestamp": 秒 }, ...]（新 API）
-    - dict {"value": 毫秒}
-    - 直接毫秒整数 len==13；秒整数 len==10
-    - 公式包装 {"type":..,"value":[...]}
+    单独抽出来是为了**保留时分秒**：get_datetime_value 只回日期，拿它算
+    「活动开始前 48 小时」会整整差一天。
     """
     val = fields.get(key)
     if val is None:
         return default
     val = _unwrap_formula(val)
-    ts = None
     try:
         if isinstance(val, list):
             if not val:
@@ -441,9 +437,34 @@ def get_datetime_value(fields, key, default=""):
         ts = int(ts)
         if abs(ts) > 10_000_000_000:  # 毫秒（含 1970 年前的负时间戳，如 -1210752000000）
             ts = ts / 1000
-        return time.strftime("%Y-%m-%d", time.localtime(ts))
+        return int(ts)
     except (ValueError, TypeError, OverflowError):
-        return str(val)
+        return default
+
+
+def get_datetime_value(fields, key, default=""):
+    """获取 DateTime 字段值，返回 %Y-%m-%d。
+
+    兼容 Feishu Bitable 日期的多种返回形态：
+    - 列表 [{ "timestamp": 秒 }, ...]（新 API）
+    - dict {"value": 毫秒}
+    - 直接毫秒整数 len==13；秒整数 len==10
+    - 公式包装 {"type":..,"value":[...]}
+
+    形态兼容都在 get_timestamp 里；只要日期、又要时分秒的调用它。
+    """
+    raw = fields.get(key)
+    if raw is None:
+        return default
+    ts = get_timestamp(fields, key)
+    if ts is None:
+        # 不是时间戳：退回原值字符串。调用方多半只是想展示，报错不如给个东西看。
+        val = _unwrap_formula(raw)
+        return default if val in ("", [], {}, None) else str(val)
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(ts))
+    except (ValueError, OSError, OverflowError):
+        return default
 
 
 def get_phone_value(fields, key, default=""):

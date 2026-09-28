@@ -86,6 +86,18 @@ from grouping import (
     handle_group_command,
     handle_group_submit,
 )
+from points_admin import (
+    handle_admin_attendance,
+    handle_admin_config,
+    handle_admin_grant,
+    handle_admin_mm_handle,
+    handle_admin_mm_list,
+    handle_admin_query_points,
+    handle_admin_wish_handle,
+    handle_admin_wish_list,
+    handle_points_help,
+    settle_due_things_loop,
+)
 from queries import find_user_by_openid
 from store import load_bindings, load_welcomed, update_p2p_chat
 
@@ -475,6 +487,28 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_admin_list_observer_codes()
         elif text_lower in ["分组帮助", "group help"]:
             reply = handle_group_help()
+        # ========== 麦穗 ==========
+        # 放在「分组帮助」之后、普通用户指令之前：这些前缀（加穗/查穗/配置…）
+        # 与上面的指令都不撞，但必须在普通用户那一段之前判，否则管理员发
+        # 「配置」会掉进 handle_welcome 的兜底里，收到一句欢迎语。
+        elif text_lower in ["麦穗帮助", "麦穗指令"]:
+            reply = handle_points_help()
+        elif text.startswith("加穗") or text.startswith("扣穗"):
+            reply = handle_admin_grant(text, sender_id)
+        elif text.startswith("查穗"):
+            reply = handle_admin_query_points(text)
+        elif text.startswith("签到"):
+            reply = handle_admin_attendance(text)
+        elif text.startswith("心愿列表"):
+            reply = handle_admin_wish_list(text)
+        elif text.startswith("心愿处理"):
+            reply = handle_admin_wish_handle(text, sender_id)
+        elif text.startswith("推荐单列表"):
+            reply = handle_admin_mm_list(text)
+        elif text.startswith("推荐单处理"):
+            reply = handle_admin_mm_handle(text, sender_id)
+        elif text.startswith("配置"):
+            reply = handle_admin_config(text)
 
     # 普通用户指令
     if not reply:
@@ -538,6 +572,9 @@ def start_worker_threads():
         ("报名通知", auto_notify_signup_loop, 30),
         ("活动报名更新", auto_update_activity_signup_loop, 30),
         ("每周推荐位", weekly_recommend_loop, 300),
+        # 到点该办的事：邀请满 7 天确认期、红娘推荐单超期。间隔取 120 秒——
+        # 这两件事的粒度是天，早两分钟晚两分钟没区别，但跑太勤会平白多查表。
+        ("麦穗周期结算", settle_due_things_loop, 120),
     ]
     for name, func, interval in threads_config:
         t = threading.Thread(target=func, args=(interval,), daemon=True, name=name)
@@ -556,6 +593,24 @@ def start_worker_threads():
 
 
 
+def init_points_db():
+    """把麦穗账本指到配置里的那个文件并跑迁移。
+
+    不能靠 lib.points_db 自己推路径：local_config 可以覆盖 SHARED_DATA_DIR，
+    而 default_db_path() 只会算出 <仓库根>/data。两边不一致的话 bot 和 H5 会
+    各写一个库，「余额 = 流水求和」当场不成立，而且不会有任何报错。
+    """
+    from lib import points_db
+    try:
+        points_db.set_db_path(POINTS_DB_FILE)
+        applied = points_db.migrate()
+        log(f"麦穗账本就绪：{POINTS_DB_FILE}" + (f"（本次应用 {applied} 条迁移）" if applied else ""))
+    except Exception as e:
+        # 账本起不来不该拖着机器人一起躺下：用户通知、审核、分组都不依赖它。
+        # 但必须嚷一声——静默的话，管理员会以为麦穗在正常工作。
+        log(f"⚠️ 麦穗账本初始化失败：{e}（麦穗相关指令会报错，其余功能不受影响）")
+
+
 def main():
     print("=" * 60)
     env_label = "【开发版】" if IS_DEV else "【生产版】"
@@ -565,6 +620,8 @@ def main():
     print(f"用户表: {USER_TABLE_ID}")
     print("等待用户消息...")
     print("=" * 60)
+
+    init_points_db()
 
     # 启动业务线程（只启动一次，长连接重连时不重复启动）
     start_worker_threads()

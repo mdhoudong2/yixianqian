@@ -24,6 +24,7 @@ from lib.bitable_client import (  # noqa: F401 — re-export for app.py via bita
     get_multi_select_value,
     get_phone_value,
     get_select_value,
+    get_timestamp,
     validate_id_card,
 )
 

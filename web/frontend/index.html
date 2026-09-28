@@ -327,6 +327,77 @@
   .modal-action { text-align: center; padding: 14px; font-size: 15px; cursor: pointer; color: #646566; }
   .modal-action-muted { color: #969799; }
   .modal-action-primary { color: #ff6b81; font-weight: 600; }
+  /* 我的麦穗（积分）：余额卡 */
+  .points-card { background: linear-gradient(135deg, #ff6b81, #ff8e9b); border-radius: 12px; padding: 18px 16px; color: #fff; box-shadow: 0 4px 16px rgba(255,107,129,0.28); }
+  .points-balance-label { font-size: 13px; opacity: 0.9; }
+  .points-balance { font-size: 40px; font-weight: 700; line-height: 1.2; margin-top: 2px; }
+  .points-balance .points-unit { font-size: 16px; font-weight: 400; margin-left: 4px; opacity: 0.9; }
+  .points-sub { display: flex; align-items: center; gap: 10px; font-size: 13px; opacity: 0.92; margin-top: 4px; }
+  .points-sub b { font-size: 15px; }
+  .points-sub-divider { opacity: 0.5; }
+  /* 待确认：这笔穗还在确认期里，不能花——必须比余额更显眼地说清，否则用户会以为能立刻拿去兑换 */
+  .points-pending { margin-top: 12px; background: rgba(255,255,255,0.22); border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.5; }
+  .points-pending b { font-size: 15px; }
+  .points-pending-tip { font-size: 12px; opacity: 0.88; margin-top: 3px; line-height: 1.5; }
+  .points-actions { display: flex; gap: 10px; margin-top: 14px; }
+  /* 麦穗明细 */
+  .points-entry { background: #fff; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .points-entry-main { flex: 1; min-width: 0; }
+  .points-entry-kind { font-size: 15px; font-weight: 500; color: #323233; }
+  .points-entry-reason { font-size: 12px; color: #969799; margin-top: 3px; line-height: 1.5; word-break: break-all; }
+  .points-entry-right { text-align: right; flex-shrink: 0; }
+  .points-entry-delta { font-size: 17px; font-weight: 700; }
+  .points-entry-delta.plus { color: #ff6b81; }
+  .points-entry-delta.minus { color: #969799; }
+  .points-entry-time { font-size: 11px; color: #c8c9cc; margin-top: 3px; }
+  /* 兑换面板 */
+  .redeem-panel { display: flex; flex-direction: column; max-height: 85vh; }
+  .redeem-list { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 16px; }
+  .redeem-item { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid #f7f8fa; }
+  .redeem-item:last-child { border-bottom: none; }
+  .redeem-item-info { flex: 1; min-width: 0; }
+  .redeem-item-label { font-size: 15px; color: #323233; }
+  .redeem-item-desc { font-size: 12px; color: #969799; margin-top: 3px; line-height: 1.5; }
+  .redeem-item-cost { font-size: 15px; font-weight: 700; color: #ff6b81; flex-shrink: 0; }
+  /* 余额不够：整行置灰并写出原因，否则用户点了没反应会以为坏掉 */
+  .redeem-item.disabled { opacity: 0.5; }
+  .redeem-item.disabled .redeem-item-cost { color: #969799; }
+  .redeem-item-disabled-tip { font-size: 12px; color: #ee0a24; margin-top: 3px; }
+  /* 心愿对象：open_id 用户看不见，只能搜人，选中后显示成一个可清除的确认条 */
+  .wish-chosen { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #fff0f3; color: #ff6b81; border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .wish-chosen-clear { color: #969799; font-size: 15px; cursor: pointer; flex-shrink: 0; }
+  .wish-target-list { max-height: 240px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  /* 兑换记录 */
+  .redeem-order { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid #f7f8fa; }
+  .redeem-order:last-child { border-bottom: none; }
+  .redeem-order-main { flex: 1; min-width: 0; }
+  .redeem-order-label { font-size: 15px; color: #323233; }
+  .redeem-order-sub { font-size: 12px; color: #969799; margin-top: 3px; line-height: 1.5; word-break: break-all; }
+  .redeem-order-time { font-size: 11px; color: #c8c9cc; margin-top: 3px; }
+  .redeem-order-right { text-align: right; flex-shrink: 0; }
+  .redeem-order-cost { font-size: 15px; font-weight: 700; color: #969799; }
+  .redeem-order-status { font-size: 12px; color: #ff6b81; margin-top: 3px; }
+  .redeem-form { padding: 4px 16px 20px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .redeem-form-label { font-size: 13px; color: #969799; margin: 14px 0 6px; }
+  .redeem-form-tip { font-size: 12px; color: #969799; padding: 8px 0; }
+  .redeem-form-actions { display: flex; gap: 10px; margin-top: 20px; }
+  /* 规则说明 */
+  .points-rules-title { font-size: 13px; font-weight: 600; color: #ff6b81; margin: 14px 0 4px; }
+  .points-rules-title:first-child { margin-top: 0; }
+  .points-rules-line { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; color: #323233; line-height: 1.6; padding: 3px 0; }
+  .points-rules-sub { font-size: 12px; color: #969799; line-height: 1.5; margin-bottom: 4px; }
+  .points-rules-note { font-size: 13px; color: #646566; line-height: 1.7; }
+  /* 邀请进度 / 好友登记 */
+  .invite-progress { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .invite-progress-item { flex: 1; min-width: 70px; background: #f7f8fa; border-radius: 8px; padding: 8px 4px; text-align: center; }
+  .invite-progress-num { font-size: 18px; font-weight: 700; color: #ff6b81; }
+  .invite-progress-label { font-size: 11px; color: #969799; margin-top: 2px; }
+  .invite-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f7f8fa; font-size: 13px; color: #323233; }
+  .invite-row:last-child { border-bottom: none; }
+  .invite-row-main { flex: 1; min-width: 0; }
+  .invite-row-time { font-size: 11px; color: #c8c9cc; margin-top: 2px; }
+  .invite-row-status { flex-shrink: 0; font-size: 12px; color: #969799; }
+  .invite-form-row { display: flex; gap: 8px; align-items: center; }
   /* 夜间模式 */
   .van-theme-dark { --van-background: #1a1a1c; --van-background-2: #222226; --van-background-3: #2c2c30; --van-border-color: #3a3a3e; --van-active-color: #3a3a3e; --van-field-placeholder-text-color: #8a8a8e; }
   .van-theme-dark html, .van-theme-dark body, html.van-theme-dark, html.van-theme-dark body { background: #1a1a1c; color: #f5f5f5; }
@@ -381,6 +452,16 @@
   .van-theme-dark .filter-tag.active, .van-theme-dark .round-tab.active { background: #ff6b81; color: #fff; }
   .van-theme-dark .picker-option.active, .van-theme-dark .multi-option.active { color: #ff6b81; }
   .van-theme-dark .multi-option.active { background: rgba(255,107,129,0.14); }
+  /* 麦穗/兑换/邀请：新增的白色与浅灰面在暗色下需要各自的替代色（渐变卡自带底色，保留品牌粉） */
+  .van-theme-dark .points-entry { background: #222226; }
+  .van-theme-dark .points-entry-kind, .van-theme-dark .redeem-item-label,
+  .van-theme-dark .points-rules-line, .van-theme-dark .invite-row { color: #f5f5f5; }
+  .van-theme-dark .points-rules-note { color: #c8c9cc; }
+  .van-theme-dark .redeem-item, .van-theme-dark .invite-row { border-color: #3a3a3e; }
+  .van-theme-dark .invite-progress-item { background: #2c2c30; }
+  .van-theme-dark .redeem-order { border-color: #3a3a3e; }
+  .van-theme-dark .redeem-order-label { color: #f5f5f5; }
+  .van-theme-dark .wish-chosen { background: rgba(255,107,129,0.14); }
   /* 四 Tab 间流畅过渡 */
   .tab-main { position: relative; min-height: calc(100vh - 60px); }
   .tab-transition-enter-active { transition: opacity 0.10s ease, transform 0.10s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
@@ -736,6 +817,7 @@
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
+      <van-cell v-if="!isObserver" title="🌾 我的麦穗" :value="pointsBalance ? pointsBalance + ' 穗' : ''" is-link @click="openPoints"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
       <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
@@ -1081,6 +1163,55 @@
     </div>
   </div>
 </div>
+<!-- ========== 麦穗 ========== -->
+<div v-else-if="page==='points'" key="points">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="points-card">
+      <div class="points-balance-label">我的麦穗</div>
+      <div class="points-balance">{{ pointsBalance }}<span class="points-unit">穗</span></div>
+      <div class="points-sub">
+        <span>累计获得 <b>{{ pointsEarned }}</b></span>
+        <span class="points-sub-divider">|</span>
+        <span>累计消耗 <b>{{ pointsSpent }}</b></span>
+      </div>
+      <!-- 待确认必须写清楚「还不能花」：它在确认期里，用户最容易误会成到手了 -->
+      <div v-if="pointsPending > 0" class="points-pending">
+        ⏳ 待确认 <b>{{ pointsPending }}</b> 穗（{{ pointsPendingCount }} 笔）
+        <div class="points-pending-tip">好友注册后有{{ inviteConfirmDays ? ' ' + inviteConfirmDays + ' 天' : '' }}确认期，确认通过才真正到账，现在还不能用来兑换</div>
+      </div>
+      <!-- 渐变底上的次要按钮不能用 plain（Vant 的 plain 底是白色，白字会看不见），直接给白描边+半透明底 -->
+      <div class="points-actions">
+        <van-button round size="small" style="background:#fff; border:1px solid #fff; color:#ff6b81;" @click="openRedeemPanel">兑换</van-button>
+        <van-button round size="small" style="background:rgba(255,255,255,0.22); border:1px solid rgba(255,255,255,0.7); color:#fff;" @click="openPointsRules">规则说明</van-button>
+        <van-button round size="small" style="background:rgba(255,255,255,0.22); border:1px solid rgba(255,255,255,0.7); color:#fff;" @click="showInviteDialog=true">邀请好友</van-button>
+      </div>
+    </div>
+
+    <div class="section-title" style="display:flex; justify-content:space-between; align-items:center;">
+      <span>麦穗明细</span>
+      <span class="theme-color" style="font-size:13px; cursor:pointer;" @click="openRedemptions">兑换记录</span>
+    </div>
+    <div v-if="loadingPoints" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!pointsEntries.length" description="还没有麦穗记录"></van-empty>
+    <div v-else>
+      <div v-for="e in pointsEntries" :key="e.id" class="points-entry">
+        <div class="points-entry-main">
+          <div class="points-entry-kind">{{ e.kind_label }}</div>
+          <div class="points-entry-reason" v-if="e.reason">{{ e.reason }}</div>
+        </div>
+        <div class="points-entry-right">
+          <div class="points-entry-delta" :class="e.delta >= 0 ? 'plus' : 'minus'">{{ e.delta > 0 ? '+' : '' }}{{ e.delta }}</div>
+          <div class="points-entry-time">{{ e.created_at }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- ========== 活动详情 ========== -->
 <div v-else-if="page==='activity_detail'" key="activity_detail">
   <div class="back-nav" @click="handleBack">
@@ -1283,9 +1414,15 @@
   <div style="padding:22px 20px 18px; text-align:center;">
     <div style="font-size:18px; font-weight:600; color:#323233;">微信缴费</div>
     <div style="margin:10px 0 4px; font-size:15px; color:#ff4d6a; font-weight:600;">费用：{{ currentActivity && currentActivity.fee > 0 ? currentActivity.fee + '元' : '免费' }}</div>
+    <div v-if="feeDiscount" style="margin:6px 0 8px; padding:8px 10px; background:#fff7f9; border-radius:8px; font-size:12.5px; color:#ff4d6a; line-height:1.6;">
+      用 {{ feeDiscount.cost }} 穗麦穗减免，实付只需 {{ feeDiscount.payable }} 元
+    </div>
     <div style="font-size:12.5px; color:#969799; line-height:1.6; margin-bottom:10px;">请长按下方二维码保存到相册，用微信扫码完成缴费<br>缴费后点击「我已完成缴费」即报名成功</div>
     <img src="pay-qr.jpg?v=2" alt="微信缴费二维码" style="width:220px; max-width:74%; border-radius:10px; border:1px solid #f0f0f0;">
-    <van-button type="primary" color="#ff6b81" block round style="margin-top:16px;" :loading="actionLoading" @click="confirmPay">我已完成缴费</van-button>
+    <!-- 减免是「付款这一步」的选择，不是报名前的独立兑换：点哪个按钮决定扫多少，
+        服务端在报名成功那一刻才扣穗。 -->
+    <van-button v-if="feeDiscount" type="primary" color="#ff6b81" block round style="margin-top:16px;" :loading="actionLoading" @click="confirmPay(true)">用麦穗减免，实付 {{ feeDiscount.payable }} 元</van-button>
+    <van-button type="primary" color="#ff6b81" block round :plain="!!feeDiscount" :style="feeDiscount ? 'margin-top:8px;' : 'margin-top:16px;'" :loading="actionLoading" @click="confirmPay(false)">{{ feeDiscount ? '原价缴费 ' + (currentActivity ? currentActivity.fee : 0) + ' 元' : '我已完成缴费' }}</van-button>
     <div style="margin-top:10px; font-size:13px; color:#969799;" @click="showPayDialog=false">取消</div>
   </div>
 </van-popup>
@@ -1410,7 +1547,7 @@
 </van-dialog>
 <!-- 邀请好友得实名名额弹窗 -->
 <van-dialog v-model:show="showInviteDialog" title="邀请好友得实名名额" :show-confirm-button="false" close-on-click-overlay>
-  <div class="invite-dialog-body">
+  <div class="invite-dialog-body" style="max-height:72vh; overflow-y:auto; -webkit-overflow-scrolling:touch;">
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
     <p>邀请好友成功并审核通过，你的<b>实名喜欢名额永久 +1</b>，没有上限。</p>
     <p style="color:#969799; font-size:13px;">你当前永久名额：{{ user.real_permanent || 0 }} 个</p>
@@ -1420,8 +1557,188 @@
       <van-button type="primary" color="#ff6b81" block @click="copyInviteFull">复制整句</van-button>
       <van-button plain type="primary" color="#ff6b81" block @click="copyInviteCode">复制邀请码</van-button>
     </div>
+
+    <!-- 邀请进度 + 好友登记：状态文案（待确认/已到账/已收回/无效邀请）由后端 status_label 直接给，前端不再二次映射 -->
+    <div v-if="loadingInvite" style="text-align:center; padding:16px 0;">
+      <van-loading size="20px">加载中...</van-loading>
+    </div>
+    <template v-else-if="inviteInfo">
+      <div class="invite-progress">
+        <div class="invite-progress-item">
+          <div class="invite-progress-num">{{ inviteInfo.progress.total }}</div>
+          <div class="invite-progress-label">累计邀请</div>
+        </div>
+        <!-- pending 与 confirmed 两个状态后端都显示成「待确认」，这里跟着合并，免得和下面列表对不上 -->
+        <div class="invite-progress-item">
+          <div class="invite-progress-num">{{ (inviteInfo.progress.pending || 0) + (inviteInfo.progress.confirmed || 0) }}</div>
+          <div class="invite-progress-label">待确认</div>
+        </div>
+        <div class="invite-progress-item">
+          <div class="invite-progress-num">{{ inviteInfo.progress.finalized }}</div>
+          <div class="invite-progress-label">已到账</div>
+        </div>
+        <div class="invite-progress-item" v-if="inviteInfo.progress.clawed_back">
+          <div class="invite-progress-num">{{ inviteInfo.progress.clawed_back }}</div>
+          <div class="invite-progress-label">已收回</div>
+        </div>
+        <div class="invite-progress-item" v-if="inviteInfo.progress.rejected">
+          <div class="invite-progress-num">{{ inviteInfo.progress.rejected }}</div>
+          <div class="invite-progress-label">无效邀请</div>
+        </div>
+      </div>
+      <p style="color:#969799; font-size:13px;">已到账 {{ inviteInfo.progress.finalized_points }} 穗，待确认 {{ inviteInfo.progress.pending_points }} 穗（确认期内不可用）</p>
+
+      <p>登记好友手机号：</p>
+      <div class="invite-form-row">
+        <van-field v-model="invitePhone" type="tel" maxlength="11" placeholder="好友注册用的手机号" class="like-textarea" style="flex:1; min-width:0;"></van-field>
+        <van-button type="primary" color="#ff6b81" :loading="inviteSubmitting" @click="submitInvitePhone">登记</van-button>
+      </div>
+      <p style="color:#969799; font-size:12px; margin-top:8px;">好友注册后进入确认期，确认通过奖励才会到账</p>
+
+      <div v-if="inviteInfo.list.length">
+        <p>已邀请（{{ inviteInfo.list.length }}）：</p>
+        <div v-for="r in inviteInfo.list" :key="r.id" class="invite-row">
+          <div class="invite-row-main">
+            <div>{{ r.phone_masked }}<span style="color:#969799;" v-if="r.gender"> · {{ r.gender }}</span></div>
+            <div class="invite-row-time">{{ r.created_at }}</div>
+          </div>
+          <span class="invite-row-status">{{ r.status_label }}</span>
+          <span class="theme-color" v-if="r.reward">+{{ r.reward }}</span>
+        </div>
+      </div>
+    </template>
   </div>
 </van-dialog>
+<!-- ========== 麦穗兑换面板 ========== -->
+<!-- 未选条目时是列表，选中后同一层内切到参数表单：避免再套一层弹层，返回手势只需处理一层 -->
+<van-popup v-model:show="showRedeemPanel" position="bottom" round>
+  <div class="redeem-panel">
+    <div class="picker-header">
+      <span @click="closeRedeemPanel">取消</span>
+      <span style="font-weight:600;">{{ redeemItem ? redeemItem.label : '兑换麦穗' }}</span>
+      <span style="color:#ff6b81;">{{ pointsBalance }} 穗</span>
+    </div>
+
+    <!-- 第一步：选条目 -->
+    <div v-if="!redeemItem" class="redeem-list">
+      <div v-if="!pointsRulesLoaded" style="text-align:center; padding:24px;">
+        <van-loading size="20px">加载中...</van-loading>
+      </div>
+      <template v-else>
+        <div v-for="it in redeemPanelItems" :key="it.item" class="redeem-item"
+          :class="{disabled: pointsBalance < it.cost}" @click="pickRedeemItem(it)">
+          <div class="redeem-item-info">
+            <div class="redeem-item-label">{{ it.label }}</div>
+            <div class="redeem-item-desc" v-if="it.desc">{{ it.desc }}</div>
+            <div class="redeem-item-disabled-tip" v-if="pointsBalance < it.cost">还差 {{ it.cost - pointsBalance }} 穗，暂时不能兑换</div>
+          </div>
+          <div class="redeem-item-cost">{{ it.cost }} 穗</div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 第二步：填该条目需要的参数 -->
+    <div v-else class="redeem-form">
+      <div style="font-size:13px; color:#969799; padding:2px 0 6px;">消耗 {{ redeemItem.cost }} 穗 · {{ redeemItem.desc }}</div>
+
+      <template v-if="redeemNeedsActivity">
+        <div class="redeem-form-label">选择活动</div>
+        <div v-if="!activities.length" class="redeem-form-tip">暂无可选活动，请先去活动页看看</div>
+        <div v-else>
+          <div v-for="a in activities" :key="a.record_id" class="picker-option"
+            :class="{active: redeemActivityId === a.record_id}" @click="redeemActivityId = a.record_id">
+            {{ a.name }}<span style="color:#969799; font-size:12px; margin-left:6px;">{{ a.status }}</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- 心愿对象：后端要的是 open_id，而 open_id 用户看不见，所以按昵称/用户ID 搜人再点选（接口只返回异性单身） -->
+      <template v-if="redeemItem.item === 'wish'">
+        <div class="redeem-form-label">心愿对象</div>
+        <div v-if="redeemTarget" class="wish-chosen">
+          <span>{{ redeemTarget.nickname || redeemTarget.user_id }}</span>
+          <span class="wish-chosen-clear" @click="clearWishTarget">✕</span>
+        </div>
+        <template v-else>
+          <van-field v-model="wishQuery" placeholder="搜昵称或用户ID（如 0003）" class="like-textarea"></van-field>
+          <div v-if="loadingWishTargets" class="redeem-form-tip">搜索中…</div>
+          <div v-else-if="!wishTargets.length" class="redeem-form-tip">没搜到可指定的人（只能选异性单身用户）</div>
+          <div v-else class="wish-target-list">
+            <div v-for="u in wishTargets" :key="u.openid" class="picker-option" @click="pickWishTarget(u)">
+              {{ u.nickname }}<span style="color:#969799; font-size:12px; margin-left:6px;">{{ u.user_id }}</span>
+            </div>
+          </div>
+        </template>
+      </template>
+
+      <!-- 红娘只收一段条件文本，字数上限由后端配置下发 -->
+      <template v-if="redeemItem.item === 'matchmaker'">
+        <div class="redeem-form-label">牵线条件</div>
+        <van-field v-model="redeemCondition" type="textarea" rows="3" autosize
+          :maxlength="matchmakerConditionMax" show-word-limit
+          placeholder="写下你的牵线条件（地区、年龄、职业等）" class="like-textarea"></van-field>
+      </template>
+
+      <div class="redeem-form-actions">
+        <van-button plain type="primary" color="#ff6b81" block @click="redeemItem = null">上一步</van-button>
+        <!-- 必须写成 submitRedeem()：直接写函数名会把 click 事件当成第一个参数（那个参数是「要兑换的条目」） -->
+        <van-button type="primary" color="#ff6b81" block :loading="redeemSubmitting" @click="submitRedeem()">确认兑换</van-button>
+      </div>
+    </div>
+  </div>
+</van-popup>
+<!-- ========== 麦穗规则说明 ========== -->
+<van-dialog v-model:show="showPointsRules" title="麦穗规则" :show-confirm-button="false" close-on-click-overlay>
+  <div class="like-dialog-body" style="max-height:70vh; overflow-y:auto; -webkit-overflow-scrolling:touch;">
+    <div class="invite-close" @click="showPointsRules=false">✕</div>
+    <div v-if="!pointsRulesLoaded" style="text-align:center; padding:16px 0;">
+      <van-loading size="20px">加载中...</van-loading>
+    </div>
+    <template v-else>
+      <div class="points-rules-title">怎么获得</div>
+      <div class="points-rules-line"><span>邀请女生注册</span><span class="theme-color">+{{ inviteRewardFemale }} 穗</span></div>
+      <div class="points-rules-line"><span>邀请男生注册</span><span class="theme-color">+{{ inviteRewardMale }} 穗</span></div>
+      <div class="points-rules-sub">好友注册后有 {{ inviteConfirmDays }} 天确认期，确认通过才到账</div>
+      <div class="points-rules-title">能换什么</div>
+      <div v-for="it in pointsRules.items" :key="it.item">
+        <div class="points-rules-line"><span>{{ it.label }}</span><span class="theme-color">{{ it.cost }} 穗</span></div>
+        <div class="points-rules-sub" v-if="it.desc">{{ it.desc }}</div>
+      </div>
+      <template v-if="pointsRules.notes.length">
+        <div class="points-rules-title">说明</div>
+        <div v-for="(n, i) in pointsRules.notes" :key="i" class="points-rules-note">· {{ n }}</div>
+      </template>
+    </template>
+  </div>
+</van-dialog>
+<!-- ========== 兑换记录 ========== -->
+<van-popup v-model:show="showRedemptions" position="bottom" round>
+  <div class="redeem-panel">
+    <div class="picker-header">
+      <span @click="showRedemptions=false">关闭</span>
+      <span style="font-weight:600;">兑换记录</span>
+      <span style="color:#ff6b81;">{{ pointsBalance }} 穗</span>
+    </div>
+    <div class="redeem-list">
+      <div v-if="loadingRedemptions" style="text-align:center; padding:24px;">
+        <van-loading size="20px">加载中...</van-loading>
+      </div>
+      <van-empty v-else-if="!redemptionsList.length" description="还没有兑换过" image-size="50"></van-empty>
+      <div v-else v-for="o in redemptionsList" :key="o.id" class="redeem-order">
+        <div class="redeem-order-main">
+          <div class="redeem-order-label">{{ o.item_label }}</div>
+          <!-- 活动类兑换的 params.title 就是活动名；红娘那条只有 condition，退而求其次显示它 -->
+          <div class="redeem-order-sub" v-if="o.params && (o.params.title || o.params.condition)">{{ o.params.title || o.params.condition }}</div>
+          <div class="redeem-order-time">{{ o.created_at }}</div>
+        </div>
+        <div class="redeem-order-right">
+          <div class="redeem-order-cost">-{{ o.cost }} 穗</div>
+          <div class="redeem-order-status">{{ o.status_label }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</van-popup>
 <!-- 牵线页活动报名引导弹窗：每个会话一次，仅对未报名目标活动（后端下发的 promo_activity_id）的用户弹（见 maybeShowActivityPromo） -->
 <van-dialog v-model:show="showActivityPromo" confirm-button-text="去报名"
   :show-cancel-button="false" confirm-button-color="#ff6b81" close-on-click-overlay
@@ -1594,7 +1911,7 @@ createApp({
         return;
       }
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
-      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showReportDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value){
+      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showReportDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value || showRedeemPanel.value || showPointsRules.value || showRedemptions.value){
         history.back();
         return;
       }
@@ -1626,7 +1943,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me'];
+    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -1806,6 +2123,213 @@ createApp({
         ? `注册时，在“邀请人ID”里填：\n${uid}`
         : '注册时，在“邀请人ID”里填邀请人编号';
     });
+
+    // ===== 我的麦穗（积分）=====
+    // 余额在「我的」页入口就要显示，所以登录后静默拉一次；点进页面再拉全量（含明细）
+    const pointsBalance = ref(0);
+    const pointsEarned = ref(0);
+    const pointsSpent = ref(0);
+    const pointsPending = ref(0);      // 确认期内的穗：能看见但不能花，页面上必须写清
+    const pointsPendingCount = ref(0);
+    const pointsEntries = ref([]);
+    const loadingPoints = ref(false);
+    const pointsLoaded = ref(false);
+
+    const pointsRules = ref({ items: [], config: {}, notes: [] }); // 结构固定，模板在加载完成前也能安全取 .items/.notes
+    const pointsRulesLoaded = ref(false);
+    const showPointsRules = ref(false);
+
+    const showRedeemPanel = ref(false);
+    const redeemItem = ref(null);      // null=还在选条目；非空=在填该条目的参数
+    const redeemActivityId = ref('');
+    const redeemTarget = ref(null);    // wish：选中的心愿对象 {openid, nickname, user_id}；提交时只取 openid
+    const redeemCondition = ref('');   // matchmaker：牵线条件
+    const redeemSubmitting = ref(false);
+
+    // 心愿对象搜索（走 /api/points/wish-targets：只返回异性单身）
+    const wishQuery = ref('');
+    const wishTargets = ref([]);
+    const loadingWishTargets = ref(false);
+    let wishSearchTimer = null;
+    let wishSearchLastQ = null; // 已拉过的关键词：进心愿步骤时会先主动拉一次空关键词，避免 watcher 再重复请求
+
+    // 兑换记录
+    const showRedemptions = ref(false);
+    const redemptionsList = ref([]);
+    const loadingRedemptions = ref(false);
+    const redemptionsLoaded = ref(false);
+
+    const inviteInfo = ref(null);
+    const loadingInvite = ref(false);
+    const inviteLoaded = ref(false);
+    const invitePhone = ref('');
+    const inviteSubmitting = ref(false);
+
+    const inviteConfirmDays = computed(() => (pointsRules.value.config && pointsRules.value.config.invite_confirm_days) || 0);
+    const inviteRewardFemale = computed(() => (pointsRules.value.config && pointsRules.value.config.invite_reward_female) || 0);
+    const inviteRewardMale = computed(() => (pointsRules.value.config && pointsRules.value.config.invite_reward_male) || 0);
+    const matchmakerConditionMax = computed(() => (pointsRules.value.config && pointsRules.value.config.matchmaker_condition_max_len) || 200);
+    // 需要先选活动的条目；real_like 只是加一次名额，与活动无关
+    const REDEEM_ACTIVITY_ITEMS = ['priority_signup', 'wish', 'fee_discount'];
+    // 费用减免不在这里兑：规则是「报名收费活动、付款那一步才扣穗」。放进兑换面板
+    // 会开出一张没人用的单子，用户再去报名时反而被告知「已经用过了」。
+    // 它在活动详情的缴费弹窗里，可用性由服务端下发的 activity.fee_discount 决定。
+    const REDEEM_PANEL_EXCLUDE = ['fee_discount'];
+    const redeemPanelItems = computed(() => (pointsRules.value.items || []).filter(it => !REDEEM_PANEL_EXCLUDE.includes(it.item)));
+    const redeemNeedsActivity = computed(() => !!(redeemItem.value && REDEEM_ACTIVITY_ITEMS.includes(redeemItem.value.item)));
+
+    // 幂等键：兑换接口按 request_key 去重，连点/超时重试不会重复扣穗。
+    // crypto.randomUUID 只在安全上下文可用（部分飞书 WebView 里没有），取不到就退回 Math.random 拼 32 位十六进制。
+    function newRequestKey(){
+      try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID().replace(/-/g, '');
+      } catch(e) {}
+      let s = '';
+      for (let i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
+      return s;
+    }
+
+    // 「我的」页入口显示余额用：失败就安静算了，不打扰用户
+    async function loadPointsBalance() {
+      try { const data = await api('/api/points/me'); pointsBalance.value = data.balance || 0; }
+      catch(e) {}
+    }
+
+    async function openPoints() {
+      page.value = 'points';
+      loadPointsRules(false); // 待确认那行要写清确认期几天，规则没到就先不写天数（已加载过不会重复请求）
+      await loadPoints(false);
+    }
+    async function loadPoints(force) {
+      if (pointsLoaded.value && !force) return;
+      loadingPoints.value = true;
+      try {
+        const data = await api('/api/points/me');
+        pointsBalance.value = data.balance || 0;
+        pointsEarned.value = data.earned || 0;
+        pointsSpent.value = data.spent || 0;
+        pointsPending.value = data.pending_points || 0;
+        pointsPendingCount.value = data.pending_count || 0;
+        pointsEntries.value = data.entries || [];
+        pointsLoaded.value = true;
+      } catch(e) { vant.showToast(e.message); }
+      loadingPoints.value = false;
+    }
+
+    async function loadPointsRules(force) {
+      if (pointsRulesLoaded.value && !force) return;
+      try { const data = await api('/api/points/rules'); pointsRules.value = { items: data.items || [], config: data.config || {}, notes: data.notes || [] }; pointsRulesLoaded.value = true; }
+      catch(e) { vant.showToast(e.message); }
+    }
+    function openPointsRules() { showPointsRules.value = true; loadPointsRules(false); }
+
+    async function openRedemptions() {
+      showRedemptions.value = true;
+      if (redemptionsLoaded.value) return; // 已加载则直接展示缓存（兑完会置回 false 强制重拉）
+      loadingRedemptions.value = true;
+      try { const data = await api('/api/points/redemptions'); redemptionsList.value = data.list || []; redemptionsLoaded.value = true; }
+      catch(e) { vant.showToast(e.message); }
+      loadingRedemptions.value = false;
+    }
+
+    function openRedeemPanel() {
+      redeemItem.value = null;
+      showRedeemPanel.value = true;
+      loadPointsRules(false);
+      loadActivities(); // 复用活动页的缓存列表（已加载过就不会再请求）
+    }
+    function closeRedeemPanel() {
+      showRedeemPanel.value = false;
+      redeemItem.value = null;
+      redeemActivityId.value = '';
+      redeemTarget.value = null;
+      redeemCondition.value = '';
+      wishQuery.value = '';
+      wishTargets.value = [];
+      wishSearchLastQ = null;
+    }
+    // 心愿搜索：停顿 300ms 再打接口，边打字边发会把接口打满
+    async function loadWishTargets() {
+      const q = wishQuery.value.trim();
+      wishSearchLastQ = q;
+      loadingWishTargets.value = true;
+      try { const data = await api('/api/points/wish-targets?q=' + encodeURIComponent(q)); wishTargets.value = data.list || []; }
+      catch(e) { vant.showToast(e.message); }
+      loadingWishTargets.value = false;
+    }
+    watch(wishQuery, () => {
+      if (wishSearchTimer) clearTimeout(wishSearchTimer);
+      wishSearchTimer = setTimeout(() => {
+        if (wishQuery.value.trim() === wishSearchLastQ) return; // 这个关键词已经拉过了（进步骤时那次）
+        loadWishTargets();
+      }, 300);
+    });
+    function pickWishTarget(u) { redeemTarget.value = u; }
+    function clearWishTarget() {
+      redeemTarget.value = null;
+      wishQuery.value = '';
+      wishSearchLastQ = null; // 清空后回到「前 50 个」，重新拉一次
+      loadWishTargets();
+    }
+    async function pickRedeemItem(it) {
+      if (pointsBalance.value < it.cost) return; // 置灰行不响应，页面上已写明差多少
+      if (it.item === 'real_like') {
+        try {
+          await vant.showConfirmDialog({ title: '兑换' + it.label, message: `消耗 ${it.cost} 穗，多一次实名喜欢机会，不过期。确定兑换吗？`, confirmButtonColor: '#ff6b81' });
+        } catch(e) { return; } // 取消
+        await submitRedeem(it);
+        return;
+      }
+      redeemItem.value = it;
+      // 进心愿步骤先把「前 50 个可选的人」铺出来，用户不搜也能直接点
+      if (it.item === 'wish') { wishQuery.value = ''; wishTargets.value = []; wishSearchLastQ = null; loadWishTargets(); }
+    }
+    // 传 it 时用于「确认后直接兑换」（real_like），不传则取当前表单里的条目
+    async function submitRedeem(it) {
+      const target = it || redeemItem.value;
+      if (!target) return;
+      if (redeemNeedsActivity.value && !redeemActivityId.value) { vant.showToast('请先选择活动'); return; }
+      if (target.item === 'wish' && !redeemTarget.value) { vant.showToast('请选择心愿对象'); return; }
+      if (target.item === 'matchmaker' && !redeemCondition.value.trim()) { vant.showToast('请填写牵线条件'); return; }
+      redeemSubmitting.value = true;
+      try {
+        const body = { item: target.item, request_key: newRequestKey() };
+        if (redeemNeedsActivity.value) body.activity_record_id = redeemActivityId.value;
+        if (target.item === 'wish') body.target_open_id = redeemTarget.value.openid;
+        if (target.item === 'matchmaker') body.condition = redeemCondition.value.trim();
+        const data = await api('/api/points/redeem', { method: 'POST', body: JSON.stringify(body) });
+        vant.showToast(data.message || '兑换成功');
+        if (typeof data.balance === 'number') pointsBalance.value = data.balance;
+        closeRedeemPanel();
+        redemptionsLoaded.value = false; // 兑换记录多了一条，下次打开重新拉
+        await loadPoints(true); // 余额和明细都要跟着变
+      } catch(e) { vant.showToast(e.message); }
+      redeemSubmitting.value = false;
+    }
+
+    async function loadInviteInfo(force) {
+      if (inviteLoaded.value && !force) return;
+      loadingInvite.value = true;
+      try { const data = await api('/api/points/invite'); inviteInfo.value = data; inviteLoaded.value = true; }
+      catch(e) { vant.showToast(e.message); }
+      loadingInvite.value = false;
+    }
+    async function submitInvitePhone() {
+      const phone = (invitePhone.value || '').trim();
+      if (!/^1\d{10}$/.test(phone)) { vant.showToast('请输入 11 位手机号'); return; }
+      inviteSubmitting.value = true;
+      try {
+        const data = await api('/api/points/invite', { method: 'POST', body: JSON.stringify({ phone }) });
+        vant.showToast(data.message || '已登记');
+        invitePhone.value = '';
+        await loadInviteInfo(true); // 强制刷新，列表里要立刻看到刚登记的那条
+      } catch(e) { vant.showToast(e.message); }
+      inviteSubmitting.value = false;
+    }
+    // 打开邀请弹窗时带出进度和已邀请列表（弹窗里有登记表单，数据必须是最新的）
+    watch(showInviteDialog, (v) => { if (v) loadInviteInfo(false); });
+    // 兑换面板里要用活动列表；面板打开时兜底加载一次（loadActivities 自带「已加载不重复请求」）
+    watch(showRedeemPanel, (v) => { if (v) loadActivities(); });
 
     // 喜欢我的
     const likesData = ref({ liked_me: [], mutual: [] });
@@ -2279,6 +2803,7 @@ createApp({
         throw e;
       }
       user.value = data.user;
+      if (data.user) loadPointsBalance(); // 麦穗余额：入口单元格要显示数字，静默拉，失败不打扰
       if (data.user && data.user.is_admin) setTimeout(()=>{ try{ refreshReportedCount(); }catch(e){} }, 600);
       if (data.register_form_url) registerFormUrl.value = data.register_form_url;
       if (data.promo_activity_id) promoActivityId.value = data.promo_activity_id;
@@ -2315,20 +2840,28 @@ createApp({
       if (fee > 0) {
         showPayDialog.value = true;
       } else {
-        doSignup();
+        doSignup(false);
       }
     }
-    async function confirmPay() {
+    // 付款弹窗里的减免选项：可用性由服务端随活动详情下发（余额、是不是收费活动、
+    // 这场有没有用过都在那边判），前端只决定画不画这个按钮。
+    const feeDiscount = computed(() => {
+      const d = currentActivity.value && currentActivity.value.fee_discount;
+      return d && d.available ? d : null;
+    });
+    async function confirmPay(useDiscount) {
       showPayDialog.value = false;
-      await doSignup();
+      await doSignup(useDiscount);
     }
-    async function doSignup() {
+    async function doSignup(useDiscount) {
       actionLoading.value = true;
       try {
-        await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'POST' });
-        vant.showToast('报名成功');
+        const data = await api('/api/activities/' + currentActivity.value.record_id + '/signup',
+          { method: 'POST', body: JSON.stringify({ use_fee_discount: !!useDiscount }) });
+        vant.showToast(data.message || '报名成功');
         activities.value = []; activitiesLoaded.value = false; // 刷新缓存
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
+        pointsLoaded.value = false; // 减免扣过穗的话，麦穗页下次进去要重新拉
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
@@ -3738,6 +4271,9 @@ createApp({
       if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
       if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
+      if(showPointsRules.value){ showPointsRules.value=false; isHandlingPopState=false; return; }
+      if(showRedemptions.value){ showRedemptions.value=false; isHandlingPopState=false; return; }
+      if(showRedeemPanel.value){ closeRedeemPanel(); isHandlingPopState=false; return; }
       if(showActivityPromo.value){ showActivityPromo.value=false; isHandlingPopState=false; return; }
       if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
@@ -3768,7 +4304,7 @@ createApp({
       }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile',
+        'my_activities': 'profile', 'my_groups': 'profile', 'points': 'profile',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
@@ -3816,6 +4352,9 @@ createApp({
     watch(showReportDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'reportDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='reportDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showSuggestionDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'suggestionDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='suggestionDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showInviteDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'inviteDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='inviteDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showRedeemPanel, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'redeemPanel'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='redeemPanel'){ ignoreNextPop=true; history.back(); } });
+    watch(showPointsRules, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'pointsRules'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='pointsRules'){ ignoreNextPop=true; history.back(); } });
+    watch(showRedemptions, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'redemptions'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='redemptions'){ ignoreNextPop=true; history.back(); } });
     watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
@@ -4244,7 +4783,7 @@ createApp({
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
-      openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
+      openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog, feeDiscount,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
       showActivityPromo, gotoPromoActivity, promoPoster,
@@ -4283,6 +4822,16 @@ createApp({
       openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewPoster,
       handleBack, showInviteDialog, inviteShareText, copyInviteFull, copyInviteCode,
+      pointsBalance, pointsEarned, pointsSpent, pointsPending, pointsPendingCount, pointsEntries,
+      loadingPoints, pointsLoaded, loadPoints, openPoints, loadPointsBalance,
+      pointsRules, pointsRulesLoaded, loadPointsRules, showPointsRules, openPointsRules,
+      showRedeemPanel, redeemItem, redeemActivityId, redeemTarget, redeemCondition, redeemSubmitting,
+      redeemNeedsActivity, redeemPanelItems, matchmakerConditionMax, openRedeemPanel, closeRedeemPanel,
+      pickRedeemItem, submitRedeem, newRequestKey,
+      wishQuery, wishTargets, loadingWishTargets, loadWishTargets, pickWishTarget, clearWishTarget,
+      showRedemptions, redemptionsList, loadingRedemptions, redemptionsLoaded, openRedemptions,
+      inviteInfo, loadingInvite, inviteLoaded, loadInviteInfo, invitePhone, inviteSubmitting, submitInvitePhone,
+      inviteConfirmDays, inviteRewardFemale, inviteRewardMale,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,

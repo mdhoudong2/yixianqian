@@ -56,6 +56,9 @@ MATCH_TABLE_ID = _cfg_get("MATCH_TABLE_ID", getattr(_cfg, "MATCH_TABLE_ID", "tbl
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
+# 电话字段（type=13），读出来是 [{"number": ...}]，要用 bitable.get_phone_value 取。
+# 麦穗的邀请关系按手机号认人，所以这个字段是邀请那条线的关键字段。
+FIELD_PHONE = "手机号"
 # ==================== 月度额度（v7） ====================
 # 模型见 lib/quota.py 顶部注释。一句话：匿名每月 10 颗、月初补满、不累积；
 # 实名每月 1 次 + 邀请/加赠得来的永久名额，不占那 10 颗。
@@ -103,6 +106,42 @@ FIELD_SIGNUP_ACTIVITY_ID = "活动ID"
 FIELD_SIGNUP_OPENID = "报名人open_id"
 FIELD_SIGNUP_NICKNAME = "报名人昵称"
 FIELD_SIGNUP_STATUS = "状态"
+# 考勤。`签到` 指令写这一列；「优先名额 48 小时内取消不退穗」和「未到场不退」
+# 都靠它判。**它和「协助组织活动」拿穗是两回事**：填这一列不发穗，那个走 `加穗`。
+FIELD_SIGNUP_ATTENDANCE = "签到状态"
+ATTENDANCE_OPTIONS = ("按时", "迟到", "未到")
+
+# 麦穗心愿单：报名成功后指定一位想认识的人（对方不被告知）
+# 留空 = 这张表还没建，相关功能会明确地说「没配置」而不是往一个不存在的表里写。
+# 建表脚本跑完把 ID 填进 local_config.py。
+WISH_TABLE_ID = _cfg_get("WISH_TABLE_ID", getattr(_cfg, "WISH_TABLE_ID", ""))
+FIELD_WISH_ACTIVITY_ID = "活动ID"
+FIELD_WISH_USER_OPENID = "发起人open_id"
+FIELD_WISH_USER_NAME = "发起人昵称"
+FIELD_WISH_TARGET_OPENID = "指定人open_id"
+FIELD_WISH_TARGET_NAME = "指定人昵称"
+FIELD_WISH_STATUS = "状态"
+FIELD_WISH_REDEMPTION_ID = "兑换单号"
+FIELD_WISH_OPERATOR = "处理人"
+FIELD_WISH_HANDLED_AT = "处理时间"
+FIELD_WISH_CREATED_AT = "创建时间"
+WISH_STATUS_PENDING = "待安排"
+WISH_STATUS_ARRANGED = "已安排"
+WISH_STATUS_FAILED = "无法安排"
+
+# 麦穗红娘推荐单：兑换后填条件的_人工_推荐（与算法版的「数字红娘推荐表」不是一张表）
+# 同样留空 = 还没建表。
+MATCHMAKER_ORDER_TABLE_ID = _cfg_get(
+    "MATCHMAKER_ORDER_TABLE_ID", getattr(_cfg, "MATCHMAKER_ORDER_TABLE_ID", ""))
+FIELD_MM_USER_OPENID = "发起人open_id"
+FIELD_MM_USER_NAME = "发起人昵称"
+FIELD_MM_CONDITION = "择偶条件"
+FIELD_MM_STATUS = "状态"
+FIELD_MM_REDEMPTION_ID = "兑换单号"
+FIELD_MM_OPERATOR = "处理人"
+FIELD_MM_HANDLED_AT = "处理时间"
+FIELD_MM_NOTE = "处理说明"
+FIELD_MM_CREATED_AT = "创建时间"
 
 # 新用户审核通过后自动报名的活动ID（如 A-0001）；留空字符串即关闭该功能
 AUTO_SIGNUP_ACTIVITY_ID = _cfg_get(
@@ -149,6 +188,10 @@ FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同�
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
 FIELD_INVITE_CODE = "邀请码"  # 观察员注册表单的邀请码字段
 STATUS_OBSERVER = "村情六处"  # 账号状态值：村情六处（非单身看热闹，限权）
+# 账号状态值：封禁。**这个选项需要在多维表格里手动加**（scripts/dev/add_points_fields.py
+# 会加）。它只影响一件事：邀请奖励 7 天确认期内被改成「封禁」的人，不发穗、已发的收回。
+# 其余状态（含「已退出」「审核不通过」）按需求原文不走收回，只是不再累加。
+STATUS_BANNED = "封禁"
 # H5 前端入口（卡片/通知链接）。测试服在 local_config.py 覆盖为 https://testapp.nantou.love
 H5_BASE_URL = _cfg_get("H5_BASE_URL", getattr(_cfg, "H5_BASE_URL", "https://app.nantou.love"))
 

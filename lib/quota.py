@@ -141,7 +141,9 @@ def anon_used(records, ym=None):
 
 
 def real_left(records, permanent=0, ym=None):
-    """本月实名剩余次数。permanent = 邀请 + 管理员加赠得来的永久名额。
+    """本月实名剩余次数。permanent = 管理员加赠 + 麦穗兑换来的永久名额。
+
+    （v7 起邀请奖励改发麦穗，不再直接换实名名额。）
 
     注意：实名喜欢不过期，「一个月后返还名额」就是月初自然翻新——
     计数只看本月，不需要额外的返还逻辑。

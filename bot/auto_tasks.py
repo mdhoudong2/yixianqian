@@ -27,7 +27,7 @@ from store import (
     update_bindings,
 )
 
-from lib import quota, recommend, storage
+from lib import points_config, points_invite, points_redeem, quota, recommend, storage
 
 # 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
 _AUTO_FIELD_NAMES = {FIELD_CREATOR, "用户ID", "注册时间", "资料更新时间"}
@@ -511,8 +511,11 @@ def auto_send_view_after_approval():
                 open_id, nickname, get_select_value(fields, FIELD_WECHAT_PAYMENT))
 
             inviter_id = get_field_text(fields, FIELD_INVITER_ID)
-            if inviter_id:
-                reward_inviter(open_id, nickname, inviter_id)
+            # 不论有没有邀请人ID 都要走一遍：手机号可能早就在账本里登记过
+            # （报名时先记下的那种），那也是一条真实的邀请关系。
+            reward_inviter(open_id, nickname, inviter_id,
+                           invitee_phone=get_phone_value(fields, FIELD_PHONE),
+                           invitee_gender=gender)
         else:
             unreserve_notified("approval_sent", record_id)
 
@@ -522,40 +525,71 @@ def auto_send_view_after_approval():
 
 
 
-def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id):
-    """邀请人奖励：被邀请人审核通过后，通知邀请人「永久实名名额 +1」。
+def reward_inviter(invitee_openid, invitee_nickname, inviter_user_id,
+                   invitee_phone="", invitee_gender=""):
+    """被邀请人审核通过（成为「单身」）时：建立邀请关系 + 开 7 天确认期 + 通知邀请人。
 
-    v7 起这里**只发通知，不写任何额度字段**——名额由 reconcile_hearts 每 25 秒
-    按「有效邀请」推导，是唯一权威。这里若再 +1，就变成两个写者，且一旦被邀请人
-    后来脱单（掉出有效邀请）就对不上了。名称里的 reward 是历史包袱，实际是通知。
+    v7 起邀请奖励从「永久实名名额」改成**麦穗**。所以这里不再写任何额度字段，
+    而是把关系登记进 SQLite 账本，并开始倒计时——**确认期满、账号正常才发穗**，
+    期间被邀请人被封禁就收回。倒计时起点是「变成单身」这一刻，不是填表那一刻：
+    填了表可能过不了审，从那时起算会让没过审的人也占着确认期。
+
+    名字里的 reward 是历史包袱（原来在这里发名额），现在做的是登记 + 通知。
+    返回 (邀请ID, 状态)。
     """
     rewarded = load_invite_rewarded()
-    if invitee_openid in rewarded:
-        return
+    already_notified = invitee_openid in rewarded
 
-    inviter_records = find_user_by_id_or_name(inviter_user_id)
-    if not inviter_records:
-        log(f"邀请通知：未找到邀请人 {inviter_user_id}")
-        return
-    inviter = inviter_records[0]
-    inviter_fields = inviter.get("fields", {})
-    inviter_openid = get_field_text(inviter_fields, FIELD_FEISHU_ID)
-    inviter_nickname = get_field_text(inviter_fields, FIELD_NICKNAME)
+    # 「邀请人ID」是 U-xxxx，账本用的是 open_id，得先翻一道。
+    inviter_openid = ""
+    if inviter_user_id:
+        inviter_records = find_user_by_id_or_name(inviter_user_id) or []
+        if inviter_records:
+            inviter_openid = get_field_text(
+                inviter_records[0].get("fields", {}), FIELD_FEISHU_ID)
+        if not inviter_openid:
+            log(f"邀请登记：邀请人 {inviter_user_id} 找不到或未绑定飞书")
 
-    if not inviter_openid:
-        log(f"邀请通知：邀请人 {inviter_nickname} 未绑定飞书")
-        return
+    # 关系先落库再倒计时：先记关系，attach/start_confirm_window 才找得到这条。
+    if inviter_openid:
+        try:
+            points_invite.record_from_form(invitee_openid, invitee_phone,
+                                           invitee_gender, inviter_openid)
+        except Exception as e:
+            log(f"邀请登记失败 {invitee_nickname}: {e}")
 
+    try:
+        invite_id, status = points_invite.start_confirm_window(
+            invitee_openid, invitee_phone, invitee_gender)
+    except Exception as e:
+        # 账本没起来（比如 SQLite 文件不可写）不该拖垮审核通知流程。
+        log(f"邀请确认期开启失败 {invitee_nickname}: {e}")
+        return None, ""
+
+    if not invite_id:
+        return None, status
+    if already_notified:
+        return invite_id, status
+
+    # 通知只发给「确实是这个人邀请来的」的情况。自己邀请自己、号码被别人注册走
+    # 这些情况 status 不是 confirmed，账本那边已经判过了，这里不重复判。
+    if not inviter_openid or status != points_invite.STATUS_CONFIRMED:
+        return invite_id, status
+
+    reward = points_invite.reward_amount(invitee_gender)
+    days = points_config.get("invite_confirm_days")
     rewarded[invitee_openid] = inviter_openid
     save_invite_rewarded(rewarded)
-    log(f"邀请通知: {inviter_nickname} 实名名额 +1, 被邀请人: {invitee_nickname}")
+    log(f"邀请登记: {inviter_user_id} 待确认 {reward} 穗, 被邀请人: {invitee_nickname}")
     send_text_message(
         inviter_openid,
         f"\U0001f389 你的好友「{invitee_nickname}」已注册并审核通过！\n\n"
-        f"你获得了 1 个实名喜欢名额（永久有效），已自动发放至账户。\n"
-        f"继续邀请好友，名额可无限累加~"
+        f"你的邀请奖励 {reward} 穗已进入待确认状态，{days} 天后"
+        f"（对方账号正常）自动到账。\n"
+        f"到账前可以在 App「我的麦穗」里看到进度。继续邀请好友，麦穗可无限累加~"
     )
     send_main_menu_card(inviter_openid)
+    return invite_id, status
 
 
 
@@ -584,16 +618,203 @@ def auto_reconcile_invite_rewards():
         inviter_id = get_field_text(f, FIELD_INVITER_ID)
         my_uid = get_field_text(f, "用户ID")
         if not inviter_id or inviter_id == my_uid:
-            continue  # 空码或自己邀请自己，不奖励
+            continue  # 空码或自己邀请自己，不奖励（本查询本就只取填了邀请人ID的）
         nickname = get_field_text(f, FIELD_NICKNAME)
         # 节流：邀请人ID 是「没有/不知道」这类解析不到的垃圾值时，别每 30 秒重查一遍。
         # 成功记入 INVITE_REWARDED_FILE 后本函数不会再处理该用户，节流只约束失败重试。
         if not invite_retry_due(oid):
             continue
-        reward_inviter(oid, nickname, inviter_id)
+        reward_inviter(oid, nickname, inviter_id,
+                       invitee_phone=get_phone_value(f, FIELD_PHONE),
+                       invitee_gender=get_field_text(f, FIELD_GENDER))
         handled += 1
     if handled:
         log(f"邀请奖励补扫完成，本次处理 {handled} 条")
+
+
+def sync_points_documents():
+    """把账本里的心愿单 / 红娘推荐单补写到多维表格，管理员才好处理。
+
+    单据的**真相在 SQLite**（退穗、状态流转都是账本动作），表格只是管理员
+    看得见、改得动的那一面。所以是单向补写：账本有、表格没有的就建一条。
+    反向的（表格改状态 → 回写账本）在 points_admin 的「心愿处理 / 推荐单处理」里。
+
+    建过没建过靠 `reserve_notified` 那个文件记账，不去搜表格：兑换单号是文本
+    字段，按它过滤既慢又要处理「搜不到」和「表还没建」两种失败。
+    """
+    made = 0
+    if WISH_TABLE_ID:
+        for order in points_redeem.all_orders(
+                points_redeem.ITEM_WISH, [points_redeem.ST_ACTIVE]):
+            key = f"wish:{order['id']}"
+            if not reserve_notified("points_doc", key):
+                continue
+            params = order["params"]
+            target_oid = params.get("target_oid", "")
+            rec = create_record(WISH_TABLE_ID, {
+                FIELD_WISH_ACTIVITY_ID: params.get("activity_id", ""),
+                FIELD_WISH_USER_OPENID: order["user_oid"],
+                FIELD_WISH_USER_NAME: _nickname_of(order["user_oid"]),
+                FIELD_WISH_TARGET_OPENID: target_oid,
+                FIELD_WISH_TARGET_NAME: _nickname_of(target_oid),
+                FIELD_WISH_STATUS: WISH_STATUS_PENDING,
+                FIELD_WISH_REDEMPTION_ID: str(order["id"]),
+            })
+            if rec:
+                made += 1
+            else:
+                unreserve_notified("points_doc", key)
+
+    if MATCHMAKER_ORDER_TABLE_ID:
+        for order in points_redeem.all_orders(
+                points_redeem.ITEM_MATCHMAKER,
+                [points_redeem.ST_PENDING, points_redeem.ST_RECOMMENDED]):
+            key = f"matchmaker:{order['id']}"
+            if not reserve_notified("points_doc", key):
+                continue
+            rec = create_record(MATCHMAKER_ORDER_TABLE_ID, {
+                FIELD_MM_USER_OPENID: order["user_oid"],
+                FIELD_MM_USER_NAME: _nickname_of(order["user_oid"]),
+                FIELD_MM_CONDITION: order["params"].get("condition", ""),
+                FIELD_MM_STATUS: ("待处理" if order["status"] == points_redeem.ST_PENDING
+                                  else "已推荐"),
+                FIELD_MM_REDEMPTION_ID: str(order["id"]),
+            })
+            if rec:
+                made += 1
+            else:
+                unreserve_notified("points_doc", key)
+
+    if made:
+        log(f"麦穗单据同步：本次新建 {made} 条")
+    return made
+
+
+def _nickname_of(open_id):
+    """账本里只有 open_id，单据要给人看，得翻一次用户表。查不到就留空，
+    不阻断建单——名字可以事后在表格里补，单子没建起来管理员就看不见这件事。"""
+    if not open_id:
+        return ""
+    try:
+        user = find_user_by_openid(open_id)
+    except Exception:
+        return ""
+    if not user:
+        return ""
+    return get_field_text(user.get("fields", {}), FIELD_NICKNAME)
+
+
+def auto_claw_back_banned():
+    """确认期内被邀请人被标记「封禁」→ 立刻作废那条邀请奖励，并告诉邀请人。
+
+    为什么不等到期结算时再看一眼：需求的收回窗口算的是「7 天内**发生过**封禁」，
+    不是「到期那一刻还封着」。第 3 天封、第 5 天解封也该收回，等到期那天去看
+    就正好看不到。所以这里每轮扫所有当前是「封禁」的人。
+    重复调用没有副作用——`claw_back_for_invitee` 只动 confirmed 的行。
+    返回本次作废的条数。
+    """
+    items = search_records(USER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_ACCOUNT_STATUS, "operator": "is",
+             "value": [STATUS_BANNED]},
+        ]})
+    total = 0
+    for item in items or []:
+        f = item.get("fields", {})
+        oid = get_field_text(f, FIELD_FEISHU_ID)
+        if not oid:
+            continue
+        pending = points_invite.open_invites_for(oid)
+        if not pending:
+            continue
+        try:
+            n = points_invite.claw_back_for_invitee(oid, reason="确认期内被封禁")
+        except Exception as e:
+            log(f"邀请收回失败 {oid}: {e}")
+            continue
+        total += n
+        if n:
+            nickname = get_field_text(f, FIELD_NICKNAME)
+            log(f"邀请收回：被邀请人 {nickname} 封禁，作废 {n} 条等待中的邀请")
+            for row in pending:
+                send_text_message(
+                    row["inviter_oid"],
+                    f"很抱歉，你的好友「{nickname}」账号在确认期内被封禁，\n"
+                    f"这次邀请的 {row['reward']} 穗未能到账。\n"
+                    f"你可以邀请其他朋友，奖励照常计算。")
+    if total:
+        log(f"确认期内封禁收回完成，本次作废 {total} 条邀请奖励")
+    return total
+
+
+def auto_settle_wishes():
+    """活动开始时，对方还没报名的心愿 → 退穗。
+
+    需求原文：「到活动开始时对方还没报名自动退穗」。判定放在活动开始之后
+    （开始时间已过）而不是之前：开始前对方随时可能报上名。
+    返回本次退穗的条数。
+    """
+    if not WISH_TABLE_ID:
+        return 0
+    items = search_records(WISH_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_WISH_STATUS, "operator": "is",
+             "value": [WISH_STATUS_PENDING]},
+        ]})
+    if not items:
+        return 0
+
+    refunded = 0
+    for item in items:
+        f = item.get("fields", {})
+        activity_id = get_field_text(f, FIELD_WISH_ACTIVITY_ID)
+        target_oid = get_field_text(f, FIELD_WISH_TARGET_OPENID)
+        if not activity_id or not target_oid:
+            continue
+        activity = find_activity_by_id(activity_id)
+        if not activity:
+            continue
+        start_ts = get_timestamp(activity.get("fields", {}), FIELD_ACTIVITY_START_TIME)
+        if not start_ts or time.time() < start_ts:
+            continue                      # 还没开始，再等等
+        if _has_signup(activity_id, target_oid):
+            continue                      # 对方报上名了，心愿成立，不退
+
+        if not update_record(WISH_TABLE_ID, item.get("record_id"),
+                             {FIELD_WISH_STATUS: WISH_STATUS_FAILED}):
+            continue
+        raw = get_field_text(f, FIELD_WISH_REDEMPTION_ID)
+        try:
+            redemption_id = int(str(raw).strip())
+        except (TypeError, ValueError):
+            redemption_id = 0
+        if not redemption_id:
+            log(f"心愿退穗：{item.get('record_id')} 没记兑换单号，需人工核对")
+            continue
+        try:
+            points_redeem.refund(redemption_id, reason="活动开始时指定人仍未报名")
+            refunded += 1
+        except Exception as e:
+            log(f"心愿退穗失败 #{redemption_id}: {e}")
+    if refunded:
+        log(f"心愿到期结算完成，本次退穗 {refunded} 条")
+    return refunded
+
+
+def _has_signup(activity_id, open_id):
+    """这个人在这个活动上报过名没有。报名表里同一人可能有「已取消」的历史记录，
+    所以只看状态是「已报名」的那条。"""
+    rows = search_records(SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+             "value": [activity_id]},
+            {"field_name": FIELD_SIGNUP_OPENID, "operator": "is", "value": [open_id]},
+            {"field_name": FIELD_SIGNUP_STATUS, "operator": "is", "value": ["已报名"]},
+        ]})
+    return bool(rows)
 
 
 def auto_send_view_loop(interval=30):
@@ -602,6 +823,9 @@ def auto_send_view_loop(interval=30):
         try:
             auto_send_view_after_approval()
             auto_reconcile_invite_rewards()
+            auto_claw_back_banned()
+            auto_settle_wishes()
+            sync_points_documents()
         except Exception as e:
             log(f"审核通过通知循环异常: {e}")
         time.sleep(interval)
@@ -970,7 +1194,11 @@ def reconcile_hearts():
 
         匿名剩余 = 10 + 本月满期退回 − 本月发起的有效匿名喜欢
         实名剩余 = 1 + 永久名额 − 本月发起的有效实名喜欢
-        永久名额 = 有效邀请 + 管理员加赠
+        永久名额 = 管理员加赠 + 麦穗兑换的额外实名喜欢
+
+    v7 起「邀请 → 实名名额」这条线撤了：邀请奖励改成发麦穗，用麦穗兑换来的
+    名额进 SQLite 账本，不再从「邀请人ID」推导。所以这里不再算 valid_invites，
+    「邀请名额」字段也不再写（字段保留，值不再更新，避免老数据被当权威）。
 
     同 open_id 多档案：只对主档案记账（单身优先/用户ID最小），副本强制 0。
     同时把每人额度发布到共享文件，供 H5 直接读——H5 不再自己算月份，
@@ -1018,30 +1246,10 @@ def reconcile_hearts():
             continue
         groups.setdefault(oid, []).append(u)
 
-    # 每个 oid 的主档案，以及 编号(U-xxxx) -> 主档oid，用于把“邀请人ID”解析到邀请人
+    # 每个 oid 的主档案
     primary_by_oid = {oid: pick_primary_record(recs)[0] for oid, recs in groups.items()}
-    uid_to_oid = {}
-    for oid, prec in primary_by_oid.items():
-        uid = get_field_text(prec.get("fields", {}), "用户ID")
-        if uid:
-            uid_to_oid[uid.strip().upper()] = oid
 
-    # 有效邀请数以用户表“当前真实关系”为准：被邀请人主档=单身、填了邀请人编号、非自邀。
-    # 不直接对奖励账本计数，避免身份改绑/删除用户后旧 open_id 残留导致同一人被重复记账（多算名额）。
-    valid_invites = {}
-    for oid, prec in primary_by_oid.items():
-        pf = prec.get("fields", {})
-        if get_field_text(pf, FIELD_ACCOUNT_STATUS) != "单身":
-            continue  # 仅审核通过为单身的被邀请人计为一次成功邀请
-        inviter_uid = (get_field_text(pf, FIELD_INVITER_ID) or "").strip().upper()
-        my_uid = (get_field_text(pf, "用户ID") or "").strip().upper()
-        if not inviter_uid or inviter_uid == my_uid:
-            continue
-        inviter_oid = uid_to_oid.get(inviter_uid)
-        if inviter_oid:
-            valid_invites[inviter_oid] = valid_invites.get(inviter_oid, 0) + 1
-
-    # 永久名额 = 有效邀请 + 管理员加赠。
+    # 永久名额 = 管理员加赠 + 麦穗兑换的额外实名喜欢。
     # 「管理员加赠」字段是唯一手动奖励入口：管理员直接在用户表填累计奖励数，对账读取叠加、不会覆盖。
     # v7 起它的语义从「加爱心」改成「加永久实名名额」——名额无上限，所以这里也不封顶。
     admin_bonus = {}
@@ -1054,7 +1262,7 @@ def reconcile_hearts():
     quota_map = {}
     for oid in primary_by_oid:
         recs_l = likes_by_oid.get(oid, [])
-        permanent = valid_invites.get(oid, 0) + admin_bonus.get(oid, 0)
+        permanent = admin_bonus.get(oid, 0) + points_redeem.extra_real_like_quota(oid)
         quota_map[oid] = {
             "anon_left": quota.anon_left(recs_l, ym),
             "anon_total": quota.MONTHLY_ANON_HEARTS,
@@ -1074,7 +1282,7 @@ def reconcile_hearts():
     # 新字段可能还没在表格里建，或者建错了类型。两种情况都会让整笔 update 被飞书拒掉，
     # 连带把同一次 PUT 里的「爱心剩余」也挡在外面——额度对账就整个静默失效了。
     # 所以先探一次（有 5 分钟缓存，每人只探一次），只写确实存在且为「数字」的字段。
-    wanted = (FIELD_INVITE_QUOTA, FIELD_REAL_TOTAL, FIELD_REAL_REMAIN)
+    wanted = (FIELD_REAL_TOTAL, FIELD_REAL_REMAIN)
     unusable = [f for f in wanted if not field_is_number(USER_TABLE_ID, f)]
     if unusable:
         log(f"额度对账提示：用户表字段 {unusable} 不存在或不是「数字」类型，"
@@ -1099,8 +1307,6 @@ def reconcile_hearts():
             FIELD_HEART_REMAIN: q.get("anon_left", 0),
             FIELD_HEART_TOTAL: q.get("anon_total", quota.MONTHLY_ANON_HEARTS),
         }
-        if FIELD_INVITE_QUOTA not in unusable:
-            vals[FIELD_INVITE_QUOTA] = valid_invites.get(oid, 0)
         if FIELD_REAL_TOTAL not in unusable:
             vals[FIELD_REAL_TOTAL] = q.get("real_total", quota.MONTHLY_REAL_HEARTS)
         if FIELD_REAL_REMAIN not in unusable:

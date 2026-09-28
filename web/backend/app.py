@@ -3239,12 +3239,17 @@ def cancel_signup(activity_id):
 # 异常翻译成人话返回给前端。业务规则一律不在这层重写——h5 和机器人各写一份
 # 规则，迟早会对不上。
 
+# 「可以兑优先名额」的活动状态：需求原文是「已发布、且未开始报名或还有名额」。
+# 「未开始报名」正是抢优先位最有用的时候，所以它和「报名中」一样算 open。
+# 「已满员」不算——已经没有名额可给了。
+OPEN_ACTIVITY_STATUSES = ("报名中", "未开始报名")
+
+
 def _points_activity(record, activity_id):
     """多维表格的活动记录 → lib.points_redeem 认的活动事实。
 
-    `open` 只认「报名中」。需求里「未开始报名」如果在表里是一个独立状态，
-    改这一行即可——lib 那边只认这个布尔值，不认识状态名，所以将来加状态
-    不用动兑换逻辑。
+    `open` 的判定只在这一个地方。lib 那边只认这个布尔值、不认识状态名，所以
+    以后加状态改这里即可，兑换逻辑不用动。
     """
     fields = (record or {}).get("fields", {})
     return {
@@ -3253,7 +3258,8 @@ def _points_activity(record, activity_id):
         "quota": int(bitable.get_field_number(fields, F_ACTIVITY_MAX_SIGNUP, 0) or 0),
         "fee": int(bitable.get_field_number(fields, F_ACTIVITY_FEE, 0) or 0),
         "start_at": _activity_start_text(fields),
-        "open": bitable.get_select_value(fields, F_ACTIVITY_STATUS) == "报名中",
+        "open": (bitable.get_select_value(fields, F_ACTIVITY_STATUS)
+                 in OPEN_ACTIVITY_STATUSES),
     }
 
 

@@ -288,6 +288,30 @@ def test_priority_redeem_on_a_closed_activity_is_refused(client, points_db, monk
     assert client.get("/api/points/me").get_json()["balance"] == 100
 
 
+def test_priority_redeem_works_before_registration_opens(client, points_db, monkeypatch):
+    """「未开始报名」也算可兑——这恰恰是抢优先位最有用的时候。
+
+    需求原文是「已发布、且未开始报名或还有名额」，所以这两个状态都得放行；
+    只有「已满员」「已结束」这类才拦。
+    """
+    _activity(monkeypatch, status="未开始报名")
+    _fund(100)
+    d = _post(client, "/api/points/redeem",
+              {"item": "priority_signup", "activity_record_id": "rec_act"}).get_json()
+    assert d["ok"] and d["balance"] == 70
+
+
+def test_priority_redeem_is_refused_when_the_activity_is_full(client, points_db,
+                                                              monkeypatch):
+    """已满员 = 没有名额可给，优先位也用不了。"""
+    _activity(monkeypatch, status="已满员")
+    _fund(100)
+    d = _post(client, "/api/points/redeem",
+              {"item": "priority_signup", "activity_record_id": "rec_act"}).get_json()
+    assert "不能使用" in d["error"]
+    assert client.get("/api/points/me").get_json()["balance"] == 100
+
+
 def test_fee_discount_needs_a_paid_activity(client, points_db, monkeypatch):
     _activity(monkeypatch, fee=0)
     _fund(100)

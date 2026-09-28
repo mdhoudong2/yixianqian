@@ -101,11 +101,14 @@ def fund(target):
     return balance()
 
 
-def find_activity(*, want_fee, want_status):
+def find_activity(want_status, *, want_fee=None):
+    """按状态找一场活动。want_fee 传 None 表示收费与否都行。"""
     for a in search_records(ACTIVITY_TABLE_ID):
         f = a.get("fields", {})
         if get_field_text(f, FIELD_ACTIVITY_STATUS) != want_status:
             continue
+        if want_fee is None:
+            return a
         fee = get_field_number(f, "费用", 0) or 0
         if (fee > 0) == want_fee:
             return a
@@ -265,7 +268,7 @@ def test_redeem(c):
 # ---------------------------------------------------------------- E 活动类
 
 def test_activity_items(c):
-    opened = find_activity(want_fee=True, want_status="报名中")
+    opened = find_activity("报名中", want_fee=True)
     if not opened:
         print("[SKIP] E1-E3 测试服里没有「报名中 + 收费」的活动")
     else:
@@ -279,13 +282,15 @@ def test_activity_items(c):
               fd.get("payable") == points_redeem.discounted_fee(fd.get("original_fee", 0)),
               f"{fd.get('original_fee')} → {fd.get('payable')}")
 
-    closed = find_activity(want_fee=True, want_status="已结束")
+    closed = find_activity("已结束")
     if closed:
         fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
         r = redeem_post(c, {"item": "priority_signup",
                             "activity_record_id": closed["record_id"]})
         check("E4 已结束的活动不能用优先报名", r.status_code == 400,
               str(r.json())[:100])
+    else:
+        print("[SKIP] E4 测试服里一场「已结束」的活动都没有，没法验这条")
 
     r = redeem_post(c, {"item": "wish", "activity_record_id": "rec不存在"})
     check("E5 活动不存在 → 404", r.status_code == 404, f"实际 {r.status_code}")
@@ -330,8 +335,8 @@ def test_admin_commands():
         txt = pa.handle_admin_grant(f"加穗 {uid} 5", ACTOR)
         check("F7 没写原因要拒", "原因" in txt, txt[:60])
         # 上下限只针对「协助组织」（带活动ID）。手动加减是管理员裁量，不设限。
-        act = find_activity(want_fee=False, want_status="报名中") or \
-            find_activity(want_fee=True, want_status="报名中")
+        act = find_activity("报名中", want_fee=False) or \
+            find_activity("报名中", want_fee=True)
         if act:
             aid = get_field_text(act["fields"], "活动ID")
             before = balance()

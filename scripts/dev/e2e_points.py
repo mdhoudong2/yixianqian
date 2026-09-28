@@ -21,10 +21,13 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-sys.path.insert(0, "/opt/yixianqian-test")
-sys.path.insert(0, "/opt/yixianqian-test/bot")
-sys.path.insert(0, "/opt/yixianqian-test/web/backend")
-sys.path.insert(0, "/opt/yixianqian-test/scripts/dev")
+# 顺序有讲究：bot/ 必须最先被找到。bot 和 web/backend 各有一份 local_config.py，
+# 后者没有 WISH_TABLE_ID / MATCHMAKER_ORDER_TABLE_ID——先找到它，管理指令就会
+# 一律回「这张表还没配置」，看着像没配，其实是找错了文件。
+for _p in ("/opt/yixianqian-test", "/opt/yixianqian-test/scripts/dev",
+           "/opt/yixianqian-test/bot"):
+    sys.path.insert(0, _p)
+del _p
 
 import local_config as lc  # noqa: E402
 import requests  # noqa: E402
@@ -301,18 +304,20 @@ def test_admin_commands():
     check("F2 配置能列出且有默认值", "invite_reward_female" in cfg and "默认" in cfg,
           cfg.splitlines()[1] if "\n" in cfg else cfg[:80])
 
+    # 这两条是本次 E2E 最值钱的：单测里表格全是桩，桩不会告诉你表 ID 或字段名
+    # 写错了。配了表就必须真读一次。
     if pa.WISH_TABLE_ID:
         txt = pa.handle_admin_wish_list("心愿列表")
         check("F3 心愿列表打真表格不报错",
               "没有心愿单" in txt or "心愿单" in txt, txt.splitlines()[0][:80])
     else:
-        print("[SKIP] F3 没配 WISH_TABLE_ID")
+        check("F3 心愿单表已配 WISH_TABLE_ID", False, "local_config 里是空的")
     if pa.MATCHMAKER_ORDER_TABLE_ID:
         txt = pa.handle_admin_mm_list("推荐单列表")
         check("F4 推荐单列表打真表格不报错",
               "还没有" in txt or "推荐单" in txt, txt.splitlines()[0][:80])
     else:
-        print("[SKIP] F4 没配 MATCHMAKER_ORDER_TABLE_ID")
+        check("F4 推荐单表已配 MATCHMAKER_ORDER_TABLE_ID", False, "local_config 里是空的")
 
     # 加穗/扣穗走一遍真用户表（按用户ID找人），验证字段名与上下限
     uid = _my_user_id()

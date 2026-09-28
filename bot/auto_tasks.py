@@ -704,16 +704,22 @@ def sync_points_documents():
 
 def _nickname_of(open_id):
     """账本里只有 open_id，单据要给人看，得翻一次用户表。查不到就留空，
-    不阻断建单——名字可以事后在表格里补，单子没建起来管理员就看不见这件事。"""
+    不阻断建单——名字可以事后在表格里补，单子没建起来管理员就看不见这件事。
+
+    `find_user_by_openid` 回的是**列表**（同号多档时 `pick_primary_record` 挑出
+    主档案），不是一条记录。当字典用会 AttributeError，而它正好夹在「查到了人」
+    和「写单据」中间——单据会一条都建不出来，只留一行循环异常日志。
+    """
     if not open_id:
         return ""
     try:
-        user = find_user_by_openid(open_id)
-    except Exception:
+        rows = find_user_by_openid(open_id) or []
+        if not rows:
+            return ""
+        return get_field_text(rows[0].get("fields", {}), FIELD_NICKNAME)
+    except Exception:                                    # noqa: BLE001
+        log(f"读昵称失败 open_id={open_id}")
         return ""
-    if not user:
-        return ""
-    return get_field_text(user.get("fields", {}), FIELD_NICKNAME)
 
 
 def auto_claw_back_banned():

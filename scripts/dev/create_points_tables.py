@@ -22,7 +22,11 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# local_config.py 放在 bot/ 且被 gitignore（机器人以 bot/ 为工作目录跑）。
+# 从仓库根目录直接跑这个脚本时，bot/ 不在 sys.path 上，得自己补。
+sys.path.insert(0, os.path.join(_ROOT, "bot"))
+sys.path.insert(0, _ROOT)
 
 import local_config as _cfg
 import requests

@@ -35,8 +35,10 @@ from _prod_guard import guard
 APP_ID = getattr(_cfg, "FEISHU_APP_ID", None) or getattr(_cfg, "APP_ID", None)
 APP_SECRET = getattr(_cfg, "FEISHU_APP_SECRET", None) or getattr(_cfg, "APP_SECRET", None)
 BASE_TOKEN = _cfg.BASE_TOKEN
-USER_TABLE_ID = getattr(_cfg, "USER_TABLE_ID", "tblsecbZZv0thaPe")
-SIGNUP_TABLE_ID = getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t")
+# 表 ID 一律从 local_config 取，**不给生产兜底值**：表 ID 是按 base 分配的，
+# 拿着测试服的 token 配一个生产表 ID，轻则 404，重则改错环境。缺就报错退出。
+USER_TABLE_ID = getattr(_cfg, "USER_TABLE_ID", "")
+SIGNUP_TABLE_ID = getattr(_cfg, "SIGNUP_TABLE_ID", "")
 
 BASE_URL = "https://open.feishu.cn/open-apis"
 STATUS_FIELD = "账号状态"
@@ -202,6 +204,9 @@ def main():
         sys.exit(1)
     apply_changes = mode == "apply"
     guard("create_points_tables.py")
+    if not (USER_TABLE_ID and SIGNUP_TABLE_ID):
+        print("⛔ local_config.py 里缺 USER_TABLE_ID / SIGNUP_TABLE_ID，先补上再跑。")
+        sys.exit(1)
 
     print(f"环境：{os.environ.get('YIXIANQIAN_ENV', 'prod')}   模式：{mode}\n")
     ok = _ensure_banned_option(apply_changes)

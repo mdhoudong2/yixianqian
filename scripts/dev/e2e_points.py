@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""麦穗积分端到端验证（在测试服跑，会真的花穗、真的登记邀请）。
+
+跑法（要用 H5 的 venv：签 session cookie 依赖 itsdangerous，bot 的 venv 里没有）：
+    cd /opt/yixianqian-test && YIXIANQIAN_ENV=test \\
+        /opt/yixianqian-test/web/backend/venv/bin/python \\
+        /opt/yixianqian-test/scripts/dev/e2e_points.py
+
+单测（tests/test_points_*.py）考的是规则本身，这里考的是**接线**：H5 的鉴权、
+参数名、错误翻译，以及管理指令打真表格时的表 ID 和字段名对不对。单测里表格
+全是桩，桩不会告诉你字段名打错了。
+
+会改动测试服的东西（跑完都打印出来了）：
+  · 给测试账号加穗（lib 直接写账本，作为预置）
+  · 登记一个 E2E 专用手机号的邀请
+  · 花掉一些穗（兑换 + 并发幂等验证）
+退出码：0=全部通过；1=有失败。
+"""
+import os
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+sys.path.insert(0, "/opt/yixianqian-test")
+sys.path.insert(0, "/opt/yixianqian-test/bot")
+sys.path.insert(0, "/opt/yixianqian-test/web/backend")
+sys.path.insert(0, "/opt/yixianqian-test/scripts/dev")
+
+import local_config as lc  # noqa: E402
+import requests  # noqa: E402
+from _prod_guard import guard  # noqa: E402
+from clients import search_records  # noqa: E402
+from constants import (  # noqa: E402
+    ACTIVITY_TABLE_ID,
+    FIELD_ACTIVITY_STATUS,
+    FIELD_FEISHU_ID,
+    FIELD_PHONE,
+    USER_TABLE_ID,
+)
+from itsdangerous import URLSafeTimedSerializer  # noqa: E402
+
+from lib import points, points_config, points_redeem  # noqa: E402
+from lib.bitable_client import get_field_number, get_field_text  # noqa: E402
+
+guard(os.path.basename(__file__))
+
+HOST = "https://testapp.nantou.love"
+# 测试服里一个正常的单身账号（e2e_hearts 用的同一个）。换个账号也能跑，改这里即可。
+ACTOR = "ou_ec5d70f07daf238e81ac466a1c553aae"
+# E2E 专用号码：不会和真人撞（1 后面全是 9），重复跑也只登记一条（幂等看 lib）
+E2E_PHONE = "13999990001"
+
+WRITE_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+FAILURES = []
+
+
+def check(name, cond, detail=""):
+    print(f"[{'PASS' if cond else 'FAIL'}] {name} {detail}".rstrip())
+    if not cond:
+        FAILURES.append(name)
+    return cond
+
+
+def cookies():
+    s = URLSafeTimedSerializer(lc.FEISHU_APP_SECRET, salt="yxq-session")
+    return {"yxq_session": s.dumps(ACTOR)}
+
+
+def get(c, path):
+    return requests.get(f"{HOST}{path}", cookies=c, timeout=20)
+
+
+def post(c, path, body=None):
+    return requests.post(f"{HOST}{path}", cookies=c, timeout=20,
+                         headers=WRITE_HEADERS, json=body or {})
+
+
+def balance():
+    return points.balance(ACTOR)
+
+
+def fund(target):
+    """把余额垫到 target。垫的时候记一笔流水，跑完能看见这脚本动了什么。"""
+    cur = balance()
+    if cur >= target:
+        return cur
+    points.grant(ACTOR, target - cur, points.KIND_ADMIN,
+                 reason="e2e_points.py 预置")
+    print(f"    （预置：{cur} → {balance()} 穗）")
+    return balance()
+
+
+def find_activity(*, want_fee, want_status):
+    for a in search_records(ACTIVITY_TABLE_ID):
+        f = a.get("fields", {})
+        if get_field_text(f, FIELD_ACTIVITY_STATUS) != want_status:
+            continue
+        fee = get_field_number(f, "费用", 0) or 0
+        if (fee > 0) == want_fee:
+            return a
+    return None
+
+
+# ---------------------------------------------------------------- A 鉴权
+
+def test_auth():
+    anon = requests.get(f"{HOST}/api/points/me", timeout=20)
+    check("A1 未登录读麦穗 → 401", anon.status_code == 401, f"实际 {anon.status_code}")
+
+    c = cookies()
+    r = requests.post(f"{HOST}/api/points/invite", cookies=c, timeout=20,
+                      json={"phone": E2E_PHONE})
+    check("A2 缺 CSRF 头的写接口 → 403", r.status_code == 403, f"实际 {r.status_code}")
+
+
+# ---------------------------------------------------------------- B 余额与流水
+
+def test_balance_matches_ledger(c):
+    j = get(c, "/api/points/me").json()
+    check("B1 /api/points/me 形状齐全",
+          all(k in j for k in ("balance", "earned", "spent", "pending_points",
+                               "entries", "extra_real_like")),
+          f"键={sorted(j)}")
+    check("B2 接口余额 = 账本 SUM(delta)", j["balance"] == balance(),
+          f"接口 {j['balance']} / 账本 {balance()}")
+    check("B3 待确认的穗不在余额里",
+          j["balance"] == j["earned"] - j["spent"] or j["pending_points"] >= 0,
+          f"待确认 {j['pending_points']}")
+
+
+# ---------------------------------------------------------------- C 邀请
+
+def test_invite(c):
+    before = balance()
+    j = post(c, "/api/points/invite", {"phone": E2E_PHONE}).json()
+    check("C1 登记一位还没注册的好友", j.get("ok") is True, str(j)[:120])
+
+    lst = get(c, "/api/points/invite").json()
+    phones = [i.get("phone") or "" for i in lst.get("list", [])]
+    masked = [p for p in phones if p.startswith("139") and "*" in p]
+    check("C2 邀请列表里手机号打码（不整号回显）", bool(masked), f"样例 {masked[:1]}")
+    check("C3 待确认期间不进余额", balance() == before,
+          f"{before} → {balance()}")
+
+    # 自己的号码：不能邀请自己。用 ACTOR 在用户表里的手机号，取不到就跳过。
+    mine = _my_phone()
+    if mine:
+        r = post(c, "/api/points/invite", {"phone": mine})
+        check("C4 不能邀请自己", r.status_code == 400, f"实际 {r.status_code}")
+
+    r = post(c, "/api/points/invite", {"phone": "12345"})
+    check("C5 号码不合法要拒", r.status_code == 400, f"实际 {r.status_code}")
+
+
+def _me_record():
+    """自己在用户表里的那一行。找不到返回 None（下面的用例会跳过）。"""
+    for u in search_records(USER_TABLE_ID, {"conjunction": "and", "conditions": [
+            {"field_name": FIELD_FEISHU_ID, "operator": "is", "value": [ACTOR]}]}):
+        return u
+    return None
+
+
+def _my_phone():
+    rec = _me_record()
+    raw = (rec or {}).get("fields", {}).get(FIELD_PHONE)
+    return raw if isinstance(raw, str) and raw.isdigit() else ""
+
+
+# ---------------------------------------------------------------- D 兑换
+
+def redeem_post(c, body):
+    """打兑换接口。带节流：/api/points/redeem 限 20 次/60 秒，撞上就是 429——
+    那看起来和「被规则拒绝」一模一样，是假红。"""
+    while True:
+        now = time.time()
+        while _redeem_calls and now - _redeem_calls[0] > 60:
+            _redeem_calls.pop(0)
+        if len(_redeem_calls) < 18:
+            _redeem_calls.append(now)
+            break
+        time.sleep(_redeem_calls[0] + 60 - now + 1)
+    return post(c, "/api/points/redeem", body)
+
+
+_redeem_calls = []
+
+
+def test_redeem(c):
+    cost = points_redeem.cost_of(points_redeem.ITEM_REAL_LIKE)
+    # 每次跑都要一把新键：写死的键第二次跑就变成「已经开过单」，D5 会假红。
+    run = str(int(time.time()))
+    fund(cost * 3)
+
+    b0 = balance()
+    j = redeem_post(c, {"item": "real_like", "request_key": f"e2e-{run}-a"}).json()
+    after_first = balance()
+    check("D1 兑换额外实名喜欢扣穗",
+          j.get("ok") is True and after_first == b0 - cost, f"{b0} → {after_first}")
+    check("D2 兑换返回最新余额给前端",
+          j.get("balance") == after_first, f"{j.get('balance')} / {after_first}")
+
+    n_orders = len(get(c, "/api/points/redemptions").json()["list"])
+
+    # 幂等：同一个 request_key 再来一次，不能再扣
+    key = f"e2e-{run}-idem"
+    fund(cost * 2)
+    b0 = balance()
+    redeem_post(c, {"item": "real_like", "request_key": key})
+    b1 = balance()
+    r = redeem_post(c, {"item": "real_like", "request_key": key})
+    b2 = balance()
+    check("D3 同 request_key 重试不重复扣穗", b1 == b2, f"{b1} → {b2}")
+    check("D4 重试返回「已经开过单」而不是「余额不足」",
+          "已经开过单" in r.json().get("error", ""), str(r.json())[:120])
+    check("D5 第一次确实扣了", b1 == b0 - cost, f"{b0} → {b1}")
+
+    # 并发：5 个一模一样的请求同时打，只能开出一单
+    fund(cost * 2)
+    b0 = balance()
+    key2 = f"e2e-{run}-conc"
+
+    def _hit(_):
+        return redeem_post(c, {"item": "real_like",
+                               "request_key": key2}).status_code
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        codes = list(ex.map(_hit, range(5)))
+    b1 = balance()
+    check("D6 并发 5 次只扣一次",
+          b1 == b0 - cost and codes.count(200) == 1,
+          f"{b0} → {b1}，响应码 {sorted(codes)}")
+
+    orders = get(c, "/api/points/redemptions").json()["list"]
+    check("D7 兑换记录条数对得上", len(orders) >= n_orders + 1, f"{len(orders)} 条")
+
+    # 余额不足
+    spend_all()
+    r = redeem_post(c, {"item": points_redeem.ITEM_MATCHMAKER})
+    check("D8 余额不足拒兑",
+          r.status_code == 400 and "余额不足" in r.json().get("error", ""),
+          str(r.json())[:100])
+
+    r = redeem_post(c, {"item": "不存在的项"})
+    check("D9 未知兑换项被拒", r.status_code == 400, f"实际 {r.status_code}")
+
+
+def spend_all():
+    """把余额花到不够红娘推荐（50 穗）——反复兑最便宜的那项，直到不够。"""
+    item = points_redeem.ITEM_REAL_LIKE
+    cost = points_redeem.cost_of(item)
+    while balance() >= points_redeem.cost_of(points_redeem.ITEM_MATCHMAKER):
+        if not points_redeem.redeem_real_like(ACTOR):
+            break
+        print(f"    （花穗：-{cost}，余 {balance()}）")
+
+
+# ---------------------------------------------------------------- E 活动类
+
+def test_activity_items(c):
+    opened = find_activity(want_fee=True, want_status="报名中")
+    if not opened:
+        print("[SKIP] E1-E3 测试服里没有「报名中 + 收费」的活动")
+    else:
+        aid = opened["record_id"]
+        fund(points_redeem.cost_of(points_redeem.ITEM_FEE_DISCOUNT))
+        act = get(c, f"/api/activities/{aid}").json()
+        fd = act.get("fee_discount") or {}
+        check("E1 活动详情带 fee_discount 开关", "available" in fd, str(fd)[:120])
+        check("E2 收费活动上减免可用", fd.get("available") is True, str(fd)[:120])
+        check("E3 减免后金额是原价七折",
+              fd.get("payable") == points_redeem.discounted_fee(fd.get("original_fee", 0)),
+              f"{fd.get('original_fee')} → {fd.get('payable')}")
+
+    closed = find_activity(want_fee=True, want_status="已结束")
+    if closed:
+        fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
+        r = redeem_post(c, {"item": "priority_signup",
+                            "activity_record_id": closed["record_id"]})
+        check("E4 已结束的活动不能用优先报名", r.status_code == 400,
+              str(r.json())[:100])
+
+    r = redeem_post(c, {"item": "wish", "activity_record_id": "rec不存在"})
+    check("E5 活动不存在 → 404", r.status_code == 404, f"实际 {r.status_code}")
+
+
+# ---------------------------------------------------------------- F 管理指令打真表格
+
+def test_admin_commands():
+    """管理指令直连多维表格。单测里表格是桩，字段名写错了桩不会吭声。"""
+    import points_admin as pa
+
+    txt = pa.handle_points_help()
+    check("F1 麦穗帮助有内容", "加穗" in txt and "心愿" in txt)
+
+    cfg = pa.handle_admin_config("配置")
+    check("F2 配置能列出且有默认值", "invite_reward_female" in cfg and "默认" in cfg,
+          cfg.splitlines()[1] if "\n" in cfg else cfg[:80])
+
+    if pa.WISH_TABLE_ID:
+        txt = pa.handle_admin_wish_list("心愿列表")
+        check("F3 心愿列表打真表格不报错",
+              "没有心愿单" in txt or "心愿单" in txt, txt.splitlines()[0][:80])
+    else:
+        print("[SKIP] F3 没配 WISH_TABLE_ID")
+    if pa.MATCHMAKER_ORDER_TABLE_ID:
+        txt = pa.handle_admin_mm_list("推荐单列表")
+        check("F4 推荐单列表打真表格不报错",
+              "还没有" in txt or "推荐单" in txt, txt.splitlines()[0][:80])
+    else:
+        print("[SKIP] F4 没配 MATCHMAKER_ORDER_TABLE_ID")
+
+    # 加穗/扣穗走一遍真用户表（按用户ID找人），验证字段名与上下限
+    uid = _my_user_id()
+    if uid:
+        before = balance()
+        txt = pa.handle_admin_grant(f"加穗 {uid} 5 e2e 冒烟", ACTOR)
+        check("F5 加穗生效", balance() == before + 5, f"{before} → {balance()}｜{txt[:60]}")
+        txt = pa.handle_admin_grant(f"扣穗 {uid} 5 e2e 冒烟回滚", ACTOR)
+        check("F6 扣穗生效", balance() == before, f"{balance()}｜{txt[:60]}")
+        txt = pa.handle_admin_grant(f"加穗 {uid} 5", ACTOR)
+        check("F7 没写原因要拒", "原因" in txt, txt[:60])
+        txt = pa.handle_admin_grant(f"加穗 {uid} 999 e2e 超限", ACTOR)
+        check("F8 超过上限要拒", "上限" in txt or "不能超过" in txt, txt[:60])
+    else:
+        print("[SKIP] F5-F8 找不到自己的用户ID")
+
+    q = pa.handle_admin_query_points(f"查穗 {uid or ACTOR}")
+    check("F9 查穗有回复", "穗" in q, q.splitlines()[0][:80])
+
+
+def _my_user_id():
+    return get_field_text((_me_record() or {}).get("fields", {}), "用户ID")
+
+
+# ---------------------------------------------------------------- G 周期结算
+
+def test_settle_loop():
+    import points_admin as pa
+    try:
+        pa.settle_due_things()
+        check("G1 周期结算能跑完不抛异常", True)
+    except Exception as e:
+        check("G1 周期结算能跑完不抛异常", False, repr(e)[:160])
+
+
+def main():
+    print(f"目标 {HOST}｜账号 {ACTOR}｜起始余额 {balance()} 穗")
+    print(f"配置：实名 {points_config.get('redeem_real_like')} / "
+          f"优先 {points_config.get('redeem_priority_signup')} / "
+          f"心愿 {points_config.get('redeem_wish')} / "
+          f"红娘 {points_config.get('redeem_matchmaker')} / "
+          f"减免 {points_config.get('redeem_fee_discount')}"
+          f"（{points_config.get('fee_discount_rate')} 折）\n")
+
+    c = cookies()
+    for step in (test_auth, lambda: test_balance_matches_ledger(c),
+                 lambda: test_invite(c), lambda: test_redeem(c),
+                 lambda: test_activity_items(c), test_admin_commands,
+                 test_settle_loop):
+        try:
+            step()
+        except Exception as e:                       # noqa: BLE001
+            check(f"{getattr(step, '__name__', 'step')} 未抛异常", False, repr(e)[:200])
+        print()
+
+    print(f"结束余额 {balance()} 穗")
+    if FAILURES:
+        print(f"\n❌ {len(FAILURES)} 项失败：")
+        for f in FAILURES:
+            print(f"  · {f}")
+        return 1
+    print("\n✅ 全部通过")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

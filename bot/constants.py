@@ -172,6 +172,10 @@ QUOTA_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_quota.json")
 # bot.auto_tasks.generate_weekly_recommendations。**只在服务端流转**：
 # 里面的 pinned 字段就是「谁暗恋你」，绝不能原样发给浏览器。
 RECOMMEND_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_weekly_recommend.json")
+# 麦穗积分账本（SQLite）。bot 与 H5 写同一个文件，靠 WAL + BEGIN IMMEDIATE
+# 跨进程串行化，详见 lib/points_db.py。数值配置在 lib/points_config.py，
+# 运行时覆盖存在这个库的 config 表里，所以改配置不需要重新部署。
+POINTS_DB_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_points.db")
 
 WS_HEALTH_CHECK_INTERVAL = 60      # 每60秒检查一次
 WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连

@@ -80,12 +80,20 @@ def balance():
 
 
 def fund(target):
-    """把余额垫到 target。垫的时候记一笔流水，跑完能看见这脚本动了什么。"""
+    """把余额**对齐到** target：不够就补，多了就扣回。两个方向都记流水、都打印。
+
+    只补不扣的话，上一次跑剩下的穗会让「余额不足」这类用例失去前提，断言就
+    时灵时不灵。开局状态一致，断言才可比。
+    """
     cur = balance()
-    if cur >= target:
+    if cur == target:
         return cur
-    points.grant(ACTOR, target - cur, points.KIND_ADMIN,
-                 reason="e2e_points.py 预置")
+    delta = target - cur
+    if delta > 0:
+        points.grant(ACTOR, delta, points.KIND_ADMIN, reason="e2e_points.py 预置")
+    else:
+        points.add_entry(ACTOR, delta, points.KIND_ADMIN,
+                         reason="e2e_points.py 预置回正", operator_oid=ACTOR)
     print(f"    （预置：{cur} → {balance()} 穗）")
     return balance()
 
@@ -136,9 +144,12 @@ def test_invite(c):
     check("C1 登记一位还没注册的好友", j.get("ok") is True, str(j)[:120])
 
     lst = get(c, "/api/points/invite").json()
-    phones = [i.get("phone") or "" for i in lst.get("list", [])]
-    masked = [p for p in phones if p.startswith("139") and "*" in p]
-    check("C2 邀请列表里手机号打码（不整号回显）", bool(masked), f"样例 {masked[:1]}")
+    rows = lst.get("list", [])
+    masked = [i.get("phone_masked") for i in rows]
+    check("C2 邀请列表里手机号打码（不整号回显）",
+          f"{E2E_PHONE[:3]}****{E2E_PHONE[-4:]}" in masked and
+          not any("invitee_phone" in i for i in rows),
+          f"样例 {masked[:2]}")
     check("C3 待确认期间不进余额", balance() == before,
           f"{before} → {balance()}")
 
@@ -233,25 +244,19 @@ def test_redeem(c):
     orders = get(c, "/api/points/redemptions").json()["list"]
     check("D7 兑换记录条数对得上", len(orders) >= n_orders + 1, f"{len(orders)} 条")
 
-    # 余额不足
-    spend_all()
-    r = redeem_post(c, {"item": points_redeem.ITEM_MATCHMAKER})
+    # 余额不足。红娘推荐要先过「条件不能为空」，所以这里得把条件填上，
+    # 否则拦下来的是空条件——那也是个正确的拒绝，但考的不是余额这条闸。
+    fund(points_redeem.cost_of(points_redeem.ITEM_REAL_LIKE))   # 20 穗 < 红娘的 50
+    left = balance()
+    r = redeem_post(c, {"item": points_redeem.ITEM_MATCHMAKER,
+                        "condition": "e2e 余额不足用例"})
     check("D8 余额不足拒兑",
-          r.status_code == 400 and "余额不足" in r.json().get("error", ""),
-          str(r.json())[:100])
+          left < points_redeem.cost_of(points_redeem.ITEM_MATCHMAKER)
+          and r.status_code == 400 and "余额不足" in r.json().get("error", ""),
+          f"余额 {left}｜{str(r.json())[:80]}")
 
     r = redeem_post(c, {"item": "不存在的项"})
     check("D9 未知兑换项被拒", r.status_code == 400, f"实际 {r.status_code}")
-
-
-def spend_all():
-    """把余额花到不够红娘推荐（50 穗）——反复兑最便宜的那项，直到不够。"""
-    item = points_redeem.ITEM_REAL_LIKE
-    cost = points_redeem.cost_of(item)
-    while balance() >= points_redeem.cost_of(points_redeem.ITEM_MATCHMAKER):
-        if not points_redeem.redeem_real_like(ACTOR):
-            break
-        print(f"    （花穗：-{cost}，余 {balance()}）")
 
 
 # ---------------------------------------------------------------- E 活动类
@@ -319,8 +324,20 @@ def test_admin_commands():
         check("F6 扣穗生效", balance() == before, f"{balance()}｜{txt[:60]}")
         txt = pa.handle_admin_grant(f"加穗 {uid} 5", ACTOR)
         check("F7 没写原因要拒", "原因" in txt, txt[:60])
-        txt = pa.handle_admin_grant(f"加穗 {uid} 999 e2e 超限", ACTOR)
-        check("F8 超过上限要拒", "上限" in txt or "不能超过" in txt, txt[:60])
+        # 上下限只针对「协助组织」（带活动ID）。手动加减是管理员裁量，不设限。
+        act = find_activity(want_fee=False, want_status="报名中") or \
+            find_activity(want_fee=True, want_status="报名中")
+        if act:
+            aid = get_field_text(act["fields"], "活动ID")
+            before = balance()
+            txt = pa.handle_admin_grant(f"加穗 {uid} 999 {aid} e2e 超限", ACTOR)
+            check("F8 协助组织超过单次上限要拒",
+                  "10~50" in txt or "50" in txt, txt[:60])
+            check("F8b 被拒的这笔没进账", balance() == before, f"{before} → {balance()}")
+            txt = pa.handle_admin_grant(f"加穗 {uid} 5 {aid} e2e 协助", ACTOR)
+            check("F8c 协助组织 10 穗以下也要拒", "10~50" in txt, txt[:60])
+        else:
+            print("[SKIP] F8 测试服里没有「报名中」的活动")
     else:
         print("[SKIP] F5-F8 找不到自己的用户ID")
 

@@ -319,7 +319,7 @@ def test_priority_wiring(c):
     单测里报名表是桩，桩不会告诉你字段名或表 ID 写错了——而这一项的失败方式
     恰恰是**静默的**：穗照扣，单子挂着，人永远没被报上名。
     """
-    import points_admin as pa
+    import auto_tasks
 
     # 只要「报名中」就行，不筛「有配额」：测试服那场活动的「报名人数上限」填的
     # 是「无」（文本），优先名额本来就兑不了——那是没填数据，不是规则错。
@@ -348,31 +348,36 @@ def test_priority_wiring(c):
     check("E6a 兑换开出一张生效中的单", bool(order) and
           order["status"] == points_redeem.ST_ACTIVE, str(order and order["status"]))
 
-    pa.auto_settle_priority_orders()
-    check("E6b 结算真的把他报上了名", _signup_row(text_id) is not None,
-          f"活动 {text_id}")
-
-    # 收尾：退穗 + 把报名改成已取消。不退穗的话单子还是 active，机器人 30 秒后
-    # 又会把他报上——留下一堆谁也说不清的报名记录，下一轮 E2E 也读不准。
-    points_redeem.refund(order["id"], reason="e2e 收尾")
-    _cancel_signup(text_id)
-    check("E6c 收尾后单子不再是生效中",
-          points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED)
-
-    # 活动取消 → 退穗。直接在表里把状态改成「已取消」再改回来，用完就还原。
+    # 从这里往下都靠 finally 收尾：**一张没退掉的生效单子会一直挂在机器人循环
+    # 里**，30 秒后把人报上名，之后每轮 E2E 都会读到这条谁也说不清的报名记录。
+    # 中间任何一步抛异常（哪怕只是断言写错）都得先把单子收掉。
     act_id = act["record_id"]
     try:
+        auto_tasks.auto_settle_priority_orders()
+        check("E6b 结算真的把他报上了名", _signup_row(text_id) is not None,
+              f"活动 {text_id}")
+
+        points_redeem.refund(order["id"], reason="e2e 收尾")
+        _cancel_signup(text_id)
+        check("E6c 收尾后单子不再是生效中",
+              points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED)
+
+        # 活动取消 → 退穗。把表里状态改成「已取消」再改回来，用完就还原。
         update_record(ACTIVITY_TABLE_ID, act_id, {FIELD_ACTIVITY_STATUS: "已取消"})
         points_redeem.redeem_priority(ACTOR, {
             "id": text_id, "title": "e2e 取消用例", "quota": 10, "fee": 0,
             "start_at": "", "open": True})
         cancel_order = points_redeem.find(ACTOR, points_redeem.ITEM_PRIORITY, text_id)
         before = balance()
-        pa.auto_settle_priority_orders()
+        auto_tasks.auto_settle_priority_orders()
         check("E6d 活动取消后退穗", balance() == before + cancel_order["cost"],
               f"{before} → {balance()}")
     finally:
         update_record(ACTIVITY_TABLE_ID, act_id, {FIELD_ACTIVITY_STATUS: "报名中"})
+        for o in points_redeem.list_for(ACTOR, item=points_redeem.ITEM_PRIORITY):
+            if o["status"] == points_redeem.ST_ACTIVE:
+                points_redeem.refund(o["id"], reason="e2e 收尾")
+        _cancel_signup(text_id)
 
 
 def _signup_row(activity_id):

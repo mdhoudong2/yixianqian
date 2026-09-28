@@ -310,9 +310,9 @@ def test_priority_wiring(c):
     """
     import points_admin as pa
 
-    act = find_activity("报名中")
+    act = _find_priority_activity()
     if not act:
-        print("[SKIP] E6 测试服里没有「报名中」的活动")
+        print("[SKIP] E6 测试服里没有「报名中、有配额、优先位还没满」的活动")
         return
     text_id = get_field_text(act["fields"], "活动ID")
 
@@ -336,6 +336,24 @@ def test_priority_wiring(c):
     _cancel_signup(text_id)
     check("E6c 收尾后单子不再是生效中",
           points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED)
+
+
+def _find_priority_activity():
+    """找一场能兑优先名额的活动。
+
+    光看「报名中」不够——`redeem_priority` 还要求有配额（`总名额 × 30%` 至少
+    得凑得出 1 个优先位）。测试服里就有报了名但没填「报名人数上限」的活动，
+    直接拿它测会得到一句「没有名额」的 SKIP，看着像功能坏了。
+    """
+    ratio = float(points_config.get("priority_ratio"))
+    for a in search_records(ACTIVITY_TABLE_ID):
+        f = a.get("fields", {})
+        if get_field_text(f, FIELD_ACTIVITY_STATUS) != "报名中":
+            continue
+        quota = get_field_number(f, "报名人数上限", 0) or 0
+        if int(quota * ratio) >= 1:
+            return a
+    return None
 
 
 def _signup_row(activity_id):

@@ -32,12 +32,16 @@ del _p
 import local_config as lc  # noqa: E402
 import requests  # noqa: E402
 from _prod_guard import guard  # noqa: E402
-from clients import search_records  # noqa: E402
+from clients import search_records, update_record  # noqa: E402
 from constants import (  # noqa: E402
     ACTIVITY_TABLE_ID,
     FIELD_ACTIVITY_STATUS,
     FIELD_FEISHU_ID,
     FIELD_PHONE,
+    FIELD_SIGNUP_ACTIVITY_ID,
+    FIELD_SIGNUP_OPENID,
+    FIELD_SIGNUP_STATUS,
+    SIGNUP_TABLE_ID,
     USER_TABLE_ID,
 )
 from itsdangerous import URLSafeTimedSerializer  # noqa: E402
@@ -294,6 +298,64 @@ def test_activity_items(c):
 
     r = redeem_post(c, {"item": "wish", "activity_record_id": "rec不存在"})
     check("E5 活动不存在 → 404", r.status_code == 404, f"实际 {r.status_code}")
+
+    test_priority_wiring(c)
+
+
+def test_priority_wiring(c):
+    """E6 优先名额真能报到名：真表格、真结算循环。
+
+    单测里报名表是桩，桩不会告诉你字段名或表 ID 写错了——而这一项的失败方式
+    恰恰是**静默的**：穗照扣，单子挂着，人永远没被报上名。
+    """
+    import points_admin as pa
+
+    act = find_activity("报名中")
+    if not act:
+        print("[SKIP] E6 测试服里没有「报名中」的活动")
+        return
+    text_id = get_field_text(act["fields"], "活动ID")
+
+    fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
+    r = redeem_post(c, {"item": "priority_signup",
+                        "activity_record_id": act["record_id"]})
+    if not r.json().get("ok"):
+        print(f"[SKIP] E6 这场活动兑不了优先名额：{r.json().get('error')}")
+        return
+    order = points_redeem.find(ACTOR, points_redeem.ITEM_PRIORITY, text_id)
+    check("E6a 兑换开出一张生效中的单", bool(order) and
+          order["status"] == points_redeem.ST_ACTIVE, str(order and order["status"]))
+
+    pa.auto_settle_priority_orders()
+    check("E6b 结算真的把他报上了名", _signup_row(text_id) is not None,
+          f"活动 {text_id}")
+
+    # 收尾：退穗 + 把报名改成已取消。不退穗的话单子还是 active，机器人 30 秒后
+    # 又会把他报上——留下一堆谁也说不清的报名记录，下一轮 E2E 也读不准。
+    points_redeem.refund(order["id"], reason="e2e 收尾")
+    _cancel_signup(text_id)
+    check("E6c 收尾后单子不再是生效中",
+          points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED)
+
+
+def _signup_row(activity_id):
+    """我在这个活动上的「已报名」记录（没有则 None）。"""
+    for s in search_records(SIGNUP_TABLE_ID, {
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+                 "value": [activity_id]},
+                {"field_name": FIELD_SIGNUP_OPENID, "operator": "is", "value": [ACTOR]},
+                {"field_name": FIELD_SIGNUP_STATUS, "operator": "is",
+                 "value": ["已报名"]}]}):
+        return s
+    return None
+
+
+def _cancel_signup(activity_id):
+    row = _signup_row(activity_id)
+    if row:
+        update_record(SIGNUP_TABLE_ID, row["record_id"], {FIELD_SIGNUP_STATUS: "已取消"})
 
 
 # ---------------------------------------------------------------- F 管理指令打真表格

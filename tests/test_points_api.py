@@ -8,6 +8,7 @@
 """
 import os
 import sys
+import time
 
 import pytest
 
@@ -61,6 +62,11 @@ def _post(c, url, body=None):
 
 def _fund(n=100, oid=ME):
     points.grant(oid, n, points.KIND_ADMIN, reason="测试预置")
+
+
+def _delete(c, url):
+    """带 CSRF 头的 DELETE —— 网关对已登录写接口（含 DELETE）强制要求。"""
+    return c.delete(url, headers={"X-Requested-With": "XMLHttpRequest"})
 
 
 # ---------------------------------------------------------------- 未登录
@@ -494,3 +500,55 @@ def test_activity_detail_hides_the_discount_once_used(client, points_db, monkeyp
     _post(client, "/api/activities/rec_act/signup", {"use_fee_discount": True})
     fd = client.get("/api/activities/rec_act").get_json()["fee_discount"]
     assert not fd["available"] and "已经用过" in fd["reason"]
+
+
+# ---------------------------------------------------------------- 取消报名时的优先名额
+
+def _cancel_env(monkeypatch, *, hours_to_start):
+    """取消报名的环境：活动「报名中」、我有一条「已报名」记录。"""
+    _activity(monkeypatch)
+    monkeypatch.setattr(app, "snap_signup",
+                        lambda aid, oid: {"record_id": "rec_signup"})
+    monkeypatch.setattr(app.bitable, "update_record", lambda t, r, v: True)
+    monkeypatch.setattr(app.bitable, "get_timestamp",
+                        lambda f, k, d=None: time.time() + hours_to_start * 3600)
+
+
+def _buy_priority():
+    act = {"id": "ACT-1", "title": "周末桌游", "quota": 10, "fee": 0,
+           "start_at": "", "open": True}
+    return points_redeem.redeem_priority(ME, act)
+
+
+def test_cancelling_early_gives_the_priority_points_back(client, points_db, monkeypatch):
+    """开始前 48 小时以上主动取消 → 退穗。"""
+    _cancel_env(monkeypatch, hours_to_start=72)
+    _fund(100)
+    order = _buy_priority()
+    assert client.get("/api/points/me").get_json()["balance"] == 70
+
+    d = _delete(client, "/api/activities/rec_act/signup").get_json()
+    assert d["ok"] and d["balance"] == 100
+    assert "30 穗" in d["message"]
+    assert points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED
+
+
+def test_cancelling_late_keeps_the_points(client, points_db, monkeypatch):
+    """48 小时以内取消 → 不退穗，但单子要收掉——留着 active 会一直占着
+    「每场 30%」的名额上限。"""
+    _cancel_env(monkeypatch, hours_to_start=10)
+    _fund(100)
+    order = _buy_priority()
+
+    d = _delete(client, "/api/activities/rec_act/signup").get_json()
+    assert d["ok"] and "balance" not in d
+    assert client.get("/api/points/me").get_json()["balance"] == 70
+    assert points_redeem.get(order["id"])["status"] == points_redeem.ST_CANCELLED
+
+
+def test_cancelling_without_a_priority_order_is_unaffected(client, points_db,
+                                                           monkeypatch):
+    """没兑过优先名额的人取消报名，回复跟以前一模一样（不多一句退穗）。"""
+    _cancel_env(monkeypatch, hours_to_start=72)
+    d = _delete(client, "/api/activities/rec_act/signup").get_json()
+    assert d == {"ok": True, "message": "已取消报名"}

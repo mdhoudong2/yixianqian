@@ -3230,7 +3230,40 @@ def cancel_signup(activity_id):
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")
-    return jsonify({"ok": True, "message": "已取消报名"})
+    resp = {"ok": True, "message": "已取消报名"}
+    refund = _refund_priority_on_cancel(open_id, text_act_id, act_fields)
+    if refund:
+        resp["message"] += f"，优先名额的 {refund['points']} 穗已退回"
+        resp["balance"] = refund["balance"]
+    return jsonify(resp)
+
+
+def _refund_priority_on_cancel(open_id, activity_id, act_fields):
+    """用户主动取消报名时，顺带处理他这场活动的优先名额。
+
+    规则：「开始前 48 小时之前主动取消 → 退穗；48 小时内 → 不退」。判 48 小时
+    用 `points_redeem.can_cancel_priority`（阈值在配置里），这一层只负责把
+    活动开始时间翻成「还有几小时」。
+
+    不退穗时也把单子标成已取消——名额确实放弃了，留着 active 会一直占着
+    「每场 30%」的名额上限。退穗失败不抛：报名已经取消了，不能因为账本出问题
+    就让用户以为整个操作失败。返回 None（没这回事）或 {points, balance}。
+    """
+    order = points_redeem.find(open_id, points_redeem.ITEM_PRIORITY, activity_id)
+    if not order or order["status"] != points_redeem.ST_ACTIVE:
+        return None
+    start_ts = bitable.get_timestamp(act_fields, F_ACTIVITY_START_TIME)
+    hours = (start_ts - time.time()) / 3600.0 if start_ts else None
+    try:
+        if points_redeem.can_cancel_priority(hours_to_start=hours):
+            points_redeem.refund(order["id"], reason="活动开始 48 小时前主动取消报名")
+            return {"points": order["cost"], "balance": points.balance(open_id)}
+        points_redeem.mark(order["id"], points_redeem.ST_CANCELLED,
+                           note="48 小时内取消报名，按规则不退穗")
+    except Exception as e:
+        app.logger.error(f"取消报名时处理优先名额失败 open_id={open_id} "
+                         f"redemption={order['id']}: {e}")
+    return None
 
 # ========== 麦穗积分 ==========
 #

@@ -101,6 +101,16 @@ FIELD_ACTIVITY_ID = "活动ID"
 FIELD_ACTIVITY_NAME = "活动名称"
 FIELD_ACTIVITY_CURRENT_SIGNUP = "当前报名人数"
 FIELD_ACTIVITY_STATUS = "活动状态"
+# 活动状态的取值。表里就这五个（2026-09-29 从测试表读出来的），代码按字面匹配，
+# 所以集中在这——写错一个字就是静默不生效，比报错难查得多。
+# 「报名中」「未开始报名」都算「可兑优先名额」（见 web/backend/app.py 的
+# OPEN_ACTIVITY_STATUSES）——前者恰恰是抢优先位最有用的时候。
+STATUS_SIGNUP_OPEN = "报名中"
+STATUS_SIGNUP_NOT_STARTED = "未开始报名"
+STATUS_SIGNUP_FULL = "已满员"
+STATUS_ACTIVITY_FINISHED = "已结束"
+# 活动取消：机器人扫到这个状态就把该活动名下的优先名额、费用减免退穗。
+ACTIVITY_STATUS_CANCELLED = "已取消"
 
 FIELD_SIGNUP_ACTIVITY_ID = "活动ID"
 FIELD_SIGNUP_OPENID = "报名人open_id"

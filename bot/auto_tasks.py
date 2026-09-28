@@ -815,6 +815,172 @@ def auto_settle_wishes():
     return refunded
 
 
+def auto_settle_priority_orders():
+    """优先名额的单子：该报名的报上，该退穗的退掉。
+
+    兑换那一刻只开单扣穗，**兑现全在这里**——少了这一步，用户花 30 穗买到的
+    就是一张没人管的单子。按活动状态分四种走向：
+
+      · 报名中 / 已满员 → 替他把名报上。**满员也报**：花 30 穗买的就是「一定
+        有位」，而且「每场优先名额 ≤ 总名额 30%」已经把超出的人头框住了
+        （见 lib.points_redeem.redeem_priority）。
+      · 未开始报名 → 再等等，报名一开放下一轮就报上。
+      · 已取消 → 退穗。
+      · 已结束 → 收尾：从没报上过名的（活动压根没开放过报名，或这中间出了
+        岔子）退穗；报上过的说明名额用掉了，按「48 小时内取消/未到场不退」
+        不再退，把单子关掉。
+
+    幂等：报名表查重挡重复报名，`refund` 自己挡重复退穗（非 active 直接拒）。
+    返回 (本次报上人数, 本次退穗条数)。
+    """
+    orders = points_redeem.all_orders(points_redeem.ITEM_PRIORITY,
+                                      [points_redeem.ST_ACTIVE])
+    if not orders:
+        return 0, 0
+
+    signed = refunded = closed = 0
+    for order in orders:
+        activity_id = str((order.get("params") or {}).get("activity_id") or "")
+        open_id = order["user_oid"]
+        if not activity_id or not open_id:
+            continue
+        activity = find_activity_by_id(activity_id)
+        if not activity:
+            log(f"优先名额 #{order['id']}：找不到活动 {activity_id}，留待人工核对")
+            continue
+        act_fields = activity.get("fields", {})
+        status = get_select_value(act_fields, FIELD_ACTIVITY_STATUS)
+
+        if status == ACTIVITY_STATUS_CANCELLED:
+            if _refund_order(order, "活动已取消"):
+                refunded += 1
+            continue
+
+        if status == STATUS_ACTIVITY_FINISHED:
+            if _any_signup_record(activity_id, open_id):
+                points_redeem.mark(order["id"], points_redeem.ST_DONE,
+                                   note="活动已结束")
+                closed += 1
+            elif _refund_order(order, "活动结束时仍未用上优先名额"):
+                refunded += 1
+            continue
+
+        if status not in (STATUS_SIGNUP_OPEN, STATUS_SIGNUP_FULL):
+            continue                      # 未开始报名：再等等
+
+        if _try_priority_signup(activity_id, open_id, order["id"]):
+            signed += 1
+
+    if signed or refunded or closed:
+        log(f"优先名额结算：报上 {signed} 人，退穗 {refunded} 条，收尾 {closed} 条")
+    return signed, refunded
+
+
+def auto_settle_fee_discounts():
+    """费用减免的单子：活动取消就退穗，活动结束就收尾。
+
+    减免的穗是报名那一下扣的（「付款成功才扣穗」），平时不用管。需求里写明的
+    退穗条件只有一个：**活动全额退款（取消）**。活动结束后把单子关掉，否则
+    一直挂着「生效中」——`all_orders` 是 `ORDER BY id LIMIT 200`，陈年 active
+    单子堆过 200 条，新单子就扫不到了。
+
+    返回 (退穗条数, 收尾条数)。
+    """
+    refunded = closed = 0
+    for order in points_redeem.all_orders(points_redeem.ITEM_FEE_DISCOUNT,
+                                          [points_redeem.ST_ACTIVE]):
+        activity_id = str((order.get("params") or {}).get("activity_id") or "")
+        if not activity_id:
+            continue
+        activity = find_activity_by_id(activity_id)
+        if not activity:
+            continue
+        status = get_select_value(activity.get("fields", {}), FIELD_ACTIVITY_STATUS)
+        if status == ACTIVITY_STATUS_CANCELLED:
+            if _refund_order(order, "活动已取消，全额退款"):
+                refunded += 1
+        elif status == STATUS_ACTIVITY_FINISHED:
+            points_redeem.mark(order["id"], points_redeem.ST_DONE, note="活动已结束")
+            closed += 1
+    if refunded or closed:
+        log(f"费用减免结算：退穗 {refunded} 条，收尾 {closed} 条")
+    return refunded, closed
+
+
+def _refund_order(order, reason):
+    """退穗并记日志。失败不抛——一条单子出问题不该拖垮整轮结算。"""
+    try:
+        points_redeem.refund(order["id"], reason=reason)
+        return True
+    except Exception as e:                               # noqa: BLE001
+        log(f"优先名额退穗失败 #{order['id']}（{reason}）: {e}")
+        return False
+
+
+def _any_signup_record(activity_id, open_id):
+    """这个人在这个活动上**有没有过**报名记录（含已取消）。
+
+    和 `_has_signup` 的区别很重要：判「名额用没用掉」要认历史——用户报上之后
+    又主动取消了，名额在活动方那边已经被占过了，不能因为「现在查不到已报名」
+    就当成我们没交付过而退穗。
+    """
+    rows = search_records(SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+             "value": [activity_id]},
+            {"field_name": FIELD_SIGNUP_OPENID, "operator": "is", "value": [open_id]},
+        ]})
+    return bool(rows)
+
+
+def _try_priority_signup(activity_id, open_id, order_id):
+    """替优先名额的持有人报名。满员也报（付了穗就该有位）。返回是否新报上。"""
+    # 直接走 bitable 而非 clients.search_records：后者把查询失败转成 []，那样
+    # 飞书瞬时失败会被误判成「没报上」而写下第二条报名记录（同 auto_signup_new_user）。
+    existing = bitable.search_records(SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+             "value": [activity_id]},
+            {"field_name": FIELD_SIGNUP_STATUS, "operator": "is", "value": ["已报名"]},
+        ]})
+    if existing is None:
+        log(f"优先名额 #{order_id}：报名表查询失败，下轮重试")
+        return False
+    if any(get_field_text(s.get("fields", {}), FIELD_SIGNUP_OPENID) == open_id
+           for s in existing):
+        return False                      # 已经报上了（可能他自己报的）
+
+    nickname = _nickname_of(open_id)
+    if not create_record(SIGNUP_TABLE_ID, {
+        FIELD_SIGNUP_ACTIVITY_ID: activity_id,
+        FIELD_SIGNUP_OPENID: open_id,
+        FIELD_SIGNUP_NICKNAME: nickname,
+        FIELD_SIGNUP_STATUS: "已报名",
+    }):
+        log(f"优先名额 #{order_id}：报名写入失败，下轮重试（{nickname or open_id}）")
+        return False
+    log(f"优先名额报名成功: {nickname or open_id} -> 活动 {activity_id}")
+    _notify_priority_signup(open_id, activity_id)
+    return True
+
+
+def _notify_priority_signup(open_id, activity_id):
+    """报上了得说一声——用户是提前花穗占的位，不告诉他等于没占。
+    通知失败不影响报名本身，只记日志。"""
+    try:
+        activity = find_activity_by_id(activity_id)
+        name = get_field_text((activity or {}).get("fields", {}), FIELD_ACTIVITY_NAME)
+        send_text_message(
+            open_id,
+            f"\U0001f389 你用麦穗换的优先名额生效了！\n\n"
+            f"活动「{name or activity_id}」已经开始报名，我们已经替你报上名。\n"
+            f"去 App 的活动页就能看到。")
+    except Exception as e:                               # noqa: BLE001
+        log(f"优先名额报名通知发送失败 {open_id}: {e}")
+
+
 def _has_signup(activity_id, open_id):
     """这个人在这个活动上报过名没有。报名表里同一人可能有「已取消」的历史记录，
     所以只看状态是「已报名」的那条。"""
@@ -837,6 +1003,8 @@ def auto_send_view_loop(interval=30):
             auto_reconcile_invite_rewards()
             auto_claw_back_banned()
             auto_settle_wishes()
+            auto_settle_priority_orders()
+            auto_settle_fee_discounts()
             sync_points_documents()
         except Exception as e:
             log(f"审核通过通知循环异常: {e}")

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """麦穗积分要用的多维表格改动（幂等，重复跑安全）。
 
-做四件事：
+做五件事：
   1. 用户表「账号状态」加上「封禁」选项 —— 只有这个新状态触发邀请奖励收回；
-  2. 报名表加「签到状态」字段（按时/迟到/未到）—— 考勤，供退穗判定；
-  3. 建「麦穗心愿单」表；
-  4. 建「麦穗红娘推荐单」表。
+  2. 活动表「活动状态」加上「已取消」选项 —— 机器人扫到它才退优先名额 / 费用减免；
+  3. 报名表加「签到状态」字段（按时/迟到/未到）—— 考勤，供退穗判定；
+  4. 建「麦穗心愿单」表；
+  5. 建「麦穗红娘推荐单」表。
 
 用法（在仓库根目录）：
   python scripts/dev/create_points_tables.py check     # 只看看现在缺什么
@@ -45,6 +46,11 @@ STATUS_FIELD = "账号状态"
 STATUS_BANNED = "封禁"
 ATTENDANCE_FIELD = "签到状态"
 ATTENDANCE_OPTIONS = ["按时", "迟到", "未到"]
+# 活动取消。机器人扫到这个状态就退该活动名下的优先名额 / 费用减免，
+# 字面量必须与 bot/constants.py 的 ACTIVITY_STATUS_CANCELLED 一致。
+ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", "")
+ACTIVITY_STATUS_FIELD = "活动状态"
+ACTIVITY_STATUS_CANCELLED = "已取消"
 
 # type: 1=文本 2=数字 3=单选 5=日期 1005=自动编号
 WISH_TABLE_NAME = "麦穗心愿单"
@@ -109,37 +115,38 @@ def _find_table(name):
     return ""
 
 
-def _ensure_banned_option(apply_changes):
-    """给「账号状态」单选加上「封禁」。已有选项原样保留——飞书这个接口是整体
-    覆盖 options 的，漏传一个就等于把那个状态删了，那一堆用户的状态会变成空。"""
-    fields = _list_fields(USER_TABLE_ID)
-    target = next((f for f in fields if f.get("field_name") == STATUS_FIELD), None)
+def _ensure_select_option(table_id, table_label, field_name, option_name,
+                          apply_changes):
+    """给某个单选字段补一个选项。已有选项原样保留——飞书这个接口是整体覆盖
+    options 的，漏传一个就等于把那个状态删了，那一堆记录的状态会变成空。"""
+    fields = _list_fields(table_id)
+    target = next((f for f in fields if f.get("field_name") == field_name), None)
     if not target:
-        print(f"❌ 用户表没有「{STATUS_FIELD}」字段，先手工确认表对不对")
+        print(f"❌ {table_label}没有「{field_name}」字段，先手工确认表对不对")
         return False
     options = (target.get("property") or {}).get("options") or []
     names = [o.get("name") for o in options]
-    if STATUS_BANNED in names:
-        print(f"✅ 「{STATUS_FIELD}」已有「{STATUS_BANNED}」选项：{names}")
+    if option_name in names:
+        print(f"✅ 「{field_name}」已有「{option_name}」选项：{names}")
         return True
     if not apply_changes:
-        print(f"⬜ 「{STATUS_FIELD}」缺「{STATUS_BANNED}」选项，现有：{names}")
+        print(f"⬜ 「{field_name}」缺「{option_name}」选项，现有：{names}")
         return True
 
     # 保留原有 id，只追加新选项：飞书按 name 匹配，带 id 传回去等于「这个选项没动」。
     new_options = [{"id": o.get("id"), "name": o.get("name")} for o in options]
-    new_options.append({"name": STATUS_BANNED})
+    new_options.append({"name": option_name})
     r = requests.put(
-        f"{BASE_URL}/bitable/v1/apps/{BASE_TOKEN}/tables/{USER_TABLE_ID}/fields/"
+        f"{BASE_URL}/bitable/v1/apps/{BASE_TOKEN}/tables/{table_id}/fields/"
         f"{target.get('field_id')}",
         headers=_h(),
-        json={"field_name": STATUS_FIELD, "type": target.get("type"),
+        json={"field_name": field_name, "type": target.get("type"),
               "property": {"options": new_options}})
     data = r.json()
     if data.get("code") != 0:
         print(f"❌ 加选项失败：{json.dumps(data, ensure_ascii=False)}")
         return False
-    print(f"✅ 「{STATUS_FIELD}」已加上「{STATUS_BANNED}」")
+    print(f"✅ 「{field_name}」已加上「{option_name}」")
     return True
 
 
@@ -204,12 +211,18 @@ def main():
         sys.exit(1)
     apply_changes = mode == "apply"
     guard("create_points_tables.py")
-    if not (USER_TABLE_ID and SIGNUP_TABLE_ID):
-        print("⛔ local_config.py 里缺 USER_TABLE_ID / SIGNUP_TABLE_ID，先补上再跑。")
+    if not (USER_TABLE_ID and SIGNUP_TABLE_ID and ACTIVITY_TABLE_ID):
+        print("⛔ local_config.py 里缺 USER_TABLE_ID / SIGNUP_TABLE_ID / "
+              "ACTIVITY_TABLE_ID，先补上再跑。")
         sys.exit(1)
 
     print(f"环境：{os.environ.get('YIXIANQIAN_ENV', 'prod')}   模式：{mode}\n")
-    ok = _ensure_banned_option(apply_changes)
+    ok = _ensure_select_option(USER_TABLE_ID, "用户表", STATUS_FIELD, STATUS_BANNED,
+                               apply_changes)
+    # 活动取消是「优先名额/费用减免自动退穗」的唯一触发点，没有这个选项那条规则
+    # 就没有输入端（机器人按状态字面匹配）。
+    ok = _ensure_select_option(ACTIVITY_TABLE_ID, "活动表", ACTIVITY_STATUS_FIELD,
+                               ACTIVITY_STATUS_CANCELLED, apply_changes) and ok
     ok = _ensure_attendance_field(apply_changes) and ok
     wish_id = _create_table(WISH_TABLE_NAME, WISH_FIELDS, apply_changes)
     mm_id = _create_table(MATCHMAKER_TABLE_NAME, MATCHMAKER_FIELDS, apply_changes)

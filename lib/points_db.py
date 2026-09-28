@@ -98,9 +98,19 @@ def close_all():
     _conn_state.state = None
 
 
+def now_dt():
+    """当前时刻。用 lib.quota 的时区，不跟着系统时区漂。
+
+    账本里所有「现在」都从这里来，别处不要再调 `quota.now()`——
+    单测要拨动时间（比如验证 7 天确认期的边界）时只钉这一个点就够了。
+    """
+    return quota.now()
+
+
 def now_str():
-    """流水时间戳。用 lib.quota 的时区，不跟着系统时区漂。"""
-    return quota.now().strftime("%Y-%m-%d %H:%M:%S")
+    """流水时间戳。定宽 `YYYY-mm-dd HH:MM:SS`，所以字符串比较就是时间比较——
+    `confirm_due_at <= now` 这类判断全靠这个格式，改格式会静默改变比较结果。"""
+    return now_dt().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _open(path):

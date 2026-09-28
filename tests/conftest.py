@@ -38,3 +38,26 @@ def points_db(tmp_path):
     yield mod
     mod.close_all()
     points_config.invalidate()
+
+
+@pytest.fixture
+def clock(points_db, monkeypatch):
+    """可控时钟：把所有「现在」钉住，测试自己往前拨。
+
+    只有 `points_db.now_dt` 这一个缝——`now_str()` 和 `points_invite` 里算确认期
+    到期时刻的地方都从它派生。要验「7 天确认期的边界」这类事，靠 sleep 是不行的
+    （跑 7 天），靠手写一个未来的 confirm_due_at 又绕过了被测代码。
+    """
+    from datetime import timedelta
+
+    from lib import quota
+
+    state = {"t": quota.now().replace(microsecond=0)}
+
+    def advance(days=0, hours=0, seconds=0):
+        state["t"] += timedelta(days=days, hours=hours, seconds=seconds)
+        return state["t"]
+
+    monkeypatch.setattr(points_db, "now_dt", lambda: state["t"])
+    advance.__doc__ = "把时钟往前拨，返回拨完的时刻。"
+    return advance

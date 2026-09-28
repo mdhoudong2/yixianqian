@@ -198,9 +198,18 @@ def summary(user_oid, conn=None):
 
 def has_key(idempotency_key, conn=None):
     """这个幂等键记过账没有。给「先问一句」的展示逻辑用，不作为并发防线。"""
+    return entry_id_for(idempotency_key, conn=conn) is not None
+
+
+def entry_id_for(idempotency_key, conn=None):
+    """幂等键对应的流水 ID（没有则 None）。
+
+    周期任务里 `grant()` 返回 None 说明「上次发过了」，但往往还要把那个流水 ID
+    记到业务表上（比如 invites.reward_ledger_id）。补一次查比重发一次安全。
+    """
     if not idempotency_key:
-        return False
+        return None
     with _tx(conn) as c:
-        row = c.execute("SELECT 1 FROM ledger WHERE idempotency_key=?",
+        row = c.execute("SELECT id FROM ledger WHERE idempotency_key=?",
                         (idempotency_key,)).fetchone()
-    return row is not None
+    return int(row["id"]) if row is not None else None

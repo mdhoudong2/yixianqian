@@ -104,6 +104,17 @@
   .heart-btn:active { transform: scale(0.88); }
   .heart-btn.liked { background: #c8c9cc; box-shadow: none; cursor: not-allowed; }
   .feedback-btn { height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid #dcdee0; background: #fff; color: #969799; font-size: 12px; cursor: pointer; }
+  /* 点赞：比 ♥ 小一号、弱一档——它是轻动作，视觉上不能和「喜欢」抢主次 */
+  .praise-btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ffb26b, #ffcf8e); color: #fff; font-size: 21px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 10px rgba(255,178,107,0.4); transition: transform 0.15s; position: relative; }
+  .praise-btn:active { transform: scale(0.88); }
+  .praise-btn.praised { background: #c8c9cc; box-shadow: none; }
+  .praise-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* 今日剩余次数：贴在按钮右下角。为 0 时不显示（按钮此时也是灰的） */
+  .praise-left { position: absolute; right: -4px; bottom: -4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: rgba(0,0,0,0.55); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+  /* 「要不要表示喜欢？」——点过赞、还没喜欢时出现。做成一枚浮在按钮上方的小标签，
+     不占卡片正文的地方，也不挡「喜欢」按钮本身。 */
+  .praise-hint-pill { max-width: 150px; padding: 5px 10px; border-radius: 12px; background: #fff0f3; color: #ff6b81; font-size: 12px; line-height: 1.35; text-align: right; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .praise-hint-inline { margin-bottom: 10px; padding: 8px 12px; border-radius: 10px; background: #fff0f3; color: #ff6b81; font-size: 13px; line-height: 1.5; }
   .back-btn { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #dcdee0; background: #fff; color: #969799; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.15s; }
   .back-btn:active { transform: scale(0.88); }
   .back-btn:disabled { opacity: 0.3; }
@@ -442,6 +453,7 @@
   .van-theme-dark .msg-reply-tag { color: #8c8d91; }
   .van-theme-dark .msg-reply-btn { color: #6e6f73; }
   .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
+  .van-theme-dark .praise-hint-pill, .van-theme-dark .praise-hint-inline { background: #3a2830; color: #ff8fa1; }
   .van-theme-dark .profile-photo-section img { border-color: #3a3a3e; }
   .van-theme-dark .msg-input { color: #f5f5f5; }
   .van-theme-dark .candidate-search-input { background: #1a1a1c; border-color: #3a3a3e; }
@@ -639,6 +651,14 @@
       </div>
       <div class="card-actions" v-if="cardTab==='profile'">
         <button v-if="!currentCard.is_self" class="feedback-btn" @click="openFeedbackDialog">反馈</button>
+        <!-- 点赞夹在「反馈」和「♥」中间（需求第 13 条）。已喜欢过就不再显示（第 9 条）：
+             都表白了，再摆一个更轻的按钮只会让人犹豫点哪个。 -->
+        <button v-if="canPraiseCard" class="praise-btn" :class="{praised: cardPraised}"
+                @click="togglePraise(currentCard)" :disabled="actionLoading || praiseBusy">
+          👍
+          <span class="praise-left" v-if="!cardPraised && praiseLeft > 0">{{ praiseLeft }}</span>
+        </button>
+        <div class="praise-hint-pill" v-if="canPraiseCard && cardPraised">要不要表示喜欢？</div>
         <button v-if="!isObserver && !currentCard.is_self" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
       </div>
     </template>
@@ -805,6 +825,15 @@
         <span class="hearts-total">共 {{ user.real_total || 1 }} 次</span>
         <span class="hearts-left">剩 {{ user.real_left }} 次</span>
       </div>
+      <!-- 收到的赞**只有本人看得到**（需求第 4 条）：这是「我的」页，不是任何
+           公开资料页。别人点进来看你，一个数字都拿不到。 -->
+      <template v-if="praiseReady">
+        <div class="profile-card-divider"></div>
+        <div class="profile-card-row">
+          <span class="row-label">👍 收到的赞</span>
+          <span class="hearts-total">本周 {{ praiseReceivedWeek }} 个</span>
+        </div>
+      </template>
       <div class="profile-card-divider"></div>
       <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
         <span class="row-label">🎁 邀请好友得麦穗</span>
@@ -1375,7 +1404,17 @@
       </template>
     </div>
     <div style="padding:20px 12px;" v-if="canLikeUserDetail">
+      <!-- 需求第 8 条：给TA点过赞、还没表白，就在这儿问一句。praised 由后端按
+           「我点过赞没有」算好；这里不含任何「TA收到几个赞」的信息。 -->
+      <div class="praise-hint-inline" v-if="userDetail && userDetail.praised">你给TA点过赞——要不要表示喜欢？</div>
       <van-button color="#ff6b81" block @click="openLikeDialogForUser(userDetail)">💕 喜欢TA</van-button>
+    </div>
+    <div style="padding:20px 12px;" v-else-if="canPraiseDetail">
+      <button class="praise-btn" style="margin:0 auto;" :class="{praised: !!userDetail.praised}"
+              @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy">👍</button>
+      <div style="text-align:center; margin-top:8px; color:#969799; font-size:12px;">
+        {{ userDetail && userDetail.praised ? '已点赞' : '点个赞' }}
+      </div>
     </div>
   </div>
   <div v-else style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
@@ -2667,6 +2706,61 @@ createApp({
       if (!u.gender || !me.gender) return false;
       return u.gender !== me.gender;
     });
+
+    // ===== 点赞 =====
+    // 和「喜欢」是两条独立的线：不配对、不解锁聊天、不发穗、不占爱心额度。
+    // 状态一次性从 /api/praise/me 拿全（今天还能点几个 + 我点过谁），
+    // **不在卡片列表里逐张查**——那个接口是打开最频繁的页面，
+    // 「喜欢」为它专门做了一套快照，点赞没必要去拖慢它。
+    const praiseState = ref(null);   // null = 还没拿到（没配置 / 拉取失败）
+    const praiseBusy = ref(false);
+    const praisedSet = computed(() => new Set((praiseState.value && praiseState.value.praised) || []));
+    const praiseReady = computed(() => !!praiseState.value);
+    const praiseLeft = computed(() => (praiseState.value && praiseState.value.left) || 0);
+    const praiseReceivedWeek = computed(() => (praiseState.value && praiseState.value.received_week) || 0);
+    // 卡片页：卡片列表已经按性别筛过了，门禁和 ♥ 保持一致，再加一条
+    // 「已喜欢过就不显示点赞按钮」（需求第 9 条）。
+    const canPraiseCard = computed(() => {
+      const c = currentCard.value;
+      if (!c || !c.openid || isObserver.value || c.is_self) return false;
+      return !c.liked && praiseReady.value;
+    });
+    const cardPraised = computed(() => !!currentCard.value && praisedSet.value.has(currentCard.value.openid));
+    // 他人资料页：liked 为真时走 💕，不再显示点赞。
+    const canPraiseDetail = computed(() => {
+      const u = userDetail.value;
+      if (!u || !u.openid || isObserver.value || u.is_self || u.liked) return false;
+      return praiseReady.value;
+    });
+    async function loadPraiseState() {
+      try {
+        praiseState.value = await api('/api/praise/me');
+      } catch (e) {
+        // 表没配（503）/ 服务异常：整块按钮不出现就行。这里弹提示只会
+        // 让每个用户开机就看到一条看不懂的错误——这是配置问题，不是他的问题。
+        praiseState.value = null;
+      }
+    }
+    async function togglePraise(u) {
+      if (!u || !u.openid || praiseBusy.value) return;
+      const wasPraised = praisedSet.value.has(u.openid);
+      praiseBusy.value = true;
+      try {
+        const r = wasPraised
+          ? await api('/api/praise/' + encodeURIComponent(u.openid), { method: 'DELETE' })
+          : await api('/api/praise', { method: 'POST', body: JSON.stringify({ target_openid: u.openid }) });
+        praiseState.value = { ...(praiseState.value || {}), ...r };
+        // 资料页的 praised 由后端单独算，就地同步一下，免得返回再进还是旧的
+        if (userDetail.value && userDetail.value.openid === u.openid) {
+          userDetail.value = { ...userDetail.value, praised: !wasPraised };
+        }
+        vant.showToast(r.message || (wasPraised ? '已取消点赞' : '点赞成功'));
+      } catch (e) {
+        vant.showToast(e.message);
+      } finally {
+        praiseBusy.value = false;
+      }
+    }
 
     // 触摸滑动（卡片/图片分离）
 
@@ -4328,9 +4422,9 @@ createApp({
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
-      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); }
+      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
-      if (p === 'profile') { checkGroupEntry(); if (user.value && user.value.is_admin) refreshReportedCount(); }
+      if (p === 'profile') { checkGroupEntry(); loadPraiseState(); if (user.value && user.value.is_admin) refreshReportedCount(); }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
@@ -4691,6 +4785,7 @@ createApp({
           if (entryHash === '#/likes') { page.value = 'likes'; }
           else if (entryHash === '#/activities') { page.value = 'home'; }
           // cards / likes / activities 已在 doLogin → loadHome 中一次性加载
+          loadPraiseState();   // 点赞的今日剩余 / 我点过谁，和切到卡片页时同一份
           setTimeout(()=>{ checkIdValidForPage(page.value); }, 1000);
           setTimeout(()=>{ checkFaceValidForPage(page.value); }, 1200);
         }
@@ -4806,6 +4901,8 @@ createApp({
       onCardMouseDown, onCardMouseMove, onCardMouseUp, onCardMouseLeave,
       onPhotoTouchStart, onPhotoTouchMove, onPhotoTouchEnd, onPhotoClick,
       onPhotoMouseDown, onPhotoMouseMove, onPhotoMouseUp, onPhotoMouseLeave,
+      canPraiseCard, cardPraised, canPraiseDetail, praiseLeft, praiseBusy, togglePraise,
+      praiseReady, praiseReceivedWeek,
       openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage,
       showLikeDialog, likeDialogTitle, likeTarget, likeType,
       showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,

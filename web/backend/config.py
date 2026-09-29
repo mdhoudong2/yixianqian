@@ -48,6 +48,10 @@ GROUP_RESULT_TABLE = _lc_get("GROUP_RESULT_TABLE", getattr(_lc, "GROUP_RESULT_TA
 REPORT_TABLE_ID = _lc_get("REPORT_TABLE_ID", getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T"))
 MESSAGE_TABLE_ID = _lc_get("MESSAGE_TABLE_ID", getattr(_lc, "MESSAGE_TABLE_ID", ""))  # 留言表（生产表ID待建，测试服在 local_config 覆盖）
 SUGGESTION_TABLE_ID = _lc_get("SUGGESTION_TABLE_ID", getattr(_lc, "SUGGESTION_TABLE_ID", "tbldZ7aWtCA5V3Cg"))  # 意见反馈表
+# 点赞表。**故意不给默认值**：表 ID 是按 base 分配的，测试服和生产完全不同，配错
+# 就是往另一个环境写。没配就留空，接口明确回「还没配置」，不往空表 ID 里写。
+# 建表：python scripts/dev/create_praise_table.py apply
+PRAISE_TABLE_ID = _lc_get("PRAISE_TABLE_ID", getattr(_lc, "PRAISE_TABLE_ID", ""))
 
 # 用户表字段
 F_USER_ID = "用户ID"
@@ -232,6 +236,21 @@ F_LIKE_CREATED_AT = "创建时间"  # 自动字段，记的是 spool 落库时�
 F_LIKE_MONTH = "归属月份"
 F_LIKE_INITIATOR_GENDER = "发起用户性别"
 F_LIKE_TARGET_GENDER = "目标用户性别"
+
+# 点赞表字段（与 bot/constants.py 的 FIELD_PRAISE_* 逐字一致）。
+# 状态/对象类型的取值在 lib/praise.py，两边都从那里取，不在这里抄字面量。
+F_PRAISE_INITIATOR_OPENID = "点赞人open_id"
+F_PRAISE_INITIATOR_NAME = "点赞人昵称"
+F_PRAISE_INITIATOR_GENDER = "点赞人性别"
+F_PRAISE_TARGET_OPENID = "被点赞人open_id"
+F_PRAISE_TARGET_NAME = "被点赞人昵称"
+F_PRAISE_TARGET_GENDER = "被点赞人性别"
+F_PRAISE_STATUS = "状态"
+F_PRAISE_OBJECT_TYPE = "点赞对象类型"
+F_PRAISE_OBJECT_ID = "点赞对象ID"
+F_PRAISE_DAY = "归属日期"      # YYYY-MM-DD，每日上限按它数
+F_PRAISE_WEEK = "归属周"       # YYYY-Www（ISO），周汇总按它数
+F_PRAISE_CREATED_AT = "创建时间"
 
 # 活动表字段
 F_ACTIVITY_ID = "活动ID"

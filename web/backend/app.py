@@ -41,6 +41,7 @@ from lib import (
     points_db,
     points_invite,
     points_redeem,
+    praise,
     quota,
     storage,
 )
@@ -4069,6 +4070,177 @@ def like_user():
 
 
 
+# ========== 点赞 ==========
+#
+# 点赞和喜欢是两条独立的线：不配对、不解锁聊天、不发穗、不占爱心额度、不影响配对。
+# 唯一的交汇在资料页的按钮上（点过赞 → 提示「要不要表示喜欢」；已喜欢过 → 不显示
+# 点赞按钮），而且那两处规则都只活在前端，两条线的数据谁也不写谁。
+#
+# 写入是**同步**的，不像喜欢那样走 spool：喜欢走 spool 是为了 0 秒回包 + 机器人
+# 统一对账爱心；点赞没有额度账要对，也不需要机器人重算，直接写表最简单、结果也
+# 立刻可读（点完刷新页面就该看到已点）。代价是响应要等一次飞书往返，可以接受。
+
+# 挡住同一瞬间的双击。飞书表没有事务，check-then-write 之间不锁的话，
+# 两个并发请求会各自查到「今天还没点过这个人」，然后建出两条记录——
+# 一人一次形同虚设，每日额度也会被多算。
+_praise_lock = threading.Lock()
+
+
+def _praise_ready():
+    """点赞表配了没有。没配就让接口明确说「还没配置」，绝不往空表 ID 里写
+    （表 ID 是按 base 分配的，空 ID 的写入会落到一个语义不明的地方）。"""
+    return bool(PRAISE_TABLE_ID)
+
+
+def _praise_not_ready():
+    return jsonify({"error": "点赞功能还没配置好，请联系管理员"}), 503
+
+
+def _praise_state(open_id):
+    """我的点赞状态：今日剩余 + 点过谁。**给自己看的数据，不外泄**。
+
+    每次要两次飞书往返（当天记录、点过谁）。写接口里只在**锁外**调它——
+    锁是用来挡住 check-then-create 那一下的，不该被两个网络往返撑长。
+    """
+    limit = int(points_config.get("daily_praise_limit"))
+    left = praise.daily_left(bitable.prays_today(open_id, praise.day_key()), limit)
+    praised = []
+    for it in bitable.search_records(PRAISE_TABLE_ID, [
+            {"field_name": F_PRAISE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}]):
+        fields = it.get("fields", {})
+        if not bitable.praise_is_active(fields):
+            continue
+        oid = bitable.get_field_text(fields, F_PRAISE_TARGET_OPENID)
+        if oid:
+            praised.append(oid)
+    return {"limit": limit, "left": left,
+            "used": max(0, limit - left), "praised": sorted(set(praised))}
+
+
+@app.route("/api/praise", methods=["POST"])
+def praise_user():
+    """给某人点个赞。匿名——被点赞人这边没有任何接口能看到是谁点的。"""
+    _rl = _rate_limit(limit=20, window=60, key_prefix="praise")
+    if _rl:
+        return _rl
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = active_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+    if not _praise_ready():
+        return _praise_not_ready()
+
+    target_openid = (request.get_json() or {}).get("target_openid", "")
+    if not target_openid:
+        return jsonify({"error": "缺少目标用户"}), 400
+    if target_openid == open_id:
+        return jsonify({"error": "不能给自己点赞"}), 400
+
+    me = snap_self_user()
+    target = snap_find_user_by_openid(target_openid)
+    if not me or not target:
+        return jsonify({"error": "用户不存在"}), 404
+    me_fields = me.get("fields", {})
+    target_fields = target.get("fields", {})
+    my_gender = bitable.get_select_value(me_fields, F_GENDER)
+    target_gender = bitable.get_select_value(target_fields, F_GENDER)
+    if not my_gender or not target_gender:
+        return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
+    if my_gender == target_gender:
+        return jsonify({"error": "仅限异性之间点赞"}), 400
+
+    limit = int(points_config.get("daily_praise_limit"))
+    with _praise_lock:
+        # 重复点赞**不当错误**：按钮是「点过就变已点」，双击或者断网重试都会打到
+        # 这里。回 400 会弹一条红提示，用户以为没点上、实际是点上了——照实回成功。
+        if bitable.find_praise(open_id, target_openid):
+            duplicated = True
+        else:
+            duplicated = False
+            left = praise.daily_left(
+                bitable.prays_today(open_id, praise.day_key()), limit)
+            if left > 0:
+                rec = bitable.create_record(PRAISE_TABLE_ID, {
+                    F_PRAISE_INITIATOR_OPENID: open_id,
+                    F_PRAISE_INITIATOR_NAME: bitable.get_field_text(me_fields, F_NICKNAME),
+                    F_PRAISE_INITIATOR_GENDER: my_gender,
+                    F_PRAISE_TARGET_OPENID: target_openid,
+                    F_PRAISE_TARGET_NAME: bitable.get_field_text(target_fields, F_NICKNAME),
+                    F_PRAISE_TARGET_GENDER: target_gender,
+                    F_PRAISE_STATUS: praise.PRAISE_STATUS_ACTIVE,
+                    # 现在只有「用户资料」一种。以后要赞问答内容，加个选项、把内容 ID
+                    # 写进「点赞对象ID」即可，统计口径不用动（第 11 条就是为这个预留的）。
+                    F_PRAISE_OBJECT_TYPE: praise.OBJECT_USER_PROFILE,
+                    F_PRAISE_OBJECT_ID: target_openid,
+                    # 归属日期/周在受理这一刻钉死。之后所有统计（每日上限、周汇总）
+                    # 只读这两个字段，不回头读「创建时间」——和喜欢表的「归属月份」
+                    # 是同一个坑：自动字段记的是落库时刻，跨零点/跨周那一瞬间会把
+                    # 两个桶都算错。
+                    F_PRAISE_DAY: praise.day_key(),
+                    F_PRAISE_WEEK: praise.week_key(),
+                    F_PRAISE_CREATED_AT: quota.stamp(),
+                })
+            else:
+                rec = None
+    if duplicated:
+        return jsonify({"ok": True, "already": True, "message": "已经点过赞了",
+                        **_praise_state(open_id)})
+    if left <= 0:
+        return jsonify({"error": f"今天已经点满 {limit} 个赞了，明天再来"}), 400
+    if not rec:
+        return jsonify({"error": "点赞没成功，请稍后再试"}), 502
+    return jsonify({"ok": True, "message": "点赞成功", **_praise_state(open_id)})
+
+
+@app.route("/api/praise/<target_openid>", methods=["DELETE"])
+def unpraise_user(target_openid):
+    """取消点赞：状态改「已取消」，不删记录。删了就查不出「点过又反悔」，
+    已取消的赞不占当日次数（见 lib.praise.daily_left），所以取消是真·退回一次。"""
+    _rl = _rate_limit(limit=20, window=60, key_prefix="praise")
+    if _rl:
+        return _rl
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = active_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+    if not _praise_ready():
+        return _praise_not_ready()
+
+    with _praise_lock:
+        rec = bitable.find_praise(open_id, target_openid)
+        if not rec:
+            # 已经取消了（或者本来就没点过）。同上：重复操作不当错误。
+            return jsonify({"ok": True, "already": True, "message": "还没点过赞",
+                            **_praise_state(open_id)})
+        ok = bitable.update_record(PRAISE_TABLE_ID, rec.get("record_id"),
+                                   {F_PRAISE_STATUS: praise.PRAISE_STATUS_CANCELLED})
+    if not ok:
+        return jsonify({"error": "取消没成功，请稍后再试"}), 502
+    return jsonify({"ok": True, "message": "已取消点赞", **_praise_state(open_id)})
+
+
+@app.route("/api/praise/me", methods=["GET"])
+def my_praise():
+    """我自己的点赞情况。**收到多少赞只在这里出现**——资料页公开接口一个数字都
+    不放（第 4 条：数量只有本人可见，不公开、不排行）。"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+    if not _praise_ready():
+        return _praise_not_ready()
+    state = _praise_state(open_id)
+    week = praise.week_key()
+    got = praise.received_by_week(bitable.received_praise(open_id), week)
+    return jsonify({**state, "received_week": got.get(open_id, 0)})
+
+
 @app.route("/api/feedback", methods=["POST"])
 def feedback():
     _rl = _rate_limit(limit=10, window=60, key_prefix="feedback")
@@ -5823,6 +5995,17 @@ def get_user_public(openid):
         and bool(my_gender) and bool(target_gender) and my_gender != target_gender
         and not liked
     )
+    # 点过赞没有？前端用它显示「要不要表示喜欢？」（第 8 条）。
+    # **注意这一条只回答「我点过赞没有」，绝不含对方收到几个赞**——收到数只有
+    # 本人可见（第 4 条），任何公开接口都不放。
+    # 只在「还可能需要显示提示」时查：已经喜欢过的人不显示点赞按钮、也不显示这句
+    # 提示，再查一次纯属浪费一次飞书往返（资料页是打开最频繁的页面）。
+    praised = False
+    if not liked and not is_self and _praise_ready():
+        try:
+            praised = bool(bitable.find_praise(oid, openid))
+        except Exception:                       # noqa: BLE001
+            praised = False
     data = {
         "openid": bitable.get_field_text(fields, F_FEISHU_ID),
         "user_id": bitable.get_field_text(fields, F_USER_ID),
@@ -5832,6 +6015,7 @@ def get_user_public(openid):
         "display_fields": build_display_fields(fields),
         "is_self": is_self,
         "liked": liked,
+        "praised": praised,
         "can_like": can_like,
     }
     return jsonify(data)

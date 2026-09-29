@@ -12,7 +12,7 @@ if _REPO_ROOT not in sys.path:
 
 from config import *
 
-from lib import quota
+from lib import praise, quota
 from lib.bitable_client import (  # noqa: F401 — re-export for app.py via bitable.*
     BitableClient,
     get_attachment_tokens,
@@ -145,6 +145,71 @@ def find_like(initiator_openid, target_openid):
         if like_is_active(it.get("fields", {})):
             return it
     return None
+
+
+# ========== 点赞相关 ==========
+
+def praise_week(fields):
+    """点赞的归属周（受理那一刻钉死）。
+
+    和喜欢表的「归属月份」同一个道理：不读「创建时间」自动字段，那是落库时刻，
+    周日 23:59 点的赞会被算进下一周，两家都发错。
+    """
+    return get_field_text(fields, F_PRAISE_WEEK)
+
+
+def praise_is_active(fields):
+    """这条点赞现在还算数吗？口径唯一来源 lib.praise.is_praise_active。
+
+    全站读点赞状态的地方都走这里，不要各写各的 `!= "已取消"`：否定式会把以后
+    新增的任何状态都当成有效，静默多算额度、多发一条周汇总。"""
+    return praise.is_praise_active(get_select_value(fields, F_PRAISE_STATUS))
+
+
+def find_praise(initiator_openid, target_openid):
+    """查找仍然有效的点赞记录（一人对一人只有一条有效的）"""
+    # 状态白名单交给下面的 praise_is_active：飞书单选框 operator=is 的 value 只能
+    # 一个值，塞 list(...) 会被判 InvalidFilter(1254018)，而本模块把查询失败转成
+    # 空列表——重复点赞拦截就静默失效了。
+    items = search_records(PRAISE_TABLE_ID, [
+        {"field_name": F_PRAISE_INITIATOR_OPENID, "operator": "is",
+         "value": [initiator_openid]},
+        {"field_name": F_PRAISE_TARGET_OPENID, "operator": "is",
+         "value": [target_openid]},
+    ])
+    for it in items:
+        if praise_is_active(it.get("fields", {})):
+            return it
+    return None
+
+
+def prays_today(openid, day):
+    """某人某天点过的赞 → [(状态, 归属日期)]，喂给 lib.praise.daily_left。
+
+    **只查当天**：一个人的点赞记录是只增不减的，时间一长「按 open_id 拉全部再
+    本地过滤」会变成每点一次赞就拉几百条。归属日期是受理那刻写进去的文本，
+    直接当成过滤条件用。
+
+    失败模式的取舍：本模块把查询失败转成空列表（见 search_records 的包装），
+    于是查不到就等价于「今天一个没点」——用户能多点几个赞，而不是被误拒。
+    点赞不涉及任何稀缺资源，这个方向是安全的那一边。**注意别反过来**：
+    要是哪天拿它去卡某个稀缺资源，得先让它能区分「失败」和「空」。
+    """
+    items = search_records(PRAISE_TABLE_ID, [
+        {"field_name": F_PRAISE_INITIATOR_OPENID, "operator": "is", "value": [openid]},
+        {"field_name": F_PRAISE_DAY, "operator": "is", "value": [day]},
+    ])
+    return [(get_select_value(it.get("fields", {}), F_PRAISE_STATUS), day)
+            for it in items]
+
+
+def received_praise(openid, week=None):
+    """某人收到的有效点赞 → [(状态, 归属周, 被点赞人open_id)]，喂给 received_by_week。"""
+    items = search_records(PRAISE_TABLE_ID, [
+        {"field_name": F_PRAISE_TARGET_OPENID, "operator": "is", "value": [openid]},
+    ])
+    return [(get_select_value(it.get("fields", {}), F_PRAISE_STATUS),
+             praise_week(it.get("fields", {})), openid) for it in items]
 
 
 # ========== 分组相关 ==========

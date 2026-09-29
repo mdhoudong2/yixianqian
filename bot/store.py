@@ -47,6 +47,45 @@ def unreserve_notified(key, item_key):
     storage.update_json(NOTIFIED_FILE, {"likes": [], "mutual": []}, _m)
 
 
+def reserve_praise_week(week, open_id):
+    """占一个「这个周已经给这个人发过点赞汇总」的位。True = 这次该我发。
+
+    不复用 reserve_notified：那份文件的键是「事件 + 对象」，点赞周汇总却是
+    「每个收件人每周一条」——用它的格式，文件会以 人数×周数 的速度长下去，
+    而每占一次位都要整份重写。这里只留最近一个周，换周时整份清掉，见
+    PRAISE_WEEK_FILE 的注释。
+    """
+    acquired = [False]
+
+    def _m(data):
+        if data.get("week") != week:
+            data.clear()
+            data.update({"week": week, "sent": []})
+        sent = data.setdefault("sent", [])
+        if open_id in sent:
+            return None                     # 已发过，放弃写入
+        sent.append(open_id)
+        acquired[0] = True
+        return data
+
+    storage.update_json(PRAISE_WEEK_FILE, {}, _m)
+    return acquired[0]
+
+
+def unreserve_praise_week(week, open_id):
+    """发送失败时退回占位，让下一轮重试。周对不上就不动——那是上一周的事。"""
+    def _m(data):
+        if data.get("week") != week:
+            return None
+        sent = data.get("sent", [])
+        if open_id in sent:
+            sent.remove(open_id)
+            return data
+        return None
+
+    storage.update_json(PRAISE_WEEK_FILE, {}, _m)
+
+
 def load_welcomed():
     """加载已发送进入欢迎消息的用户列表"""
     return storage.load_json(WELCOMED_FILE, [])

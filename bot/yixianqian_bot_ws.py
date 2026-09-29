@@ -98,6 +98,7 @@ from points_admin import (
     handle_points_help,
     settle_due_things_loop,
 )
+from praise_admin import praise_stats_text, praise_weekly_loop
 from queries import find_user_by_openid
 from store import load_bindings, load_welcomed, update_p2p_chat
 
@@ -509,6 +510,10 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_admin_mm_handle(text, sender_id)
         elif text.startswith("配置"):
             reply = handle_admin_config(text)
+        # 点赞。没有「点赞列表」之类的指令：点赞是匿名的，管理员也不该能
+        # 按人查「谁赞了谁」——统计给的是汇总数，不是名单。
+        elif text_lower in ["点赞统计"]:
+            reply = praise_stats_text()
 
     # 普通用户指令
     if not reply:
@@ -575,6 +580,10 @@ def start_worker_threads():
         # 到点该办的事：邀请满 7 天确认期、红娘推荐单超期。间隔取 120 秒——
         # 这两件事的粒度是天，早两分钟晚两分钟没区别，但跑太勤会平白多查表。
         ("麦穗周期结算", settle_due_things_loop, 120),
+        # 点赞周汇总：周日 20:00 之后给「本周收到过赞」的人各发一条私聊。
+        # 间隔 30 分钟——要发的是一个「周」，跑再勤也不会更早；占位文件
+        # （store.reserve_praise_week）保证一人一周只发一次。
+        ("点赞周汇总", praise_weekly_loop, 1800),
     ]
     for name, func, interval in threads_config:
         t = threading.Thread(target=func, args=(interval,), daemon=True, name=name)

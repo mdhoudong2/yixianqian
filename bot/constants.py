@@ -53,6 +53,10 @@ LIKE_TABLE_ID = _cfg_get("LIKE_TABLE_ID", getattr(_cfg, "LIKE_TABLE_ID", "tblaci
 ACTIVITY_TABLE_ID = _cfg_get("ACTIVITY_TABLE_ID", getattr(_cfg, "ACTIVITY_TABLE_ID", "tblHLltReY8xHTfu"))
 SIGNUP_TABLE_ID = _cfg_get("SIGNUP_TABLE_ID", getattr(_cfg, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t"))
 MATCH_TABLE_ID = _cfg_get("MATCH_TABLE_ID", getattr(_cfg, "MATCH_TABLE_ID", "tbl8eu9Y85tQZCu7"))
+# 点赞表。**故意不给生产兜底值**：表 ID 是按 base 分配的，测试服和生产完全不同，
+# 配错就是往另一个环境写。没配就留空，功能会明确说「还没配置」，不硬写。
+# 建表：python scripts/dev/create_praise_table.py apply
+PRAISE_TABLE_ID = _cfg_get("PRAISE_TABLE_ID", getattr(_cfg, "PRAISE_TABLE_ID", ""))
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
@@ -96,6 +100,22 @@ FIELD_LIKE_TYPE = "喜欢类型"  # 匿名/实名
 FIELD_LIKE_MONTH = "归属月份"
 # 自动字段，仅作「归属月份」缺失时的回退。注意它是记录落库时刻，不是用户点击时刻。
 FIELD_LIKE_CREATED_AT = "创建时间"
+
+# 点赞表字段（与 web/backend/config.py 的 F_PRAISE_* 逐字一致）。
+# 状态和对象类型的取值在 lib/praise.py，两边都从那里取，不在这里抄字面量。
+FIELD_PRAISE_INITIATOR_OPENID = "点赞人open_id"
+FIELD_PRAISE_INITIATOR_NAME = "点赞人昵称"
+FIELD_PRAISE_INITIATOR_GENDER = "点赞人性别"
+FIELD_PRAISE_TARGET_OPENID = "被点赞人open_id"
+FIELD_PRAISE_TARGET_NAME = "被点赞人昵称"
+FIELD_PRAISE_TARGET_GENDER = "被点赞人性别"
+FIELD_PRAISE_STATUS = "状态"
+FIELD_PRAISE_OBJECT_TYPE = "点赞对象类型"
+FIELD_PRAISE_OBJECT_ID = "点赞对象ID"
+# 受理那一刻钉死的桶，之后所有统计只读它们，不回头读「创建时间」自动字段。
+FIELD_PRAISE_DAY = "归属日期"      # YYYY-MM-DD，每日上限按它数
+FIELD_PRAISE_WEEK = "归属周"       # YYYY-Www（ISO），周汇总按它数
+FIELD_PRAISE_CREATED_AT = "创建时间"
 
 FIELD_ACTIVITY_ID = "活动ID"
 FIELD_ACTIVITY_NAME = "活动名称"
@@ -229,6 +249,11 @@ RECOMMEND_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_weekly_recommend.json
 # 跨进程串行化，详见 lib/points_db.py。数值配置在 lib/points_config.py，
 # 运行时覆盖存在这个库的 config 表里，所以改配置不需要重新部署。
 POINTS_DB_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_points.db")
+# 点赞周汇总的发放记账：{"week": "2026-W40", "sent": [open_id, ...]}。
+# **只留最近一个周**，换周时整份清掉——汇总只可能发本周或上一个周（见
+# lib.praise.summary_week），历史周留着没有用，而「每人每周一条」的格式
+# 攒一年就是几万行，每占一次位还要整份重写一遍。
+PRAISE_WEEK_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_praise_week.json")
 
 WS_HEALTH_CHECK_INTERVAL = 60      # 每60秒检查一次
 WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连

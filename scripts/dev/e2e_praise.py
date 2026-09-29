@@ -406,7 +406,7 @@ def test_weekly_dry_run(targets):
         check("H1 被赞的人会收到周汇总", bool(hit),
               f"共 {len(run.captured)} 条；{targets[0][-6:]} 收到 {len(hit)} 条")
         if hit:
-            check("H2 正文报的个数和真表一致", f"收到 {want} 个赞" in hit[0],
+            check("H2 正文报的个数和真表一致", f"收到了 {want} 个赞" in hit[0],
                   f"表里 {want} 个，消息「{hit[0][:40].replace(chr(10), ' ')}」")
             check("H3 正文不出现是谁点的", targets[0] not in hit[0], hit[0][:60])
 
@@ -466,7 +466,9 @@ def main():
     print(f"目标 {HOST}｜账号 {ACTOR[-6:]}（{my_gender}）｜点赞表 {PRAISE_TABLE_ID}"
           f"｜对象 {[t[-6:] for t in targets[:3]]}")
     print(f"用户表 {len(rows)} 人\n")
-    if not check("C0 找到两个异性测试对象", len(targets) >= 2, str(targets)):
+    # 别把整份候选名单打出来：测试服用户表上千人，一行几百个 open_id 会把
+    # 后面所有结论挤出屏幕。
+    if not check("C0 找到两个异性测试对象", len(targets) >= 2, f"{len(targets)} 个候选"):
         return 1
 
     clear_my_praises("开局")

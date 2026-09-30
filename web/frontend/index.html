@@ -2966,17 +2966,37 @@ createApp({
       if (!u || !u.openid || praiseBusy.value) return;
       const wasPraised = praisedSet.value.has(u.openid);
       praiseBusy.value = true;
+
+      // 先有反应再记数据：立刻翻转按钮状态并弹提示，网络请求放后台跑。
+      // 失败就回滚——用「先快后准」换掉「点了半天没动静」。
+      const prev = praiseState.value;
+      const limit = (prev && prev.limit) || 0;
+      const used = Math.max(0, limit - ((prev && prev.left) || 0));
+      const nextUsed = wasPraised ? Math.max(0, used - 1) : used + 1;
+      praiseState.value = {
+        ...(prev || {}),
+        praised: wasPraised
+          ? ((prev && prev.praised) || []).filter(o => o !== u.openid)
+          : [...((prev && prev.praised) || []), u.openid],
+        used: nextUsed,
+        left: Math.max(0, limit - nextUsed),
+      };
+      // 资料页的 praised 由后端单独算，就地同步，免得返回再进还是旧的
+      if (userDetail.value && userDetail.value.openid === u.openid) {
+        userDetail.value = { ...userDetail.value, praised: !wasPraised };
+      }
+      vant.showToast(wasPraised ? '已取消点赞' : '点赞成功');
+
       try {
         const r = wasPraised
           ? await api('/api/praise/' + encodeURIComponent(u.openid), { method: 'DELETE' })
           : await api('/api/praise', { method: 'POST', body: JSON.stringify({ target_openid: u.openid }) });
         praiseState.value = { ...(praiseState.value || {}), ...r };
-        // 资料页的 praised 由后端单独算，就地同步一下，免得返回再进还是旧的
-        if (userDetail.value && userDetail.value.openid === u.openid) {
-          userDetail.value = { ...userDetail.value, praised: !wasPraised };
-        }
-        vant.showToast(r.message || (wasPraised ? '已取消点赞' : '点赞成功'));
       } catch (e) {
+        praiseState.value = prev;
+        if (userDetail.value && userDetail.value.openid === u.openid) {
+          userDetail.value = { ...userDetail.value, praised: wasPraised };
+        }
         vant.showToast(e.message);
       } finally {
         praiseBusy.value = false;

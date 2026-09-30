@@ -3361,22 +3361,6 @@ def _alert_points(msg):
             app.logger.warning(f"麦穗告警发送失败: {e}")
 
 
-def snap_find_user_by_phone(phone):
-    """按手机号找人（新人判定用）。号码先归一化，再逐个比。
-
-    不走 filter 搜索：手机号是电话字段，飞书那边按它过滤的语义不统一；
-    用户表本来就在本地快照里，全量比一遍最稳，几千条的量级也不值得优化。
-    """
-    want = points_invite.normalize_phone(phone)
-    if not want:
-        return None
-    for u in _snap("users"):
-        got = bitable.get_phone_value(u.get("fields", {}), F_PHONE)
-        if got and points_invite.normalize_phone(got) == want:
-            return u
-    return None
-
-
 def _my_inviter_id():
     """我的「用户ID」（U-xxxx）——注册表单里「邀请人ID」填的就是它。"""
     me = snap_self_user()
@@ -3489,41 +3473,6 @@ def points_invite_view():
         "progress": prog,
         "list": lst,
     })
-
-
-@app.route("/api/points/invite", methods=["POST"])
-def points_invite_register():
-    """登记一位被我邀请的人。被邀请人还没注册也认——按手机号先记下关系。"""
-    _rl = _rate_limit(limit=10, window=60, key_prefix="points_invite")
-    if _rl:
-        return _rl
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = active_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-
-    body = request.get_json(silent=True) or {}
-    phone = str(body.get("phone") or "").strip()
-    me = snap_self_user()
-    if not me:
-        return jsonify({"error": "用户不存在"}), 404
-    my_phone = bitable.get_phone_value(me.get("fields", {}), F_PHONE)
-
-    try:
-        invite_id, status = points_invite.register(
-            open_id, phone,
-            is_existing_user=bool(snap_find_user_by_phone(phone)),
-            inviter_phone=my_phone)
-    except points_invite.InviteError as e:
-        # 自己邀请自己 / 已经是用户 / 参加过以往活动 / 已登记过别人，
-        # 各自一句人话，文案在 lib 里，这层不重写。
-        return _points_error(e)
-
-    return jsonify({"ok": True,
-                    "message": "已记下这位好友，等他注册并填完资料后开始计算",
-                    "invite": {"id": invite_id, "status": status}})
 
 
 @app.route("/api/points/redeem", methods=["POST"])

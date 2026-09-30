@@ -408,7 +408,6 @@
   .invite-row-main { flex: 1; min-width: 0; }
   .invite-row-time { font-size: 11px; color: #c8c9cc; margin-top: 2px; }
   .invite-row-status { flex-shrink: 0; font-size: 12px; color: #969799; }
-  .invite-form-row { display: flex; gap: 8px; align-items: center; }
   /* 夜间模式 */
   .van-theme-dark { --van-background: #1a1a1c; --van-background-2: #222226; --van-background-3: #2c2c30; --van-border-color: #3a3a3e; --van-active-color: #3a3a3e; --van-field-placeholder-text-color: #8a8a8e; }
   .van-theme-dark html, .van-theme-dark body, html.van-theme-dark, html.van-theme-dark body { background: #1a1a1c; color: #f5f5f5; }
@@ -655,7 +654,7 @@
              都表白了，再摆一个更轻的按钮只会让人犹豫点哪个。 -->
         <button v-if="canPraiseCard" class="praise-btn" :class="{praised: cardPraised}"
                 @click="togglePraise(currentCard)" :disabled="actionLoading || praiseBusy">
-          👍
+          👍&#xFE0E;
           <span class="praise-left" v-if="!cardPraised && praiseLeft > 0">{{ praiseLeft }}</span>
         </button>
         <div class="praise-hint-pill" v-if="canPraiseCard && cardPraised">要不要表示喜欢？</div>
@@ -814,6 +813,22 @@
   </div>
   <div style="padding:12px 12px 0;" v-if="!isObserver">
     <div class="profile-card">
+      <div class="profile-card-row" style="cursor:pointer;" @click="openPoints">
+        <span class="row-label">🌾 我的麦穗</span>
+        <span class="hearts-left" v-if="pointsBalance">{{ pointsBalance }} 穗</span>
+        <van-icon name="arrow" color="#c8c9cc" />
+      </div>
+      <div class="profile-card-divider"></div>
+      <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
+        <span class="row-label">🎁 邀请好友得麦穗</span>
+        <van-icon name="arrow" color="#c8c9cc" />
+      </div>
+      <div class="profile-card-divider"></div>
+      <div class="profile-card-row" style="cursor:pointer;" @click="openPointsRules">
+        <span class="row-label" style="color:#969799; font-size:13px; line-height:1.5;">麦穗能换「实名喜欢」名额、「优先报名」名额、「心愿名额」、「红娘人工推荐」、「活动费用减免」</span>
+        <van-icon name="arrow-down" color="#c8c9cc" />
+      </div>
+      <div class="profile-card-divider"></div>
       <div class="profile-card-row">
         <span class="row-label">💕 匿名喜欢</span>
         <span class="hearts-total">共 {{ user.anon_total || 10 }} 颗</span>
@@ -834,11 +849,6 @@
           <span class="hearts-total">本周 {{ praiseReceivedWeek }} 个</span>
         </div>
       </template>
-      <div class="profile-card-divider"></div>
-      <div class="profile-card-row" style="cursor:pointer;" @click="showInviteDialog=true">
-        <span class="row-label">🎁 邀请好友得麦穗</span>
-        <van-icon name="arrow" color="#c8c9cc" />
-      </div>
     </div>
   </div>
   <div style="padding:12px 12px 0;">
@@ -846,7 +856,6 @@
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
-      <van-cell v-if="!isObserver" title="🌾 我的麦穗" :value="pointsBalance ? pointsBalance + ' 穗' : ''" is-link @click="openPoints"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
       <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
@@ -1411,7 +1420,7 @@
     </div>
     <div style="padding:20px 12px;" v-else-if="canPraiseDetail">
       <button class="praise-btn" style="margin:0 auto;" :class="{praised: !!userDetail.praised}"
-              @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy">👍</button>
+              @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy">👍&#xFE0E;</button>
       <div style="text-align:center; margin-top:8px; color:#969799; font-size:12px;">
         {{ userDetail && userDetail.praised ? '已点赞' : '点个赞' }}
       </div>
@@ -1588,8 +1597,7 @@
 <van-dialog v-model:show="showInviteDialog" title="邀请好友得麦穗" :show-confirm-button="false" close-on-click-overlay>
   <div class="invite-dialog-body" style="max-height:72vh; overflow-y:auto; -webkit-overflow-scrolling:touch;">
     <div class="invite-close" @click="showInviteDialog=false">✕</div>
-    <p>好友注册并审核通过，你就能得<b>麦穗</b>：她成为单身 20 穗、他成为单身 15 穗，没有上限。</p>
-    <p style="color:#969799; font-size:13px;">满 7 天、对方账号正常才到账；到账前显示「待确认」，可继续累积。</p>
+    <p>好友注册并审核通过，你就能得<b>麦穗</b>：邀请一个女生得 20 穗，邀请一个男生得 15 穗，没有上限。</p>
     <p>将下面文字发送给「被邀请人」：</p>
     <div class="invite-link-box">{{ inviteShareText }}</div>
     <div class="invite-btn-row">
@@ -1597,7 +1605,7 @@
       <van-button plain type="primary" color="#ff6b81" block @click="copyInviteCode">复制邀请码</van-button>
     </div>
 
-    <!-- 邀请进度 + 好友登记：状态文案（待确认/已到账/已收回/无效邀请）由后端 status_label 直接给，前端不再二次映射 -->
+    <!-- 邀请进度：状态文案（待确认/已到账/已收回/无效邀请）由后端 status_label 直接给，前端不再二次映射 -->
     <div v-if="loadingInvite" style="text-align:center; padding:16px 0;">
       <van-loading size="20px">加载中...</van-loading>
     </div>
@@ -1626,13 +1634,6 @@
         </div>
       </div>
       <p style="color:#969799; font-size:13px;">已到账 {{ inviteInfo.progress.finalized_points }} 穗，待确认 {{ inviteInfo.progress.pending_points }} 穗（确认期内不可用）</p>
-
-      <p>登记好友手机号：</p>
-      <div class="invite-form-row">
-        <van-field v-model="invitePhone" type="tel" maxlength="11" placeholder="好友注册用的手机号" class="like-textarea" style="flex:1; min-width:0;"></van-field>
-        <van-button type="primary" color="#ff6b81" :loading="inviteSubmitting" @click="submitInvitePhone">登记</van-button>
-      </div>
-      <p style="color:#969799; font-size:12px; margin-top:8px;">好友注册后进入确认期，确认通过奖励才会到账</p>
 
       <div v-if="inviteInfo.list.length">
         <p>已邀请（{{ inviteInfo.list.length }}）：</p>
@@ -2205,8 +2206,6 @@ createApp({
     const inviteInfo = ref(null);
     const loadingInvite = ref(false);
     const inviteLoaded = ref(false);
-    const invitePhone = ref('');
-    const inviteSubmitting = ref(false);
 
     const inviteConfirmDays = computed(() => (pointsRules.value.config && pointsRules.value.config.invite_confirm_days) || 0);
     const inviteRewardFemale = computed(() => (pointsRules.value.config && pointsRules.value.config.invite_reward_female) || 0);
@@ -2363,19 +2362,7 @@ createApp({
       catch(e) { vant.showToast(e.message); }
       loadingInvite.value = false;
     }
-    async function submitInvitePhone() {
-      const phone = (invitePhone.value || '').trim();
-      if (!/^1\d{10}$/.test(phone)) { vant.showToast('请输入 11 位手机号'); return; }
-      inviteSubmitting.value = true;
-      try {
-        const data = await api('/api/points/invite', { method: 'POST', body: JSON.stringify({ phone }) });
-        vant.showToast(data.message || '已登记');
-        invitePhone.value = '';
-        await loadInviteInfo(true); // 强制刷新，列表里要立刻看到刚登记的那条
-      } catch(e) { vant.showToast(e.message); }
-      inviteSubmitting.value = false;
-    }
-    // 打开邀请弹窗时带出进度和已邀请列表（弹窗里有登记表单，数据必须是最新的）
+    // 打开邀请弹窗时带出进度和已邀请列表，数据必须是最新的
     watch(showInviteDialog, (v) => { if (v) loadInviteInfo(false); });
     // 兑换面板里要用活动列表；面板打开时兜底加载一次（loadActivities 自带「已加载不重复请求」）
     watch(showRedeemPanel, (v) => { if (v) loadActivities(); });
@@ -4937,7 +4924,7 @@ createApp({
       pickRedeemItem, submitRedeem, newRequestKey,
       wishQuery, wishTargets, loadingWishTargets, loadWishTargets, pickWishTarget, clearWishTarget,
       showRedemptions, redemptionsList, loadingRedemptions, redemptionsLoaded, openRedemptions,
-      inviteInfo, loadingInvite, inviteLoaded, loadInviteInfo, invitePhone, inviteSubmitting, submitInvitePhone,
+      inviteInfo, loadingInvite, inviteLoaded, loadInviteInfo,
       inviteConfirmDays, inviteRewardFemale, inviteRewardMale,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,

@@ -1,7 +1,10 @@
-"""邀请关系单测：手机号关联、7 天确认期、封禁收回、新人判定（不联网）。
+"""邀请关系单测：手机号关联、7 天确认期、封禁收回（不联网）。
 
 需求点名的几条都在这儿：奖励不重复发、7 天边界、确认期内封号会收回、
-先登记后注册能关联上、不能邀请自己、一人只能有一个邀请人。
+不能邀请自己、一人只能有一个邀请人。
+
+「登记好友手机号」那条路径（先记手机号、好友注册后再关联）已下线，
+邀请关系只走「被邀请人注册时带邀请人ID」这一条（`record_from_form`）。
 """
 import pytest
 
@@ -12,8 +15,9 @@ FRIEND = "ou_friend"
 PHONE = "13800001234"
 
 
-def _invite(points_db, phone=PHONE, inviter=INVITER, **kw):
-    return points_invite.register(inviter, phone, **kw)
+def _invite(points_db, phone=PHONE, inviter=INVITER, invitee=FRIEND, gender="女性"):
+    """走注册表单路径建一条 pending 邀请。"""
+    return points_invite.record_from_form(invitee, phone, gender, inviter)
 
 
 def _make_due(clock):
@@ -42,52 +46,11 @@ def test_invalid_phones_are_rejected(points_db, raw):
     assert points_invite.normalize_phone(raw) == ""
 
 
-def test_a_bad_phone_is_refused_at_registration(points_db):
-    with pytest.raises(points_invite.InviteError):
-        _invite(points_db, phone="1380000123")
-
-
-# ---------------------------------------------------------------- 登记
-
-def test_registering_creates_a_pending_invite(points_db):
-    invite_id, status = _invite(points_db)
-    assert status == points_invite.STATUS_PENDING
-    assert points_invite.progress(INVITER)["pending"] == 1
-    assert invite_id > 0
-
-
-def test_registering_the_same_phone_twice_is_idempotent(points_db):
-    """同一个人点两次「登记好友」，不是错误。"""
-    first, _ = _invite(points_db)
-    again, status = _invite(points_db)
-    assert again == first
-    assert status == points_invite.STATUS_PENDING
-    assert points_invite.progress(INVITER)["total"] == 1
-
-
-def test_a_phone_can_only_have_one_inviter(points_db):
-    _invite(points_db)
-    with pytest.raises(points_invite.AlreadyInvited):
-        _invite(points_db, inviter="ou_someone_else")
-
-
-def test_you_cannot_invite_yourself_by_phone(points_db):
-    with pytest.raises(points_invite.SelfInvite):
-        _invite(points_db, inviter_phone="138 0000 1234")
-
-
-def test_an_existing_user_is_not_a_newcomer(points_db):
-    with pytest.raises(points_invite.NotNewcomer):
-        _invite(points_db, is_existing_user=True)
-
-
 # ---------------------------------------------------------------- 历史名单
 
-def test_a_historical_participant_is_not_a_newcomer(points_db):
+def test_a_historical_participant_is_recognised(points_db):
     points_invite.add_historical_participants([("13800001234", "老王")], source="2023")
     assert points_invite.is_historical_participant("138 0000 1234") is True
-    with pytest.raises(points_invite.NotNewcomer):
-        _invite(points_db)
 
 
 def test_importing_the_same_list_twice_does_not_double_count(points_db):
@@ -104,47 +67,19 @@ def test_bad_rows_are_skipped_not_fatal(points_db):
     assert (added, skipped) == (1, 2)
 
 
-# ---------------------------------------------------------------- 关联
-
-def test_a_friend_who_registers_later_gets_linked(points_db):
-    """需求原文：「报名时被邀请人可能还没注册，先用手机号记下邀请关系，
-    注册后自动关联」。"""
-    invite_id, _ = _invite(points_db)
-    got_id, status = points_invite.attach_account(FRIEND, "138 0000 1234", "女性")
-    assert got_id == invite_id
-    assert status == points_invite.STATUS_PENDING       # 还没审核通过，不计时
-    assert points_invite.invitee_oid_for_phone(PHONE) == FRIEND
-
-
-def test_a_friend_who_registers_with_a_different_number_is_not_linked(points_db):
-    _invite(points_db)
-    got_id, status = points_invite.attach_account(FRIEND, "13900009999", "女性")
-    assert (got_id, status) == (None, None)
-
-
-def test_attach_is_idempotent(points_db):
-    _invite(points_db)
-    a = points_invite.attach_account(FRIEND, PHONE, "女性")
-    b = points_invite.attach_account(FRIEND, PHONE, "女性")
-    assert a == b
-
+# ---------------------------------------------------------------- 注册表单路径
 
 def test_registering_with_an_inviter_id_creates_the_invite(points_db):
-    """注册表单那条路径：人自己带着「邀请人ID」进来，不需要新人判定。"""
-    invite_id, status = points_invite.record_from_form(
-        FRIEND, PHONE, "女性", INVITER)
+    """被邀请人自己带着「邀请人ID」注册进来。"""
+    invite_id, status = _invite(points_db)
     assert status == points_invite.STATUS_PENDING
     assert points_invite.progress(INVITER)["pending"] == 1
     assert invite_id > 0
 
 
-def test_a_pre_registered_phone_wins_over_the_form_id(points_db):
-    """有人先登记了这个号码，注册时却填了别人的邀请人ID。
-
-    以**先登记的那位**为准——那个人才是真的把他拉来的人。这里不抛错，
-    只在 note 里留一笔，因为注册流程不该因为这个失败。
-    """
-    _invite(points_db)                                   # INVITER 先登记
+def test_the_same_phone_can_only_have_one_inviter(points_db):
+    """同一个手机号再带另一个邀请人ID 进来，以先记的那位为准。"""
+    _invite(points_db)
     invite_id, _ = points_invite.record_from_form(FRIEND, PHONE, "女性", "ou_later")
     row = points_db.connection().execute(
         "SELECT inviter_oid, note FROM invites WHERE id=?", (invite_id,)).fetchone()
@@ -156,7 +91,6 @@ def test_a_pre_registered_phone_wins_over_the_form_id(points_db):
 
 def test_the_clock_starts_when_the_account_becomes_single(points_db, clock):
     _invite(points_db)
-    points_invite.attach_account(FRIEND, PHONE, "女性")
     assert points.balance(INVITER) == 0                  # 审核通过前后都没有穗
 
     invite_id, status = points_invite.start_confirm_window(FRIEND, PHONE, "女性")
@@ -300,8 +234,8 @@ def test_a_normal_account_is_not_clawed_back(points_db, clock):
 # ---------------------------------------------------------------- 性别与金额
 
 def test_a_woman_is_worth_twenty_and_a_man_fifteen(points_db, clock):
-    points_invite.register(INVITER, "13800000001")
-    points_invite.register(INVITER, "13800000002")
+    points_invite.record_from_form("ou_f", "13800000001", "女性", INVITER)
+    points_invite.record_from_form("ou_m", "13800000002", "男性", INVITER)
     points_invite.start_confirm_window("ou_f", "13800000001", "女性")
     points_invite.start_confirm_window("ou_m", "13800000002", "男性")
     _make_due(clock)
@@ -331,10 +265,8 @@ def test_the_amounts_come_from_config(points_db, clock):
 # ---------------------------------------------------------------- 自己邀请自己
 
 def test_binding_your_own_account_is_rejected(points_db):
-    """手机号可能注册前后换过，只有到「变单身」这一步才确定这个 open_id
-    到底是不是邀请人本人。"""
-    _invite(points_db, inviter=INVITER)
-    points_invite.attach_account(INVITER, PHONE, "女性")
+    """被邀请人和邀请人是同一个人时，在「变单身」这一步被拦下。"""
+    _invite(points_db, invitee=INVITER)
     invite_id, status = points_invite.start_confirm_window(INVITER, PHONE, "女性")
     assert status == points_invite.STATUS_REJECTED
     assert points_invite.progress(INVITER)["rejected"] == 1
@@ -351,9 +283,9 @@ def test_list_masks_the_phone_number(points_db):
 
 
 def test_progress_counts_each_state(points_db, clock):
-    points_invite.register(INVITER, "13800000001")
-    points_invite.register(INVITER, "13800000002")
-    points_invite.register(INVITER, "13800000003")
+    points_invite.record_from_form("ou_a", "13800000001", "女性", INVITER)
+    points_invite.record_from_form("ou_b", "13800000002", "男性", INVITER)
+    points_invite.record_from_form("ou_c", "13800000003", "女性", INVITER)
     points_invite.start_confirm_window("ou_a", "13800000001", "女性")
     points_invite.start_confirm_window("ou_b", "13800000002", "男性")
     _make_due(clock)

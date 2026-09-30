@@ -1,4 +1,4 @@
-"""邀请关系：手机号预登记 → 注册后关联 → 7 天确认期 → 到账 / 收回。
+"""邀请关系：被邀请人注册时带「邀请人ID」→ 7 天确认期 → 到账 / 收回。
 
 ## 为什么奖励要等满 7 天
 
@@ -65,18 +65,6 @@ def _reward_key(invite_id):
 
 class InviteError(Exception):
     """邀请关系相关的错误基类。"""
-
-
-class AlreadyInvited(InviteError):
-    """这个手机号已经有别的邀请人了。"""
-
-
-class NotNewcomer(InviteError):
-    """不是新人（已经是 App 用户，或参加过以往活动）。"""
-
-
-class SelfInvite(InviteError):
-    """不能邀请自己。"""
 
 
 def normalize_phone(raw):
@@ -160,75 +148,12 @@ def historical_count(conn=None):
 
 # ---------------------------------------------------------------- 登记
 
-def register(inviter_oid, invitee_phone, *, is_existing_user=False, inviter_phone="",
-             source="app", conn=None):
-    """登记一条邀请关系（被邀请人这时可能还没注册）。
-
-    `is_existing_user` / `inviter_phone` 由调用方查用户表得出——lib 不碰飞书。
-    返回 (邀请 ID, 状态)。同一个人重复登记同一个号码是幂等的，返回原有那条。
-    """
-    if not inviter_oid:
-        raise InviteError("邀请人不能为空")
-    phone = normalize_phone(invitee_phone)
-    if not phone:
-        raise InviteError("手机号看起来不对，请填 11 位手机号")
-    if normalize_phone(inviter_phone) == phone:
-        raise SelfInvite("不能邀请自己")
-    if is_existing_user:
-        raise NotNewcomer("这个人已经是 App 用户了，不用再邀请")
-    if is_historical_participant(phone, conn=conn):
-        raise NotNewcomer("这个人参加过以往的活动，不算新朋友")
-
-    stamp = points_db.now_str()
-    with points_db.transaction(conn) as c:
-        row = c.execute("SELECT id, inviter_oid, status FROM invites WHERE invitee_phone=?",
-                        (phone,)).fetchone()
-        if row is not None:
-            if row["inviter_oid"] == inviter_oid:
-                # 重复登记：同一个人点两次「登记好友」，不是错误。
-                return int(row["id"]), row["status"]
-            raise AlreadyInvited("这个手机号已经登记过邀请人了")
-        cur = c.execute(
-            "INSERT INTO invites(inviter_oid, invitee_phone, status, source,"
-            " created_at, updated_at) VALUES(?,?,?,?,?,?)",
-            (inviter_oid, phone, STATUS_PENDING, source or "app", stamp, stamp))
-        return int(cur.lastrowid), STATUS_PENDING
-
-
-def attach_account(invitee_oid, phone, gender="", conn=None):
-    """被邀请人注册了：把 open_id 挂到那条按手机号登记的邀请上。
-
-    此时**不开始倒计时**——人还是「待审核」，可能过不了审。倒计时等
-    `start_confirm_window`（账号状态变「单身」）才启动。
-    返回 (邀请 ID, 状态)；没有对应的邀请关系时 (None, None)。
-    """
-    phone = normalize_phone(phone)
-    if not phone or not invitee_oid:
-        return None, None
-    with points_db.transaction(conn) as c:
-        row = c.execute("SELECT * FROM invites WHERE invitee_phone=?", (phone,)).fetchone()
-        if row is None:
-            return None, None
-        invite_id = int(row["id"])
-        if row["invitee_oid"] == invitee_oid:
-            return invite_id, row["status"]          # 已经挂过，幂等
-        if row["invitee_oid"]:
-            # 号码被别人注册走了。不改绑定，留给 start_confirm_window 去判——
-            # 那一步才知道谁真在「单身」。
-            return invite_id, row["status"]
-        c.execute("UPDATE invites SET invitee_oid=?, gender=?, bound_at=?, updated_at=?"
-                  " WHERE id=?",
-                  (invitee_oid, gender or "", points_db.now_str(),
-                   points_db.now_str(), invite_id))
-        return invite_id, row["status"]
-
-
 def record_from_form(invitee_oid, phone, gender, inviter_oid, source="form", conn=None):
     """被邀请人是**自己带着「邀请人ID」注册进来**的（注册表单那条路径）。
 
     这条路径不做新人判定：人正站在注册表单里，之前当然不是用户。但「一人只能
-    有一个邀请人」仍然要守——如果他注册前已经有人登记过这个手机号，以**先登记
-    的那位**为准（那个人才是真的把他拉来的人），并在 note 里留一笔备查。
+    有一个邀请人」仍然要守——如果这个手机号已经绑定了别的邀请人，以**先绑定的
+    那位**为准（那个人才是真的把他拉来的人），并在 note 里留一笔备查。
 
     返回 (邀请 ID, 状态)；手机号不合法或邀请人ID 缺失时 (None, None)。
     """
@@ -242,7 +167,7 @@ def record_from_form(invitee_oid, phone, gender, inviter_oid, source="form", con
             if row["inviter_oid"] == inviter_oid or row["status"] != STATUS_PENDING:
                 return int(row["id"]), row["status"]
             c.execute("UPDATE invites SET note=?, updated_at=? WHERE id=?",
-                      (f"注册时填的邀请人 {inviter_oid} 与先登记的邀请人不一致，以先登记的为准",
+                      (f"注册时填的邀请人 {inviter_oid} 与已绑定的邀请人不一致，以先绑定的为准",
                        stamp, int(row["id"])))
             return int(row["id"]), row["status"]
         cur = c.execute(
@@ -452,14 +377,3 @@ def list_for(inviter_oid, limit=100, conn=None):
 def _mask(phone):
     phone = str(phone or "")
     return f"{phone[:3]}****{phone[-4:]}" if len(phone) == 11 else ""
-
-
-def invitee_oid_for_phone(phone, conn=None):
-    """这个手机号关联到哪个已注册用户（没注册则 None）。报名预登记时用。"""
-    phone = normalize_phone(phone)
-    if not phone:
-        return None
-    with points_db.transaction(conn) as c:
-        row = c.execute("SELECT invitee_oid FROM invites WHERE invitee_phone=?",
-                        (phone,)).fetchone()
-    return (row["invitee_oid"] or None) if row else None

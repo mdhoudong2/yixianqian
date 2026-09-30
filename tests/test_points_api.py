@@ -85,7 +85,7 @@ def test_reading_without_login_is_401(url):
 
 def test_writing_without_csrf_header_is_403(client):
     """跨站表单能带上 cookie，所以写接口额外要一个自定义头。"""
-    r = client.post("/api/points/invite", json={"phone": "13800000002"})
+    r = client.post("/api/points/redeem", json={"item": "real_like"})
     assert r.status_code == 403
 
 
@@ -106,7 +106,7 @@ def test_me_returns_everything_the_header_needs(client, points_db):
 
 def test_confirmed_invites_are_pending_not_spendable(client, points_db, clock):
     """确认期内的邀请显示成「在路上的穗」，但不进余额、兑不动。"""
-    points_invite.register(ME, "13800000002", inviter_phone=ME_FIELDS["手机号"])
+    points_invite.record_from_form("ou_friend", "13800000002", "女性", ME)
     points_invite.start_confirm_window("ou_friend", "13800000002", "女性")
 
     d = client.get("/api/points/me").get_json()
@@ -120,7 +120,7 @@ def test_confirmed_invites_are_pending_not_spendable(client, points_db, clock):
 
 
 def test_pending_turns_into_balance_once_the_window_expires(client, points_db, clock):
-    points_invite.register(ME, "13800000002", inviter_phone=ME_FIELDS["手机号"])
+    points_invite.record_from_form("ou_friend", "13800000002", "女性", ME)
     points_invite.start_confirm_window("ou_friend", "13800000002", "女性")
     clock(days=points_invite.points_config.get("invite_confirm_days"))
 
@@ -167,45 +167,6 @@ def test_invite_view_shows_id_share_text_and_my_link(client, points_db):
     assert d["share_text"]
     assert d["register_url"]
     assert d["progress"]["total"] == 0 and d["list"] == []
-
-
-def test_registering_a_friend_masks_the_phone_in_the_list(client, points_db):
-    r = _post(client, "/api/points/invite", {"phone": "138 0000 0002"})
-    assert r.status_code == 200 and r.get_json()["ok"]
-
-    d = client.get("/api/points/invite").get_json()
-    assert d["progress"]["total"] == 1 and d["progress"]["pending"] == 1
-    row = d["list"][0]
-    assert row["phone_masked"] == "138****0002"
-    assert "invitee_phone" not in row           # 别人的号码不回给前端
-
-
-def test_cannot_invite_yourself(client, points_db):
-    r = _post(client, "/api/points/invite", {"phone": ME_FIELDS["手机号"]})
-    assert r.status_code == 400
-    assert "自己" in r.get_json()["error"]
-
-
-def test_cannot_invite_someone_who_is_already_a_user(client, points_db, monkeypatch):
-    monkeypatch.setattr(app, "snap_find_user_by_phone", lambda p: {"fields": {}})
-    r = _post(client, "/api/points/invite", {"phone": "13800000003"})
-    assert r.status_code == 400
-    assert "已经" in r.get_json()["error"]
-
-
-def test_a_phone_can_only_have_one_inviter(client, points_db, monkeypatch):
-    """别人先登记过的号码，我不能抢——否则一分奖励会被两个人各算一次。"""
-    points_invite.register(OTHER, "13800000004")
-    monkeypatch.setattr(app, "snap_find_user_by_phone", lambda p: None)
-    r = _post(client, "/api/points/invite", {"phone": "13800000004"})
-    assert r.status_code == 400
-    assert "已经登记过" in r.get_json()["error"]
-
-
-def test_a_bad_phone_number_is_rejected_in_plain_words(client, points_db):
-    r = _post(client, "/api/points/invite", {"phone": "123"})
-    assert r.status_code == 400
-    assert "手机号" in r.get_json()["error"]
 
 
 # ---------------------------------------------------------------- 兑换

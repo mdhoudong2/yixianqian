@@ -246,7 +246,7 @@ def test_a_woman_is_worth_twenty_and_a_man_fifteen(points_db, clock):
 def test_an_unknown_gender_pays_the_lower_amount(points_db, clock):
     """性别读不出来时按低的那个发。宁可少发 5 穗：多发的可能已经被兑换掉，
     之后想追回时余额不足，reverse_entry 会失败。"""
-    _invite(points_db)
+    _invite(points_db, gender="")
     points_invite.start_confirm_window(FRIEND, PHONE, "")
     _make_due(clock)
     points_invite.settle_all()

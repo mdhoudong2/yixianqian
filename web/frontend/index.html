@@ -396,6 +396,29 @@
   .points-rules-sub { font-size: 12px; color: #969799; line-height: 1.5; margin-bottom: 4px; }
   .points-rules-note { font-size: 13px; color: #646566; line-height: 1.7; display: flex; align-items: baseline; }
   .points-rules-note::before { content: '·'; flex-shrink: 0; margin-right: 0.5em; }
+  /* 管理员·麦穗总览 */
+  .pa-title { font-size: 18px; font-weight: 600; color: #323233; padding: 12px 16px 0; }
+  .pa-stats { display: flex; gap: 8px; margin: 12px 0 6px; }
+  .pa-stat { flex: 1; background: #fff7f8; border-radius: 12px; padding: 12px 4px; text-align: center; }
+  .pa-stat-num { font-size: 22px; font-weight: 700; color: #ff6b81; }
+  .pa-stat-label { font-size: 11px; color: #969799; margin-top: 4px; }
+  .pa-total-line { font-size: 12px; color: #969799; margin: 0 0 8px; }
+  .pa-search { margin: 8px 0; }
+  .pa-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f2f3f5; }
+  .pa-row-main { flex: 1; min-width: 0; }
+  .pa-row-name { font-size: 14px; color: #323233; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pa-row-id { font-size: 11px; color: #969799; margin-left: 4px; }
+  .pa-row-sub { font-size: 12px; color: #969799; margin-top: 2px; line-height: 1.4; }
+  .pa-balance, .pa-delta { font-size: 16px; font-weight: 700; flex-shrink: 0; }
+  .pa-balance.pos, .pa-delta.pos { color: #07c160; }
+  .pa-balance.neg, .pa-delta.neg { color: #ee0a24; }
+  .pa-filter-chip { display: inline-block; margin: 8px 0; padding: 4px 12px; border-radius: 14px; background: #fff0f3; color: #ff6b81; font-size: 12px; cursor: pointer; }
+  .pa-config { margin: 16px 0 24px; background: #f7f8fa; border-radius: 12px; padding: 12px; }
+  .pa-config-title { font-size: 13px; font-weight: 600; color: #323233; margin-bottom: 8px; }
+  .pa-config-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 12px; }
+  .pa-config-label { color: #646566; }
+  .pa-config-val { color: #323233; font-weight: 600; text-align: right; }
+  .pa-config-val.over { color: #ff6b81; }
   /* 邀请进度 / 好友登记 */
   .invite-progress { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .invite-progress-item { flex: 1; min-width: 70px; background: #f7f8fa; border-radius: 8px; padding: 8px 4px; text-align: center; }
@@ -451,6 +474,10 @@
   .van-theme-dark .msg-reply-btn { color: #6e6f73; }
   .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
   .van-theme-dark .praise-hint-inline { background: #3a2830; color: #ff8fa1; }
+  .van-theme-dark .pa-stat { background: #2a1a1e; }
+  .van-theme-dark .pa-row { border-bottom-color: #2c2c2e; }
+  .van-theme-dark .pa-row-name, .van-theme-dark .pa-config-title, .van-theme-dark .pa-config-val, .van-theme-dark .pa-title { color: #f5f5f5; }
+  .van-theme-dark .pa-config { background: #1c1c1e; }
   .van-theme-dark .profile-photo-section img { border-color: #3a3a3e; }
   .van-theme-dark .msg-input { color: #f5f5f5; }
   .van-theme-dark .candidate-search-input { background: #1a1a1c; border-color: #3a3a3e; }
@@ -853,6 +880,7 @@
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
+      <van-cell v-if="user.is_admin" title="🌾 麦穗管理" is-link @click="openPointsAdmin"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
       <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
     </van-cell-group>
@@ -862,6 +890,74 @@
       <van-cell title="意见反馈" is-link @click="openSuggestionDialog"></van-cell>
     </van-cell-group>
   </div>
+</div>
+<!-- ========== 管理员·麦穗总览 ========== -->
+<div v-else-if="page==='points_admin'" key="points_admin" class="page">
+  <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
+  <div class="pa-title">🌾 麦穗管理</div>
+
+  <div v-if="paLoading" style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+  <template v-else>
+    <div class="pa-stats">
+      <div class="pa-stat"><div class="pa-stat-num">{{ paStats.outstanding }}</div><div class="pa-stat-label">待发放余额</div></div>
+      <div class="pa-stat"><div class="pa-stat-num">{{ paStats.user_count }}</div><div class="pa-stat-label">有穗人数</div></div>
+      <div class="pa-stat"><div class="pa-stat-num">{{ paStats.entry_count }}</div><div class="pa-stat-label">流水笔数</div></div>
+      <div class="pa-stat"><div class="pa-stat-num">{{ paStats.redemption_count }}</div><div class="pa-stat-label">兑换单数</div></div>
+    </div>
+    <div class="pa-total-line">累计发放 {{ paStats.earned }} · 累计消耗 {{ paStats.spent }} · 邀请登记 {{ paStats.invite_count }}</div>
+
+    <van-tabs v-model:active="paTab">
+      <van-tab title="用户">
+        <div class="pa-search"><van-field v-model="paUserQuery" placeholder="搜昵称或用户ID" clearable /></div>
+        <div v-for="u in paFilteredUsers" :key="u.user_oid" class="pa-row" @click="paFilterByUser(u)">
+          <div class="pa-row-main">
+            <div class="pa-row-name">{{ u.nickname }} <span v-if="u.user_id" class="pa-row-id">{{ u.user_id }}</span></div>
+            <div class="pa-row-sub">获得 {{ u.earned }} · 消耗 {{ u.spent }} · {{ u.entry_count }} 笔<template v-if="u.last_at"> · {{ u.last_at }}</template></div>
+          </div>
+          <div class="pa-balance" :class="u.balance > 0 ? 'pos' : 'neg'">{{ u.balance }}</div>
+        </div>
+        <van-empty v-if="!paFilteredUsers.length" description="暂无有穗用户" />
+      </van-tab>
+      <van-tab title="流水">
+        <div v-if="paLedgerFilter" class="pa-filter-chip" @click="clearPaFilter">只看：{{ paLedgerFilterNick }} ✕</div>
+        <div v-for="e in paLedger" :key="e.id" class="pa-row">
+          <div class="pa-row-main">
+            <div class="pa-row-name">{{ e.nickname }} <span v-if="e.user_id" class="pa-row-id">{{ e.user_id }}</span></div>
+            <div class="pa-row-sub">{{ e.kind_label }} · {{ e.reason || '—' }} · {{ e.created_at }}</div>
+          </div>
+          <div class="pa-delta" :class="e.delta > 0 ? 'pos' : 'neg'">{{ e.delta > 0 ? '+' : '' }}{{ e.delta }}</div>
+        </div>
+        <van-empty v-if="!paLedger.length" description="暂无流水" />
+      </van-tab>
+      <van-tab title="兑换">
+        <div v-for="o in paRedemptions" :key="o.id" class="pa-row">
+          <div class="pa-row-main">
+            <div class="pa-row-name">{{ o.nickname }} <span v-if="o.user_id" class="pa-row-id">{{ o.user_id }}</span></div>
+            <div class="pa-row-sub">{{ o.item_label }} · {{ o.status_label }} · {{ o.created_at }}</div>
+          </div>
+          <div class="pa-delta neg">-{{ o.cost }}</div>
+        </div>
+        <van-empty v-if="!paRedemptions.length" description="暂无兑换单" />
+      </van-tab>
+      <van-tab title="邀请">
+        <div v-for="iv in paInvites" :key="iv.id" class="pa-row">
+          <div class="pa-row-main">
+            <div class="pa-row-name">{{ iv.nickname }} <span v-if="iv.user_id" class="pa-row-id">{{ iv.user_id }}</span></div>
+            <div class="pa-row-sub">{{ iv.phone_masked }} · {{ iv.status }} · {{ iv.created_at }}</div>
+          </div>
+        </div>
+        <van-empty v-if="!paInvites.length" description="暂无邀请记录" />
+      </van-tab>
+    </van-tabs>
+
+    <div class="pa-config">
+      <div class="pa-config-title">配置（改过的高亮，显示当前 / 默认）</div>
+      <div v-for="c in paConfig" :key="c.key" class="pa-config-row">
+        <span class="pa-config-label">{{ c.label }}</span>
+        <span class="pa-config-val" :class="{over: c.overridden}">{{ c.value }}<template v-if="c.overridden"> / 默认 {{ c.default }}</template></span>
+      </div>
+    </div>
+  </template>
 </div>
 <!-- ========== 我的资料详情 ========== -->
 <div v-else-if="page==='profile_detail'" key="profile_detail">
@@ -1977,7 +2073,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points'];
+    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points','points_admin'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -2256,6 +2352,72 @@ createApp({
       catch(e) { vant.showToast(e.message); }
     }
     function openPointsRules() { showPointsRules.value = true; loadPointsRules(false); }
+
+    // ===== 管理员·麦穗总览 =====
+    const paLoading = ref(false);
+    const paStats = ref({ user_count: 0, entry_count: 0, earned: 0, spent: 0, outstanding: 0, redemption_count: 0, invite_count: 0 });
+    const paConfig = ref([]);
+    const paUsers = ref([]);
+    const paLedger = ref([]);
+    const paRedemptions = ref([]);
+    const paInvites = ref([]);
+    const paTab = ref(0);
+    const paUserQuery = ref('');
+    const paLedgerFilter = ref('');
+    const paLedgerFilterNick = ref('');
+
+    const paFilteredUsers = computed(() => {
+      const q = paUserQuery.value.trim().toLowerCase();
+      if (!q) return paUsers.value;
+      return paUsers.value.filter(u =>
+        (u.nickname || '').toLowerCase().includes(q) ||
+        (u.user_id || '').toLowerCase().includes(q));
+    });
+
+    async function loadPaOverview() {
+      const data = await api('/api/admin/points/overview');
+      paStats.value = data.stats || paStats.value;
+      paConfig.value = data.config || [];
+      paUsers.value = data.users || [];
+    }
+    async function loadPaLedger() {
+      const q = paLedgerFilter.value ? ('?user_oid=' + encodeURIComponent(paLedgerFilter.value)) : '';
+      const data = await api('/api/admin/points/ledger' + q);
+      paLedger.value = data.rows || [];
+    }
+    async function loadPaRedemptions() {
+      const data = await api('/api/admin/points/redemptions');
+      paRedemptions.value = data.rows || [];
+    }
+    async function loadPaInvites() {
+      const data = await api('/api/admin/points/invites');
+      paInvites.value = data.rows || [];
+    }
+
+    async function openPointsAdmin() {
+      page.value = 'points_admin';
+      paTab.value = 0;
+      paUserQuery.value = '';
+      paLedgerFilter.value = '';
+      paLedgerFilterNick.value = '';
+      if (paLoading.value) return;
+      paLoading.value = true;
+      try {
+        await Promise.all([loadPaOverview(), loadPaLedger(), loadPaRedemptions(), loadPaInvites()]);
+      } catch(e) { vant.showToast(e.message); }
+      paLoading.value = false;
+    }
+    async function paFilterByUser(u) {
+      paLedgerFilter.value = u.user_oid;
+      paLedgerFilterNick.value = u.nickname || u.user_id || u.user_oid;
+      paTab.value = 1;
+      try { await loadPaLedger(); } catch(e) { vant.showToast(e.message); }
+    }
+    function clearPaFilter() {
+      paLedgerFilter.value = '';
+      paLedgerFilterNick.value = '';
+      loadPaLedger().catch(e => vant.showToast(e.message));
+    }
 
     async function openRedemptions() {
       showRedemptions.value = true;
@@ -4374,7 +4536,7 @@ createApp({
       }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile', 'points': 'profile',
+        'my_activities': 'profile', 'my_groups': 'profile', 'points': 'profile', 'points_admin': 'profile',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
@@ -4909,7 +5071,10 @@ createApp({
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,
       userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, loadNotifications,
-      hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact
+      hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
+      paLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
+      paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
+      openPointsAdmin, paFilterByUser, clearPaFilter
     };
   }
 }).use(vant).mount('#app');

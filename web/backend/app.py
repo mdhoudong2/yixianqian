@@ -3365,6 +3365,194 @@ def points_rules():
     })
 
 
+# ========== 管理员：麦穗总览（只读，供 H5 管理员页用） ==========
+# 机器人侧已有一整套「加穗/扣穗/查穗/签到…」指令，这里只补「一眼看全量」的
+# 只读视图。**不在这里做任何写操作**：改账入口仍只有机器人指令一条路，
+# 账本只有一处会动，对账才不糊涂。
+
+
+def _require_admin():
+    open_id = require_login()
+    if not open_id:
+        return None, jsonify({"error": "未登录"}), 401
+    if open_id not in ADMIN_OPEN_IDS:
+        return None, jsonify({"error": "没有权限"}), 403
+    return open_id, None, None
+
+
+def _openid_directory():
+    """open_id -> {nickname, user_id, status}，从 users/observers 快照拼，
+    把账本里的 open_id 翻成人名。已删档的 open_id 用其本身兜底，不静默丢行。"""
+    d = {}
+
+    def _fill(records):
+        for r in records:
+            oid = bitable.get_field_text(r.get("fields", {}), F_FEISHU_ID)
+            if not oid or oid in d:
+                continue
+            d[oid] = {
+                "nickname": bitable.get_field_text(r.get("fields", {}), F_NICKNAME) or oid,
+                "user_id": bitable.get_field_text(r.get("fields", {}), F_USER_ID) or "",
+                "status": bitable.get_select_value(r.get("fields", {}), F_ACCOUNT_STATUS) or "",
+            }
+    _fill(_snap("users"))
+    if OBSERVER_TABLE_ID:
+        _fill(_snap("observers"))
+    return d
+
+
+def _name_of(directory, oid):
+    u = directory.get(oid) or {}
+    return {
+        "nickname": u.get("nickname") or oid,
+        "user_id": u.get("user_id") or "",
+        "status": u.get("status") or "",
+    }
+
+
+def _admin_limit_offset():
+    limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+    offset = max(0, int(request.args.get("offset", 0)))
+    return limit, offset
+
+
+@app.route("/api/admin/points/overview", methods=["GET"])
+def admin_points_overview():
+    """总览：全站聚合数 + 每个有穗用户的余额 + 当前配置。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    conn = points_db.connection()
+    stats = conn.execute(
+        "SELECT COUNT(DISTINCT user_oid) AS user_count,"
+        " COUNT(*) AS entry_count,"
+        " COALESCE(SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END), 0) AS earned,"
+        " COALESCE(SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END), 0) AS spent"
+        " FROM ledger").fetchone()
+    outstanding = conn.execute(
+        "SELECT COALESCE(SUM(bal), 0) FROM"
+        " (SELECT SUM(delta) AS bal FROM ledger GROUP BY user_oid) WHERE bal > 0"
+    ).fetchone()[0]
+    redemption_count = conn.execute("SELECT COUNT(*) FROM redemptions").fetchone()[0]
+    invite_count = conn.execute("SELECT COUNT(*) FROM invites").fetchone()[0]
+
+    users = conn.execute(
+        "SELECT user_oid,"
+        " SUM(delta) AS balance,"
+        " SUM(CASE WHEN delta > 0 THEN delta ELSE 0 END) AS earned,"
+        " SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS spent,"
+        " COUNT(*) AS entry_count,"
+        " MAX(created_at) AS last_at"
+        " FROM ledger GROUP BY user_oid ORDER BY balance DESC LIMIT 1000").fetchall()
+
+    directory = _openid_directory()
+    user_rows = []
+    for r in users:
+        row = dict(r)
+        row.update(_name_of(directory, r["user_oid"]))
+        user_rows.append(row)
+
+    return jsonify({
+        "stats": {
+            "user_count": int(stats["user_count"]),
+            "entry_count": int(stats["entry_count"]),
+            "earned": int(stats["earned"]),
+            "spent": int(stats["spent"]),
+            "outstanding": int(outstanding),
+            "redemption_count": int(redemption_count),
+            "invite_count": int(invite_count),
+        },
+        "config": points_config.describe(),
+        "users": user_rows,
+    })
+
+
+@app.route("/api/admin/points/ledger", methods=["GET"])
+def admin_points_ledger():
+    """全站流水（可按 user_oid 过滤），新的在前。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    limit, offset = _admin_limit_offset()
+    user_oid = request.args.get("user_oid", "").strip()
+
+    conn = points_db.connection()
+    where = " WHERE user_oid=?" if user_oid else ""
+    args = [user_oid] if user_oid else []
+    total = conn.execute("SELECT COUNT(*) FROM ledger" + where, args).fetchone()[0]
+    rows = conn.execute(
+        "SELECT id, user_oid, delta, balance_after, kind, reason, ref_type, ref_id,"
+        " operator_oid, created_at FROM ledger" + where
+        + " ORDER BY id DESC LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
+
+    directory = _openid_directory()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["kind_label"] = points.KIND_LABELS.get(d["kind"], d["kind"])
+        d.update(_name_of(directory, d["user_oid"]))
+        out.append(d)
+    return jsonify({"total": int(total), "rows": out})
+
+
+@app.route("/api/admin/points/redemptions", methods=["GET"])
+def admin_points_redemptions():
+    """全站兑换单，新的在前。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    limit, offset = _admin_limit_offset()
+
+    conn = points_db.connection()
+    total = conn.execute("SELECT COUNT(*) FROM redemptions").fetchone()[0]
+    rows = conn.execute(
+        "SELECT * FROM redemptions ORDER BY id DESC LIMIT ? OFFSET ?",
+        (limit, offset)).fetchall()
+
+    directory = _openid_directory()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["item_label"] = points_redeem.ITEM_LABELS.get(d["item"], d["item"])
+        d["status_label"] = points_redeem.STATUS_LABELS.get(d["status"], d["status"])
+        try:
+            d["params"] = json.loads(d.get("params") or "{}")
+        except ValueError:
+            d["params"] = {}
+        d.update(_name_of(directory, d["user_oid"]))
+        out.append(d)
+    return jsonify({"total": int(total), "rows": out})
+
+
+@app.route("/api/admin/points/invites", methods=["GET"])
+def admin_points_invites():
+    """全站邀请登记，新的在前。手机号掩码，管理员页也不晾完整号。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    limit, offset = _admin_limit_offset()
+
+    conn = points_db.connection()
+    total = conn.execute("SELECT COUNT(*) FROM invites").fetchone()[0]
+    rows = conn.execute(
+        "SELECT id, inviter_oid, invitee_phone, invitee_oid, status, gender, source,"
+        " created_at, confirm_due_at, confirmed_at, note"
+        " FROM invites ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+
+    directory = _openid_directory()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d.update(_name_of(directory, d["inviter_oid"]))
+        if d.get("invitee_oid"):
+            d["invitee"] = _name_of(directory, d["invitee_oid"])
+        ph = d.pop("invitee_phone", "") or ""
+        d["phone_masked"] = (ph[:3] + "****" + ph[-4:]) if len(ph) >= 7 else ph
+        out.append(d)
+    return jsonify({"total": int(total), "rows": out})
+
+
 @app.route("/api/points/invite", methods=["GET"])
 def points_invite_view():
     """我的邀请：链接、进度、已登记的人。"""

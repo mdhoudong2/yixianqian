@@ -3444,7 +3444,7 @@ def admin_points_overview():
         " SUM(CASE WHEN delta < 0 THEN -delta ELSE 0 END) AS spent,"
         " COUNT(*) AS entry_count,"
         " MAX(created_at) AS last_at"
-        " FROM ledger GROUP BY user_oid ORDER BY balance DESC LIMIT 1000").fetchall()
+        " FROM ledger GROUP BY user_oid").fetchall()
 
     directory = _openid_directory()
     user_rows = []
@@ -3452,6 +3452,23 @@ def admin_points_overview():
         row = dict(r)
         row.update(_name_of(directory, r["user_oid"]))
         user_rows.append(row)
+
+    # 有穗的 open_id 集合；账本里可能还躺着已删档的 open_id，也要保留。
+    seen = {r["user_oid"] for r in user_rows}
+    for oid in directory:
+        if oid in seen:
+            continue
+        user_rows.append({
+            "user_oid": oid,
+            "balance": 0,
+            "earned": 0,
+            "spent": 0,
+            "entry_count": 0,
+            "last_at": None,
+            **_name_of(directory, oid),
+        })
+    # 有穗的排前面，其余按昵称排，别让列表顺序随快照漂移。
+    user_rows.sort(key=lambda r: (-int(r["balance"]), r.get("nickname") or ""))
 
     return jsonify({
         "stats": {

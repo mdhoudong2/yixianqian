@@ -926,9 +926,9 @@
             <div class="pa-row-name">{{ u.nickname }} <span v-if="u.user_id" class="pa-row-id">{{ u.user_id }}</span></div>
             <div class="pa-row-sub">获得 {{ u.earned }} · 消耗 {{ u.spent }} · {{ u.entry_count }} 笔<template v-if="u.last_at"> · {{ u.last_at }}</template></div>
           </div>
-          <div class="pa-balance" :class="u.balance > 0 ? 'pos' : 'neg'">{{ u.balance }}</div>
+          <div class="pa-balance" :class="u.balance > 0 ? 'pos' : (u.balance < 0 ? 'neg' : '')">{{ u.balance }}</div>
         </div>
-        <van-empty v-if="!paFilteredUsers.length" description="暂无有穗用户" />
+        <van-empty v-if="!paFilteredUsers.length" description="暂无用户" />
       </van-tab>
       <van-tab title="流水">
         <div v-if="paLedgerFilter" class="pa-filter-chip" @click="clearPaFilter">只看：{{ paLedgerFilterNick }} ✕</div>

@@ -9,7 +9,6 @@ def test_defaults_come_from_code(points_db):
     assert points_config.get("invite_reward_male") == 15
     assert points_config.get("redeem_real_like") == 20
     assert points_config.get("invite_confirm_days") == 7
-    assert points_config.get("fee_discount_rate") == 0.7
     assert points_config.get("priority_ratio") == 0.3
 
 
@@ -17,8 +16,7 @@ def test_every_configured_number_is_present(points_db):
     """需求点名的分值/价格/比例/期限，一个都不能漏在代码里。"""
     need = {"invite_reward_female", "invite_reward_male",
             "redeem_real_like", "redeem_priority_signup", "redeem_wish",
-            "redeem_matchmaker", "redeem_fee_discount",
-            "fee_discount_rate", "priority_ratio",
+            "redeem_matchmaker", "priority_ratio",
             "assist_min", "assist_max",
             "invite_confirm_days", "matchmaker_deadline_days",
             "priority_cancel_hours"}

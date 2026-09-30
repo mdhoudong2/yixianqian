@@ -1,4 +1,4 @@
-"""优先名额 / 费用减免的单子怎么收尾（bot/auto_tasks 的周期结算）。
+"""优先名额的单子怎么收尾（bot/auto_tasks 的周期结算）。
 
 这一层考的是**兑现**：兑换那一刻只是开单扣穗，真正「报上名」「退穗」都发生在
 机器人循环里。少了它，用户花 30 穗买到的就是一张没人管的单子。
@@ -24,15 +24,12 @@ def _activity(status):
                        "报名人数上限": 10}}
 
 
-def _order(points_db, item=points_redeem.ITEM_PRIORITY, status=STATUS_SIGNUP_OPEN,
-           fee=0):
-    """给账本里造一张「已生效」的单子，返回它。"""
+def _order(points_db):
+    """给账本里造一张「已生效」的优先名额单子，返回它。"""
     points.grant("ou_me", 100, points.KIND_ADMIN, reason="测试预置")
-    act = {"id": ACT_ID, "title": "周末桌游", "quota": 10, "fee": fee,
+    act = {"id": ACT_ID, "title": "周末桌游", "quota": 10,
            "start_at": "2026-10-01 19:00:00", "open": True}
-    if item == points_redeem.ITEM_PRIORITY:
-        return points_redeem.redeem_priority("ou_me", act)
-    return points_redeem.redeem_fee_discount("ou_me", act)
+    return points_redeem.redeem_priority("ou_me", act)
 
 
 def _stub(monkeypatch, status, *, signups=None, search_ok=True):
@@ -144,36 +141,4 @@ def test_a_missing_activity_is_left_for_a_human(points_db, monkeypatch):
     monkeypatch.setattr(auto_tasks, "find_activity_by_id", lambda aid: None)
 
     assert auto_tasks.auto_settle_priority_orders() == (0, 0)
-    assert points_redeem.get(order["id"])["status"] == points_redeem.ST_ACTIVE
-
-
-# ---------------------------------------------------------------- 费用减免
-
-def test_a_cancelled_activity_refunds_the_fee_discount(points_db, monkeypatch):
-    """活动取消 = 全额退款 → 减免的穗要还回去。"""
-    order = _order(points_db, item=points_redeem.ITEM_FEE_DISCOUNT, fee=100)
-    _stub(monkeypatch, ACTIVITY_STATUS_CANCELLED)
-
-    assert auto_tasks.auto_settle_fee_discounts() == (1, 0)
-    assert points.balance("ou_me") == 100
-    assert points_redeem.get(order["id"])["status"] == points_redeem.ST_REFUNDED
-
-
-def test_a_finished_activity_closes_the_fee_discount_without_refunding(points_db,
-                                                                      monkeypatch):
-    """活动办完了，减免就是真用掉了，不退；只把单子从「生效中」收掉。"""
-    order = _order(points_db, item=points_redeem.ITEM_FEE_DISCOUNT, fee=100)
-    _stub(monkeypatch, STATUS_ACTIVITY_FINISHED)
-
-    assert auto_tasks.auto_settle_fee_discounts() == (0, 1)
-    assert points.balance("ou_me") == 60
-    assert points_redeem.get(order["id"])["status"] == points_redeem.ST_DONE
-
-
-def test_an_open_activity_leaves_the_fee_discount_alone(points_db, monkeypatch):
-    """活动正常进行中 → 不动。"""
-    order = _order(points_db, item=points_redeem.ITEM_FEE_DISCOUNT, fee=100)
-    _stub(monkeypatch, STATUS_SIGNUP_OPEN)
-
-    assert auto_tasks.auto_settle_fee_discounts() == (0, 0)
     assert points_redeem.get(order["id"])["status"] == points_redeem.ST_ACTIVE

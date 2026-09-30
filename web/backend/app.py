@@ -3091,9 +3091,6 @@ def activity_detail(activity_id):
 
     act = format_activity(act_record)
     act["my_signup"] = bool(snap_signup(text_act_id, open_id))
-    # 费用减免在「付款页」出现，所以这个开关跟着活动详情下发：可用性由服务端
-    # 判（余额、是不是收费活动、这场有没有用过），前端只负责画按钮。
-    act["fee_discount"] = _fee_discount_view(open_id, act_record, text_act_id)
 
     # 获取报名人数列表（不返回open_id）
     signups = snap_signups_by_activity(text_act_id)
@@ -3132,11 +3129,6 @@ def signup(activity_id):
         return jsonify({"error": "用户信息不存在"}), 404
     nickname = bitable.get_field_text(user.get("fields", {}), F_NICKNAME)
 
-    # 费用减免：勾了才走。没有在线支付，「报名成功」就是「付款成功」，
-    # 所以扣穗要卡在**确定能报上**之后——见下面 file_lock 里的顺序。
-    body = request.get_json(silent=True) or {}
-    use_discount = bool(body.get("use_fee_discount"))
-
     with file_lock:
         # 锁内二次校验：查重+人数上限以实时为准，防并发超员
         if bitable.get_user_signup(text_act_id, open_id):
@@ -3147,52 +3139,18 @@ def signup(activity_id):
             if real_cnt >= max_signup:
                 return jsonify({"error": "报名人数已满"}), 400
 
-        order = None
-        if use_discount:
-            # 这一场已经有一张生效中的减免单就直接用它（不重复扣穗）：老页面可能
-            # 还留着「先兑减免、再报名」的入口，那条路兑出来的单子得认，否则用户
-            # 花了穗却被告知「已经开过单了」。
-            exist = points_redeem.find(
-                open_id, points_redeem.ITEM_FEE_DISCOUNT, text_act_id)
-            if exist and exist["status"] == points_redeem.ST_ACTIVE:
-                order = exist
-            else:
-                try:
-                    order = points_redeem.redeem_fee_discount(
-                        open_id, _points_activity(act_record, text_act_id))
-                except points.InsufficientBalance as e:
-                    return _points_error(e)
-                except points_redeem.RedeemError as e:
-                    return _points_error(e)
-
         signup_record = bitable.create_record(SIGNUP_TABLE_ID, {
             F_SIGNUP_ACTIVITY_ID: text_act_id,
             F_SIGNUP_OPENID: open_id,
             F_SIGNUP_NICKNAME: nickname,
             F_SIGNUP_STATUS: "已报名"
         })
-        if not signup_record and order:
-            # 报名没落库，穗不能白扣。退穗是新增一笔反向流水，不改原流水。
-            try:
-                points_redeem.refund(order["id"], reason="报名失败，退回费用减免")
-            except Exception as e:
-                app.logger.error(
-                    f"报名失败退穗也失败了，需人工补：open_id={open_id}"
-                    f" redemption={order['id']} err={e}")
-                _alert_points(f"退穗失败，需人工补：用户 {open_id}，兑换单 #{order['id']}")
     if not signup_record:
         return jsonify({"error": "报名失败，请重试"}), 500
 
     refresh_snapshot_table_async("signups")
     refresh_snapshot_table_async("activities")
-    resp = {"ok": True, "message": "报名成功"}
-    if order:
-        payable = order["params"].get("payable")
-        original = order["params"].get("original_fee")
-        resp["message"] = f"报名成功，已用麦穗减免：原价 {original} 元，实付 {payable} 元"
-        resp["fee"] = {"original": original, "payable": payable}
-        resp["balance"] = points.balance(open_id)
-    return jsonify(resp)
+    return jsonify({"ok": True, "message": "报名成功"})
 
 @app.route("/api/activities/<activity_id>/signup", methods=["DELETE"])
 def cancel_signup(activity_id):
@@ -3290,41 +3248,9 @@ def _points_activity(record, activity_id):
         "id": str(activity_id or ""),
         "title": bitable.get_field_text(fields, F_ACTIVITY_NAME) or str(activity_id or ""),
         "quota": int(bitable.get_field_number(fields, F_ACTIVITY_MAX_SIGNUP, 0) or 0),
-        "fee": int(bitable.get_field_number(fields, F_ACTIVITY_FEE, 0) or 0),
         "start_at": _activity_start_text(fields),
         "open": (bitable.get_select_value(fields, F_ACTIVITY_STATUS)
                  in OPEN_ACTIVITY_STATUSES),
-    }
-
-
-def _fee_discount_view(open_id, record, activity_id):
-    """这场活动的费用减免还能不能用（活动详情页付款时画按钮用）。
-
-    只读，不改账——真正扣穗在报名那一下，因为规则是「付款成功才扣穗」。
-    这里返回 `available=False` 时前端就不显示这个选项，省得点下去才报错。
-    """
-    act = _points_activity(record, activity_id)
-    try:
-        cost = points_redeem.cost_of(points_redeem.ITEM_FEE_DISCOUNT)
-        rate = points_config.get("fee_discount_rate")
-        used = bool(points_redeem.find(open_id, points_redeem.ITEM_FEE_DISCOUNT, act["id"]))
-        bal = points.balance(open_id)
-    except Exception as e:
-        app.logger.warning(f"读费用减免能否使用失败 open_id={open_id}: {e}")
-        return {"available": False, "reason": "麦穗数据暂时读不到"}
-    if act["fee"] <= 0:
-        return {"available": False, "reason": "免费活动用不上费用减免"}
-    if used:
-        return {"available": False, "reason": "这场活动你已经用过费用减免了"}
-    if bal < cost:
-        return {"available": False, "reason": f"麦穗不够，还差 {cost - bal} 穗"}
-    return {
-        "available": True,
-        "cost": cost,
-        "rate": rate,
-        "balance": bal,
-        "original_fee": act["fee"],
-        "payable": points_redeem.discounted_fee(act["fee"], rate),
     }
 
 
@@ -3348,19 +3274,6 @@ def _points_error(e, status=400):
     return jsonify({"error": str(e)}), status
 
 
-def _alert_points(msg):
-    """麦穗相关的「必须有人看一眼」的事（比如退穗失败）推给管理员。
-
-    不重试、不重试到成功为止：退穗失败意味着账和事实对不上，这是要对账的事，
-    不是靠重试能解的。发一条通知，让管理员去「查穗」看实际情况。
-    """
-    for admin_oid in ADMIN_OPEN_IDS:
-        try:
-            send_text_message(admin_oid, f"⚠️ 麦穗告警：{msg}")
-        except Exception as e:
-            app.logger.warning(f"麦穗告警发送失败: {e}")
-
-
 def _my_inviter_id():
     """我的「用户ID」（U-xxxx）——注册表单里「邀请人ID」填的就是它。"""
     me = snap_self_user()
@@ -3373,10 +3286,9 @@ def _my_inviter_id():
 # 免得管理员改了配置、说明页却还写着旧数字。
 POINTS_ITEM_DESC = {
     points_redeem.ITEM_REAL_LIKE: "免费实名喜欢用完后，多一次实名喜欢的机会，不过期。",
-    points_redeem.ITEM_PRIORITY: "热门小活动开始报名时，你比别人早一步占位。",
-    points_redeem.ITEM_WISH: "报名成功后指定一位想认识的人，由活动安排同桌。对方不会收到通知。",
+    points_redeem.ITEM_PRIORITY: "如果活动需要优化男女比例、满员等，你可直接报名，不受规则限制。",
+    points_redeem.ITEM_WISH: "报名成功后，你可以指定一位想认识的人，组织方去邀请TA参加活动，并安排同桌。对方不会知道是你想认识TA。",
     points_redeem.ITEM_MATCHMAKER: "填写你的择偶条件，红娘人工帮你物色并牵线。",
-    points_redeem.ITEM_FEE_DISCOUNT: "报名收费活动时会出现，按折扣价缴费，差额由麦穗抵扣。",
 }
 
 POINTS_RULE_NOTES = [
@@ -3495,8 +3407,7 @@ def points_redeem_create():
         return jsonify({"error": "没有这个兑换项"}), 400
 
     act = None
-    if item in (points_redeem.ITEM_PRIORITY, points_redeem.ITEM_WISH,
-                points_redeem.ITEM_FEE_DISCOUNT):
+    if item in (points_redeem.ITEM_PRIORITY, points_redeem.ITEM_WISH):
         rec, text_id = _resolve_activity_or_error(body.get("activity_record_id") or
                                                   body.get("activity_id") or "")
         if not rec:
@@ -3520,9 +3431,6 @@ def points_redeem_create():
             order = points_redeem.redeem_matchmaker(
                 open_id, str(body.get("condition") or "").strip(),
                 request_key=request_key)
-        else:
-            order = points_redeem.redeem_fee_discount(open_id, act,
-                                                      request_key=request_key)
     except points_redeem.AlreadyRedeemed as e:
         return _points_error(e)
     except points_redeem.ItemUnavailable as e:

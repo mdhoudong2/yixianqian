@@ -129,7 +129,7 @@ STATUS_SIGNUP_OPEN = "报名中"
 STATUS_SIGNUP_NOT_STARTED = "未开始报名"
 STATUS_SIGNUP_FULL = "已满员"
 STATUS_ACTIVITY_FINISHED = "已结束"
-# 活动取消：机器人扫到这个状态就把该活动名下的优先名额、费用减免退穗。
+# 活动取消：机器人扫到这个状态就把该活动名下的优先名额退穗。
 ACTIVITY_STATUS_CANCELLED = "已取消"
 
 FIELD_SIGNUP_ACTIVITY_ID = "活动ID"

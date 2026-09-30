@@ -3,7 +3,7 @@
 
 做五件事：
   1. 用户表「账号状态」加上「封禁」选项 —— 只有这个新状态触发邀请奖励收回；
-  2. 活动表「活动状态」加上「已取消」选项 —— 机器人扫到它才退优先名额 / 费用减免；
+  2. 活动表「活动状态」加上「已取消」选项 —— 机器人扫到它才退优先名额；
   3. 报名表加「签到状态」字段（按时/迟到/未到）—— 考勤，供退穗判定；
   4. 建「麦穗心愿单」表；
   5. 建「麦穗红娘推荐单」表。
@@ -46,7 +46,7 @@ STATUS_FIELD = "账号状态"
 STATUS_BANNED = "封禁"
 ATTENDANCE_FIELD = "签到状态"
 ATTENDANCE_OPTIONS = ["按时", "迟到", "未到"]
-# 活动取消。机器人扫到这个状态就退该活动名下的优先名额 / 费用减免，
+# 活动取消。机器人扫到这个状态就退该活动名下的优先名额，
 # 字面量必须与 bot/constants.py 的 ACTIVITY_STATUS_CANCELLED 一致。
 ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", "")
 ACTIVITY_STATUS_FIELD = "活动状态"
@@ -219,7 +219,7 @@ def main():
     print(f"环境：{os.environ.get('YIXIANQIAN_ENV', 'prod')}   模式：{mode}\n")
     ok = _ensure_select_option(USER_TABLE_ID, "用户表", STATUS_FIELD, STATUS_BANNED,
                                apply_changes)
-    # 活动取消是「优先名额/费用减免自动退穗」的唯一触发点，没有这个选项那条规则
+    # 活动取消是「优先名额自动退穗」的唯一触发点，没有这个选项那条规则
     # 就没有输入端（机器人按状态字面匹配）。
     ok = _ensure_select_option(ACTIVITY_TABLE_ID, "活动表", ACTIVITY_STATUS_FIELD,
                                ACTIVITY_STATUS_CANCELLED, apply_changes) and ok

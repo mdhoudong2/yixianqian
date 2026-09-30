@@ -283,20 +283,6 @@ def test_redeem(c):
 # ---------------------------------------------------------------- E 活动类
 
 def test_activity_items(c):
-    opened = find_activity("报名中", want_fee=True)
-    if not opened:
-        print("[SKIP] E1-E3 测试服里没有「报名中 + 收费」的活动")
-    else:
-        aid = opened["record_id"]
-        fund(points_redeem.cost_of(points_redeem.ITEM_FEE_DISCOUNT))
-        act = get(c, f"/api/activities/{aid}").json()
-        fd = act.get("fee_discount") or {}
-        check("E1 活动详情带 fee_discount 开关", "available" in fd, str(fd)[:120])
-        check("E2 收费活动上减免可用", fd.get("available") is True, str(fd)[:120])
-        check("E3 减免后金额是原价七折",
-              fd.get("payable") == points_redeem.discounted_fee(fd.get("original_fee", 0)),
-              f"{fd.get('original_fee')} → {fd.get('payable')}")
-
     closed = find_activity("已结束")
     if closed:
         fund(points_redeem.cost_of(points_redeem.ITEM_PRIORITY))
@@ -498,9 +484,7 @@ def main():
     print(f"配置：实名 {points_config.get('redeem_real_like')} / "
           f"优先 {points_config.get('redeem_priority_signup')} / "
           f"心愿 {points_config.get('redeem_wish')} / "
-          f"红娘 {points_config.get('redeem_matchmaker')} / "
-          f"减免 {points_config.get('redeem_fee_discount')}"
-          f"（{points_config.get('fee_discount_rate')} 折）\n")
+          f"红娘 {points_config.get('redeem_matchmaker')}\n")
 
     c = cookies()
     for step in (test_auth, lambda: test_balance_matches_ledger(c),

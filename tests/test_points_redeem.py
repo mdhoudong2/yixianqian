@@ -20,7 +20,7 @@ def _fund(points_db, oid=USER, amount=1000):
 
 def _act(**kw):
     """调用方传进来的活动事实，形状见 points_redeem._activity。"""
-    base = {"id": ACT, "title": "周末桌游", "quota": 10, "fee": 0,
+    base = {"id": ACT, "title": "周末桌游", "quota": 10,
             "start_at": "2026-10-01 14:00:00", "open": True}
     base.update(kw)
     return base
@@ -138,7 +138,7 @@ def test_without_a_request_key_each_call_is_a_new_redemption(points_db):
 
 
 def test_an_activity_item_is_naturally_one_per_person(points_db):
-    """优先报名/心愿/费用减免的键里带着活动 ID，所以第二次必然撞键。"""
+    """优先报名/心愿的键里带着活动 ID，所以第二次必然撞键。"""
     _fund(points_db)
     points_redeem.redeem_priority(USER, _act())
     with pytest.raises(points_redeem.AlreadyRedeemed):
@@ -388,39 +388,6 @@ def test_a_recommended_order_is_not_overdue(points_db, clock):
 
     clock(days=30)
     assert points_redeem.matchmaker_overdue() == []
-
-
-# ---------------------------------------------------------------- 费用减免
-
-def test_fee_discount_only_applies_to_paid_activities(points_db):
-    _fund(points_db)
-    with pytest.raises(points_redeem.ItemUnavailable, match="免费活动"):
-        points_redeem.redeem_fee_discount(USER, _act(fee=0))
-
-
-def test_the_discounted_price_rounds_to_whole_yuan(points_db):
-    """需求原文：按原价 70% 取整到元。"""
-    assert points_redeem.discounted_fee(100) == 70
-    assert points_redeem.discounted_fee(99) == 69       # 69.3
-    assert points_redeem.discounted_fee(95) == 67       # 66.5 → 四舍五入，不是银行家舍入的 66
-    assert points_redeem.discounted_fee(50) == 35
-    assert points_redeem.discounted_fee(1) == 1         # 0.7 → 1，不能减到 0 元
-
-
-def test_the_discount_rate_comes_from_config(points_db):
-    points_config.set_value("fee_discount_rate", 0.5)
-    assert points_redeem.discounted_fee(90) == 45
-
-
-def test_a_free_activity_has_no_discounted_price(points_db):
-    assert points_redeem.discounted_fee(0) == 0
-
-
-def test_a_fee_discount_order_records_both_prices(points_db):
-    _fund(points_db)
-    order = points_redeem.redeem_fee_discount(USER, _act(fee=95))
-    assert order["params"]["original_fee"] == 95
-    assert order["params"]["payable"] == 67
 
 
 # ---------------------------------------------------------------- 退还

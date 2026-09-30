@@ -47,11 +47,7 @@ SPECS = {
         "default": 30, "label": "兑换：心愿名额", "min": 0, "max": 10000},
     "redeem_matchmaker": {
         "default": 50, "label": "兑换：红娘人工推荐", "min": 0, "max": 10000},
-    "redeem_fee_discount": {
-        "default": 40, "label": "兑换：活动费用减免", "min": 0, "max": 10000},
 
-    "fee_discount_rate": {
-        "default": 0.7, "label": "费用减免后自付比例", "min": 0.0, "max": 1.0},
     "priority_ratio": {
         "default": 0.3, "label": "优先名额占活动总名额比例", "min": 0.0, "max": 1.0},
     "priority_cancel_hours": {

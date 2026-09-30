@@ -1,10 +1,9 @@
-"""H5 麦穗接口契约：形状、错误翻译、以及嵌进报名流程里的费用减免（不联网）。
+"""H5 麦穗接口契约：形状、错误翻译（不联网）。
 
 前端是 CDN 引的静态页，接口形状一变就是「页面静静少了一块」。这里钉的是
-前端真正读的那几个键，顺带覆盖两条最容易写错的接线：
+前端真正读的那几个键，顺带覆盖最容易写错的一条接线：
 
-1. **待确认的穗不进余额**——7 天确认期没满就显示成可用，用户会去兑、然后兑失败；
-2. **报名失败要退穗**——扣穗和写报名记录是两次写入，中间失败时钱不能白扣。
+1. **待确认的穗不进余额**——7 天确认期没满就显示成可用，用户会去兑、然后兑失败。
 """
 import os
 import sys
@@ -282,14 +281,6 @@ def test_priority_redeem_is_refused_when_the_activity_is_full(client, points_db,
     assert client.get("/api/points/me").get_json()["balance"] == 100
 
 
-def test_fee_discount_needs_a_paid_activity(client, points_db, monkeypatch):
-    _activity(monkeypatch, fee=0)
-    _fund(100)
-    d = _post(client, "/api/points/redeem",
-              {"item": "fee_discount", "activity_record_id": "rec_act"}).get_json()
-    assert "免费活动" in d["error"]
-
-
 def test_redeeming_for_a_missing_activity_is_404(client, points_db, monkeypatch):
     monkeypatch.setattr(app, "snap_resolve_activity", lambda aid: (None, None))
     _fund(100)
@@ -349,160 +340,6 @@ def test_wish_works_once_i_am_signed_up(client, points_db, monkeypatch):
               {"item": "wish", "activity_record_id": "rec_act",
                "target_open_id": OTHER}).get_json()
     assert d["ok"] and d["balance"] == 70
-
-
-# ---------------------------------------------------------------- 报名 + 费用减免
-
-def _signup_env(monkeypatch, *, fee=100, max_signup=10, create_ok=True):
-    _activity(monkeypatch, fee=fee, quota=max_signup)
-    monkeypatch.setattr(app.bitable, "get_user_signup", lambda aid, oid: None)
-    monkeypatch.setattr(app.bitable, "get_signups", lambda aid: [])
-
-    calls = {"n": 0}
-
-    def _create(table, vals):
-        calls["n"] += 1
-        return {"record_id": "rec_signup"} if create_ok else None
-
-    monkeypatch.setattr(app.bitable, "create_record", _create)
-    return calls
-
-
-def test_signup_with_discount_charges_and_reports_the_payable(client, points_db,
-                                                              monkeypatch):
-    _signup_env(monkeypatch, fee=100)
-    _fund(100)
-    d = _post(client, "/api/activities/rec_act/signup",
-              {"use_fee_discount": True}).get_json()
-    assert d["ok"]
-    assert d["fee"] == {"original": 100, "payable": 70}   # 七折取整到元
-    assert d["balance"] == 60
-    assert "70" in d["message"]
-
-
-def test_signup_without_the_flag_does_not_touch_the_ledger(client, points_db,
-                                                           monkeypatch):
-    _signup_env(monkeypatch)
-    _fund(100)
-    d = _post(client, "/api/activities/rec_act/signup", {}).get_json()
-    assert d["ok"] and "fee" not in d
-    assert client.get("/api/points/me").get_json()["balance"] == 100
-
-
-def test_a_failed_signup_gives_the_points_back(client, points_db, monkeypatch):
-    """扣穗和写报名记录是两次写入，后一次失败时穗不能白扣。"""
-    _signup_env(monkeypatch, create_ok=False)
-    _fund(100)
-    r = _post(client, "/api/activities/rec_act/signup", {"use_fee_discount": True})
-    assert r.status_code == 500
-    assert client.get("/api/points/me").get_json()["balance"] == 100
-
-    orders = client.get("/api/points/redemptions").get_json()["list"]
-    assert orders[0]["status"] == points_redeem.ST_REFUNDED
-
-
-def test_the_discount_can_only_be_used_once_per_activity(client, points_db,
-                                                         monkeypatch):
-    """同一场活动只能减一次：报名减过之后再走兑换接口，会被幂等键拦下。"""
-    _signup_env(monkeypatch)
-    _fund(100)
-    _post(client, "/api/activities/rec_act/signup", {"use_fee_discount": True})
-    d = _post(client, "/api/points/redeem",
-              {"item": "fee_discount", "activity_record_id": "rec_act"}).get_json()
-    assert "已经开过单" in d["error"]
-    assert client.get("/api/points/me").get_json()["balance"] == 60
-
-
-def test_an_existing_discount_order_is_reused_not_charged_again(client, points_db,
-                                                                monkeypatch):
-    """已经兑过减免的人再报名，认那张单子，不重复扣穗。
-
-    「兑换」面板以前是有费用减免的（现在移到缴费那一步了），从那条路兑出来的
-    单子必须认，否则用户花了穗却被告知「已经开过单了」。
-    """
-    _signup_env(monkeypatch)
-    _fund(100)
-    first = _post(client, "/api/points/redeem",
-                  {"item": "fee_discount", "activity_record_id": "rec_act"}).get_json()
-    assert first["balance"] == 60
-    d = _post(client, "/api/activities/rec_act/signup",
-              {"use_fee_discount": True}).get_json()
-    assert d["ok"] and d["fee"] == {"original": 100, "payable": 70}
-    assert d["balance"] == 60          # 复用那张单，没有再扣 40
-    assert len(client.get("/api/points/redemptions").get_json()["list"]) == 1
-
-
-def test_a_discount_can_be_bought_again_after_the_first_one_was_refunded(
-        client, points_db, monkeypatch):
-    """报名写库失败会退穗（见上一条用例）。退过之后不能把这条路永久堵死——
-    用户的问题只是一次网络抖动，不该让他这场活动再也用不了减免。"""
-    _signup_env(monkeypatch, create_ok=False)
-    _fund(100)
-    assert _post(client, "/api/activities/rec_act/signup",
-                 {"use_fee_discount": True}).status_code == 500
-    assert client.get("/api/points/me").get_json()["balance"] == 100
-
-    _signup_env(monkeypatch, create_ok=True)
-    d = _post(client, "/api/activities/rec_act/signup",
-              {"use_fee_discount": True}).get_json()
-    assert d["ok"] and d["balance"] == 60       # 这一次真的扣了
-
-
-def test_a_full_activity_refuses_before_charging(client, points_db, monkeypatch):
-    """满员要在扣穗之前拦住——先扣了再报「人满了」就得靠退穗兜，多一次失败机会。"""
-    _signup_env(monkeypatch, max_signup=1)
-    monkeypatch.setattr(app.bitable, "get_signups", lambda aid: [{"record_id": "x"}])
-    _fund(100)
-    r = _post(client, "/api/activities/rec_act/signup", {"use_fee_discount": True})
-    assert r.status_code == 400
-    assert "已满" in r.get_json()["error"]
-    assert client.get("/api/points/me").get_json()["balance"] == 100
-
-
-def test_a_free_activity_cannot_be_discounted_at_signup(client, points_db, monkeypatch):
-    _signup_env(monkeypatch, fee=0)
-    _fund(100)
-    d = _post(client, "/api/activities/rec_act/signup",
-              {"use_fee_discount": True}).get_json()
-    assert "免费活动" in d["error"]
-    assert client.get("/api/points/me").get_json()["balance"] == 100
-
-
-# ------------------------------------------------- 活动详情里的减免开关（付款页用）
-
-def test_activity_detail_reports_the_discount_when_it_is_usable(client, points_db,
-                                                                monkeypatch):
-    """前端靠这个开关决定缴费弹窗里画不画「用麦穗减免」那个按钮。"""
-    _signup_env(monkeypatch, fee=100)
-    _fund(40)
-    d = client.get("/api/activities/rec_act").get_json()
-    fd = d["fee_discount"]
-    assert fd["available"] and fd["cost"] == 40
-    assert fd["payable"] == 70 and fd["original_fee"] == 100
-
-
-def test_activity_detail_hides_the_discount_when_points_are_short(client, points_db,
-                                                                  monkeypatch):
-    _signup_env(monkeypatch, fee=100)
-    _fund(39)
-    fd = client.get("/api/activities/rec_act").get_json()["fee_discount"]
-    assert not fd["available"] and "还差 1 穗" in fd["reason"]
-
-
-def test_activity_detail_hides_the_discount_on_a_free_activity(client, points_db,
-                                                               monkeypatch):
-    _signup_env(monkeypatch, fee=0)
-    _fund(100)
-    fd = client.get("/api/activities/rec_act").get_json()["fee_discount"]
-    assert not fd["available"] and "免费活动" in fd["reason"]
-
-
-def test_activity_detail_hides_the_discount_once_used(client, points_db, monkeypatch):
-    _signup_env(monkeypatch, fee=100)
-    _fund(100)
-    _post(client, "/api/activities/rec_act/signup", {"use_fee_discount": True})
-    fd = client.get("/api/activities/rec_act").get_json()["fee_discount"]
-    assert not fd["available"] and "已经用过" in fd["reason"]
 
 
 # ---------------------------------------------------------------- 取消报名时的优先名额

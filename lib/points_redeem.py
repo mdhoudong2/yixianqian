@@ -15,11 +15,10 @@
 
     redeem:priority_signup:<oid>:<活动ID>     一人一场只能兑一次
     redeem:wish:<oid>:<活动ID>                同上
-    redeem:fee_discount:<oid>:<活动ID>        同上
     redeem:real_like:<oid>:<序号|请求号>      没有天然唯一性，靠调用方给的请求号
     redeem:matchmaker:<oid>:<序号|请求号>     同上
 
-前三个不依赖调用方自觉：两次请求撞在同一个键上，数据库直接拒掉第二次，
+前两个不依赖调用方自觉：两次请求撞在同一个键上，数据库直接拒掉第二次，
 不需要「先查再写」那种在并发下必然漏检的检查。
 
 后两个没有天然的唯一性（同一个人可以兑第二次额外实名喜欢），所以键里放一个
@@ -35,7 +34,6 @@
 这样规则的判定逻辑可以脱离飞书单测，也让「活动数据从哪来」这件事只有一处。
 """
 import json
-import math
 from datetime import datetime, timedelta
 
 from lib import points, points_config, points_db
@@ -45,14 +43,12 @@ ITEM_REAL_LIKE = "real_like"
 ITEM_PRIORITY = "priority_signup"
 ITEM_WISH = "wish"
 ITEM_MATCHMAKER = "matchmaker"
-ITEM_FEE_DISCOUNT = "fee_discount"
 
 ITEM_LABELS = {
     ITEM_REAL_LIKE: "额外实名喜欢",
-    ITEM_PRIORITY: "小活动优先报名名额",
+    ITEM_PRIORITY: "活动优先报名",
     ITEM_WISH: "心愿名额",
     ITEM_MATCHMAKER: "红娘人工推荐",
-    ITEM_FEE_DISCOUNT: "活动费用减免",
 }
 
 # 兑换项 → points_config 里的价格键
@@ -61,7 +57,6 @@ ITEM_PRICE_KEYS = {
     ITEM_PRIORITY: "redeem_priority_signup",
     ITEM_WISH: "redeem_wish",
     ITEM_MATCHMAKER: "redeem_matchmaker",
-    ITEM_FEE_DISCOUNT: "redeem_fee_discount",
 }
 
 # 兑换单状态。active 是「已兑换、还没了结」，其余都是终态。
@@ -116,7 +111,7 @@ class _activity:
     """调用方传进来的活动事实。
 
     只读它需要的那几个键，缺了就给一句人话的错——这些值来自多维表格，
-    字段读串了（比如把「费用」读成文本）时，报「这场活动没有名额」比
+    字段读串了（比如把「名额」读成文本）时，报「这场活动没有名额」比
     TypeError 好查得多。
     """
 
@@ -125,7 +120,6 @@ class _activity:
         self.id = str(raw.get("id") or "").strip()
         self.title = str(raw.get("title") or self.id).strip()
         self.quota = _as_int(raw.get("quota"))
-        self.fee = _as_int(raw.get("fee"))
         self.start_at = str(raw.get("start_at") or "").strip()
         self.open = bool(raw.get("open"))
         if not self.id:
@@ -137,22 +131,6 @@ def _as_int(value, default=0):
         return int(float(str(value).strip()))
     except (TypeError, ValueError):
         return default
-
-
-def discounted_fee(fee, rate=None):
-    """减免后的自付金额（元）。原价 × 比例，四舍五入到元。
-
-    用「加 0.5 再向下取整」而不是 Python 的 `round()`：后者是银行家舍入
-    （round-half-to-even），95 元打七折算出 66.5 会变成 66，99 元算出 69.3
-    是 69——两个都是「四舍五入」但用户按计算器核对时对不上 66.5→67 这个
-    直觉。金额展示必须可预期。
-    """
-    fee = _as_int(fee)
-    if fee <= 0:
-        return 0
-    if rate is None:
-        rate = float(points_config.get("fee_discount_rate"))
-    return max(0, math.floor(fee * float(rate) + 0.5))
 
 
 # ---------------------------------------------------------------- 核心
@@ -360,28 +338,6 @@ def redeem_matchmaker(user_oid, condition, *, request_key="", conn=None):
                        ref_type=ITEM_MATCHMAKER, ref_id="",
                        params={"condition": condition}, key=key, status=ST_PENDING,
                        reason="兑换红娘人工推荐")
-
-
-def redeem_fee_discount(user_oid, activity, *, request_key="", conn=None):
-    """活动费用减免（40 穗）。只在收费活动、报名时一起用。
-
-    「付款成功才扣穗」：本项目没有在线支付，报名成功就是付款成功，所以这个
-    函数由报名流程在**确认能报上**之后调用。减免后的金额见 `discounted_fee`。
-    """
-    act = _activity(activity)
-    with points_db.transaction(conn) as c:
-        key = _new_key(c, ITEM_FEE_DISCOUNT, user_oid, act.id, request_key)
-        _precheck(c, key, ITEM_FEE_DISCOUNT)
-        _require_balance(c, user_oid, ITEM_FEE_DISCOUNT)
-        if act.fee <= 0:
-            raise ItemUnavailable(f"「{act.title}」是免费活动，用不上费用减免")
-        return _create(c, user_oid, ITEM_FEE_DISCOUNT, cost=cost_of(ITEM_FEE_DISCOUNT),
-                       ref_type=ITEM_FEE_DISCOUNT, ref_id=act.id,
-                       params={"activity_id": act.id, "title": act.title,
-                               "original_fee": act.fee,
-                               "payable": discounted_fee(act.fee)},
-                       key=key, status=ST_ACTIVE,
-                       reason=f"兑换活动费用减免：{act.title}")
 
 
 # ---------------------------------------------------------------- 退还

@@ -654,7 +654,7 @@
              都表白了，再摆一个更轻的按钮只会让人犹豫点哪个。 -->
         <button v-if="canPraiseCard" class="praise-btn" :class="{praised: cardPraised}"
                 @click="togglePraise(currentCard)" :disabled="actionLoading || praiseBusy">
-          👍&#xFE0E;
+          <van-icon name="good-job" />
           <span class="praise-left" v-if="!cardPraised && praiseLeft > 0">{{ praiseLeft }}</span>
         </button>
         <div class="praise-hint-pill" v-if="canPraiseCard && cardPraised">要不要表示喜欢？</div>
@@ -825,8 +825,8 @@
       </div>
       <div class="profile-card-divider"></div>
       <div class="profile-card-row" style="cursor:pointer;" @click="openPointsRules">
-        <span class="row-label" style="color:#969799; font-size:13px; line-height:1.5;">麦穗能换「实名喜欢」名额、「优先报名」名额、「心愿名额」、「红娘人工推荐」、「活动费用减免」</span>
-        <van-icon name="arrow-down" color="#c8c9cc" />
+        <span class="row-label" style="color:#969799; font-size:13px; line-height:1.5;">麦穗能换「实名喜欢」名额、「优先报名」名额、「心愿名额」、「红娘人工推荐」</span>
+        <van-icon name="arrow" color="#c8c9cc" />
       </div>
       <div class="profile-card-divider"></div>
       <div class="profile-card-row">
@@ -1420,7 +1420,7 @@
     </div>
     <div style="padding:20px 12px;" v-else-if="canPraiseDetail">
       <button class="praise-btn" style="margin:0 auto;" :class="{praised: !!userDetail.praised}"
-              @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy">👍&#xFE0E;</button>
+              @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy"><van-icon name="good-job" /></button>
       <div style="text-align:center; margin-top:8px; color:#969799; font-size:12px;">
         {{ userDetail && userDetail.praised ? '已点赞' : '点个赞' }}
       </div>
@@ -1462,15 +1462,9 @@
   <div style="padding:22px 20px 18px; text-align:center;">
     <div style="font-size:18px; font-weight:600; color:#323233;">微信缴费</div>
     <div style="margin:10px 0 4px; font-size:15px; color:#ff4d6a; font-weight:600;">费用：{{ currentActivity && currentActivity.fee > 0 ? currentActivity.fee + '元' : '免费' }}</div>
-    <div v-if="feeDiscount" style="margin:6px 0 8px; padding:8px 10px; background:#fff7f9; border-radius:8px; font-size:12.5px; color:#ff4d6a; line-height:1.6;">
-      用 {{ feeDiscount.cost }} 穗麦穗减免，实付只需 {{ feeDiscount.payable }} 元
-    </div>
     <div style="font-size:12.5px; color:#969799; line-height:1.6; margin-bottom:10px;">请长按下方二维码保存到相册，用微信扫码完成缴费<br>缴费后点击「我已完成缴费」即报名成功</div>
     <img src="pay-qr.jpg?v=2" alt="微信缴费二维码" style="width:220px; max-width:74%; border-radius:10px; border:1px solid #f0f0f0;">
-    <!-- 减免是「付款这一步」的选择，不是报名前的独立兑换：点哪个按钮决定扫多少，
-        服务端在报名成功那一刻才扣穗。 -->
-    <van-button v-if="feeDiscount" type="primary" color="#ff6b81" block round style="margin-top:16px;" :loading="actionLoading" @click="confirmPay(true)">用麦穗减免，实付 {{ feeDiscount.payable }} 元</van-button>
-    <van-button type="primary" color="#ff6b81" block round :plain="!!feeDiscount" :style="feeDiscount ? 'margin-top:8px;' : 'margin-top:16px;'" :loading="actionLoading" @click="confirmPay(false)">{{ feeDiscount ? '原价缴费 ' + (currentActivity ? currentActivity.fee : 0) + ' 元' : '我已完成缴费' }}</van-button>
+    <van-button type="primary" color="#ff6b81" block round style="margin-top:16px;" :loading="actionLoading" @click="confirmPay()">我已完成缴费</van-button>
     <div style="margin-top:10px; font-size:13px; color:#969799;" @click="showPayDialog=false">取消</div>
   </div>
 </van-popup>
@@ -1750,7 +1744,7 @@
       </div>
       <template v-if="pointsRules.notes.length">
         <div class="points-rules-title">说明</div>
-        <div v-for="(n, i) in pointsRules.notes" :key="i" class="points-rules-note">· {{ n }}</div>
+        <div v-for="(n, i) in pointsRules.notes" :key="i" class="points-rules-note">{{ n }}</div>
       </template>
     </template>
   </div>
@@ -2212,12 +2206,8 @@ createApp({
     const inviteRewardMale = computed(() => (pointsRules.value.config && pointsRules.value.config.invite_reward_male) || 0);
     const matchmakerConditionMax = computed(() => (pointsRules.value.config && pointsRules.value.config.matchmaker_condition_max_len) || 200);
     // 需要先选活动的条目；real_like 只是加一次名额，与活动无关
-    const REDEEM_ACTIVITY_ITEMS = ['priority_signup', 'wish', 'fee_discount'];
-    // 费用减免不在这里兑：规则是「报名收费活动、付款那一步才扣穗」。放进兑换面板
-    // 会开出一张没人用的单子，用户再去报名时反而被告知「已经用过了」。
-    // 它在活动详情的缴费弹窗里，可用性由服务端下发的 activity.fee_discount 决定。
-    const REDEEM_PANEL_EXCLUDE = ['fee_discount'];
-    const redeemPanelItems = computed(() => (pointsRules.value.items || []).filter(it => !REDEEM_PANEL_EXCLUDE.includes(it.item)));
+    const REDEEM_ACTIVITY_ITEMS = ['priority_signup', 'wish'];
+    const redeemPanelItems = computed(() => (pointsRules.value.items || []));
     const redeemNeedsActivity = computed(() => !!(redeemItem.value && REDEEM_ACTIVITY_ITEMS.includes(redeemItem.value.item)));
     // 心愿限定「自己报了名的活动」（接口也会拦，这里只是别让人白填一遍）。
     // 其余活动类兑换项照旧全列——优先名额在没报名时用才是它的意义。
@@ -2931,28 +2921,21 @@ createApp({
       if (fee > 0) {
         showPayDialog.value = true;
       } else {
-        doSignup(false);
+        doSignup();
       }
     }
-    // 付款弹窗里的减免选项：可用性由服务端随活动详情下发（余额、是不是收费活动、
-    // 这场有没有用过都在那边判），前端只决定画不画这个按钮。
-    const feeDiscount = computed(() => {
-      const d = currentActivity.value && currentActivity.value.fee_discount;
-      return d && d.available ? d : null;
-    });
-    async function confirmPay(useDiscount) {
+    async function confirmPay() {
       showPayDialog.value = false;
-      await doSignup(useDiscount);
+      await doSignup();
     }
-    async function doSignup(useDiscount) {
+    async function doSignup() {
       actionLoading.value = true;
       try {
         const data = await api('/api/activities/' + currentActivity.value.record_id + '/signup',
-          { method: 'POST', body: JSON.stringify({ use_fee_discount: !!useDiscount }) });
+          { method: 'POST' });
         vant.showToast(data.message || '报名成功');
         activities.value = []; activitiesLoaded.value = false; // 刷新缓存
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
-        pointsLoaded.value = false; // 减免扣过穗的话，麦穗页下次进去要重新拉
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
@@ -4875,7 +4858,7 @@ createApp({
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
-      openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog, feeDiscount,
+      openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
       showActivityPromo, gotoPromoActivity, promoPoster,

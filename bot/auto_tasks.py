@@ -497,7 +497,7 @@ def auto_send_view_after_approval():
             "每月有 10 颗匿名喜欢额度（月初补满），另有每月 1 次实名喜欢。\n"
             f"邀请好友注册，可得麦穗（她 {_invite_reward('female')} 穗 / "
             f"他 {_invite_reward('male')} 穗），麦穗能换额外实名喜欢、优先报名、"
-            f"心愿名额、红娘推荐、活动费用减免。\n\n"
+            f"心愿名额、红娘推荐。\n\n"
             "祝你早日找到天主给你准备的另一半！\U0001f495"
         )
         if send_text_message(open_id, message_head):
@@ -882,37 +882,6 @@ def auto_settle_priority_orders():
     return signed, refunded
 
 
-def auto_settle_fee_discounts():
-    """费用减免的单子：活动取消就退穗，活动结束就收尾。
-
-    减免的穗是报名那一下扣的（「付款成功才扣穗」），平时不用管。需求里写明的
-    退穗条件只有一个：**活动全额退款（取消）**。活动结束后把单子关掉，否则
-    一直挂着「生效中」——`all_orders` 是 `ORDER BY id LIMIT 200`，陈年 active
-    单子堆过 200 条，新单子就扫不到了。
-
-    返回 (退穗条数, 收尾条数)。
-    """
-    refunded = closed = 0
-    for order in points_redeem.all_orders(points_redeem.ITEM_FEE_DISCOUNT,
-                                          [points_redeem.ST_ACTIVE]):
-        activity_id = str((order.get("params") or {}).get("activity_id") or "")
-        if not activity_id:
-            continue
-        activity = find_activity_by_id(activity_id)
-        if not activity:
-            continue
-        status = get_select_value(activity.get("fields", {}), FIELD_ACTIVITY_STATUS)
-        if status == ACTIVITY_STATUS_CANCELLED:
-            if _refund_order(order, "活动已取消，全额退款"):
-                refunded += 1
-        elif status == STATUS_ACTIVITY_FINISHED:
-            points_redeem.mark(order["id"], points_redeem.ST_DONE, note="活动已结束")
-            closed += 1
-    if refunded or closed:
-        log(f"费用减免结算：退穗 {refunded} 条，收尾 {closed} 条")
-    return refunded, closed
-
-
 def _refund_order(order, reason):
     """退穗并记日志。失败不抛——一条单子出问题不该拖垮整轮结算。"""
     try:
@@ -1010,7 +979,6 @@ def auto_send_view_loop(interval=30):
             auto_claw_back_banned()
             auto_settle_wishes()
             auto_settle_priority_orders()
-            auto_settle_fee_discounts()
             sync_points_documents()
         except Exception as e:
             log(f"审核通过通知循环异常: {e}")

@@ -419,6 +419,18 @@
   .pa-config-label { color: #646566; }
   .pa-config-val { color: #323233; font-weight: 600; text-align: right; }
   .pa-config-val.over { color: #ff6b81; }
+  /* 管理员·单用户麦穗概括弹层 */
+  .pa-detail { padding: 20px 16px 8px; max-height: 84vh; overflow-y: auto; }
+  .pa-detail-head { text-align: center; padding-bottom: 14px; border-bottom: 1px solid #f2f3f5; }
+  .pa-detail-name { font-size: 17px; font-weight: 700; color: #323233; }
+  .pa-detail-balance { font-size: 14px; color: #646566; margin-top: 8px; }
+  .pa-detail-balance b { font-size: 26px; color: #ff6b81; margin: 0 2px; }
+  .pa-detail-sub { font-size: 12px; color: #969799; margin-top: 4px; }
+  .pa-detail-section { margin-top: 14px; }
+  .pa-detail-title { font-size: 13px; font-weight: 600; color: #323233; margin-bottom: 4px; }
+  .pa-detail-empty { font-size: 12px; color: #c8c9cc; padding: 4px 0; }
+  .pa-detail-actions { display: flex; gap: 10px; margin: 18px 0 6px; }
+  .pa-detail-actions .van-button { flex: 1; }
   /* 邀请进度 / 好友登记 */
   .invite-progress { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .invite-progress-item { flex: 1; min-width: 70px; background: #f7f8fa; border-radius: 8px; padding: 8px 4px; text-align: center; }
@@ -909,7 +921,7 @@
     <van-tabs v-model:active="paTab">
       <van-tab title="用户">
         <div class="pa-search"><van-field v-model="paUserQuery" placeholder="搜昵称或用户ID" clearable /></div>
-        <div v-for="u in paFilteredUsers" :key="u.user_oid" class="pa-row" @click="paFilterByUser(u)">
+        <div v-for="u in paFilteredUsers" :key="u.user_oid" class="pa-row" @click="paOpenUser(u)">
           <div class="pa-row-main">
             <div class="pa-row-name">{{ u.nickname }} <span v-if="u.user_id" class="pa-row-id">{{ u.user_id }}</span></div>
             <div class="pa-row-sub">获得 {{ u.earned }} · 消耗 {{ u.spent }} · {{ u.entry_count }} 笔<template v-if="u.last_at"> · {{ u.last_at }}</template></div>
@@ -958,6 +970,65 @@
       </div>
     </div>
   </template>
+
+  <van-popup v-model:show="paUserDetailShow" position="bottom" round>
+    <div v-if="paUserDetailLoading" style="text-align:center; padding:48px;"><van-loading size="24px">加载中...</van-loading></div>
+    <div v-else-if="paUserDetail" class="pa-detail">
+      <div class="pa-detail-head">
+        <div class="pa-detail-name">{{ paUserDetail.user.nickname }} <span v-if="paUserDetail.user.user_id" class="pa-row-id">{{ paUserDetail.user.user_id }}</span></div>
+        <div class="pa-detail-balance">余额 <b>{{ paUserDetail.summary.balance }}</b> 穗</div>
+        <div class="pa-detail-sub">累计获得 {{ paUserDetail.summary.earned }} · 累计消耗 {{ paUserDetail.summary.spent }} · 实名额度 {{ paUserDetail.extra_real_like }}</div>
+      </div>
+      <div class="pa-detail-section">
+        <div class="pa-detail-title">获得构成</div>
+        <div v-for="k in paUserDetail.earned_by_kind" :key="k.kind" class="pa-config-row">
+          <span class="pa-config-label">{{ k.kind_label }}</span>
+          <span class="pa-config-val">+{{ k.total }}（{{ k.count }} 笔）</span>
+        </div>
+        <div v-if="!paUserDetail.earned_by_kind.length" class="pa-detail-empty">暂无获得记录</div>
+      </div>
+      <div class="pa-detail-section">
+        <div class="pa-detail-title">兑换构成</div>
+        <div v-for="r in paUserDetail.redeemed_by_item" :key="r.item" class="pa-config-row">
+          <span class="pa-config-label">{{ r.item_label }}</span>
+          <span class="pa-config-val">-{{ r.total }}（{{ r.count }} 次）</span>
+        </div>
+        <div v-if="!paUserDetail.redeemed_by_item.length" class="pa-detail-empty">暂未兑换</div>
+      </div>
+      <div class="pa-detail-section">
+        <div class="pa-detail-title">邀请进度</div>
+        <div class="pa-config-row">
+          <span class="pa-config-label">共邀请</span>
+          <span class="pa-config-val">{{ paUserDetail.invites.total }} 人（到账 {{ paUserDetail.invites.finalized }} · 待确认 {{ paUserDetail.invites.confirmed }} · 待注册 {{ paUserDetail.invites.pending }} · 已收回 {{ paUserDetail.invites.clawed_back }}）</span>
+        </div>
+        <div v-for="iv in paUserDetail.invite_list" :key="iv.id" class="pa-config-row">
+          <span class="pa-config-label">{{ iv.phone_masked }}</span>
+          <span class="pa-config-val">{{ iv.status_label }}</span>
+        </div>
+        <div v-if="!paUserDetail.invite_list.length" class="pa-detail-empty">暂未邀请</div>
+      </div>
+      <div class="pa-detail-section">
+        <div class="pa-detail-title">最近兑换</div>
+        <div v-for="o in paUserDetail.redemptions" :key="o.id" class="pa-config-row">
+          <span class="pa-config-label">{{ o.item_label }}</span>
+          <span class="pa-config-val">{{ o.status_label }} · -{{ o.cost }} · {{ o.created_at }}</span>
+        </div>
+        <div v-if="!paUserDetail.redemptions.length" class="pa-detail-empty">暂无兑换单</div>
+      </div>
+      <div class="pa-detail-section">
+        <div class="pa-detail-title">最近流水</div>
+        <div v-for="e in paUserDetail.entries" :key="e.id" class="pa-config-row">
+          <span class="pa-config-label">{{ e.kind_label }} · {{ e.reason || '—' }}</span>
+          <span class="pa-config-val" :class="e.delta > 0 ? 'pos' : 'neg'">{{ e.delta > 0 ? '+' : '' }}{{ e.delta }}</span>
+        </div>
+        <div v-if="!paUserDetail.entries.length" class="pa-detail-empty">暂无流水</div>
+      </div>
+      <div class="pa-detail-actions">
+        <van-button size="small" plain @click="paShowLedger(paUserDetailOid, paUserDetail.user.nickname)">看 TA 的全部流水</van-button>
+        <van-button size="small" @click="paUserDetailShow=false">关闭</van-button>
+      </div>
+    </div>
+  </van-popup>
 </div>
 <!-- ========== 我的资料详情 ========== -->
 <div v-else-if="page==='profile_detail'" key="profile_detail">
@@ -2365,6 +2436,10 @@ createApp({
     const paUserQuery = ref('');
     const paLedgerFilter = ref('');
     const paLedgerFilterNick = ref('');
+    const paUserDetail = ref(null);
+    const paUserDetailShow = ref(false);
+    const paUserDetailLoading = ref(false);
+    const paUserDetailOid = ref('');
 
     const paFilteredUsers = computed(() => {
       const q = paUserQuery.value.trim().toLowerCase();
@@ -2407,11 +2482,22 @@ createApp({
       } catch(e) { vant.showToast(e.message); }
       paLoading.value = false;
     }
-    async function paFilterByUser(u) {
-      paLedgerFilter.value = u.user_oid;
-      paLedgerFilterNick.value = u.nickname || u.user_id || u.user_oid;
+    async function paOpenUser(u) {
+      paUserDetailOid.value = u.user_oid;
+      paUserDetail.value = null;
+      paUserDetailShow.value = true;
+      paUserDetailLoading.value = true;
+      try {
+        paUserDetail.value = await api('/api/admin/points/user?user_oid=' + encodeURIComponent(u.user_oid));
+      } catch(e) { vant.showToast(e.message); paUserDetailShow.value = false; }
+      paUserDetailLoading.value = false;
+    }
+    function paShowLedger(oid, nick) {
+      paLedgerFilter.value = oid;
+      paLedgerFilterNick.value = nick;
+      paUserDetailShow.value = false;
       paTab.value = 1;
-      try { await loadPaLedger(); } catch(e) { vant.showToast(e.message); }
+      loadPaLedger().catch(e => vant.showToast(e.message));
     }
     function clearPaFilter() {
       paLedgerFilter.value = '';
@@ -5074,7 +5160,8 @@ createApp({
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
       paLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
-      openPointsAdmin, paFilterByUser, clearPaFilter
+      paUserDetail, paUserDetailShow, paUserDetailLoading, paUserDetailOid,
+      openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter
     };
   }
 }).use(vant).mount('#app');

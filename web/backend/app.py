@@ -3553,6 +3553,53 @@ def admin_points_invites():
     return jsonify({"total": int(total), "rows": out})
 
 
+@app.route("/api/admin/points/user", methods=["GET"])
+def admin_points_user():
+    """单个用户的麦穗概括：获得/消耗构成、邀请进度、兑换、最近流水。
+    给运营看「穗从哪来、花到哪去、邀请转化」，一眼判断该往哪个方向调策略。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    user_oid = request.args.get("user_oid", "").strip()
+    if not user_oid:
+        return jsonify({"error": "缺少 user_oid"}), 400
+
+    conn = points_db.connection()
+    earned_rows = conn.execute(
+        "SELECT kind, SUM(delta) AS total, COUNT(*) AS cnt FROM ledger"
+        " WHERE user_oid=? AND delta > 0 GROUP BY kind ORDER BY total DESC",
+        (user_oid,)).fetchall()
+    earned_by_kind = [{
+        "kind": r["kind"],
+        "kind_label": points.KIND_LABELS.get(r["kind"], r["kind"]),
+        "total": int(r["total"]), "count": int(r["cnt"]),
+    } for r in earned_rows]
+
+    redeemed_rows = conn.execute(
+        "SELECT item, COUNT(*) AS cnt, SUM(cost) AS total FROM redemptions"
+        " WHERE user_oid=? GROUP BY item ORDER BY total DESC",
+        (user_oid,)).fetchall()
+    redeemed_by_item = [{
+        "item": r["item"],
+        "item_label": points_redeem.ITEM_LABELS.get(r["item"], r["item"]),
+        "count": int(r["cnt"]), "total": int(r["total"] or 0),
+    } for r in redeemed_rows]
+
+    directory = _openid_directory()
+    return jsonify({
+        "open_id": user_oid,
+        "user": _name_of(directory, user_oid),
+        "summary": points.summary(user_oid),
+        "extra_real_like": points_redeem.extra_real_like_quota(user_oid),
+        "earned_by_kind": earned_by_kind,
+        "redeemed_by_item": redeemed_by_item,
+        "invites": points_invite.progress(user_oid),
+        "invite_list": points_invite.list_for(user_oid, limit=30),
+        "redemptions": points_redeem.list_for(user_oid, limit=30),
+        "entries": points.entries(user_oid, limit=30),
+    })
+
+
 @app.route("/api/points/invite", methods=["GET"])
 def points_invite_view():
     """我的邀请：链接、进度、已登记的人。"""

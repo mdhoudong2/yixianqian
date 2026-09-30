@@ -109,9 +109,6 @@
   .praise-btn:active { transform: scale(0.88); }
   .praise-btn.praised { background: #c8c9cc; box-shadow: none; }
   .praise-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  /* 「要不要表示喜欢？」——点过赞、还没喜欢时出现。做成一枚浮在按钮上方的小标签，
-     不占卡片正文的地方，也不挡「喜欢」按钮本身。 */
-  .praise-hint-pill { max-width: 150px; padding: 5px 10px; border-radius: 12px; background: #fff0f3; color: #ff6b81; font-size: 12px; line-height: 1.35; text-align: right; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   .praise-hint-inline { margin-bottom: 10px; padding: 8px 12px; border-radius: 10px; background: #fff0f3; color: #ff6b81; font-size: 13px; line-height: 1.5; }
   .back-btn { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #dcdee0; background: #fff; color: #969799; font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.15s; }
   .back-btn:active { transform: scale(0.88); }
@@ -240,6 +237,8 @@
   .like-note-highlight { color: #ff6b81; font-weight: 600; }
   .feedback-radio-group .van-radio { margin-bottom: 14px; }
   .feedback-radio-group .van-radio:last-child { margin-bottom: 0; }
+  .like-radio-group .van-radio { margin-right: 24px; margin-bottom: 8px; }
+  .like-radio-group .van-radio:last-child { margin-right: 0; }
   .like-textarea { background: #f7f8fa; border-radius: 8px; padding: 8px 10px; }
   .like-realname-warn { color: #ed6a0c; font-size: 12px; line-height: 1.6; margin: 4px 0 10px; background: #fff7e6; border-radius: 6px; padding: 6px 10px; }
   /* 邀请好友弹窗 */
@@ -451,7 +450,7 @@
   .van-theme-dark .msg-reply-tag { color: #8c8d91; }
   .van-theme-dark .msg-reply-btn { color: #6e6f73; }
   .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
-  .van-theme-dark .praise-hint-pill, .van-theme-dark .praise-hint-inline { background: #3a2830; color: #ff8fa1; }
+  .van-theme-dark .praise-hint-inline { background: #3a2830; color: #ff8fa1; }
   .van-theme-dark .profile-photo-section img { border-color: #3a3a3e; }
   .van-theme-dark .msg-input { color: #f5f5f5; }
   .van-theme-dark .candidate-search-input { background: #1a1a1c; border-color: #3a3a3e; }
@@ -655,7 +654,6 @@
                 @click="togglePraise(currentCard)" :disabled="actionLoading || praiseBusy">
           <van-icon name="good-job" />
         </button>
-        <div class="praise-hint-pill" v-if="canPraiseCard && cardPraised">要不要表示喜欢？</div>
         <button v-if="!isObserver && !currentCard.is_self" class="heart-btn" :class="{liked: currentCard.liked}" @click="openLikeDialog" :disabled="actionLoading || currentCard.liked">♥</button>
       </div>
     </template>
@@ -1529,7 +1527,7 @@
       <div>· 如果对方也喜欢你，就会自动获得对方的联系方式</div>
       <div>· 如果一方报名了某个活动，会相互收到通知</div>
     </div>
-    <van-radio-group v-model="likeType" direction="horizontal" style="padding: 0 0 8px;">
+    <van-radio-group v-model="likeType" direction="horizontal" class="like-radio-group" style="padding: 0 0 8px;">
       <van-radio name="匿名" :disabled="(user.anon_left || 0) <= 0">
         匿名喜欢（剩 {{ user.anon_left || 0 }} 颗）
       </van-radio>

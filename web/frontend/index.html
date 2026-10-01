@@ -249,6 +249,10 @@
   .promo-dialog-poster { display: block; width: 100%; border-radius: 10px; background: #f2f3f5; }
   /* 有海报时正文紧跟其后，不留双份上边距 */
   .promo-dialog-poster-wrap + .promo-dialog-body { padding-top: 12px; }
+  /* 更新说明弹窗（首页，每版本弹一次） */
+  .update-notes-body { padding: 22px 18px; font-size: 15px; color: #323233; line-height: 1.8; text-align: left; }
+  .update-notes-title { text-align: center; font-weight: 600; margin-bottom: 12px; }
+  .update-notes-item { margin-bottom: 8px; }
   .invite-dialog-body p { font-size: 13px; color: #646566; line-height: 1.6; margin-bottom: 12px; }
   .invite-link-box { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #323233; word-break: break-all; margin-bottom: 14px; line-height: 1.6; white-space: pre-line; }
   .invite-btn-row { display: flex; gap: 10px; }
@@ -463,6 +467,7 @@
   .van-theme-dark .candidate-search-input, .van-theme-dark .filter-title,
   .van-theme-dark .promo-dialog-body { color: #f5f5f5; }
   .van-theme-dark .promo-dialog-poster { background: #2c2c30; }
+  .van-theme-dark .update-notes-body { color: #f5f5f5; }
   .van-theme-dark .activity-desc, .van-theme-dark .msg-message, .van-theme-dark .edit-label,
   .van-theme-dark .round-tab, .van-theme-dark .invite-dialog-body p, .van-theme-dark .filter-tag,
   .van-theme-dark .like-item-msg, .van-theme-dark .modal-body, .van-theme-dark .detail-meta,
@@ -1949,6 +1954,17 @@
   </div>
   <div class="promo-dialog-body">「2026南头堂一线牵」线下活动正在报名，快去报名吧</div>
 </van-dialog>
+<!-- 更新说明弹窗：首页弹一次（localStorage 按 UPDATE_NOTES_KEY 记忆，改文案就 bump 版本号） -->
+<van-dialog v-model:show="showUpdateNotes" confirm-button-text="知道了"
+  :show-cancel-button="false" confirm-button-color="#ff6b81" close-on-click-overlay
+  @confirm="showUpdateNotes=false">
+  <div class="update-notes-body">
+    <div class="update-notes-title">🎉 一线牵更新说明</div>
+    <div class="update-notes-item">· 新增「麦穗」积分：邀请好友、协助活动都能攒穗，可兑换心愿单和红娘推荐</div>
+    <div class="update-notes-item">· 新增「点赞」：每天给心动的人点个赞，表达好感</div>
+    <div class="update-notes-item">· 喜欢额度改为每月刷新：匿名 10 次 + 实名 1 次</div>
+  </div>
+</van-dialog>
 <!-- 筛选弹层 -->
 <van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
@@ -2169,6 +2185,8 @@ createApp({
     // 未下发时保持空串，此时不弹——避免拿生产活动ID去测试库里空找。
     const promoActivityId = ref('');
     const promoPoster = ref('');                        // 弹窗顶部活动海报（活动没传海报时为空，只显示文字）
+    const showUpdateNotes = ref(false);                 // 首页更新说明弹窗
+    const UPDATE_NOTES_KEY = 'yxq_update_notes_v1';     // localStorage：本版本已看过。改文案就把 v1 bump 成 v2
     const cardsTotal = ref(0);
     const cardsVersion = ref(null);   // 服务端快照版本：变化则翻页序列失效需重拉
     const cardsLoadingMore = ref(false);
@@ -2965,6 +2983,12 @@ createApp({
     async function togglePraise(u) {
       if (!u || !u.openid || praiseBusy.value) return;
       const wasPraised = praisedSet.value.has(u.openid);
+      // 今日额度已用完：直接弹限额说明，别先弹「点赞成功」再被后端 400 打回。
+      if (!wasPraised && praiseReady.value && praiseLeft.value <= 0) {
+        const limit = (praiseState.value && praiseState.value.limit) || 0;
+        vant.showToast(`今天已经点满 ${limit} 个赞了，明天再来`);
+        return;
+      }
       praiseBusy.value = true;
 
       // 先有反应再记数据：立刻翻转按钮状态并弹提示，网络请求放后台跑。
@@ -3161,6 +3185,7 @@ createApp({
       preloadAround();
       maybeShowSwipeGuide();
       maybeShowActivityPromo();
+      maybeShowUpdateNotes();
     }
 
     // 活动
@@ -3231,6 +3256,7 @@ createApp({
       showSwipeGuide.value = false;
       try { localStorage.setItem(SWIPE_GUIDE_KEY, '1'); } catch(e) {}
       maybeShowActivityPromo(); // 新手引导让位后再补弹活动引导
+      maybeShowUpdateNotes();
     }
 
     // 牵线页活动报名引导：每个会话弹一次，且只对「未报名目标活动」的用户弹。
@@ -3242,7 +3268,7 @@ createApp({
       try { if (sessionStorage.getItem(ACTIVITY_PROMO_KEY)) return; } catch(e) {}
       setTimeout(() => {
         try { if (sessionStorage.getItem(ACTIVITY_PROMO_KEY)) return; } catch(e) {}
-        if (page.value !== 'cards' || showActivityPromo.value || showSwipeGuide.value) return;
+        if (page.value !== 'cards' || showActivityPromo.value || showSwipeGuide.value || showUpdateNotes.value) return;
         const act = (activities.value || []).find(a => a.activity_id === promoActivityId.value);
         if (!act || act.my_signup) return;
         if (act.status !== '报名中') return;
@@ -3269,6 +3295,16 @@ createApp({
       showActivityPromo.value = false;
       if (!promoActivityId.value) return;
       await openActivity(promoActivityId.value);
+    }
+    // 首页更新说明：每个版本弹一次（localStorage 按 UPDATE_NOTES_KEY 记忆）。
+    // 和新手引导、活动引导互斥——都抢首页第一屏，串行弹，别叠在一起。
+    function maybeShowUpdateNotes() {
+      try { if (localStorage.getItem(UPDATE_NOTES_KEY)) return; } catch(e) {}
+      setTimeout(() => {
+        try { if (localStorage.getItem(UPDATE_NOTES_KEY)) return; } catch(e) {}
+        if (page.value !== 'cards' || showUpdateNotes.value || showSwipeGuide.value || showActivityPromo.value) return;
+        showUpdateNotes.value = true;
+      }, 1500);
     }
 
     // 牵线卡片
@@ -4613,6 +4649,7 @@ createApp({
       if(showRedemptions.value){ showRedemptions.value=false; isHandlingPopState=false; return; }
       if(showRedeemPanel.value){ closeRedeemPanel(); isHandlingPopState=false; return; }
       if(showActivityPromo.value){ showActivityPromo.value=false; isHandlingPopState=false; return; }
+      if(showUpdateNotes.value){ showUpdateNotes.value=false; isHandlingPopState=false; return; }
       if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
@@ -4656,7 +4693,7 @@ createApp({
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
       if (p === 'home') loadActivities();
-      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); loadPraiseState(); }
+      if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); maybeShowUpdateNotes(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
       if (p === 'profile') { checkGroupEntry(); loadPraiseState(); if (user.value && user.value.is_admin) refreshReportedCount(); }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
@@ -4704,6 +4741,15 @@ createApp({
       else if(!v){
         try { sessionStorage.setItem(ACTIVITY_PROMO_KEY, '1'); } catch(e) {}
         if(!isHandlingPopState && history.state && history.state.overlay==='activityPromo'){ ignoreNextPop=true; history.back(); }
+        maybeShowUpdateNotes(); // 活动引导让位后，更新说明仍有机会在首页弹一次
+      }
+    });
+    // 更新说明弹窗：关闭动作统一记入 localStorage（每版本一次），历史回退与活动引导同款
+    watch(showUpdateNotes, (v)=>{
+      if(v && !isHandlingPopState){ pushHistory({overlay:'updateNotes'}); }
+      else if(!v){
+        try { localStorage.setItem(UPDATE_NOTES_KEY, '1'); } catch(e) {}
+        if(!isHandlingPopState && history.state && history.state.overlay==='updateNotes'){ ignoreNextPop=true; history.back(); }
       }
     });
 
@@ -5125,7 +5171,7 @@ createApp({
       openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
-      showActivityPromo, gotoPromoActivity, promoPoster,
+      showActivityPromo, gotoPromoActivity, promoPoster, showUpdateNotes,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,

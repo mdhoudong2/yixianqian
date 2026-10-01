@@ -855,7 +855,7 @@
     <div class="profile-card">
       <div class="profile-card-row" style="cursor:pointer;" @click="openPoints">
         <span class="row-label">🌾 我的麦穗</span>
-        <span class="hearts-left" v-if="pointsBalance">{{ pointsBalance }} 穗</span>
+        <span class="hearts-left">{{ pointsBalance }} 穗</span>
         <van-icon name="arrow" color="#c8c9cc" />
       </div>
       <div class="profile-card-divider"></div>
@@ -4066,7 +4066,7 @@ createApp({
         vant.showToast('你已经喜欢过TA了');
         return;
       }
-      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加管理员加赠和麦穗兑换来的名额）。
+      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加麦穗兑换来的名额）。
       // 只有两池都空才拦——只看匿名会把有实名名额的用户挡在门外。
       if ((user.value.anon_left || 0) <= 0 && (user.value.real_left || 0) <= 0) {
         vant.showToast('本月喜欢额度已用完，邀请好友得麦穗，麦穗可换实名喜欢');
@@ -4098,7 +4098,7 @@ createApp({
         vant.showToast('你已经喜欢过TA了');
         return;
       }
-      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加管理员加赠和麦穗兑换来的名额）。
+      // 两池分开：匿名 10 颗/月，实名 1 次/月（外加麦穗兑换来的名额）。
       // 只有两池都空才拦——只看匿名会把有实名名额的用户挡在门外。
       if ((user.value.anon_left || 0) <= 0 && (user.value.real_left || 0) <= 0) {
         vant.showToast('本月喜欢额度已用完，邀请好友得麦穗，麦穗可换实名喜欢');

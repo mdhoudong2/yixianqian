@@ -224,9 +224,9 @@ def _precheck(c, key, item):
 def redeem_real_like(user_oid, *, request_key="", conn=None):
     """额外实名喜欢（20 穗）。不过期，用掉不退穗。
 
-    换来的是一次**永久**实名名额，和「管理员加赠」是同一个池子——
-    `lib/quota.real_left` 天生就是「先用每月免费的、再用永久名额」。
-    （v7 起邀请奖励改发麦穗，不再直接换名额，所以那个池子只剩这两个来源。）
+    换来的是一次**永久**实名名额，进入 `lib/quota.real_left` 的永久名额池——
+    `real_left` 天生就是「先用每月免费的、再用永久名额」。
+    （v7 起邀请奖励改发麦穗、「管理员加赠」字段也已删除，池子只剩兑换这一条来源。）
     """
     with points_db.transaction(conn) as c:
         key = _new_key(c, ITEM_REAL_LIKE, user_oid, "", request_key)

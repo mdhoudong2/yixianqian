@@ -1348,7 +1348,7 @@ def reconcile_hearts():
 
         匿名剩余 = 10 + 本月满期退回 − 本月发起的有效匿名喜欢
         实名剩余 = 1 + 永久名额 − 本月发起的有效实名喜欢
-        永久名额 = 管理员加赠 + 麦穗兑换的额外实名喜欢
+        永久名额 = 麦穗兑换的额外实名喜欢
 
     v7 起「邀请 → 实名名额」这条线撤了：邀请奖励改成发麦穗，用麦穗兑换来的
     名额进 SQLite 账本，不再从「邀请人ID」推导。所以这里不再算 valid_invites，
@@ -1403,20 +1403,12 @@ def reconcile_hearts():
     # 每个 oid 的主档案
     primary_by_oid = {oid: pick_primary_record(recs)[0] for oid, recs in groups.items()}
 
-    # 永久名额 = 管理员加赠 + 麦穗兑换的额外实名喜欢。
-    # 「管理员加赠」字段是唯一手动奖励入口：管理员直接在用户表填累计奖励数，对账读取叠加、不会覆盖。
-    # v7 起它的语义从「加爱心」改成「加永久实名名额」——名额无上限，所以这里也不封顶。
-    admin_bonus = {}
-    for oid, prec in primary_by_oid.items():
-        try:
-            admin_bonus[oid] = int(get_field_number(prec.get("fields", {}), FIELD_HEART_BONUS, 0) or 0)
-        except Exception:
-            admin_bonus[oid] = 0
-
+    # 永久名额 = 麦穗兑换的额外实名喜欢。
+    # 「管理员加赠」字段已下线删除（2026-10），永久名额只剩麦穗兑换这一条来源。
     quota_map = {}
     for oid in primary_by_oid:
         recs_l = likes_by_oid.get(oid, [])
-        permanent = admin_bonus.get(oid, 0) + points_redeem.extra_real_like_quota(oid)
+        permanent = points_redeem.extra_real_like_quota(oid)
         quota_map[oid] = {
             "anon_left": quota.anon_left(recs_l, ym),
             "anon_total": quota.MONTHLY_ANON_HEARTS,

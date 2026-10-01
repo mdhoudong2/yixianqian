@@ -555,11 +555,10 @@ def _quota_from_record(open_id):
     f = (u or {}).get("fields", {})
     if not f:
         return None
-    # 永久名额 = 管理员加赠 + 麦穗兑换来的额外实名喜欢。v7 起「邀请名额」不再参与
-    # ——邀请奖励改成发麦穗了。这里跟机器人 reconcile_hearts 用同一套口径，
-    # 两边算得不一样的话，下面的 min() 会稳定取到小的那个，用户会莫名其妙少一次。
-    permanent = ((bitable.get_field_number(f, F_PERMANENT_BONUS, 0) or 0)
-                 + points_redeem.extra_real_like_quota(open_id))
+    # 永久名额 = 麦穗兑换来的额外实名喜欢。v7 起「邀请名额」「管理员加赠」都不再
+    # 参与——邀请奖励改成发麦穗、管理员加赠字段已删除。这里跟机器人 reconcile_hearts
+    # 用同一套口径，两边算得不一样的话，下面的 min() 会稳定取到小的那个。
+    permanent = points_redeem.extra_real_like_quota(open_id)
     anon_total = bitable.get_field_number(f, F_HEART_REMAIN_TOTAL, MONTHLY_ANON_HEARTS)
     return {
         "anon_left": bitable.get_field_number(f, F_HEART_REMAIN, MONTHLY_ANON_HEARTS),

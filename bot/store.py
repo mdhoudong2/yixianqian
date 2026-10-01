@@ -162,8 +162,8 @@ def update_p2p_chat(open_id, chat_id):
     storage.update_json(P2P_CHAT_FILE, {}, _m)
 
 
-# load_heart_bonus / add_heart_bonus 已删除：管理员加赠不再走这个独立账本，
-# 而是直接填用户表的「管理员加赠」字段，由 reconcile_hearts 读取叠加。
+# load_heart_bonus / add_heart_bonus 已删除：管理员加赠先改成直接填用户表字段，
+# 2026-10 起那个「管理员加赠」字段也整个下线删除了（永久名额只剩麦穗兑换）。
 
 
 def add_notification(recipient, ntype, text, key=None, extra=None):

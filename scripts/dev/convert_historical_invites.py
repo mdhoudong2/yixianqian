@@ -43,13 +43,16 @@ from clients import search_records, update_record  # noqa: E402
 from constants import (  # noqa: E402
     ADMIN_OPEN_IDS,
     FIELD_FEISHU_ID,
-    FIELD_HEART_BONUS,
     FIELD_NICKNAME,
     POINTS_DB_FILE,
     USER_TABLE_ID,
 )
 from lib import points, points_db  # noqa: E402
 from lib.bitable_client import get_field_number, get_field_text  # noqa: E402
+
+# 「管理员加赠」字段已于 2026-10 下线删除，constants 里不再有。这份一次性脚本
+# 已经跑完，本地定义只是为了它还能被 import / 重跑，不依赖 constants。
+FIELD_HEART_BONUS = "管理员加赠"
 
 # 用户ID -> (预期昵称, 穗数, 说明)。仅此一份，改这里就是改发多少。
 CONVERSION = [

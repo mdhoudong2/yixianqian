@@ -68,9 +68,8 @@ FIELD_PHONE = "手机号"
 # 实名每月 1 次 + 邀请/加赠得来的永久名额，不占那 10 颗。
 FIELD_HEART_REMAIN = "爱心剩余"  # 本月剩余匿名额度
 FIELD_HEART_TOTAL = "爱心总量"   # 本月匿名额度，固定 = lib.quota.MONTHLY_ANON_HEARTS
-FIELD_HEART_BONUS = "管理员加赠"  # 管理员手动加赠的「永久实名名额」（表格里直接填，对账叠加、不被覆盖）
 FIELD_INVITE_QUOTA = "邀请名额"   # 邀请好友获得的永久实名名额（对账按「有效邀请」推导，非奖励账本）
-FIELD_REAL_TOTAL = "实名总量"     # 实名总额度 = 1 + 邀请名额 + 管理员加赠
+FIELD_REAL_TOTAL = "实名总量"     # 实名总额度 = 1 + 麦穗兑换来的额外实名喜欢
 FIELD_REAL_REMAIN = "实名剩余"    # 本月剩余实名次数
 FIELD_ACCOUNT_STATUS = "账号状态"
 FIELD_GENDER = "性别"

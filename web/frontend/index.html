@@ -3160,6 +3160,14 @@ createApp({
     async function doLogin() {
       loggingIn.value = true; loginError.value = false; loginTip.value = ''; showPersonalGuide.value = false;
 
+      // 测试环境专用：?preview_guide=1 直接展示个人版引导卡片，不走真实登录，便于验收
+      try {
+        if (location.hostname.includes('test') && new URLSearchParams(location.search).get('preview_guide') === '1') {
+          loggingIn.value = false; loginError.value = true; showPersonalGuide.value = true;
+          return;
+        }
+      } catch (e) {}
+
       // 1. 已有会话（cookie 有效则直接进）
       try {
         await loadHome();

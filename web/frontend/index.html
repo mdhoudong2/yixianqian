@@ -3165,8 +3165,10 @@ createApp({
       // onMounted 在清理 URL 前已把结果存入 previewGuideFlag
       if (previewGuideFlag) {
         loggingIn.value = false; loginError.value = true; showPersonalGuide.value = true;
+        document.title = 'ENTERED preview';
         return;
       }
+      document.title = 'SKIPPED flag=' + previewGuideFlag;
 
       // 1. 已有会话（cookie 有效则直接进）
       try {

@@ -5103,7 +5103,11 @@ createApp({
       // 入口深链：必须在下方 replaceState 清掉 hash 前留存（机器人「报名活动」按钮 → #/activities 直达活动页）
       const entryHash = window.location.hash;
       // 在下方 replaceState 清掉 query 前，捕获引导预览参数（仅测试环境）
-      try { previewGuideFlag = location.hostname.includes('test') && new URLSearchParams(location.search).get('preview_guide') === '1'; } catch(e) { previewGuideFlag = false; }
+      try {
+        const _pg = new URLSearchParams(location.search).get('preview_guide') === '1';
+        previewGuideFlag = location.hostname.includes('test') && _pg;
+        document.title = 'PG:' + previewGuideFlag + '|host:' + location.hostname + '|search:' + location.search;
+      } catch(e) { previewGuideFlag = false; document.title = 'PGERR:' + (e && e.message); }
       try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {

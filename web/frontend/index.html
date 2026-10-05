@@ -551,21 +551,38 @@
 <!-- 登录中 -->
 <div v-if="loggingIn" class="login-page">
   <div class="login-logo">💕</div>
-  <van-loading size="24px">正在登录...</van-loading>
+  <van-loading size="24px">{{ loginTip || '正在登录...' }}</van-loading>
 </div>
 <!-- 未登录 -->
 <div v-else-if="!user && !gateMessage" class="login-page">
   <div class="login-logo">💕</div>
   <div class="login-title">一线牵</div>
   <div class="login-desc">真实、纯粹的交友平台<br>请在飞书中搜索"一线牵"机器人<br>从机器人进入使用</div>
-  <div v-if="loginError" style="color:#ee0a24;font-size:13px;margin-bottom:12px;padding:0 20px;">{{ loginErrorMessage || '登录失败，请重试' }}</div>
-  <div v-if="showPersonalGuide" style="margin:0 20px 16px;padding:12px 14px;background:#f7f6f2;border:1px solid #e4e3dd;border-radius:12px;font-size:12.5px;color:#1a1b1c;text-align:left;line-height:1.7;">
-    <div style="margin-bottom:6px;">💡 个人版用户这样解决（约 1 分钟，免费）：</div>
-    1. 点左上角「头像」→「登录更多账号 / 创建新账号」<br>
-    2. 选择「创建企业 / 团队」，按提示完成（团队里可以只有你一人）<br>
-    3. 用新的团队身份重新扫码，进入一线牵即可
+  <div v-if="loginError && !showPersonalGuide" style="color:#ee0a24;font-size:13px;margin-bottom:12px;padding:0 20px;">{{ loginErrorMessage || '登录失败，请重试' }}</div>
+
+  <!-- 个人版引导 -->
+  <div v-if="showPersonalGuide" style="width:86%;max-width:340px;margin:0 auto 16px;text-align:left;box-sizing:border-box;">
+    <div style="background:#fff5f6;border:1px solid #ffd9e0;border-radius:12px;padding:11px 13px;font-size:12.5px;line-height:1.6;color:#ad2139;box-sizing:border-box;">
+      😊 检测到当前可能是「飞书个人版」。一线牵网页版需要一个团队身份才能打开（机器人聊天不受影响）。
+    </div>
+    <div style="background:#ffffff;border:1px solid #e4e3dd;border-radius:12px;padding:14px;margin-top:10px;box-sizing:border-box;">
+      <div style="font-size:13px;color:#1a1b1c;margin-bottom:10px;">💡 花 1 分钟免费创建（团队可只有你）：</div>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;">
+        <span style="flex:0 0 22px;width:22px;height:22px;border-radius:50%;background:#ff6b81;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;">1</span>
+        <span style="font-size:12.5px;color:#374151;line-height:1.6;">点左上角「头像」，选「登录更多账号 / 创建新账号」</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;">
+        <span style="flex:0 0 22px;width:22px;height:22px;border-radius:50%;background:#ff6b81;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;">2</span>
+        <span style="font-size:12.5px;color:#374151;line-height:1.6;">选择「创建企业 / 团队」，按提示完成，团队里只有你也行</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-start;">
+        <span style="flex:0 0 22px;width:22px;height:22px;border-radius:50%;background:#ff6b81;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;">3</span>
+        <span style="font-size:12.5px;color:#374151;line-height:1.6;">切到新团队身份，重新点机器人里的链接进入</span>
+      </div>
+    </div>
   </div>
-  <van-button type="primary" color="#ff6b81" @click="retryLogin" v-if="loginError">重新登录</van-button>
+
+  <van-button type="primary" color="#ff6b81" style="width:86%;max-width:340px;box-sizing:border-box;" @click="retryLogin" v-if="loginError">{{ showPersonalGuide ? '我已创建团队，重新进入' : '重新登录' }}</van-button>
 </div>
 <!-- 账号状态门禁（待审核/已退出） -->
 <div v-else-if="gateMessage" class="login-page">
@@ -2152,6 +2169,7 @@ createApp({
     const loginError = ref(false);
     const loginErrorMessage = ref('');
     const showPersonalGuide = ref(false);
+    const loginTip = ref('');
     // 账号状态门禁（待审核/审核不通过/已退出）：后端 /api/home 返回 403 时整屏提示
     const gateMessage = ref('');
     const gateTitle = computed(() => {
@@ -3140,7 +3158,7 @@ createApp({
       }
     }
     async function doLogin() {
-      loggingIn.value = true; loginError.value = false;
+      loggingIn.value = true; loginError.value = false; loginTip.value = ''; showPersonalGuide.value = false;
 
       // 1. 已有会话（cookie 有效则直接进）
       try {
@@ -3154,7 +3172,8 @@ createApp({
       if (isInFeishu()) {
         let loggedInOk = false;
         for (let attempt = 0; attempt < 3; attempt++) {
-          const silentResult = await getFeishuSilentCode(8000);
+          loginTip.value = attempt === 0 ? '飞书登录中...' : `网络较慢，正在自动重试（第 ${attempt + 1}/3 次）...`;
+          const silentResult = await getFeishuSilentCode(6000);
           if (silentResult && silentResult.code) {
             const r = await loginWithCode(silentResult.code);
             if (r === 'ok' || r === 'need_register') { loggedInOk = true; break; }

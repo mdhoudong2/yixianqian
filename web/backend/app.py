@@ -2579,19 +2579,26 @@ def feishu_auth():
     open_id = None
     last_error = ""
     # 标准 access_token（与 authen/v1/authorize 配套）
-    try:
-        url = "https://open.feishu.cn/open-apis/authen/v1/access_token"
-        headers = {"Authorization": f"Bearer {app_access_token}", "Content-Type": "application/json"}
-        resp = requests.post(url, headers=headers, json={"grant_type": "authorization_code", "code": code}, timeout=15)
-        result = resp.json()
-        app.logger.info(f"Authen token response code={result.get('code')}, msg={result.get('msg')}")
-        if result.get("code") == 0:
-            open_id = result.get("data", {}).get("open_id")
-            app.logger.info(f"Auth success, open_id={open_id}")
-        else:
+    # 网络抖动/超时导致未换到身份时重试一次：code 已成功消费会直接 code==0 跳出、
+    # 不会重复消费；仅当首次请求未成功时，重试才可能挽回。
+    url = "https://open.feishu.cn/open-apis/authen/v1/access_token"
+    headers = {"Authorization": f"Bearer {app_access_token}", "Content-Type": "application/json"}
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, headers=headers, json={"grant_type": "authorization_code", "code": code}, timeout=15)
+            result = resp.json()
+            app.logger.info(f"Authen token response code={result.get('code')}, msg={result.get('msg')}")
+            if result.get("code") == 0:
+                open_id = result.get("data", {}).get("open_id")
+                app.logger.info(f"Auth success, open_id={open_id}")
+                break
             last_error = f"{result.get('code')} {result.get('msg')}"
-    except Exception as e:
-        last_error = f"exception: {e}"
+        except Exception as e:
+            last_error = f"exception: {e}"
+        if open_id:
+            break
+        if attempt == 0:
+            app.logger.warning("Authen token 首次未成功，进行 1 次重试")
 
     if not open_id:
         app.logger.error(f"Feishu auth failed: {last_error}")

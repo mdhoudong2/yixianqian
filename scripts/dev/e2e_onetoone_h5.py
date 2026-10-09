@@ -15,6 +15,8 @@ H5 6 个路由 + 留言→已聊推导：
 - POST /api/messages → 再次读 result 验证对方变「已聊」
 
 状态编排直接改活动表「一对一状态」字段（收集中→已完成），不清结果表（结果由 seed 造好）。
+断言全部数据无关（不硬编码人数），只验证路由语义：候选=全量异性且不含自己、志愿回读一致、
+结果排名 1..N 连续、留言后目标必聊对象变「已聊」。
 """
 import os
 import sys
@@ -70,6 +72,20 @@ def _find_participant(gender_ch):
     return None, None, None
 
 
+def _count_opposite_signups(me_oid, opposite_gender):
+    """报名里（排除自己）异性人数——与 candidates 路由同口径，用于断言候选数量。"""
+    signups = bitable.get_signups(ACT)
+    n = 0
+    for s in signups:
+        s_oid = _t(s.get("fields", {}), CFG.F_SIGNUP_OPENID)
+        if not s_oid or s_oid == me_oid:
+            continue
+        u = bitable.find_user_by_openid(s_oid)
+        if u and bitable.get_select_value(u.get("fields", {}), CFG.F_GENDER) == opposite_gender:
+            n += 1
+    return n
+
+
 def main():
     act_record = _find_activity_record()
     if not act_record:
@@ -113,11 +129,14 @@ def main():
         _fail(f"candidates HTTP {r.status_code}: {r.get_json()}")
     else:
         cand = r.get_json().get("candidates", [])
+        expected = _count_opposite_signups(male_oid, "女性")
         if any(c["openid"] == male_oid for c in cand):
             _fail("candidates 含自己")
-        if len(cand) != 8:
-            _fail(f"candidates 数量期望 8，得 {len(cand)}")
-        print(f"  candidates: {len(cand)} 位异性（排除自己）")
+        if len(cand) != expected:
+            _fail(f"candidates 数量 {len(cand)} 与异性报名 {expected} 不符")
+        if len(cand) < 7:
+            _fail(f"candidates 不足 7 位，无法提交志愿：{len(cand)}")
+        print(f"  candidates: {len(cand)} 位异性、排除自己（异性报名 {expected}）")
 
         choices = [c["openid"] for c in cand[:7]]
         r2 = post(f"/api/activities/{ACT}/onetoone/select", {"choices": choices})
@@ -143,13 +162,15 @@ def main():
         _fail(f"result HTTP {r.status_code}: {r.get_json()}")
     else:
         partners = r.get_json().get("partners", [])
-        if len(partners) != 8:
-            _fail(f"result partners 期望 8，得 {len(partners)}")
-        if any(p["chatted"] for p in partners):
-            _fail("result 初始 chatted 应全 false（尚未留言）")
-        if [p["rank"] for p in partners] != list(range(1, len(partners) + 1)):
-            _fail(f"result rank 非 1..N：{[p['rank'] for p in partners]}")
-        print(f"  result: {len(partners)} 位必聊、rank 1..8、chatted 全 false")
+        if not partners:
+            _fail("result partners 为空")
+        ranks = [p.get("rank") for p in partners]
+        if ranks != list(range(1, len(partners) + 1)):
+            _fail(f"result rank 非 1..N：{ranks}")
+        if any(not p.get("openid") for p in partners):
+            _fail("result 存在空 openid")
+        n_chatted = sum(1 for p in partners if p.get("chatted"))
+        print(f"  result: {len(partners)} 位必聊、rank 1..{len(partners)}、初始已聊 {n_chatted} 位")
 
     r = get("/api/activities/mine/onetoone")
     if r.status_code != 200:
@@ -173,21 +194,23 @@ def main():
     if not partners:
         _fail("无 partners，跳过留言验证")
     else:
-        target = partners[0]["openid"]
-        import time as _t
-        r = post("/api/messages", {"target_openid": target,
-                                   "content": f"E2E一对一已聊测试 {int(_t.time())}"})
-        if r.status_code != 200:
-            _fail(f"POST /api/messages HTTP {r.status_code}: {r.get_json()}")
+        target = next((p["openid"] for p in partners if not p.get("chatted")), None)
+        if not target:
+            print("  所有 partner 均已聊（历史留言残留），跳过留言→已聊验证")
         else:
-            h5_mod.refresh_snapshot_table("messages")
-            r = get(f"/api/activities/{ACT}/onetoone/result")
-            by_oid = {p["openid"]: p for p in r.get_json().get("partners", [])}
-            if by_oid.get(target, {}).get("chatted") is not True:
-                _fail(f"留言后 {target[:10]}… 应为已聊")
+            import time as _time
+            r = post("/api/messages", {"target_openid": target,
+                                       "content": f"E2E一对一已聊测试 {int(_time.time())}"})
+            if r.status_code != 200:
+                _fail(f"POST /api/messages HTTP {r.status_code}: {r.get_json()}")
             else:
-                n_chatted = sum(1 for p in by_oid.values() if p["chatted"])
-                print(f"  留言后 {target[:10]}… 已变「已聊」，其余仍 false：{n_chatted}/8 已聊")
+                h5_mod.refresh_snapshot_table("messages")
+                r = get(f"/api/activities/{ACT}/onetoone/result")
+                by_oid = {p["openid"]: p for p in r.get_json().get("partners", [])}
+                if by_oid.get(target, {}).get("chatted") is not True:
+                    _fail(f"留言后 {target[:10]}… 应为已聊")
+                else:
+                    print(f"  留言后 {target[:10]}… 已变「已聊」")
 
     print("\n" + ("✅ H5 API 端到端全部通过" if not _issues else "⛔ 存在失败项"))
     if _issues:

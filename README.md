@@ -44,7 +44,7 @@
 |---|---|
 | 机器人 | Python 3.12 · lark-oapi（WS 长连接） |
 | H5 后端 | Flask · gunicorn · Pillow · itsdangerous |
-| H5 前端 | Vue 3（CDN）· Vant 移动端组件 · Sortable |
+| H5 前端 | Vue 3（CDN）· Vant 移动端组件 |
 | 数据 | 飞书多维表格 Bitable |
 | AI | DeepSeek · ModelScope Vision · Tavily |
 

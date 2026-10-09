@@ -77,7 +77,24 @@ jobs:
             tail -3 "$f"
           done
           if [ "$fail" -ne 0 ]; then
-            echo "有分片失败，完整输出见上方各分片日志"
+            # 失败时必须倒出整份日志：tail -3 的 "1 failed" 只是症状，
+            # 真正的 traceback 与断言细节都被截掉了，摘要之外没有别的信息源。
+            printed=0
+            for f in /tmp/pytest-shards/shard*.log; do
+              if grep -qE 'failed|error|FAILED|ERROR' "$f"; then
+                echo "===== $f（完整日志）====="
+                cat "$f"
+                printed=1
+              fi
+            done
+            # 兜底：正则没命中（例如信号杀死导致日志残缺）就全量输出，宁可啰嗦也不丢原因
+            if [ "$printed" -eq 0 ]; then
+              for f in /tmp/pytest-shards/shard*.log; do
+                echo "===== $f（完整日志）====="
+                cat "$f"
+              done
+            fi
+            echo "有分片失败，上面已打印失败分片的完整日志"
             exit 1
           fi
           echo "全部分片通过（${#pids[@]} 片，${total} 个测试文件）"

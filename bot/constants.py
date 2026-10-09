@@ -283,9 +283,11 @@ MATCHMAKER_STAR_SCORES = {5: 100, 4: 90, 3: 80, 2: 75, 1: 70}
 # 权重
 WEIGHT_USER_SELECTION = 0.7
 WEIGHT_MATCHMAKER_PICK = 0.3
-# 一对一匹配权重：志愿优先级 + 匹配度（0.7*55=38.5 > 0.3*100=30，志愿恒排在非志愿前）
-WEIGHT_ONETOONE_PRIORITY = 0.7
-WEIGHT_ONETOONE_MATCH = 0.3
+# 一对一匹配（双向奔赴模型，去掉红娘打分）：总分 = 我的优先级得分×0.5 + 对方的优先级得分×0.3。
+# 「未选择TA」给 30 分基础分（不反感但没主动选），让「选了但我没选」的人有机会进我的名单。
+WEIGHT_ONETOONE_MY_PRIORITY = 0.5
+WEIGHT_ONETOONE_THEIR_PRIORITY = 0.3
+ONETOONE_UNSELECTED_SCORE = 30
 
 def is_admin(open_id):
     return open_id in ADMIN_OPEN_IDS

@@ -9,7 +9,8 @@ _do_onetoone 做匹配并写结果），最后读回结果表逐条验证。
 
 端到端要覆盖的核心断言：
 - 16 人 × 每人 8 个异性 = 128 条结果行（异性 8 < top_n 10，有多少算多少）；
-- 每人名单里 7 个志愿必居前 7 且顺序=志愿优先级；
+- 每人名单顺序 = 双向奔赴公式重算（0.5×我的优先级得分 + 0.3×对方的优先级得分，未选择=30）
+  逐条相等（含「没被我选、但选了我」的惊喜位插队）；
 - 无自己、无同性、排名 1..8 无重复。
 
 用法（在 /opt/yixianqian-test 仓库根，必须显式 YIXIANQIAN_ENV=dev）：
@@ -282,7 +283,7 @@ def _print_plan(p):
           f"{get_select_value(af, C.FIELD_ACT_ONETOONE_FLAG) or '空'}→是")
     print(f"\n【执行】handle_admin_stop_onetoone(\"{_ACTIVITY_ID}\")：匹配并写结果。")
     print(f"【预期】{len(p['participants'])} 人 × 每人 8 个异性 = "
-          f"{len(p['participants']) * 8} 条结果；7 志愿必居前 7。")
+          f"{len(p['participants']) * 8} 条结果；名单顺序=双向奔赴公式重算。")
 
 
 def _seed_selections(p):
@@ -334,8 +335,23 @@ def _run_matching():
     return reply
 
 
+def _expected_matches(p):
+    """用双向奔赴公式重算每人名单（喂给 run_onetoone_matching 与 _do_onetoone 完全相同的输入）。"""
+    from onetoone import run_onetoone_matching
+
+    participants = [{"id": x["oid"], "gender": "male" if x["gender"] == "男性" else "female"}
+                    for x in p["participants"]]
+    selections = {}
+    for item in p["plan"]:
+        sel = item["selector"]
+        selections[sel["oid"]] = [{"id": t["oid"], "priority": i + 1}
+                                  for i, t in enumerate(item["targets"])]
+    return run_onetoone_matching(participants, selections, top_n=_TOP_N)
+
+
 def _verify_state(p):
     lines, issues = [], []
+    expected_matches = _expected_matches(p)
     results = _read_results()
     af = _read_activity().get("fields", {})
     status = get_select_value(af, C.FIELD_ACT_ONETOONE_STATUS)
@@ -379,19 +395,17 @@ def _verify_state(p):
             bad.append("含非异性/自己")
         if oid in targets:
             bad.append("含自己")
-        # 7 志愿必居前 7：找该人的选择
-        plan_item = next((i for i in p["plan"] if i["selector"]["oid"] == oid), None)
-        if plan_item:
-            sel_targets = [t["oid"] for t in plan_item["targets"]]
-            top7 = [g["target"] for g in sorted(got, key=lambda g: g["rank"])[:7]]
-            if top7 != sel_targets:
-                bad.append(f"7 志愿未居前 7 且未按优先级：{top7[:3]}…")
+        # 名单顺序 = 双向奔赴公式重算（0.5×我 + 0.3×对方，未选择=30），逐条比对
+        expect_targets = [t for t, _ in expected_matches.get(oid, [])]
+        got_order = [g["target"] for g in sorted(got, key=lambda g: g["rank"])]
+        if got_order != expect_targets:
+            bad.append(f"名单顺序与公式不符：得 {got_order[:4]}… 应 {expect_targets[:4]}…")
         if bad:
             issues.append(f"{person['uid']}({person['gender']})：{'; '.join(bad)}")
         else:
             n_ok += 1
     lines.append(f"[逐人验证] {n_ok}/{len(p['participants'])} 人通过（每人 8 异性、排名 1..8、"
-                 f"7 志愿居前 7 且按优先级、无自己无同性）")
+                 f"名单顺序=双向奔赴公式、无自己无同性）")
 
     for line in lines:
         print("  " + line)

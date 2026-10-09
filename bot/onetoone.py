@@ -1,33 +1,42 @@
-"""活动一对一：各自独立 top-N 必聊名单匹配、选择卡片、指令处理。
+"""活动一对一：双向奔赴 top-N 必聊名单匹配、选择卡片、指令处理。
 
 与 grouping.py 同构，差异只在匹配算法：分组是「卫星滚动分组」（把人塞进小组），
-一对一则是「每人独立算一份最多 10 人的必聊名单」，按 `0.7*志愿优先级 + 0.3*匹配度`
-排序取前 N。匹配度复用 lib.recommend.match_score。
+一对一则是「每人独立算一份最多 10 人的必聊名单」，按
+`0.5*我的优先级得分 + 0.3*对方的优先级得分` 排序取前 N（双向奔赴，去掉红娘打分）。
+「未选择TA」给 30 分基础分，让「选了我但我没主动选」的人也有机会进名单。
 """
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 from clients import *
 from constants import *
 from grouping import get_activity_signups
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 
-from lib import recommend
-
 # 一对一执行互斥锁：防止管理员并发两次「执行一对一」互相删除/覆盖结果
 _onetoone_lock = threading.Lock()
 
 
-def run_onetoone_matching(participants, selections, profiles, top_n=10):
-    """各自独立：给每人算出 up to top_n 个异性必聊。
+def run_onetoone_matching(participants, selections, top_n=10):
+    """双向奔赴：给每人算出 up to top_n 个异性必聊名单（各自独立生成，不保证互相对应）。
 
     participants: [{"id": openid, "gender": "male"/"female"}, ...]
     selections: {selector_oid: [{"id": target_oid, "priority": 1..7}, ...]}
-    profiles: {oid: 打分资料dict}（键与 lib.recommend.match_score 对齐，已 prepare_profile）
     返回: {oid: [(target_oid, rank), ...]}，rank 从 1 开始。
+
+    总分 = 我的优先级得分 × WEIGHT_ONETOONE_MY_PRIORITY
+         + 对方的优先级得分 × WEIGHT_ONETOONE_THEIR_PRIORITY
+    「优先级得分」= PRIORITY_SCORES[志愿位次]；未选择则 ONETOONE_UNSELECTED_SCORE(30)。
+    「我的优先级得分」看我选没选 TA；「对方的优先级得分」看 TA 选没选我——所以
+    没被我主动选、但对我示好的人也有机会进名单（惊喜位）。
     """
     males = [p["id"] for p in participants if p.get("gender") == "male"]
     females = [p["id"] for p in participants if p.get("gender") == "female"]
+
+    # 反向索引：target_oid -> {selector_oid: priority}，用来算「对方对我的优先级得分」。
+    chosen_by = {}
+    for sel_oid, choices in selections.items():
+        for c in choices:
+            chosen_by.setdefault(c["id"], {})[sel_oid] = c["priority"]
 
     result = {}
     for p in participants:
@@ -43,22 +52,22 @@ def run_onetoone_matching(participants, selections, profiles, top_n=10):
             continue
         candidates = [q for q in opp if q != pid]
 
-        # 志愿映射：target -> priority（同人多次填取最小优先级，即最高意愿）
-        choice_priority = {}
+        # 我选的人：target -> priority（同人多次填取最小优先级，即最高意愿）
+        my_choice = {}
         for s in selections.get(pid, []):
-            if s["id"] not in choice_priority or s["priority"] < choice_priority[s["id"]]:
-                choice_priority[s["id"]] = s["priority"]
+            if s["id"] not in my_choice or s["priority"] < my_choice[s["id"]]:
+                my_choice[s["id"]] = s["priority"]
 
         scored = []
-        prof_a = profiles.get(pid, {})
         for qid in candidates:
-            priority = PRIORITY_SCORES.get(choice_priority.get(qid), 0)
-            try:
-                match = recommend.match_score(prof_a, profiles.get(qid, {}))[0]
-            except Exception:
-                match = 0
-            final = WEIGHT_ONETOONE_PRIORITY * priority + WEIGHT_ONETOONE_MATCH * match
-            scored.append((final, qid))
+            my_p = my_choice.get(qid)
+            my_score = PRIORITY_SCORES.get(my_p, ONETOONE_UNSELECTED_SCORE)
+            # 对方对我的优先级得分 = 「qid 有没有选我」→ chosen_by[target=pid][selector=qid]
+            their_p = chosen_by.get(pid, {}).get(qid)
+            their_score = PRIORITY_SCORES.get(their_p, ONETOONE_UNSELECTED_SCORE)
+            total = (WEIGHT_ONETOONE_MY_PRIORITY * my_score
+                     + WEIGHT_ONETOONE_THEIR_PRIORITY * their_score)
+            scored.append((total, qid))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         top = scored[:min(top_n, len(scored))]
@@ -360,23 +369,6 @@ def handle_admin_stop_onetoone(keyword):
         return _do_onetoone(activity)
 
 
-def _build_profiles(open_ids):
-    """为每个 open_id 构建打分资料（键与 lib.recommend.match_score 对齐）。"""
-    from auto_tasks import _profile_of
-
-    def _fetch(oid):
-        recs = find_user_by_openid(oid)
-        if not recs:
-            return oid, {}
-        return oid, _profile_of(recs[0].get("fields", {}))
-
-    profiles = {}
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="onetoone-profile") as pool:
-        for oid, prof in pool.map(_fetch, open_ids):
-            profiles[oid] = prof
-    return profiles
-
-
 def _do_onetoone(activity):
     """执行一对一匹配（调用方需已持有 _onetoone_lock）"""
     af = activity.get("fields", {})
@@ -418,10 +410,8 @@ def _do_onetoone(activity):
         update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "收集中"})
         return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
 
-    profiles = _build_profiles([p["id"] for p in participants])
-
     try:
-        matches = run_onetoone_matching(participants, selections, profiles, top_n=10)
+        matches = run_onetoone_matching(participants, selections, top_n=10)
     except Exception as e:
         update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "收集中"})
         return f"一对一匹配出错：{e}，状态已恢复为「收集中」"

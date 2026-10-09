@@ -9,8 +9,8 @@ _do_onetoone 做匹配并写结果），最后读回结果表逐条验证。
 
 端到端要覆盖的核心断言：
 - 16 人 × 每人 8 个异性 = 128 条结果行（异性 8 < top_n 10，有多少算多少）；
-- 每人名单顺序 = 双向奔赴公式重算（0.5×我的优先级得分 + 0.3×对方的优先级得分，未选择=30）
-  逐条相等（含「没被我选、但选了我」的惊喜位插队）；
+- 每人名单顺序 = 双向奔赴公式重算（0.5×我的优先级得分 + 0.3×对方的优先级得分 +
+  0.2×资料相似度，未选择=30）逐条相等（含「没被我选、但选了我」的惊喜位插队）；
 - 无自己、无同性、排名 1..8 无重复。
 
 用法（在 /opt/yixianqian-test 仓库根，必须显式 YIXIANQIAN_ENV=dev）：
@@ -337,7 +337,7 @@ def _run_matching():
 
 def _expected_matches(p):
     """用双向奔赴公式重算每人名单（喂给 run_onetoone_matching 与 _do_onetoone 完全相同的输入）。"""
-    from onetoone import run_onetoone_matching
+    from onetoone import run_onetoone_matching, _build_profiles
 
     participants = [{"id": x["oid"], "gender": "male" if x["gender"] == "男性" else "female"}
                     for x in p["participants"]]
@@ -346,7 +346,8 @@ def _expected_matches(p):
         sel = item["selector"]
         selections[sel["oid"]] = [{"id": t["oid"], "priority": i + 1}
                                   for i, t in enumerate(item["targets"])]
-    return run_onetoone_matching(participants, selections, top_n=_TOP_N)
+    profiles = _build_profiles([x["oid"] for x in p["participants"]])
+    return run_onetoone_matching(participants, selections, profiles, top_n=_TOP_N)
 
 
 def _verify_state(p):

@@ -920,6 +920,7 @@
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
+      <van-cell v-if="hasOnetooneEntry && !isObserver" title="我的一对一" is-link @click="openMyOnetoone"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="🌾 麦穗管理" is-link @click="openPointsAdmin"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
@@ -1345,12 +1346,16 @@
           <div class="activity-meta">
             <van-tag type="primary" color="#ff6b81">{{ act.status }}</van-tag>
             <van-tag v-if="act.group_status" plain type="primary">{{ act.group_status }}</van-tag>
+            <van-tag v-if="act.onetoone_status" plain type="primary">{{ act.onetoone_status }}</van-tag>
           </div>
           <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
         </div>
         <div class="activity-body" style="padding-top:0;">
           <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goGroupResult(act.record_id)">
             🎉 查看分组结果
+          </van-button>
+          <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
+            💬 查看我的必聊
           </van-button>
           <van-button v-if="act.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openActivity(act.record_id)" style="margin-top:8px;">
             查看活动详情
@@ -1494,6 +1499,24 @@
         <van-icon name="arrow" color="#ff6b81"></van-icon>
       </div>
     </div>
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='收集中'" class="activity-card" @click="goOnetooneSelect(currentActivity.record_id)" style="cursor:pointer;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">💞 一对一志愿选择</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">选择你心仪的TA，最多7个志愿</div>
+        </div>
+        <van-icon name="arrow" color="#ff6b81"></van-icon>
+      </div>
+    </div>
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='已完成'" class="activity-card" @click="goOnetooneResult(currentActivity.record_id)" style="cursor:pointer;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">💬 查看我的必聊</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">看看你的必聊对象，点「留言」即标记已聊</div>
+        </div>
+        <van-icon name="arrow" color="#ff6b81"></van-icon>
+      </div>
+    </div>
   </div>
 </div>
 <!-- ========== 分组选择 ========== -->
@@ -1570,6 +1593,117 @@
           <div class="group-member-name">{{m.nickname}}</div>
           <div class="group-member-meta">{{ m.user_id || '' }} · {{ m.gender }}</div>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 我的一对一 ========== -->
+<div v-else-if="page==='my_onetoone'" key="my_onetoone">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingMyOnetoone" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!myOnetooneList.length" description="你报名的活动还没有开启一对一"></van-empty>
+    <div v-else>
+      <div v-for="act in myOnetooneList" :key="act.record_id" class="activity-card">
+        <div class="activity-body">
+          <h3>{{ act.name }}</h3>
+          <div class="activity-meta">
+            <van-tag type="primary" color="#ff6b81">{{ act.onetoone_status }}</van-tag>
+          </div>
+          <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
+        </div>
+        <div class="activity-body" style="padding-top:0;">
+          <van-button v-if="act.onetoone_status==='收集中'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneSelect(act.record_id)">
+            {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '🎯 提交志愿' }}
+          </van-button>
+          <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
+            💬 查看我的必聊
+          </van-button>
+          <div v-if="act.onetoone_status==='已截止'" style="font-size:13px; color:#969799; text-align:center; padding:6px 0;">已截止，正在匹配…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 一对一选择 ========== -->
+<div v-else-if="page==='onetoone_select'" key="onetoone_select">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="selected-list" v-if="onetooneSelectedChoices.length">
+      <h4>已选志愿（点击 ✕ 移除）</h4>
+      <div>
+        <div v-for="(c, i) in onetooneSelectedChoices" :key="c.openid" class="choice-item">
+          <span class="choice-rank">第{{i+1}}志愿</span>
+          <span class="choice-name">{{ c.nickname }}</span>
+          <van-icon name="cross" color="#c8c9cc" size="18" @click="removeOnetooneChoice(i)" />
+        </div>
+      </div>
+    </div>
+    <div class="section-title">可选{{ myGender==='男性' ? '女生' : '男生' }}（点击添加到志愿）</div>
+    <div style="padding: 16px 0 8px;">
+      <van-button type="primary" color="#ff6b81" block :disabled="!onetooneSelectedChoices.length" :loading="actionLoading" @click="submitOnetooneChoices">
+        提交志愿（{{onetooneSelectedChoices.length}}个）
+      </van-button>
+    </div>
+    <div v-if="onetooneLoadingCandidates" style="text-align:center; padding:30px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <div v-else-if="!onetooneCandidates.length" style="text-align:center; padding:40px 20px;">
+      <van-empty :description="onetooneCandidatesError || '暂无可选人员'" />
+      <van-button v-if="onetooneCandidatesError" type="primary" color="#ff6b81" size="small" @click="goOnetooneSelect(currentActivityId)" style="margin-top:12px;">重试</van-button>
+    </div>
+    <div v-else>
+      <div class="candidate-search-box">
+        <input v-model="onetooneCandidateQuery" placeholder="搜索 昵称/用户ID/圣名" class="candidate-search-input" />
+      </div>
+      <div v-for="c in visibleOnetooneCandidates" :key="c.openid"
+        class="group-candidate"
+        :class="{selected: isOnetooneSelected(c.openid)}"
+        @click="toggleOnetooneChoice(c)">
+        <div class="signup-sheet-avatar" style="margin-right:12px;">
+          <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
+          <template v-else>{{ c.user_id || '👤' }}</template>
+        </div>
+        <div class="group-candidate-info">
+          <div class="group-candidate-name">{{ c.nickname }}</div>
+          <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
+        </div>
+        <div v-if="isOnetooneSelected(c.openid)" class="choice-badge">{{onetooneSelectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
+        <van-icon v-else name="plus" color="#dcdee0" size="22"></van-icon>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 一对一结果 ========== -->
+<div v-else-if="page==='onetoone_result'" key="onetoone_result">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="group-result-header" v-if="onetooneResult.count">
+      <div style="color:#969799; font-size:14px;">你的必聊名单</div>
+      <div class="group-number">{{ onetooneResult.count }} 人</div>
+    </div>
+    <van-empty v-else description="未找到你的必聊名单"></van-empty>
+    <div v-if="onetooneResult.partners && onetooneResult.partners.length">
+      <div class="section-title" style="text-align:center;">必聊对象（点「留言」写下评价即标记已聊）</div>
+      <div v-for="p in onetooneResult.partners" :key="p.openid" class="group-candidate">
+        <div class="signup-sheet-avatar" style="margin-right:12px;">
+          <img v-if="p.photo" :src="p.photo" alt="" @error="retryImg($event, 2, ()=>{p.photo=''})" loading="lazy" decoding="async">
+          <template v-else>{{ p.user_id || '👤' }}</template>
+        </div>
+        <div class="group-candidate-info">
+          <div class="group-candidate-name">{{ p.nickname }}</div>
+          <div class="group-candidate-meta">{{ p.user_id || '' }} · 第{{ p.rank }}位</div>
+        </div>
+        <van-button v-if="!p.chatted" type="primary" color="#ff6b81" size="mini" @click="openOnetooneMsg(p)">留言</van-button>
+        <van-tag v-else type="success">已聊</van-tag>
       </div>
     </div>
   </div>
@@ -1748,6 +1882,18 @@
     </van-radio-group>
     <van-field v-model="feedbackText" type="textarea" rows="2" autosize
       placeholder="补充说明（选填）" class="like-textarea"></van-field>
+  </div>
+</van-dialog>
+<!-- 一对一留言快捷弹窗 -->
+<van-dialog v-model:show="showOnetooneMsg" :title="onetooneMsgTarget ? '留言给 ' + onetooneMsgTarget.nickname : '留言'" show-cancel-button
+  confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :before-close="onOnetooneMsgBeforeClose">
+  <div class="like-dialog-body">
+    <div class="like-notes">
+      写下对TA的评价，发送后对方可见，该人即标记为「已聊」。
+    </div>
+    <van-field v-model="onetooneMsgText" type="textarea" rows="3" autosize
+      placeholder="写下你的评价…" class="like-textarea"></van-field>
   </div>
 </van-dialog>
 <!-- 举报留言弹窗 -->
@@ -2187,7 +2333,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points','points_admin'];
+    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -2355,6 +2501,14 @@ createApp({
         "【执行分组 活动ID 轮次】执行分组算法",
         "【分组状态 活动ID】查看分组进度",
         "【分组帮助】分组指令说明",
+      ]},
+      { title: "一对一", items: [
+        "【开始一对一 活动ID】开始填志愿（每人7个）",
+        "【开启一对一功能 活动ID 开/关】控制「我的一对一」入口",
+        "【查看未提交一对一 活动ID】查看未提交志愿的报名者",
+        "【执行一对一 活动ID】执行匹配（每人最多10位必聊）",
+        "【一对一状态 活动ID】查看一对一进度",
+        "【一对一帮助】一对一指令说明",
       ]},
       { title: "系统", items: [
         "【重连】手动重连机器人",
@@ -2939,6 +3093,30 @@ createApp({
     const myGender = computed(() => user.value?.gender || '');
     const groupSelectFrom = ref('my_groups');   // 进入分组选择前的页面，用于返回
     const groupResultFrom = ref('my_groups');   // 进入分组结果前的页面，用于返回
+
+    // 一对一
+    const myOnetooneList = ref([]);
+    const loadingMyOnetoone = ref(false);
+    const myOnetooneLoaded = ref(false);
+    const hasOnetooneEntry = ref(false); // 是否显示「我的一对一」入口（报名过且该活动开启一对一功能）
+    const onetooneCandidates = ref([]);
+    const onetooneSelectedChoices = ref([]);
+    const onetooneCandidateQuery = ref('');
+    const visibleOnetooneCandidates = computed(() => {
+      const q = (onetooneCandidateQuery.value||'').trim().toLowerCase();
+      if (!q) return onetooneCandidates.value;
+      return onetooneCandidates.value.filter(c => (c.nickname||'').toLowerCase().includes(q)
+        || (c.user_id||'').toLowerCase().includes(q)
+        || (c.baptismal_name||'').toLowerCase().includes(q));
+    });
+    const onetooneLoadingCandidates = ref(false);
+    const onetooneCandidatesError = ref('');
+    const onetooneResult = ref({});
+    const onetooneSelectFrom = ref('my_onetoone');   // 进入一对一选择前的页面，用于返回
+    const onetooneResultFrom = ref('my_onetoone');   // 进入一对一结果前的页面，用于返回
+    const onetooneMsgTarget = ref(null);
+    const onetooneMsgText = ref('');
+    const showOnetooneMsg = ref(false);
 
     // 全屏图片
     const showPhotoViewer = ref(false);
@@ -4671,6 +4849,104 @@ createApp({
     function switchGroupRound(round) {
       loadGroupResult(currentActivityId.value, round);
     }
+    // 一对一
+    async function openMyOnetoone() {
+      page.value = 'my_onetoone';
+      if (myOnetooneLoaded.value) return; // 已加载则直接展示缓存
+      loadingMyOnetoone.value = true;
+      try { const data = await api('/api/activities/mine/onetoone'); myOnetooneList.value = data.activities; myOnetooneLoaded.value = true; }
+      catch(e) { vant.showToast(e.message); }
+      loadingMyOnetoone.value = false;
+    }
+    async function checkOnetooneEntry() {
+      try { const data = await api('/api/activities/mine/onetoone/flag'); hasOnetooneEntry.value = !!data.has_onetoone_activity; }
+      catch(e) { hasOnetooneEntry.value = false; }
+    }
+    async function goOnetooneSelect(activityId) {
+      onetooneSelectFrom.value = page.value; // 记录来路，用于返回
+      currentActivityId.value = activityId;
+      page.value = 'onetoone_select'; onetooneLoadingCandidates.value = true; onetooneSelectedChoices.value = []; onetooneCandidatesError.value = '';
+      try {
+        const candData = await api('/api/activities/' + activityId + '/onetoone/candidates');
+        onetooneCandidates.value = candData.candidates || [];
+        try {
+          const statusData = await api('/api/activities/' + activityId + '/onetoone/status');
+          const myChoices = statusData.my_choices || [];
+          const byOid = {};
+          onetooneCandidates.value.forEach(c => { byOid[c.openid] = c; });
+          onetooneSelectedChoices.value = myChoices.map(oid => byOid[oid]).filter(Boolean);
+        } catch(e) {}
+      } catch(e) {
+        onetooneCandidatesError.value = '加载失败：' + e.message + '，点击重试';
+        vant.showToast(e.message);
+      }
+      onetooneLoadingCandidates.value = false;
+    }
+    function isOnetooneSelected(oid) { return onetooneSelectedChoices.value.some(c => c.openid === oid); }
+    function toggleOnetooneChoice(c) {
+      const idx = onetooneSelectedChoices.value.findIndex(x => x.openid === c.openid);
+      if (idx >= 0) { onetooneSelectedChoices.value.splice(idx, 1); }
+      else {
+        if (onetooneSelectedChoices.value.length >= 7) { vant.showToast('最多选择7个志愿'); return; }
+        onetooneSelectedChoices.value.push(c);
+      }
+    }
+    function removeOnetooneChoice(i) { onetooneSelectedChoices.value.splice(i, 1); }
+    async function submitOnetooneChoices() {
+      const activityId = currentActivityId.value;
+      if (!activityId) { vant.showToast('活动信息丢失'); return; }
+      actionLoading.value = true;
+      try {
+        await api('/api/activities/' + activityId + '/onetoone/select', {
+          method: 'POST', body: JSON.stringify({ choices: onetooneSelectedChoices.value.map(c => c.openid) })
+        });
+        vant.showToast('志愿提交成功');
+        myOnetooneLoaded.value = false;
+        if (onetooneSelectFrom.value === 'activity_detail') await openActivity(activityId);
+        else openMyOnetoone();
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+    async function loadOnetooneResult(activityId) {
+      try { const data = await api('/api/activities/' + activityId + '/onetoone/result'); onetooneResult.value = data; }
+      catch(e) { vant.showToast(e.message); }
+    }
+    async function goOnetooneResult(activityId) {
+      onetooneResultFrom.value = page.value; // 记录来路，用于返回
+      currentActivityId.value = activityId;
+      page.value = 'onetoone_result';
+      onetooneResult.value = {};
+      await loadOnetooneResult(activityId);
+    }
+    function openOnetooneMsg(p) {
+      onetooneMsgTarget.value = p;
+      onetooneMsgText.value = '';
+      showOnetooneMsg.value = true;
+    }
+    async function onOnetooneMsgBeforeClose(action) {
+      if (action === 'confirm') {
+        if (!onetooneMsgText.value.trim()) { vant.showToast('请先输入留言内容'); return false; }
+        await doOnetooneMsg();
+      }
+      return true;
+    }
+    async function doOnetooneMsg() {
+      const t = onetooneMsgTarget.value;
+      if (!t || !t.openid) return;
+      actionLoading.value = true;
+      try {
+        await api('/api/messages', {
+          method: 'POST',
+          body: JSON.stringify({ target_openid: t.openid, content: onetooneMsgText.value.trim() })
+        });
+        vant.showToast('留言成功');
+        showOnetooneMsg.value = false;
+        const arr = onetooneResult.value.partners || [];
+        const idx = arr.findIndex(x => x.openid === t.openid);
+        if (idx >= 0) arr[idx].chatted = true;
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
 
     // 页面切换加载数据
     // 拦截 popstate：按 浮层 > 子页 优先级关闭
@@ -4688,6 +4964,7 @@ createApp({
       if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
       if(showReportDialog.value){ showReportDialog.value=false; isHandlingPopState=false; return; }
       if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
+      if(showOnetooneMsg.value){ showOnetooneMsg.value=false; isHandlingPopState=false; return; }
       if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
       if(showPointsRules.value){ showPointsRules.value=false; isHandlingPopState=false; return; }
@@ -4724,11 +5001,13 @@ createApp({
       }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile', 'points': 'profile', 'points_admin': 'profile',
+        'my_activities': 'profile', 'my_groups': 'profile', 'my_onetoone': 'profile', 'points': 'profile', 'points_admin': 'profile',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
         'group_result': groupResultFrom.value || 'my_groups',
+        'onetoone_select': onetooneSelectFrom.value || 'my_onetoone',
+        'onetoone_result': onetooneResultFrom.value || 'my_onetoone',
         'user_detail': userDetailFrom.value || 'home',
         'likes': 'cards', 'home': 'cards', 'profile': 'cards'
       };
@@ -4740,7 +5019,7 @@ createApp({
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); maybeShowUpdateNotes(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
-      if (p === 'profile') { checkGroupEntry(); loadPraiseState(); if (user.value && user.value.is_admin) refreshReportedCount(); }
+      if (p === 'profile') { checkGroupEntry(); checkOnetooneEntry(); loadPraiseState(); if (user.value && user.value.is_admin) refreshReportedCount(); }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
@@ -5241,6 +5520,11 @@ createApp({
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe,
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
+      myOnetooneList, loadingMyOnetoone, openMyOnetoone, hasOnetooneEntry,
+      onetooneCandidates, onetooneSelectedChoices, onetooneCandidateQuery, visibleOnetooneCandidates, onetooneLoadingCandidates, onetooneCandidatesError, onetooneResult,
+      onetooneSelectFrom, onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
+      goOnetooneSelect, isOnetooneSelected, toggleOnetooneChoice, removeOnetooneChoice, submitOnetooneChoices, goOnetooneResult,
+      openOnetooneMsg, onOnetooneMsgBeforeClose,
       profileData, openProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,

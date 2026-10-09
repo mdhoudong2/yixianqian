@@ -611,6 +611,47 @@ def handle_admin_toggle_group_flag(keyword):
 
 
 
+def handle_admin_toggle_onetoone_flag(keyword):
+    """管理员：开启/关闭活动的一对一功能（控制 H5 我的页「我的一对一」入口显示）
+    格式: 开启一对一功能 A-xxxx 开/关  或  开启一对一功能 A-xxxx on/off"""
+    parts = keyword.split()
+    if len(parts) < 2:
+        return "格式：开启一对一功能 活动ID 开/关\n例如：开启一对一功能 A-0002 开"
+    activity_id, state = parts[0], parts[1].lower()
+    if state in ("开", "on", "1", "是", "true"):
+        flag = "是"
+    elif state in ("关", "off", "0", "否", "false"):
+        flag = "否"
+    else:
+        return "第二参数需为 开/关（on/off）"
+
+    activity = find_activity_by_id(activity_id)
+    if not activity:
+        return f"未找到活动：{activity_id}"
+
+    af = activity.get("fields", {})
+    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
+    record_id = activity.get("record_id")
+    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_FLAG: flag})
+    log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> {flag}")
+    return (f"已{'开启' if flag == '是' else '关闭'}活动「{activity_name}」的一对一功能。\n"
+            f"开启后，报名该活动的用户可在 H5「我的」页看到「我的一对一」入口。"
+            + ("\n（活动结束后记得关闭，入口即隐藏）" if flag == "是" else ""))
+
+
+def handle_onetoone_help():
+    """管理员：一对一指令使用说明"""
+    return (
+        "一对一相关指令：\n\n"
+        "【开始一对一 活动ID】\n  开启志愿收集，如：开始一对一 A-0002\n"
+        "【开启一对一功能 活动ID 开/关】\n  控制 H5 我的页是否显示「我的一对一」入口\n"
+        "【查看未提交一对一 活动ID】\n  查看报名但未提交志愿的人员\n"
+        "【执行一对一 活动ID】\n  执行匹配并保存结果（每人最多10位必聊）\n"
+        "【一对一状态 活动ID】\n  查看一对一进度\n"
+        "【一对一帮助】\n  查看本说明"
+    )
+
+
 def handle_group_help():
     """管理员：分组指令使用说明"""
     return (
@@ -677,6 +718,13 @@ def handle_admin_help():
         "【执行分组 活动ID [轮次]】执行分组算法（默认第1轮）\n"
         "【分组状态 活动ID】查看分组进度\n"
         "【分组帮助】分组指令说明\n\n"
+        "【一对一】\n"
+        "【开始一对一 活动ID】开始填志愿（每人7个）\n"
+        "【开启一对一功能 活动ID 开/关】控制 H5 我的页一对一入口\n"
+        "【查看未提交一对一 活动ID】查看未提交志愿的报名者\n"
+        "【执行一对一 活动ID】执行匹配（每人最多10位必聊）\n"
+        "【一对一状态 活动ID】查看一对一进度\n"
+        "【一对一帮助】一对一指令说明\n\n"
         "【麦穗积分】\n"
         "【麦穗帮助】麦穗指令说明（加穗/查穗/签到/心愿/推荐单/配置）\n\n"
         "【点赞】\n"

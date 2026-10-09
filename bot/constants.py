@@ -213,6 +213,25 @@ FIELD_ACT_FEMALE_PER_GROUP = "每组女生数"
 FIELD_ACT_GROUP_FLAG = "分组功能开启"  # 单选(是/否)：控制 H5 我的页是否显示「我的分组」入口
 FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同活动多次分组
 
+# 一对一功能（与分组同构，但匹配算法是「各自独立 top-N 必聊名单」）。
+# 两张表留空默认值：表 ID 按 base 分配，需建表后填进 local_config.py（照点赞表模式）。
+# 建表：python scripts/dev/create_onetoone_tables.py apply
+ONETOONE_SELECT_TABLE = _cfg_get("ONETOONE_SELECT_TABLE", getattr(_cfg, "ONETOONE_SELECT_TABLE", ""))
+ONETOONE_RESULT_TABLE = _cfg_get("ONETOONE_RESULT_TABLE", getattr(_cfg, "ONETOONE_RESULT_TABLE", ""))
+FIELD_OTO_ACTIVITY_ID = "活动ID"
+FIELD_OTO_SELECTOR_OID = "选择人open_id"
+FIELD_OTO_SELECTOR_NAME = "选择人昵称"
+FIELD_OTO_SELECTOR_GENDER = "选择人性别"
+FIELD_OTO_CHOICES = ["第1志愿", "第2志愿", "第3志愿", "第4志愿", "第5志愿", "第6志愿", "第7志愿"]
+FIELD_OTO_RANK = "排名"  # 数字 1..10，该对象在本人名单里的位次
+FIELD_OTO_USER_OID = "用户open_id"
+FIELD_OTO_USER_NAME = "用户昵称"
+FIELD_OTO_USER_GENDER = "用户性别"
+FIELD_OTO_TARGET_OID = "必聊对象open_id"
+FIELD_OTO_TARGET_NAME = "必聊对象昵称"
+FIELD_ACT_ONETOONE_STATUS = "一对一状态"  # 单选：收集中/已截止/已完成（空=未开始）
+FIELD_ACT_ONETOONE_FLAG = "一对一功能开启"  # 单选(是/否)：控制 H5 我的页「我的一对一」入口
+
 # 邀请功能
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）
 FIELD_INVITE_CODE = "邀请码"  # 观察员注册表单的邀请码字段
@@ -264,6 +283,9 @@ MATCHMAKER_STAR_SCORES = {5: 100, 4: 90, 3: 80, 2: 75, 1: 70}
 # 权重
 WEIGHT_USER_SELECTION = 0.7
 WEIGHT_MATCHMAKER_PICK = 0.3
+# 一对一匹配权重：志愿优先级 + 匹配度（0.7*55=38.5 > 0.3*100=30，志愿恒排在非志愿前）
+WEIGHT_ONETOONE_PRIORITY = 0.7
+WEIGHT_ONETOONE_MATCH = 0.3
 
 def is_admin(open_id):
     return open_id in ADMIN_OPEN_IDS

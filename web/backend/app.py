@@ -287,6 +287,8 @@ _SNAPSHOT_INTERVALS = {
     "observers": 300,
     "group_selections": 300,
     "group_results": 300,
+    "onetoone_selections": 300,
+    "onetoone_results": 300,
 }
 # 每表过期阈值（秒）：超过则读接口回退实时查询；低频表阈值放宽避免每次请求打飞书
 _SNAPSHOT_STALE = {
@@ -298,6 +300,8 @@ _SNAPSHOT_STALE = {
     "observers": 600,
     "group_selections": 600,
     "group_results": 600,
+    "onetoone_selections": 600,
+    "onetoone_results": 600,
 }
 
 _SNAPSHOT_FETCHERS = {
@@ -308,6 +312,8 @@ _SNAPSHOT_FETCHERS = {
     "likes": lambda: bitable.raw_search_records(LIKE_TABLE_ID),
     "group_selections": lambda: bitable.raw_search_records(GROUP_SELECT_TABLE),
     "group_results": lambda: bitable.raw_search_records(GROUP_RESULT_TABLE),
+    "onetoone_selections": (lambda: bitable.raw_search_records(ONETOONE_SELECT_TABLE)) if ONETOONE_SELECT_TABLE else None,
+    "onetoone_results": (lambda: bitable.raw_search_records(ONETOONE_RESULT_TABLE)) if ONETOONE_RESULT_TABLE else None,
     "messages": lambda: bitable.raw_search_records(MESSAGE_TABLE_ID),
 }
 _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
@@ -930,6 +936,42 @@ def snap_group_results(act_id):
     return [r for r in gr
             if bitable.get_field_text(r.get("fields", {}), F_GR_ACTIVITY_ID) == act_id]
 
+def snap_onetoone_selections_by_selector(open_id):
+    oto = _snap("onetoone_selections")
+    if not oto and not _snap_ready("onetoone_selections"):
+        if not ONETOONE_SELECT_TABLE:
+            return []
+        return bitable.search_records(ONETOONE_SELECT_TABLE, [
+            {"field_name": F_OTO_SELECTOR_OID, "operator": "is", "value": [open_id]}])
+    return [r for r in oto
+            if bitable.get_field_text(r.get("fields", {}), F_OTO_SELECTOR_OID) == open_id]
+
+def snap_onetoone_selection(act_id, open_id):
+    oto = _snap("onetoone_selections")
+    if not oto and not _snap_ready("onetoone_selections"):
+        if not ONETOONE_SELECT_TABLE:
+            return None
+        items = bitable.search_records(ONETOONE_SELECT_TABLE, [
+            {"field_name": F_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]},
+            {"field_name": F_OTO_SELECTOR_OID, "operator": "is", "value": [open_id]}])
+        return items[0] if items else None
+    for r in oto:
+        f = r.get("fields", {})
+        if (bitable.get_field_text(f, F_OTO_ACTIVITY_ID) == act_id
+                and bitable.get_field_text(f, F_OTO_SELECTOR_OID) == open_id):
+            return r
+    return None
+
+def snap_onetoone_results(act_id):
+    ores = _snap("onetoone_results")
+    if not ores and not _snap_ready("onetoone_results"):
+        if not ONETOONE_RESULT_TABLE:
+            return []
+        return bitable.search_records(ONETOONE_RESULT_TABLE, [
+            {"field_name": F_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]}])
+    return [r for r in ores
+            if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == act_id]
+
 # ========== Session 管理 ==========
 # 跨进程文件锁（替代 threading.Lock，gunicorn 多 worker 下有效）
 try:
@@ -1328,6 +1370,7 @@ def format_activity(record):
         "status": bitable.get_select_value(fields, F_ACTIVITY_STATUS),
         "poster": poster_url,
         "group_status": bitable.get_select_value(fields, F_ACTIVITY_GROUP_STATUS),
+        "onetoone_status": bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_STATUS),
         "male_per_group": int(bitable.get_field_number(fields, F_ACTIVITY_MALE_PER_GROUP, 0)),
         "female_per_group": int(bitable.get_field_number(fields, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
         "start_time": fields.get(F_ACTIVITY_START_TIME),
@@ -5464,6 +5507,218 @@ def group_result(activity_id):
         "rounds": available_rounds
     })
 
+# ========== 一对一接口 ==========
+
+@app.route("/api/activities/<activity_id>/onetoone/candidates", methods=["GET"])
+def onetoone_candidates(activity_id):
+    """获取一对一可选的异性列表"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
+    if onetoone_status != "收集中":
+        return jsonify({"error": f"一对一状态为「{onetoone_status}」，无法选择"}), 400
+
+    signup = bitable.get_user_signup(text_act_id, open_id)
+    if not signup:
+        return jsonify({"error": "你未报名此活动"}), 403
+
+    signups = bitable.get_signups(text_act_id)
+    me = snap_self_user()
+    if not me:
+        return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
+    my_gender = bitable.get_select_value(me.get("fields", {}), F_GENDER)
+    target_gender = "女性" if my_gender == "男性" else "男性"
+
+    candidates = []
+    for s in signups:
+        fields = s.get("fields", {})
+        s_openid = bitable.get_field_text(fields, F_SIGNUP_OPENID)
+        if s_openid == open_id:
+            continue
+        u = snap_find_user_by_openid(s_openid)
+        if u:
+            u_gender = bitable.get_select_value(u.get("fields", {}), F_GENDER)
+            if u_gender == target_gender:
+                uf = u.get("fields", {})
+                tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
+                photo = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
+                candidates.append({
+                    "openid": s_openid,
+                    "nickname": bitable.get_field_text(uf, F_NICKNAME),
+                    "photo": photo,
+                    "user_id": bitable.get_field_text(uf, F_USER_ID),
+                    "baptismal_name": bitable.get_field_text(uf, F_BAPTISMAL_NAME),
+                    "birthday": format_birthday(uf),
+                    "education": bitable.get_select_value(uf, F_EDUCATION),
+                    "native_place": bitable.get_field_text(uf, F_NATIVE_PLACE),
+                    "city": bitable.get_field_text(uf, F_CITY),
+                    "hobbies": "、".join(bitable.get_multi_select_value(uf, F_SELF_HOBBIES))
+                })
+    return jsonify({"candidates": candidates})
+
+@app.route("/api/activities/<activity_id>/onetoone/select", methods=["POST"])
+def onetoone_select(activity_id):
+    """提交一对一志愿选择（秒提交版：查活动/报名/本人全走快照，同步仅 1 次写入）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = active_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+
+    data = request.get_json() or {}
+    choices = data.get("choices", [])
+
+    if not choices or not isinstance(choices, list):
+        return jsonify({"error": "请至少选择一个志愿"}), 400
+    if len(choices) > 7:
+        return jsonify({"error": "最多选择7个志愿"}), 400
+
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
+    if onetoone_status != "收集中":
+        return jsonify({"error": f"一对一状态为「{onetoone_status}」，无法选择"}), 400
+
+    signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
+    if not signup:
+        return jsonify({"error": "你未报名此活动"}), 403
+
+    me = snap_self_user()
+    me_fields = me.get("fields", {})
+    my_name = bitable.get_field_text(me_fields, F_NICKNAME)
+    my_gender = bitable.get_select_value(me_fields, F_GENDER)
+
+    existing = snap_onetoone_selection(text_act_id, open_id)
+
+    fields = {
+        F_OTO_ACTIVITY_ID: text_act_id,
+        F_OTO_SELECTOR_OID: open_id,
+        F_OTO_SELECTOR_NAME: my_name,
+        F_OTO_SELECTOR_GENDER: my_gender,
+    }
+    for i in range(len(F_OTO_CHOICES)):
+        fields[F_OTO_CHOICES[i]] = ""
+    for i, choice_oid in enumerate(choices):
+        if i < len(F_OTO_CHOICES):
+            fields[F_OTO_CHOICES[i]] = choice_oid
+
+    with file_lock:
+        if existing:
+            ok = bitable.update_record(ONETOONE_SELECT_TABLE, existing["record_id"], fields)
+        else:
+            ok = bitable.create_record(ONETOONE_SELECT_TABLE, fields)
+    if not ok:
+        return jsonify({"error": "提交失败，请稍后重试"}), 500
+
+    refresh_snapshot_table_async("onetoone_selections")
+    return jsonify({"ok": True, "message": "志愿提交成功"})
+
+@app.route("/api/activities/<activity_id>/onetoone/status", methods=["GET"])
+def onetoone_status(activity_id):
+    """查询一对一状态和我的选择"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+
+    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
+
+    my_selection = snap_onetoone_selection(text_act_id, open_id)
+    my_choices = []
+    if my_selection:
+        s_fields = my_selection.get("fields", {})
+        for choice_field in F_OTO_CHOICES:
+            val = bitable.get_field_text(s_fields, choice_field)
+            if val:
+                my_choices.append(val)
+
+    return jsonify({
+        "onetoone_status": onetoone_status,
+        "my_selected": bool(my_selection),
+        "my_choices": my_choices
+    })
+
+@app.route("/api/activities/<activity_id>/onetoone/result", methods=["GET"])
+def onetoone_result(activity_id):
+    """查询我的必聊名单（chatted 由留言推导：我给 TA 留过言即已聊）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+
+    act_record, text_act_id = snap_resolve_activity(activity_id)
+    if not act_record:
+        return jsonify({"error": "活动不存在"}), 404
+
+    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
+    if onetoone_status != "已完成":
+        return jsonify({"error": "一对一匹配尚未完成", "onetoone_status": onetoone_status}), 400
+
+    results = snap_onetoone_results(text_act_id)
+    mine = [r for r in results
+            if bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) == open_id]
+
+    # users 快照：open_id -> (用户ID, 昵称, 头像)
+    users_snap = _snap("users")
+    if not users_snap:
+        users_snap = bitable.get_all_users()
+    uid_by_oid, nick_by_oid, photo_by_oid = {}, {}, {}
+    for u in users_snap:
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid and oid not in uid_by_oid:
+            uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
+            tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
+            photo_by_oid[oid] = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
+
+    # 已聊 = 我给 TA 留过言（状态≠已删除）
+    msgs = _snap("messages")
+    if not msgs and not _snap_ready("messages"):
+        msgs = bitable.search_records(MESSAGE_TABLE_ID, [
+            {"field_name": F_MSG_AUTHOR_OID, "operator": "is", "value": [open_id]}])
+    chatted = set()
+    for m in msgs:
+        f = m.get("fields", {})
+        if bitable.get_select_value(f, F_MSG_STATUS) == "已删除":
+            continue
+        t = bitable.get_field_text(f, F_MSG_TARGET_OID)
+        if t:
+            chatted.add(t)
+
+    partners = []
+    for r in mine:
+        f = r.get("fields", {})
+        target_oid = bitable.get_field_text(f, F_OTO_TARGET_OID)
+        partners.append({
+            "openid": target_oid,
+            "nickname": bitable.get_field_text(f, F_OTO_TARGET_NAME) or nick_by_oid.get(target_oid, ""),
+            "photo": photo_by_oid.get(target_oid, ""),
+            "user_id": uid_by_oid.get(target_oid, ""),
+            "rank": int(bitable.get_field_number(f, F_OTO_RANK, 0)),
+            "chatted": target_oid in chatted,
+        })
+    partners.sort(key=lambda x: x["rank"])
+    return jsonify({"partners": partners, "count": len(partners)})
+
 # ========== 个人中心 ==========
 
 def _editable_value(fields, fname, ftype):
@@ -6036,6 +6291,65 @@ def my_groups_flag():
         if bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_GROUP_FLAG) == "是":
             return jsonify({"has_group_activity": True})
     return jsonify({"has_group_activity": False})
+
+@app.route("/api/activities/mine/onetoone", methods=["GET"])
+def my_onetoone():
+    """我报名的、已开启一对一功能的活动列表（用于「我的一对一」页面）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+
+    signups = snap_signups_by_openid(open_id)
+
+    my_selections = snap_onetoone_selections_by_selector(open_id)
+    selection_by_act = {}
+    for sel in my_selections:
+        s_fields = sel.get("fields", {})
+        aid = bitable.get_field_text(s_fields, F_OTO_ACTIVITY_ID)
+        if aid:
+            selection_by_act[aid] = s_fields
+
+    result = []
+    for s in signups:
+        fields = s.get("fields", {})
+        act_id = bitable.get_field_text(fields, F_SIGNUP_ACTIVITY_ID)
+        act = snap_find_activity(act_id)
+        if not act:
+            continue
+        onetoone_status = bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
+        if onetoone_status in ("", "未开始"):
+            continue
+        act_data = format_activity(act)
+        s_fields = selection_by_act.get(act_id)
+        my_count = 0
+        if s_fields:
+            my_count = sum(1 for cf in F_OTO_CHOICES if bitable.get_field_text(s_fields, cf))
+        act_data["my_choice_count"] = my_count
+        result.append(act_data)
+    return jsonify({"activities": result})
+
+@app.route("/api/activities/mine/onetoone/flag", methods=["GET"])
+def my_onetoone_flag():
+    """我报名过的活动中，是否存在「一对一功能开启=是」的活动（控制「我的」页是否显示一对一入口）"""
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    gate = account_gate(open_id)
+    if gate:
+        return jsonify(gate[0]), gate[1]
+
+    signups = snap_signups_by_openid(open_id)
+    for s in signups:
+        act_id = bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID)
+        act = snap_find_activity(act_id)
+        if not act:
+            continue
+        if bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_ONETOONE_FLAG) == "是":
+            return jsonify({"has_onetoone_activity": True})
+    return jsonify({"has_onetoone_activity": False})
 
 # ========== 活动报名名单 / 他人资料 / 通知 ==========
 

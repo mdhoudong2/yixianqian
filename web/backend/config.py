@@ -45,6 +45,9 @@ ACTIVITY_TABLE_ID = _lc_get("ACTIVITY_TABLE_ID", getattr(_lc, "ACTIVITY_TABLE_ID
 SIGNUP_TABLE_ID = _lc_get("SIGNUP_TABLE_ID", getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t"))
 GROUP_SELECT_TABLE = _lc_get("GROUP_SELECT_TABLE", getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ"))
 GROUP_RESULT_TABLE = _lc_get("GROUP_RESULT_TABLE", getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB"))
+# 一对一两张表：留空默认值，建表后把 ID 填进 local_config.py（照点赞表模式）。
+ONETOONE_SELECT_TABLE = _lc_get("ONETOONE_SELECT_TABLE", getattr(_lc, "ONETOONE_SELECT_TABLE", ""))
+ONETOONE_RESULT_TABLE = _lc_get("ONETOONE_RESULT_TABLE", getattr(_lc, "ONETOONE_RESULT_TABLE", ""))
 REPORT_TABLE_ID = _lc_get("REPORT_TABLE_ID", getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T"))
 MESSAGE_TABLE_ID = _lc_get("MESSAGE_TABLE_ID", getattr(_lc, "MESSAGE_TABLE_ID", ""))  # 留言表（生产表ID待建，测试服在 local_config 覆盖）
 SUGGESTION_TABLE_ID = _lc_get("SUGGESTION_TABLE_ID", getattr(_lc, "SUGGESTION_TABLE_ID", "tbldZ7aWtCA5V3Cg"))  # 意见反馈表
@@ -267,6 +270,8 @@ F_ACTIVITY_GROUP_STATUS = "分组状态"
 F_ACTIVITY_MALE_PER_GROUP = "每组男生数"
 F_ACTIVITY_FEMALE_PER_GROUP = "每组女生数"
 F_ACTIVITY_GROUP_FLAG = "分组功能开启"
+F_ACTIVITY_ONETOONE_STATUS = "一对一状态"
+F_ACTIVITY_ONETOONE_FLAG = "一对一功能开启"
 F_ACTIVITY_PUBLISH_TIME = "发布时间"
 F_ACTIVITY_START_TIME = "开始时间"
 F_ACTIVITY_END_TIME = "结束时间"
@@ -291,6 +296,21 @@ F_GR_USER_OID = "用户open_id"
 F_GR_USER_NAME = "用户昵称"
 F_GR_USER_GENDER = "用户性别"
 F_GR_ROUND = "轮次"
+
+# 一对一选择表字段（与分组选择表同构）
+F_OTO_ACTIVITY_ID = "活动ID"
+F_OTO_SELECTOR_OID = "选择人open_id"
+F_OTO_SELECTOR_NAME = "选择人昵称"
+F_OTO_SELECTOR_GENDER = "选择人性别"
+F_OTO_CHOICES = ["第1志愿", "第2志愿", "第3志愿", "第4志愿", "第5志愿", "第6志愿", "第7志愿"]
+
+# 一对一结果表字段（每人每对象一行）
+F_OTO_RANK = "排名"
+F_OTO_USER_OID = "用户open_id"
+F_OTO_USER_NAME = "用户昵称"
+F_OTO_USER_GENDER = "用户性别"
+F_OTO_TARGET_OID = "必聊对象open_id"
+F_OTO_TARGET_NAME = "必聊对象昵称"
 
 # 举报表字段
 F_REPORT_REPORTER = "举报人昵称"

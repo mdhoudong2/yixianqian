@@ -31,6 +31,7 @@ data/*
 *.bak_*
 *.bak-*
 *.bak_h5
+*.bak.*
 *.tar.gz
 *.tgz
 *.tar

@@ -7,7 +7,7 @@ on:
     branches: [main, develop]
 
 jobs:
-  py-compile:
+  syntax:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,24 +15,69 @@ jobs:
         with:
           python-version: "3.12"
       - name: 语法检查（py_compile，不依赖第三方库）
-        run: |
-          set -e
-          fail=0
-          while IFS= read -r -d '' f; do
-            python -m py_compile "$f" || { echo "语法错误: $f"; fail=1; }
-          done < <(find bot web scripts lib -name '*.py' -print0 2>/dev/null)
-          [ "$fail" -eq 0 ] || exit 1
-          echo "所有 Python 文件语法检查通过"
-      - name: 安装依赖（ruff + 项目运行时）
-        run: |
-          pip install -q "ruff==0.16.4" pytest
-          pip install -q -r bot/requirements.txt -r web/backend/requirements.txt
+        run: python -m compileall -q bot web scripts lib
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+          cache-dependency-path: |
+            bot/requirements.txt
+            web/backend/requirements.txt
+      - name: 安装 ruff
+        run: pip install -q "ruff==0.16.4"
       - name: 风格检查（ruff）
         run: ruff check bot web lib --output-format=github
-      - name: 单测（pytest，如有 tests/ 目录）
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+          cache-dependency-path: |
+            bot/requirements.txt
+            web/backend/requirements.txt
+      - name: 安装依赖（pytest + 项目运行时）
         run: |
-          if [ -d tests ]; then
-            pytest -q tests
-          else
+          pip install -q pytest
+          pip install -q -r bot/requirements.txt -r web/backend/requirements.txt
+      - name: 单测（4 分片并行，不新增任何依赖）
+        run: |
+          set -uo pipefail
+          if [ ! -d tests ]; then
             echo "无单测，跳过"
+            exit 0
           fi
+          mkdir -p /tmp/pytest-shards
+          # 动态发现，递归 tests/（排除 __pycache__），新增测试文件必被纳入，绝不硬编码
+          mapfile -t FILES < <(find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sort)
+          total=${#FILES[@]}
+          shards=4
+          [ "$total" -ge "$shards" ] || shards=$total
+          pids=()
+          for ((i=0;i<shards;i++)); do
+            subset=()
+            for ((j=i;j<total;j+=shards)); do subset+=("${FILES[j]}"); done
+            # 空分片必须跳过：pytest 无参数会退化成收集整个目录
+            [ "${#subset[@]}" -gt 0 ] || continue
+            ( pytest -q "${subset[@]}" > "/tmp/pytest-shards/shard$i.log" 2>&1 ) &
+            pids+=($!)
+          done
+          fail=0
+          for pid in "${pids[@]}"; do wait "$pid" || fail=1; done
+          for f in /tmp/pytest-shards/shard*.log; do
+            echo "===== $f ====="
+            tail -3 "$f"
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "有分片失败，完整输出见上方各分片日志"
+            exit 1
+          fi
+          echo "全部分片通过（${#pids[@]} 片，${total} 个测试文件）"

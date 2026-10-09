@@ -1573,6 +1573,11 @@ def api_version():
 def index():
     return _render_index()
 
+@app.route("/index.html")
+def index_html():
+    """与 / 一致：走占位符注入与不缓存头，避免静态路由裸返回未替换的 HTML。"""
+    return _render_index()
+
 # public.html 里的 __PUBLIC_QR_CODE__ 占位符在服务时替换为当前环境二维码（生产/测试各自不同）
 _PUBLIC_HTML_CACHE = None
 

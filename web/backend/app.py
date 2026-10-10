@@ -2601,13 +2601,16 @@ def _exchange_code_for_openid(code):
         app.logger.error(f"Feishu auth failed: {last_error}")
     return open_id
 
-def _make_login_resp(open_id, user, role, claimed=False):
+def _make_login_resp(open_id, user, role, claimed=False, extra=None):
     """构造登录成功响应：回写最近活跃、写会话 cookie，返回用户摘要。"""
     touch_last_active(open_id, user, role)
     session_id = create_session(open_id, role)
     brief = format_user_brief(user)
     brief["available_roles"] = sorted(roles_of(open_id))
-    resp = make_response(jsonify({"ok": True, "user": brief, "claimed": claimed}))
+    payload = {"ok": True, "user": brief, "claimed": claimed}
+    if extra:
+        payload.update(extra)
+    resp = make_response(jsonify(payload))
     resp.set_cookie("yxq_session", session_id, httponly=True, secure=True,
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
@@ -2639,6 +2642,49 @@ def _norm_phone(v):
 def _norm_name(v):
     """归一化姓名：去除所有空白字符。"""
     return re.sub(r"\s+", "", str(v or ""))
+
+def _claim_auto_signup(open_id, user_fields):
+    """认领时若资料已审核（单身）且注册表单选了「微信缴费=我已缴费」，立即报名
+    PROMO_ACTIVITY_ID，让用户认领后无需再手动报名。幂等：非单身/未缴费/活动非报名中/
+    满员/已报名一律跳过。机器人 auto_signup_new_user 30 秒轮询会再做一次幂等兜底，
+    所以这里任何失败都只记日志、不影响认领本身。"""
+    try:
+        if bitable.get_select_value(user_fields, F_ACCOUNT_STATUS) != "单身":
+            return False
+        if bitable.get_select_value(user_fields, F_WECHAT_PAYMENT) != WECHAT_PAY_PAID:
+            return False
+        act_record, text_act_id = snap_resolve_activity(PROMO_ACTIVITY_ID)
+        if not act_record:
+            app.logger.warning("认领即时报名跳过：未找到活动 %s", PROMO_ACTIVITY_ID)
+            return False
+        act_fields = act_record.get("fields", {})
+        if bitable.get_select_value(act_fields, F_ACTIVITY_STATUS) != "报名中":
+            return False
+        if bitable.get_user_signup(text_act_id, open_id):
+            return False  # 已报名，幂等
+        nickname = (bitable.get_field_text(user_fields, F_NICKNAME)
+                    or bitable.get_field_text(user_fields, F_REAL_NAME) or "用户")
+        with file_lock:
+            if bitable.get_user_signup(text_act_id, open_id):
+                return False
+            max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
+            if max_signup > 0 and len(bitable.get_signups(text_act_id) or []) >= max_signup:
+                return False
+            created = bitable.create_record(SIGNUP_TABLE_ID, {
+                F_SIGNUP_ACTIVITY_ID: text_act_id,
+                F_SIGNUP_OPENID: open_id,
+                F_SIGNUP_NICKNAME: nickname,
+                F_SIGNUP_STATUS: "已报名",
+            })
+        if not created:
+            return False
+        refresh_snapshot_table_async("signups")
+        refresh_snapshot_table_async("activities")
+        app.logger.warning(f"认领即时自动报名: {nickname} -> {text_act_id}")
+        return True
+    except Exception as e:
+        app.logger.warning(f"认领即时报名异常(轮询兜底): {e}")
+        return False
 
 @app.route("/api/auth/claim", methods=["POST"])
 def auth_claim():
@@ -2704,8 +2750,11 @@ def auth_claim():
         return jsonify({"error": "认领写入失败，请稍后重试（或联系现场小天使）"}), 502
 
     user = updated if isinstance(updated, dict) and updated.get("fields") else rec
-    app.logger.warning(f"认领成功: phone={phone} name={name} open_id={open_id}")
-    return _make_login_resp(open_id, user, "user", claimed=True)
+    # 资料已审核（单身）且已微信缴费 → 认领即自动报名活动；待审核则等小天使改单身后由轮询报名
+    auto_signed = _claim_auto_signup(open_id, user.get("fields", {}))
+    app.logger.warning(f"认领成功: phone={phone} name={name} open_id={open_id} auto_signed={auto_signed}")
+    return _make_login_resp(open_id, user, "user", claimed=True,
+                            extra={"auto_signed_up": auto_signed})
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():

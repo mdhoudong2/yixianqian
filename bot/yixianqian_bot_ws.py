@@ -68,6 +68,8 @@ from commands import (
     handle_admin_reject,
     handle_admin_stats,
     handle_admin_toggle_group_flag,
+    handle_claim_command,
+
     handle_group_help,
     handle_h5_command,
     handle_help_command,
@@ -519,6 +521,8 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
     if not reply:
         if text_lower in ["注册", "register", "我要注册", "报名"]:
             reply = handle_register_command(sender_id)
+        elif text_lower in ["认领", "claim", "认领资料", "认领报名", "现场认领"]:
+            reply = handle_claim_command(sender_id)
         elif text_lower in ["邀请", "invite", "邀请好友", "分享"]:
             reply = handle_invite_command(sender_id)
         elif text_lower in ["村情六处", "村情六处注册", "observer"]:

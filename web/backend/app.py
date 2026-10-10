@@ -2558,34 +2558,27 @@ def touch_last_active(open_id, user, role):
 
     threading.Thread(target=_w, daemon=True).start()
 
-@app.route("/api/auth/feishu", methods=["GET"])
-def feishu_auth():
-    """飞书OAuth免登回调"""
-    code = request.args.get("code", "")
-    if not code:
-        return jsonify({"error": "缺少code参数"}), 400
-
-    # 获取 app_access_token（authen接口需要）
+def _get_app_access_token():
+    """获取 app_access_token（authen 网页免登换票需要）。失败返回 ''。"""
     try:
         token_resp = requests.post(
             "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal",
             json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
             timeout=10
         )
-        token_data = token_resp.json()
-        app_access_token = token_data.get("app_access_token", "")
+        return token_resp.json().get("app_access_token", "")
     except Exception as e:
         app.logger.error(f"获取app_access_token失败: {e}")
-        return jsonify({"error": "服务异常"}), 500
+        return ""
 
+def _exchange_code_for_openid(code):
+    """飞书网页免登 code 换 open_id。网络抖动/超时重试 1 次：code 已成功消费会
+    code==0 直接跳出、不重复消费；仅首次未成功时重试才可能挽回。返回 open_id 或 None。"""
+    app_access_token = _get_app_access_token()
     if not app_access_token:
-        return jsonify({"error": "服务异常"}), 500
-
+        return None
     open_id = None
     last_error = ""
-    # 标准 access_token（与 authen/v1/authorize 配套）
-    # 网络抖动/超时导致未换到身份时重试一次：code 已成功消费会直接 code==0 跳出、
-    # 不会重复消费；仅当首次请求未成功时，重试才可能挽回。
     url = "https://open.feishu.cn/open-apis/authen/v1/access_token"
     headers = {"Authorization": f"Bearer {app_access_token}", "Content-Type": "application/json"}
     for attempt in range(2):
@@ -2604,28 +2597,115 @@ def feishu_auth():
             break
         if attempt == 0:
             app.logger.warning("Authen token 首次未成功，进行 1 次重试")
-
     if not open_id:
         app.logger.error(f"Feishu auth failed: {last_error}")
-        return jsonify({"error": "免登失败，请重试"}), 401
+    return open_id
 
-    user = snap_find_user_by_openid(open_id)  # 登录态未建立(g无值)，按 open_id 直解主档
-    if not user:
-        return jsonify({"error": "尚未注册，请先在飞书中搜索「一线牵」机器人完成注册", "need_register": True}), 403
-
-    # 双身份：默认进入「普通用户」，仅当无普通用户档案时才落到观察员
-    roles = roles_of(open_id)
-    default_role = "user" if "user" in roles else "observer"
-
-    touch_last_active(open_id, user, default_role)
-
-    session_id = create_session(open_id, default_role)
+def _make_login_resp(open_id, user, role, claimed=False):
+    """构造登录成功响应：回写最近活跃、写会话 cookie，返回用户摘要。"""
+    touch_last_active(open_id, user, role)
+    session_id = create_session(open_id, role)
     brief = format_user_brief(user)
-    brief["available_roles"] = sorted(roles)
-    resp = make_response(jsonify({"ok": True, "user": brief}))
+    brief["available_roles"] = sorted(roles_of(open_id))
+    resp = make_response(jsonify({"ok": True, "user": brief, "claimed": claimed}))
     resp.set_cookie("yxq_session", session_id, httponly=True, secure=True,
                     max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
     return resp
+
+@app.route("/api/auth/feishu", methods=["GET"])
+def feishu_auth():
+    """飞书OAuth免登回调"""
+    code = request.args.get("code", "")
+    if not code:
+        return jsonify({"error": "缺少code参数"}), 400
+    open_id = _exchange_code_for_openid(code)
+    if not open_id:
+        return jsonify({"error": "免登失败，请重试"}), 401
+    user = snap_find_user_by_openid(open_id)  # 登录态未建立，按 open_id 直解主档
+    if not user:
+        return jsonify({"error": "尚未注册，请先在飞书中搜索「一线牵」机器人完成注册", "need_register": True}), 403
+    # 双身份：默认进入「普通用户」，仅当无普通用户档案时才落到观察员
+    roles = roles_of(open_id)
+    default_role = "user" if "user" in roles else "observer"
+    return _make_login_resp(open_id, user, default_role)
+
+def _norm_phone(v):
+    """归一化手机号：去非数字、去 86 国家码，取末 11 位。"""
+    digits = re.sub(r"\D", "", str(v or ""))
+    if len(digits) == 13 and digits.startswith("86"):
+        digits = digits[2:]
+    return digits[-11:] if len(digits) >= 11 else digits
+
+def _norm_name(v):
+    """归一化姓名：去除所有空白字符。"""
+    return re.sub(r"\s+", "", str(v or ""))
+
+@app.route("/api/auth/claim", methods=["POST"])
+def auth_claim():
+    """微信/浏览器预报名后的现场认领：用「手机号+姓名」把当前飞书身份(open_id)
+    合并到一条「飞书用户ID为空」的预填记录上（更新原记录，绝不新建重复档案）。
+    认领后账号保持/置为「待审核」，由现场小天使核验本人与缴费后改「单身」。"""
+    rl = _rate_limit(8, 600, "claim")  # 10 分钟 8 次，防手机号枚举
+    if rl:
+        return rl
+    body = request.get_json(silent=True) or {}
+    code = str(body.get("code", "")).strip()
+    phone = _norm_phone(body.get("phone", ""))
+    name = _norm_name(body.get("name", ""))
+    if not code:
+        return jsonify({"error": "缺少飞书登录凭证，请在飞书里重新打开"}), 400
+    if not (len(phone) == 11 and phone.startswith("1")):
+        return jsonify({"error": "请输入正确的 11 位手机号"}), 400
+    if not (2 <= len(name) <= 30):
+        return jsonify({"error": "请输入注册时填写的真实姓名"}), 400
+
+    open_id = _exchange_code_for_openid(code)
+    if not open_id:
+        return jsonify({"error": "飞书登录失败，请重试"}), 401
+
+    # 幂等：该飞书身份已有档案（含已认领过）直接登录，不报错
+    existing = snap_find_user_by_openid(open_id)
+    if existing:
+        roles = roles_of(open_id)
+        default_role = "user" if "user" in roles else "observer"
+        return _make_login_resp(open_id, existing, default_role, claimed=False)
+
+    # 拉「飞书用户ID为空」的待认领记录（raw 以区分查询失败与空表）
+    pending = bitable.raw_search_records(USER_TABLE_ID, [
+        {"field_name": F_FEISHU_ID, "operator": "isEmpty", "value": []}
+    ])
+    if pending is None:
+        return jsonify({"error": "服务繁忙，请稍后重试（或联系现场小天使）"}), 502
+
+    cands = []
+    for r in pending:
+        f = r.get("fields", {})
+        if bitable.get_field_text(f, F_FEISHU_ID).strip():
+            continue  # 双保险：已有飞书身份的记录不参与认领
+        if _norm_phone(bitable.get_phone_value(f, F_PHONE)) != phone:
+            continue
+        if _norm_name(bitable.get_field_text(f, F_REAL_NAME)) != name:
+            continue
+        cands.append(r)
+
+    if len(cands) == 0:
+        app.logger.warning(f"认领未匹配: phone={phone} name={name}")
+        return jsonify({"error": "没有找到匹配的预报名信息。请核对手机号和姓名（须与微信填表时一致）；若还没填过表，请先完成注册。"}), 404
+    if len(cands) > 1:
+        app.logger.warning(f"认领匹配到 {len(cands)} 条: phone={phone} name={name}")
+        return jsonify({"error": "找到多条匹配记录，请联系现场小天使人工处理。"}), 409
+
+    rec = cands[0]
+    upd = {F_FEISHU_ID: open_id}
+    if not bitable.get_select_value(rec.get("fields", {}), F_ACCOUNT_STATUS):
+        upd[F_ACCOUNT_STATUS] = "待审核"  # 预填记录无状态时补待审核，小天使现场核验后改单身
+    updated = bitable.update_record(USER_TABLE_ID, rec.get("record_id"), upd)
+    if not updated:
+        return jsonify({"error": "认领写入失败，请稍后重试（或联系现场小天使）"}), 502
+
+    user = updated if isinstance(updated, dict) and updated.get("fields") else rec
+    app.logger.warning(f"认领成功: phone={phone} name={name} open_id={open_id}")
+    return _make_login_resp(open_id, user, "user", claimed=True)
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():

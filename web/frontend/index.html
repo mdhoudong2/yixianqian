@@ -583,7 +583,25 @@
     </div>
   </div>
 
-  <van-button type="primary" color="#ff6b81" style="width:86%;max-width:340px;box-sizing:border-box;" @click="retryLogin" v-if="loginError">{{ showPersonalGuide ? '我已创建团队，重新进入' : '重新登录' }}</van-button>
+  <!-- 预报名认领（微信/浏览器先填过表，现场补飞书身份） -->
+  <div v-if="showClaim" style="width:86%;max-width:340px;margin:0 auto 14px;box-sizing:border-box;">
+    <div style="background:#fff5f6;border:1px solid #ffd9e0;border-radius:12px;padding:14px;box-sizing:border-box;">
+      <div style="font-size:14px;color:#ad2139;font-weight:600;margin-bottom:6px;">📝 认领预报名资料</div>
+      <div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:12px;">如果你已在微信或手机浏览器填过注册表，输入当时填写的姓名和手机号，即可把资料与你的飞书账号连起来。</div>
+      <van-field v-model="claimName" label="姓名" placeholder="注册时填的真实姓名" clearable
+        style="border-radius:8px;overflow:hidden;margin-bottom:8px;background:#fff;" />
+      <van-field v-model="claimPhone" label="手机号" type="tel" maxlength="11" placeholder="11 位手机号" clearable
+        style="border-radius:8px;overflow:hidden;margin-bottom:12px;background:#fff;" />
+      <van-button type="primary" color="#ff6b81" block :loading="claiming" @click="submitClaim">认领并进入</van-button>
+      <div style="text-align:center;margin-top:10px;font-size:12px;">
+        <span style="color:#6b7280;">还没填过注册表？</span>
+        <span style="color:#ff6b81;margin-left:6px;" @click="backToLogin">返回</span>
+      </div>
+    </div>
+    <div style="font-size:11.5px;color:#9a6a12;line-height:1.6;margin-top:8px;text-align:center;">认领后资料需现场小天使核验开通，如有疑问请联系小天使</div>
+  </div>
+
+  <van-button type="primary" color="#ff6b81" style="width:86%;max-width:340px;box-sizing:border-box;" @click="retryLogin" v-if="loginError && !showClaim">{{ showPersonalGuide ? '我已创建团队，重新进入' : '重新登录' }}</van-button>
 </div>
 <!-- 账号状态门禁（待审核/已退出） -->
 <div v-else-if="gateMessage" class="login-page">
@@ -2176,6 +2194,12 @@ createApp({
     const loginErrorMessage = ref('');
     const showPersonalGuide = ref(false);
     const loginTip = ref('');
+    // 预报名认领（微信/浏览器先填过表，现场补飞书身份）
+    const showClaim = ref(false);
+    const claimName = ref('');
+    const claimPhone = ref('');
+    const claiming = ref(false);
+    let previewGuideFlag = false;
     // 账号状态门禁（待审核/审核不通过/已退出）：后端 /api/home 返回 403 时整屏提示
     const gateMessage = ref('');
     const gateTitle = computed(() => {
@@ -3158,14 +3182,49 @@ createApp({
         return 'ok';
       } catch (e) {
         if (e.message.includes('尚未注册')) {
-          vant.showDialog({ title: '提示', message: '你还未注册，请先在飞书中搜索「一线牵」机器人完成注册。', confirmButtonColor: '#ff6b81' });
+          // 未注册：展示「预报名认领」面板（微信/浏览器先填过表的用户）；新用户走机器人注册
+          loggingIn.value = false;
+          loginError.value = true;
+          showClaim.value = true;
           return 'need_register';
         }
         return 'error';
       }
     }
+    // 预报名认领：重新取飞书 code，连同 手机号+姓名 提交后端合并到预填记录
+    async function submitClaim() {
+      const name = (claimName.value || '').trim();
+      const phone = (claimPhone.value || '').replace(/\D/g, '');
+      if (name.replace(/\s+/g, '').length < 2) { vant.showToast('请输入注册时填写的真实姓名'); return; }
+      if (phone.length !== 11 || !phone.startsWith('1')) { vant.showToast('请输入正确的 11 位手机号'); return; }
+      if (!isInFeishu()) { vant.showToast('请在飞书 App 里打开本页面后再认领'); return; }
+      claiming.value = true;
+      try {
+        const silent = await getFeishuSilentCode(6000);
+        if (!silent || !silent.code) { vant.showToast('飞书登录凭证获取失败，请点「重新登录」再试'); return; }
+        const data = await api('/api/auth/claim', {
+          method: 'POST',
+          body: JSON.stringify({ code: silent.code, phone: claimPhone.value, name: claimName.value })
+        });
+        user.value = data.user;
+        user.value.anon_left = data.user.anon_left || 0;
+        user.value.real_left = data.user.real_left || 0;
+        window.history.replaceState({}, '', window.location.pathname);
+        showClaim.value = false; loginError.value = false;
+        await loadHome();
+        restoreDeck();
+        vant.showToast(data.claimed ? '认领成功' : '登录成功');
+      } catch (e) {
+        vant.showToast(e.message || '认领失败，请重试');
+      } finally {
+        claiming.value = false;
+      }
+    }
+    function backToLogin() {
+      showClaim.value = false; claimName.value = ''; claimPhone.value = '';
+    }
     async function doLogin() {
-      loggingIn.value = true; loginError.value = false; loginTip.value = ''; showPersonalGuide.value = false;
+      loggingIn.value = true; loginError.value = false; loginTip.value = ''; showPersonalGuide.value = false; showClaim.value = false;
 
       // 1. 已有会话（cookie 有效则直接进）
       try {
@@ -5208,6 +5267,7 @@ createApp({
 
     return {
       page, pageTransition, user, loggingIn, loginError, showPersonalGuide, loginTip,
+      showClaim, claimName, claimPhone, claiming, submitClaim, backToLogin,
       isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,

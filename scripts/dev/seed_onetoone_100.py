@@ -46,6 +46,7 @@ _TOP_N = 10
 _PREFIX_MALE = "ou_fake_oto_male_"
 _PREFIX_FEMALE = "ou_fake_oto_female_"
 _FIELD_USER_ID = "用户ID"  # 自动编号，只读
+_ACTIVITY_NAME = "百人对一对一演示"
 
 # 资料相似度维度取值（与 web/backend/config.py 的选项池子集一致，保证可写入）
 _EDUCATIONS = ["大专", "本科", "硕士", "博士"]
@@ -223,7 +224,7 @@ def _create_activity():
     """新建一个专用活动，读回自动编号活动ID。"""
     now_ms = int(time.time() * 1000)
     fields = {
-        C.FIELD_ACTIVITY_NAME: "百人对一对一演示",
+        C.FIELD_ACTIVITY_NAME: _ACTIVITY_NAME,
         C.FIELD_ACTIVITY_STATUS: "报名中",
         C.FIELD_ACT_ONETOONE_FLAG: "是",
         "报名人数上限": "无",
@@ -325,7 +326,7 @@ def _expected_matches(act_id, males, females, plan):
     for item in plan:
         selections[item["selector"]["oid"]] = [
             {"id": t["oid"], "priority": i + 1} for i, t in enumerate(item["targets"])]
-    profiles = _build_profiles([x["oid"] for x in participants])
+    profiles = _build_profiles([x["id"] for x in participants])
     return run_onetoone_matching(participants, selections, profiles, top_n=_TOP_N)
 
 
@@ -388,6 +389,67 @@ def _verify(act_id, males, females, plan):
     return (not issues), lines
 
 
+def _find_activity(act_id):
+    """活动ID 是自动编号，不支持 filter，全表扫 + 文本匹配（活动表很小）。"""
+    for r in _must(bitable.search_records(C.ACTIVITY_TABLE_ID), "活动表"):
+        if get_field_text(r.get("fields", {}), C.FIELD_ACTIVITY_ID) == act_id:
+            return r
+    return None
+
+
+def _read_plan_from_tables(act_id):
+    """从一对一选择表重建 participants（保持表序，不重排，避免打破同分 tie-break）+
+    plan + 性别分组。verify 模式用，纯读。"""
+    sels = _must(bitable.search_records(C.ONETOONE_SELECT_TABLE, {
+        "conjunction": "and",
+        "conditions": [{"field_name": C.FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]}],
+    }), "一对一选择表")
+    people = {}
+    order = []
+    for r in sels:
+        f = r.get("fields", {})
+        oid = get_field_text(f, C.FIELD_OTO_SELECTOR_OID)
+        if not oid or oid in people:
+            continue
+        people[oid] = {
+            "oid": oid,
+            "gender": get_field_text(f, C.FIELD_OTO_SELECTOR_GENDER),
+            "nickname": get_field_text(f, C.FIELD_OTO_SELECTOR_NAME),
+        }
+        order.append(oid)
+    plan = []
+    for r in sels:
+        f = r.get("fields", {})
+        oid = get_field_text(f, C.FIELD_OTO_SELECTOR_OID)
+        if oid not in people:
+            continue
+        targets = []
+        for cf in C.FIELD_OTO_CHOICES:
+            t = get_field_text(f, cf)
+            if t and t in people:
+                targets.append(people[t])
+        plan.append({"selector": people[oid], "targets": targets})
+    males = [people[o] for o in order if people[o]["gender"] == "男性"]
+    females = [people[o] for o in order if people[o]["gender"] == "女性"]
+    return males, females, plan
+
+
+def _cmd_verify(act_id):
+    if not act_id:
+        _fail("用法：verify 活动ID，例如 verify A-0012")
+    if not _find_activity(act_id):
+        _fail(f"活动表中未找到活动ID：{act_id}")
+    males, females, plan = _read_plan_from_tables(act_id)
+    if not plan:
+        _fail(f"活动 {act_id} 无选择记录")
+    print(f"========== VERIFY（只读复核） {act_id} ==========")
+    print(f"  参与者 {len(males) + len(females)} 人（男 {len(males)} / 女 {len(females)}），志愿 {len(plan)} 条")
+    ok, _ = _verify(act_id, males, females, plan)
+    if not ok:
+        _fail("复核未通过（见上方 ⛔ 项）")
+    print("✅ 复核通过。")
+
+
 def _cmd_plan():
     males, females = _build_users()
     print("========== PLAN（只读，不写任何数据） ==========")
@@ -437,8 +499,10 @@ def main():
         _cmd_plan()
     elif mode == "run":
         _cmd_run()
+    elif mode == "verify":
+        _cmd_verify(sys.argv[2] if len(sys.argv) > 2 else "")
     else:
-        print("用法：YIXIANQIAN_ENV=dev bot/venv/bin/python scripts/dev/seed_onetoone_100.py plan|run")
+        print("用法：YIXIANQIAN_ENV=dev bot/venv/bin/python scripts/dev/seed_onetoone_100.py plan|run|verify [活动ID]")
         sys.exit(2)
 
 

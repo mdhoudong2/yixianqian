@@ -2346,6 +2346,7 @@ createApp({
     const claimPhone = ref('');
     const claiming = ref(false);
     let previewGuideFlag = false;
+    let previewClaimFlag = false;
     // 账号状态门禁（待审核/审核不通过/已退出）：后端 /api/home 返回 403 时整屏提示
     const gateMessage = ref('');
     const gateTitle = computed(() => {
@@ -3408,6 +3409,11 @@ createApp({
       // onMounted 在清理 URL 前已把结果存入 previewGuideFlag
       if (previewGuideFlag) {
         loggingIn.value = false; loginError.value = true; showPersonalGuide.value = true;
+        return;
+      }
+      // 测试环境专用：?preview_claim=1 直接展示预报名认领面板，不走真实登录，便于验收
+      if (previewClaimFlag) {
+        loggingIn.value = false; loginError.value = true; showClaim.value = true;
         return;
       }
 
@@ -5450,6 +5456,7 @@ createApp({
       const entryHash = window.location.hash;
       // 在下方 replaceState 清掉 query 前，捕获引导预览参数（仅测试环境）
       try { previewGuideFlag = location.hostname.includes('test') && new URLSearchParams(location.search).get('preview_guide') === '1'; } catch(e) { previewGuideFlag = false; }
+      try { previewClaimFlag = location.hostname.includes('test') && new URLSearchParams(location.search).get('preview_claim') === '1'; } catch(e) { previewClaimFlag = false; }
       try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {

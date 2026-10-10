@@ -318,6 +318,25 @@ _SNAPSHOT_FETCHERS = {
 }
 _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
 
+# 实时读失败后的冷却：key -> 截止时间戳。
+# refresh_snapshot_table 只在成功时刷新 _snapshot_last_ok，失败时旧时间戳留着；
+# 而 _snap_live/_snap_fresh 每次请求都会因「快照过期」再去读一次飞书。飞书持续
+# 故障或限流（429）时，这就等于用请求量放大限流——快照本来就是为了避免这个。
+# 失败后这段时间内读请求直接用现有快照，不打飞书；任何一次成功即解除。
+SNAPSHOT_FAIL_COOLDOWN = 30  # 秒：取 30 的理由见 docs/读取一致性.md
+_SNAPSHOT_FAIL_UNTIL = {}  # key -> 冷却截止时间戳；只在失败时写，成功时 pop
+
+def _snapshot_mark_failed(key):
+    """记一次实时读失败：该表进入冷却期，期间读请求不再打飞书。"""
+    with _snapshot_lock:
+        _SNAPSHOT_FAIL_UNTIL[key] = time.time() + SNAPSHOT_FAIL_COOLDOWN
+
+def _snapshot_failing(key):
+    """该表是否仍在失败冷却期内（飞书刚读不动，此时返回现有快照是唯一合理降级）。"""
+    with _snapshot_lock:
+        until = _SNAPSHOT_FAIL_UNTIL.get(key)
+        return bool(until) and time.time() < until
+
 def refresh_snapshot_table(key):
     """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）"""
     fetcher = _SNAPSHOT_FETCHERS.get(key)
@@ -327,14 +346,18 @@ def refresh_snapshot_table(key):
         data = fetcher()
         if data is None:
             logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+            _snapshot_mark_failed(key)
             return
         with _snapshot_lock:
             _snapshot[key] = data
             _snapshot_loaded.add(key)
             _snapshot_last_ok[key] = time.time()
             _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
+            # 成功即解除冷却：冷却只压失败重试，绝不能压住自愈路径
+            _SNAPSHOT_FAIL_UNTIL.pop(key, None)
     except Exception as e:
         logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
+        _snapshot_mark_failed(key)
     if key == "users":
         _photo_reapply_pending()
         _rebuild_cards_cache()
@@ -410,9 +433,13 @@ def _snap_live(key):
     过滤过的结果写回去，否则会把全局快照污染成「只有某个活动的数据」。
     按活动/按人过滤请在拿到全表之后自行做。
 
-    读取失败时降级返回现有快照（可能陈旧）并记日志，不让页面炸掉。
+    读取失败时降级返回现有快照（可能陈旧）并记日志，不让页面炸掉；失败后还会
+    拉起该表的冷却期（SNAPSHOT_FAIL_COOLDOWN），避免限流下每个请求都放大成一次
+    飞书往返。
     """
     if _snap_ready(key):
+        return _snap(key)
+    if _snapshot_failing(key):
         return _snap(key)
     if not _SNAPSHOT_FETCHERS.get(key):
         return _snap(key)
@@ -429,6 +456,8 @@ def _snap_fresh(key):
 
     规则见 docs/读取一致性.md。
     """
+    if _snapshot_failing(key):
+        return _snap(key)
     if not _SNAPSHOT_FETCHERS.get(key):
         return _snap(key)
     refresh_snapshot_table(key)

@@ -312,6 +312,25 @@ _SNAPSHOT_FETCHERS = {
 }
 _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
 
+# 实时读失败后的冷却：key -> 截止时间戳。
+# refresh_snapshot_table 只在成功时刷新 _snapshot_last_ok，失败时旧时间戳留着；
+# 而 _snap_live/_snap_fresh 每次请求都会因「快照过期」再去读一次飞书。飞书持续
+# 故障或限流（429）时，这就等于用请求量放大限流——快照本来就是为了避免这个。
+# 失败后这段时间内读请求直接用现有快照，不打飞书；任何一次成功即解除。
+SNAPSHOT_FAIL_COOLDOWN = 30  # 秒：取 30 的理由见 docs/读取一致性.md
+_SNAPSHOT_FAIL_UNTIL = {}  # key -> 冷却截止时间戳；只在失败时写，成功时 pop
+
+def _snapshot_mark_failed(key):
+    """记一次实时读失败：该表进入冷却期，期间读请求不再打飞书。"""
+    with _snapshot_lock:
+        _SNAPSHOT_FAIL_UNTIL[key] = time.time() + SNAPSHOT_FAIL_COOLDOWN
+
+def _snapshot_failing(key):
+    """该表是否仍在失败冷却期内（飞书刚读不动，此时返回现有快照是唯一合理降级）。"""
+    with _snapshot_lock:
+        until = _SNAPSHOT_FAIL_UNTIL.get(key)
+        return bool(until) and time.time() < until
+
 def refresh_snapshot_table(key):
     """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）"""
     fetcher = _SNAPSHOT_FETCHERS.get(key)
@@ -321,14 +340,18 @@ def refresh_snapshot_table(key):
         data = fetcher()
         if data is None:
             logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+            _snapshot_mark_failed(key)
             return
         with _snapshot_lock:
             _snapshot[key] = data
             _snapshot_loaded.add(key)
             _snapshot_last_ok[key] = time.time()
             _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
+            # 成功即解除冷却：冷却只压失败重试，绝不能压住自愈路径
+            _SNAPSHOT_FAIL_UNTIL.pop(key, None)
     except Exception as e:
         logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
+        _snapshot_mark_failed(key)
     if key == "users":
         _photo_reapply_pending()
         _rebuild_cards_cache()
@@ -391,7 +414,50 @@ def _snap_ready(key):
             return False
         return True
 
-# ---- 快照读取辅助（镜像 bitable 常用查询；快照为空时回退到飞书，保证启动初期可用） ----
+def _snap_live(key):
+    """快照未就绪/已过期时实时读飞书，并把结果**回填**快照（自愈）。
+
+    bot 与 H5 是两个进程、内存不共享：后台刷新一旦失败，_SNAPSHOT_STALE 之后快照
+    就是「过期但非空」的脏数据。只做实时读而不回填的话，每个请求都会打飞书，
+    限流后雪崩；所以这里读一次就写回 _snapshot 并刷新时间戳（复用
+    refresh_snapshot_table 的全表 fetcher 与加锁写法），下一个请求重新走内存。
+
+    回填必须是**全表**形状：统一取 _SNAPSHOT_FETCHERS[key]（raw_search_records），
+    绝不能把 get_group_results(act_id)/get_signups(act_id) 这类按活动/按人
+    过滤过的结果写回去，否则会把全局快照污染成「只有某个活动的数据」。
+    按活动/按人过滤请在拿到全表之后自行做。
+
+    读取失败时降级返回现有快照（可能陈旧）并记日志，不让页面炸掉；失败后还会
+    拉起该表的冷却期（SNAPSHOT_FAIL_COOLDOWN），避免限流下每个请求都放大成一次
+    飞书往返。
+    """
+    if _snap_ready(key):
+        return _snap(key)
+    if _snapshot_failing(key):
+        return _snap(key)
+    if not _SNAPSHOT_FETCHERS.get(key):
+        return _snap(key)
+    refresh_snapshot_table(key)
+    return _snap(key)
+
+def _snap_fresh(key):
+    """不管快照是否过期，都强制实时读一次飞书并回填（决定性读取入口）。
+
+    与 _snap_live 的区别只有一处：连「还没过期」的快照也不信。凡是**判定结果**
+    依赖其他进程写入的数据（bot 改的分组状态/分组结果、各类开关），都必须走
+    这里——bot 与 H5 内存不共享，吃周期快照会让用户白等一个刷新间隔（分组表
+    300s，用户体感就是「管理员说开始了，大家却进不去」）。
+
+    规则见 docs/读取一致性.md。
+    """
+    if _snapshot_failing(key):
+        return _snap(key)
+    if not _SNAPSHOT_FETCHERS.get(key):
+        return _snap(key)
+    refresh_snapshot_table(key)
+    return _snap(key)
+
+# ---- 快照读取辅助（镜像 bitable 常用查询；快照未就绪/过期时回退到飞书，保证可用） ----
 
 def _pick_primary_user(records):
     """同一 open_id 多条记录时取主档案：单身优先，其次用户ID最小（与 bot/queries 同规则）"""
@@ -737,9 +803,7 @@ def snap_find_user_by_openid(open_id):
     return _pick_primary_user(recs)
 
 def snap_active_users():
-    users = _snap("users")
-    if not users and not _snap_ready("users"):
-        return bitable.get_all_users()
+    users = _snap_live("users")
     return [u for u in users
             if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "单身"]
 
@@ -838,10 +902,8 @@ def _get_session_order(key, cards, liked_me_openids, open_id, pinned_openids=Non
     return oids, now
 
 
-def snap_find_activity(act_id):
-    activities = _snap("activities")
-    if not activities and not _snap_ready("activities"):
-        return find_activity(act_id)
+def _match_activity(activities, act_id):
+    """在给定活动列表里按 record_id 或文本活动ID 匹配（供 my_groups 批量即时读后复用）。"""
     for a in activities:
         if a.get("record_id") == act_id:
             return a
@@ -849,54 +911,43 @@ def snap_find_activity(act_id):
             return a
     return None
 
-def snap_resolve_activity(act_id):
-    rec = snap_find_activity(act_id)
+def snap_find_activity(act_id, fresh=False):
+    """按 record_id 或文本活动ID 找活动。fresh=True 时强制实时读（判定依赖 bot 写入的活动状态时用）。"""
+    activities = _snap_fresh("activities") if fresh else _snap_live("activities")
+    return _match_activity(activities, act_id)
+
+def snap_resolve_activity(act_id, fresh=False):
+    rec = snap_find_activity(act_id, fresh=fresh)
     if not rec:
         return None, None
     return rec, bitable.get_field_text(rec.get("fields", {}), F_ACTIVITY_ID)
 
 def snap_all_activities():
-    activities = _snap("activities")
-    if not activities and not _snap_ready("activities"):
-        return bitable.get_activities()
-    return activities
+    return _snap_live("activities")
 
 def snap_likes_by_target(open_id):
-    likes = _snap("likes")
-    if not likes and not _snap_ready("likes"):
-        return bitable.search_records(LIKE_TABLE_ID, [
-            {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]}])
+    likes = _snap_live("likes")
     return [l for l in likes
             if bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID) == open_id]
 
 def snap_likes_by_initiator(open_id):
-    likes = _snap("likes")
-    if not likes and not _snap_ready("likes"):
-        return bitable.search_records(LIKE_TABLE_ID, [
-            {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
+    likes = _snap_live("likes")
     return [l for l in likes
             if bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID) == open_id]
 
 def snap_signups_by_openid(open_id):
-    signups = _snap("signups")
-    if not signups and not _snap_ready("signups"):
-        return bitable.search_records(SIGNUP_TABLE_ID, [
-            {"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]}])
+    signups = _snap_live("signups")
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) == open_id]
 
 def snap_signups_by_activity(act_id):
-    signups = _snap("signups")
-    if not signups and not _snap_ready("signups"):
-        return bitable.get_signups(act_id)
+    signups = _snap_live("signups")
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) == act_id
             and bitable.get_select_value(s.get("fields", {}), F_SIGNUP_STATUS) != "已取消"]
 
 def snap_signup(act_id, open_id):
-    signups = _snap("signups")
-    if not signups and not _snap_ready("signups"):
-        return bitable.get_user_signup(act_id, open_id)
+    signups = _snap_live("signups")
     for s in signups:
         f = s.get("fields", {})
         if (bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) == act_id
@@ -906,27 +957,22 @@ def snap_signup(act_id, open_id):
     return None
 
 def snap_group_selections_by_selector(open_id):
-    gs = _snap("group_selections")
-    if not gs and not _snap_ready("group_selections"):
-        return bitable.search_records(GROUP_SELECT_TABLE, [
-            {"field_name": F_GS_SELECTOR_OID, "operator": "is", "value": [open_id]}])
+    gs = _snap_live("group_selections")
     return [g for g in gs
             if bitable.get_field_text(g.get("fields", {}), F_GS_SELECTOR_OID) == open_id]
 
 def snap_group_selection(act_id, open_id):
-    gs = _snap("group_selections")
-    if not gs and not _snap_ready("group_selections"):
-        return bitable.get_user_group_selection(act_id, open_id)
+    gs = _snap_live("group_selections")
     for sg in gs:
         f = sg.get("fields", {})
         if bitable.get_field_text(f, F_GS_ACTIVITY_ID) == act_id and bitable.get_field_text(f, F_GS_SELECTOR_OID) == open_id:
             return sg
     return None
 
-def snap_group_results(act_id):
-    gr = _snap("group_results")
-    if not gr and not _snap_ready("group_results"):
-        return bitable.get_group_results(act_id)
+def snap_group_results(act_id, fresh=False):
+    """分组结果。fresh=True 时强制实时读：结果由 bot 进程写入，
+    轮次切换（第 2 轮分组写完）必须立刻可见，不能等 300s 快照。"""
+    gr = _snap_fresh("group_results") if fresh else _snap_live("group_results")
     return [r for r in gr
             if bitable.get_field_text(r.get("fields", {}), F_GR_ACTIVITY_ID) == act_id]
 
@@ -5361,8 +5407,8 @@ def group_candidates(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    # 检查活动状态
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 检查活动状态（分组状态由 bot 进程写入，判定依赖它 → 实时读）
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
     group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
@@ -5434,8 +5480,8 @@ def group_select(activity_id):
     if len(choices) > 7:
         return jsonify({"error": "最多选择7个志愿"}), 400
 
-    # 检查活动状态（快照）
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 检查活动状态（分组状态由 bot 进程写入，判定依赖它 → 实时读）
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
     group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
@@ -5490,7 +5536,8 @@ def group_status(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 分组状态由 bot 进程写入，判定依赖它 → 实时读
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -5522,7 +5569,8 @@ def group_result(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 分组状态由 bot 进程写入，判定依赖它 → 实时读
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -5530,7 +5578,8 @@ def group_result(activity_id):
     if group_status != "已完成":
         return jsonify({"error": "分组尚未完成", "group_status": group_status}), 400
 
-    results = snap_group_results(text_act_id)
+    # 分组结果由 bot 进程写入，轮次切换必须立刻可见 → 实时读
+    results = snap_group_results(text_act_id, fresh=True)
 
     # 轮次：默认展示最新一轮（round 最大）。旧无轮次记录(空)视为第1轮。
     def _round_of(f):
@@ -6125,11 +6174,15 @@ def my_groups():
         if aid:
             selection_by_act[aid] = s_fields
 
+    # 每个活动的「分组状态」由 bot 进程写入，本列表按它过滤 → 一次性实时读全表，
+    # 再逐个匹配；不能对每个活动各调一次即时读，否则报名多的人就是 N 次飞书请求。
+    acts_fresh = _snap_fresh("activities")
+
     result = []
     for s in signups:
         fields = s.get("fields", {})
         act_id = bitable.get_field_text(fields, F_SIGNUP_ACTIVITY_ID)
-        act = snap_find_activity(act_id)
+        act = _match_activity(acts_fresh, act_id)
         if not act:
             continue
         group_status = bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_GROUP_STATUS)

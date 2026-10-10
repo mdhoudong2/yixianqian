@@ -856,7 +856,7 @@
         <div class="activity-desc">{{ act.description || '暂无描述' }}</div>
         <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
         <div class="signup-bar">
-          <div class="signup-count">已报名 <b>{{ act.current_signup }}</b>/{{ act.max_signup || '不限' }}</div>
+          <div class="signup-count" v-if="showSignupInfo">已报名 <b>{{ act.current_signup }}</b>/{{ act.max_signup || '不限' }}</div>
           <van-icon name="arrow" color="#c8c9cc" />
         </div>
       </div>
@@ -1484,14 +1484,14 @@
           <div v-if="currentActivity.condition">📋 条件：{{ currentActivity.condition }}</div>
         </div>
         <div class="signup-bar">
-          <div class="signup-count">已报名 <b>{{ currentActivity.current_signup }}</b>/{{ currentActivity.max_signup || '不限' }}</div>
+          <div class="signup-count" v-if="showSignupInfo">已报名 <b>{{ currentActivity.current_signup }}</b>/{{ currentActivity.max_signup || '不限' }}</div>
           <van-button v-if="!isObserver && currentActivity.status==='报名中'" type="primary" color="#ff6b81" size="small"
             @click="currentActivity.my_signup ? cancelSignup() : onSignupClick()" :loading="actionLoading">
             {{ currentActivity.my_signup ? '取消报名' : '立即报名' }}
           </van-button>
           <van-tag v-else type="warning">{{ currentActivity.status }}</van-tag>
         </div>
-        <van-button plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+        <van-button v-if="showSignupInfo" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
       </div>
     </div>
     <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中'" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
@@ -2984,6 +2984,8 @@ createApp({
     const signupList = ref([]);
     const loadingSignups = ref(false);
     const signupCache = ref({});  // activity_id -> [{...}] 报名名单缓存
+    // 报名信息展示开关：false=隐藏「已报名人数/查看报名名单」（用户看不到任何报名信息）；解除隐藏时改为 true
+    const showSignupInfo = ref(false);
 
     // 他人资料页
     const userDetail = ref(null);
@@ -5345,7 +5347,7 @@ createApp({
       inviteConfirmDays, inviteRewardFemale, inviteRewardMale,
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
-      gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet,
+      gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet, showSignupInfo,
       userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
       paLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,

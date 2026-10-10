@@ -598,7 +598,7 @@
         <span style="color:#ff6b81;margin-left:6px;" @click="backToLogin">返回</span>
       </div>
     </div>
-    <div style="font-size:11.5px;color:#9a6a12;line-height:1.6;margin-top:8px;text-align:center;">认领后资料需现场小天使核验开通，如有疑问请联系小天使</div>
+    <div style="font-size:11.5px;color:#9a6a12;line-height:1.6;margin-top:8px;text-align:center;">姓名和手机号需与注册时一致。资料已审核通过的，认领后直接进入并自动报名活动；尚未审核的会先进入人工审核。</div>
   </div>
 
   <van-button type="primary" color="#ff6b81" style="width:86%;max-width:340px;box-sizing:border-box;" @click="retryLogin" v-if="loginError && !showClaim">{{ showPersonalGuide ? '我已创建团队，重新进入' : '重新登录' }}</van-button>
@@ -2346,7 +2346,7 @@ createApp({
     const claimPhone = ref('');
     const claiming = ref(false);
     let previewGuideFlag = false;
-    let previewClaimFlag = false;
+    let claimEntryFlag = false;  // 机器人「认领」链接 ?claim=1：直接进入认领页（正式功能，生产保留）
     // 账号状态门禁（待审核/审核不通过/已退出）：后端 /api/home 返回 403 时整屏提示
     const gateMessage = ref('');
     const gateTitle = computed(() => {
@@ -3392,7 +3392,8 @@ createApp({
         showClaim.value = false; loginError.value = false;
         await loadHome();
         restoreDeck();
-        vant.showToast(data.claimed ? '认领成功' : '登录成功');
+        if (data.auto_signed_up) { vant.showToast('认领成功，已为你报名活动 🎉'); }
+        else { vant.showToast(data.claimed ? '认领成功' : '登录成功'); }
       } catch (e) {
         vant.showToast(e.message || '认领失败，请重试');
       } finally {
@@ -3411,8 +3412,8 @@ createApp({
         loggingIn.value = false; loginError.value = true; showPersonalGuide.value = true;
         return;
       }
-      // 测试环境专用：?preview_claim=1 直接展示预报名认领面板，不走真实登录，便于验收
-      if (previewClaimFlag) {
+      // 机器人「认领」链接 ?claim=1：直接展示预报名认领面板，提交时才走飞书免登
+      if (claimEntryFlag) {
         loggingIn.value = false; loginError.value = true; showClaim.value = true;
         return;
       }
@@ -5456,7 +5457,7 @@ createApp({
       const entryHash = window.location.hash;
       // 在下方 replaceState 清掉 query 前，捕获引导预览参数（仅测试环境）
       try { previewGuideFlag = location.hostname.includes('test') && new URLSearchParams(location.search).get('preview_guide') === '1'; } catch(e) { previewGuideFlag = false; }
-      try { previewClaimFlag = location.hostname.includes('test') && new URLSearchParams(location.search).get('preview_claim') === '1'; } catch(e) { previewClaimFlag = false; }
+      try { claimEntryFlag = new URLSearchParams(location.search).get('claim') === '1'; } catch(e) { claimEntryFlag = false; }
       try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {

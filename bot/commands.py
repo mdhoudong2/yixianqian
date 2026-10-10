@@ -4,7 +4,7 @@ import re
 import time
 
 from auto_tasks import auto_signup_new_user, reward_inviter
-from cards import WELCOME_TEXT, generate_h5_url, send_main_menu_card
+from cards import WELCOME_TEXT, generate_h5_url, send_claim_card, send_main_menu_card
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
@@ -101,6 +101,22 @@ def handle_h5_command(sender_id):
         return None
     h5_url = generate_h5_url(sender_id)
     return f"点击进入一线牵App：\n{h5_url}"
+
+
+
+
+def handle_claim_command(sender_id):
+    """微信/浏览器预报名用户的现场认领：发送认领卡片（按钮直达 H5 认领页）。
+
+    不做「是否已注册」拦截——认领场景的用户在用户表里还没有 open_id 档案；
+    已绑定过的人点进去会被后端幂等识别为直接登录，不会产生重复档案。"""
+    if send_claim_card(sender_id):
+        log(f"已发送认领卡片: {sender_id}")
+        return None
+    return (
+        "请在飞书App内打开下面链接，填写注册时的姓名和手机号完成认领：\n\n"
+        f"{H5_BASE_URL}/?claim=1"
+    )
 
 
 

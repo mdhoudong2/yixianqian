@@ -77,6 +77,49 @@ def send_main_menu_card(open_id):
 
 
 
+def build_claim_card():
+    """构建认领卡片：微信/浏览器预报名用户的现场认领入口，按钮直达 H5 认领页 ?claim=1。"""
+    claim_url = H5_BASE_URL + "/?claim=1"
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": "认领你的预报名资料\U0001f4dd"},
+            "template": "red"
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        "如果你已在微信或手机浏览器填过注册表，点下方按钮，填写"
+                        "注册时的姓名和手机号，即可把资料和你的飞书账号连起来。\n\n"
+                        "资料已审核通过的，认领后会自动进入并报名活动。"
+                    )
+                }
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "填写认领信息"},
+                        "type": "primary",
+                        "url": claim_url
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def send_claim_card(open_id):
+    """发送认领卡片，按钮直达 H5 认领页。"""
+    return send_card_message(open_id, build_claim_card())
+
+
+
+
 WELCOME_TEXT = (
     "欢迎欢迎\U0001f44f！\n\n"
     "给机器人发送下列指令：\n\n"
@@ -86,6 +129,8 @@ WELCOME_TEXT = (
     "获取专属邀请码，邀请好友得麦穗（可换实名喜欢/优先报名/心愿/红娘推荐）；\n\n"
     "【注册】\n"
     "获取注册表单链接；\n\n"
+    "【认领】\n"
+    "已在微信/浏览器填过注册表的，认领资料并进入App、报名活动；\n\n"
     "【状态】\n"
     "查看注册审核进度；\n\n"
     "【帮助】\n"

@@ -96,6 +96,9 @@ F_PHOTO = "个人照片"
 F_WECHAT = "微信号"
 F_PHONE = "手机号"
 F_ID_CARD = "身份证号"
+# 注册表单「微信缴费」单选：只有明确「我已缴费」才在认领/审核通过后自动报名线下活动
+F_WECHAT_PAYMENT = "微信缴费"
+WECHAT_PAY_PAID = "我已缴费"
 # 月度额度字段（v7）。语义见 lib/quota.py：「爱心」现在是每月 10 颗的匿名额度，
 # 不再是可累积的余额。写入只由机器人 reconcile_hearts 负责，H5 只读。
 F_HEART_REMAIN = "爱心剩余"        # 本月剩余匿名额度

@@ -397,7 +397,29 @@ def _snap_ready(key):
             return False
         return True
 
-# ---- 快照读取辅助（镜像 bitable 常用查询；快照为空时回退到飞书，保证启动初期可用） ----
+def _snap_live(key):
+    """快照未就绪/已过期时实时读飞书，并把结果**回填**快照（自愈）。
+
+    bot 与 H5 是两个进程、内存不共享：后台刷新一旦失败，_SNAPSHOT_STALE 之后快照
+    就是「过期但非空」的脏数据。只做实时读而不回填的话，每个请求都会打飞书，
+    限流后雪崩；所以这里读一次就写回 _snapshot 并刷新时间戳（复用
+    refresh_snapshot_table 的全表 fetcher 与加锁写法），下一个请求重新走内存。
+
+    回填必须是**全表**形状：统一取 _SNAPSHOT_FETCHERS[key]（raw_search_records），
+    绝不能把 get_group_results(act_id)/get_signups(act_id) 这类按活动/按人
+    过滤过的结果写回去，否则会把全局快照污染成「只有某个活动的数据」。
+    按活动/按人过滤请在拿到全表之后自行做。
+
+    读取失败时降级返回现有快照（可能陈旧）并记日志，不让页面炸掉。
+    """
+    if _snap_ready(key):
+        return _snap(key)
+    if not _SNAPSHOT_FETCHERS.get(key):
+        return _snap(key)
+    refresh_snapshot_table(key)
+    return _snap(key)
+
+# ---- 快照读取辅助（镜像 bitable 常用查询；快照未就绪/过期时回退到飞书，保证可用） ----
 
 def _pick_primary_user(records):
     """同一 open_id 多条记录时取主档案：单身优先，其次用户ID最小（与 bot/queries 同规则）"""
@@ -743,9 +765,7 @@ def snap_find_user_by_openid(open_id):
     return _pick_primary_user(recs)
 
 def snap_active_users():
-    users = _snap("users")
-    if not users and not _snap_ready("users"):
-        return bitable.get_all_users()
+    users = _snap_live("users")
     return [u for u in users
             if bitable.get_select_value(u.get("fields", {}), F_ACCOUNT_STATUS) == "单身"]
 
@@ -844,16 +864,17 @@ def _get_session_order(key, cards, liked_me_openids, open_id, pinned_openids=Non
     return oids, now
 
 
-def snap_find_activity(act_id):
-    activities = _snap("activities")
-    if not activities and not _snap_ready("activities"):
-        return find_activity(act_id)
+def _match_activity(activities, act_id):
+    """在给定活动列表里按 record_id 或文本活动ID 匹配（供 my_groups 批量即时读后复用）。"""
     for a in activities:
         if a.get("record_id") == act_id:
             return a
         if bitable.get_field_text(a.get("fields", {}), F_ACTIVITY_ID) == act_id:
             return a
     return None
+
+def snap_find_activity(act_id):
+    return _match_activity(_snap_live("activities"), act_id)
 
 def snap_resolve_activity(act_id):
     rec = snap_find_activity(act_id)
@@ -862,47 +883,31 @@ def snap_resolve_activity(act_id):
     return rec, bitable.get_field_text(rec.get("fields", {}), F_ACTIVITY_ID)
 
 def snap_all_activities():
-    activities = _snap("activities")
-    if not activities and not _snap_ready("activities"):
-        return bitable.get_activities()
-    return activities
+    return _snap_live("activities")
 
 def snap_likes_by_target(open_id):
-    likes = _snap("likes")
-    if not likes and not _snap_ready("likes"):
-        return bitable.search_records(LIKE_TABLE_ID, [
-            {"field_name": F_LIKE_TARGET_OPENID, "operator": "is", "value": [open_id]}])
+    likes = _snap_live("likes")
     return [l for l in likes
             if bitable.get_field_text(l.get("fields", {}), F_LIKE_TARGET_OPENID) == open_id]
 
 def snap_likes_by_initiator(open_id):
-    likes = _snap("likes")
-    if not likes and not _snap_ready("likes"):
-        return bitable.search_records(LIKE_TABLE_ID, [
-            {"field_name": F_LIKE_INITIATOR_OPENID, "operator": "is", "value": [open_id]}])
+    likes = _snap_live("likes")
     return [l for l in likes
             if bitable.get_field_text(l.get("fields", {}), F_LIKE_INITIATOR_OPENID) == open_id]
 
 def snap_signups_by_openid(open_id):
-    signups = _snap("signups")
-    if not signups and not _snap_ready("signups"):
-        return bitable.search_records(SIGNUP_TABLE_ID, [
-            {"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]}])
+    signups = _snap_live("signups")
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) == open_id]
 
 def snap_signups_by_activity(act_id):
-    signups = _snap("signups")
-    if not signups and not _snap_ready("signups"):
-        return bitable.get_signups(act_id)
+    signups = _snap_live("signups")
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) == act_id
             and bitable.get_select_value(s.get("fields", {}), F_SIGNUP_STATUS) != "已取消"]
 
 def snap_signup(act_id, open_id):
-    signups = _snap("signups")
-    if not signups and not _snap_ready("signups"):
-        return bitable.get_user_signup(act_id, open_id)
+    signups = _snap_live("signups")
     for s in signups:
         f = s.get("fields", {})
         if (bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) == act_id
@@ -912,17 +917,12 @@ def snap_signup(act_id, open_id):
     return None
 
 def snap_group_selections_by_selector(open_id):
-    gs = _snap("group_selections")
-    if not gs and not _snap_ready("group_selections"):
-        return bitable.search_records(GROUP_SELECT_TABLE, [
-            {"field_name": F_GS_SELECTOR_OID, "operator": "is", "value": [open_id]}])
+    gs = _snap_live("group_selections")
     return [g for g in gs
             if bitable.get_field_text(g.get("fields", {}), F_GS_SELECTOR_OID) == open_id]
 
 def snap_group_selection(act_id, open_id):
-    gs = _snap("group_selections")
-    if not gs and not _snap_ready("group_selections"):
-        return bitable.get_user_group_selection(act_id, open_id)
+    gs = _snap_live("group_selections")
     for sg in gs:
         f = sg.get("fields", {})
         if bitable.get_field_text(f, F_GS_ACTIVITY_ID) == act_id and bitable.get_field_text(f, F_GS_SELECTOR_OID) == open_id:
@@ -930,31 +930,17 @@ def snap_group_selection(act_id, open_id):
     return None
 
 def snap_group_results(act_id):
-    gr = _snap("group_results")
-    if not gr and not _snap_ready("group_results"):
-        return bitable.get_group_results(act_id)
+    gr = _snap_live("group_results")
     return [r for r in gr
             if bitable.get_field_text(r.get("fields", {}), F_GR_ACTIVITY_ID) == act_id]
 
 def snap_onetoone_selections_by_selector(open_id):
-    oto = _snap("onetoone_selections")
-    if not oto and not _snap_ready("onetoone_selections"):
-        if not ONETOONE_SELECT_TABLE:
-            return []
-        return bitable.search_records(ONETOONE_SELECT_TABLE, [
-            {"field_name": F_OTO_SELECTOR_OID, "operator": "is", "value": [open_id]}])
+    oto = _snap_live("onetoone_selections")
     return [r for r in oto
             if bitable.get_field_text(r.get("fields", {}), F_OTO_SELECTOR_OID) == open_id]
 
 def snap_onetoone_selection(act_id, open_id):
-    oto = _snap("onetoone_selections")
-    if not oto and not _snap_ready("onetoone_selections"):
-        if not ONETOONE_SELECT_TABLE:
-            return None
-        items = bitable.search_records(ONETOONE_SELECT_TABLE, [
-            {"field_name": F_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]},
-            {"field_name": F_OTO_SELECTOR_OID, "operator": "is", "value": [open_id]}])
-        return items[0] if items else None
+    oto = _snap_live("onetoone_selections")
     for r in oto:
         f = r.get("fields", {})
         if (bitable.get_field_text(f, F_OTO_ACTIVITY_ID) == act_id
@@ -963,12 +949,7 @@ def snap_onetoone_selection(act_id, open_id):
     return None
 
 def snap_onetoone_results(act_id):
-    ores = _snap("onetoone_results")
-    if not ores and not _snap_ready("onetoone_results"):
-        if not ONETOONE_RESULT_TABLE:
-            return []
-        return bitable.search_records(ONETOONE_RESULT_TABLE, [
-            {"field_name": F_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]}])
+    ores = _snap_live("onetoone_results")
     return [r for r in ores
             if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == act_id]
 
@@ -5820,10 +5801,7 @@ def onetoone_result(activity_id):
             photo_by_oid[oid] = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
 
     # 已聊 = 我给 TA 留过言（状态≠已删除）
-    msgs = _snap("messages")
-    if not msgs and not _snap_ready("messages"):
-        msgs = bitable.search_records(MESSAGE_TABLE_ID, [
-            {"field_name": F_MSG_AUTHOR_OID, "operator": "is", "value": [open_id]}])
+    msgs = _snap_live("messages")
     chatted = set()
     for m in msgs:
         f = m.get("fields", {})

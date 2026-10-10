@@ -69,7 +69,6 @@ from commands import (
     handle_admin_stats,
     handle_admin_toggle_group_flag,
     handle_claim_command,
-
     handle_group_help,
     handle_h5_command,
     handle_help_command,

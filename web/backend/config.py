@@ -275,6 +275,7 @@ F_ACTIVITY_FEMALE_PER_GROUP = "每组女生数"
 F_ACTIVITY_GROUP_FLAG = "分组功能开启"
 F_ACTIVITY_ONETOONE_STATUS = "一对一状态"
 F_ACTIVITY_ONETOONE_FLAG = "一对一功能开启"
+F_ACTIVITY_SIGNIN_FLAG = "签到功能开启"  # 单选(是/否)：现场签到准入总闸（默认关，空=否）
 F_ACTIVITY_PUBLISH_TIME = "发布时间"
 F_ACTIVITY_START_TIME = "开始时间"
 F_ACTIVITY_END_TIME = "结束时间"
@@ -284,6 +285,7 @@ F_SIGNUP_ACTIVITY_ID = "活动ID"
 F_SIGNUP_OPENID = "报名人open_id"
 F_SIGNUP_NICKNAME = "报名人昵称"
 F_SIGNUP_STATUS = "状态"
+F_SIGNUP_ATTENDANCE = "签到状态"  # 单选：按时/迟到/未到（空=未签到）；与 bot FIELD_SIGNUP_ATTENDANCE 逐字一致
 
 # 分组选择表字段
 F_GS_ACTIVITY_ID = "活动ID"

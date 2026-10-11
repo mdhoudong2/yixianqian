@@ -48,6 +48,17 @@ ACT = "A-0002"
 
 # ---------------------------------------------------------------- 桩数据
 
+class _BatchFake(FakeBitable):
+    """FakeBitable + batch_update_records（红线文件不动，测试局部补 client 能力）。"""
+
+    def batch_update_records(self, table_id, records, batch_size=500):
+        updated = 0
+        for r in records or []:
+            if self.update_record(table_id, r["record_id"], r["fields"]):
+                updated += 1
+        return updated
+
+
 def _user(oid, uid, gender, nickname):
     return {"record_id": f"rec_u_{oid}",
             "fields": {"飞书用户ID": oid, "用户ID": uid, "性别": gender, "昵称": nickname}}
@@ -134,6 +145,7 @@ class Api:
 
 @pytest.fixture
 def api(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys.modules[__name__], "FakeBitable", _BatchFake)
     monkeypatch.setattr(lib_grouping, "log", lambda *a, **k: None)
     monkeypatch.setattr(app, "snap_find_user_by_openid", _find_user)
     monkeypatch.setattr(app.bitable, "search_records", lambda *a, **k: [])
@@ -186,6 +198,10 @@ ENDPOINTS = [
     ("GET", "/api/admin/group/job?job_id=x", None),
     ("GET", "/api/admin/group/result?activity_id=" + ACT, None),
     ("POST", "/api/admin/group/flag", {"activity_id": ACT, "enabled": True}),
+    # C4 现场签到三端点（同走 _require_admin + rate limit）
+    ("GET", "/api/admin/activity/signin?activity_id=" + ACT, None),
+    ("POST", "/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True}),
+    ("POST", "/api/admin/activity/signin/flag", {"activity_id": ACT, "enabled": True}),
 ]
 ENDPOINT_IDS = [p.split("?")[0].rsplit("/", 1)[-1] for m, p, _ in ENDPOINTS]
 
@@ -600,6 +616,49 @@ def test_payload_validation_and_missing_resources(api):
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
     assert api.post("/api/admin/group/run",
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
+
+
+# ---------------------------------------------------------------- C4：现场签到端点冒烟
+
+def test_signin_admin_roster_marks_and_flag(api):
+    """签到端点冒烟：fresh 名册 + 两态单笔 + 批次只补空 + flag 幂等。
+
+    完整契约（失败注入/多条报名/迟到拒绝等）在 tests/test_signin_gate.py。
+    """
+    act = _act(签到功能开启="是")
+    signups = [_signup("ou_m0", "小北"), _signup("ou_f0", "阿南")]
+    signups[0]["fields"]["签到状态"] = "迟到"   # 历史遗留值：也算已到（D13）
+    fake = api.install(activity=act, signups=signups)
+
+    body = api.get("/api/admin/activity/signin?activity_id=" + ACT).get_json()
+    assert body["signin_enabled"] is True
+    assert body["stats"] == {"checked_in": 1, "signed_up": 2, "not_checked_in": 1}
+    by_oid = {x["open_id"]: x for x in body["roster"]}
+    assert by_oid["ou_m0"]["checked_in"] is True
+    assert by_oid["ou_m0"]["user_id"] == "U-0001"
+
+    r = api.post("/api/admin/activity/signin",
+                 {"activity_id": ACT, "open_id": "ou_f0", "state": "未到"})
+    assert r.status_code == 200
+    row = [x for x in fake.tables[SIGNUP_TABLE_ID]
+           if x["fields"]["报名人open_id"] == "ou_f0"][0]
+    assert row["fields"]["签到状态"] == "未到"
+
+    # 批次只补空：m0 是「迟到」（非空，跳过）、f0 是「未到」（非空，跳过）
+    r2 = api.post("/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True})
+    assert r2.get_json() == {"ok": True, "activity_id": ACT, "updated": 0,
+                             "skipped": 2, "failed": 0}
+
+    # flag：已是「是」→ 幂等零写；关 → 写「否」
+    updates_before = [c for c in fake.writes() if c[0] == "update"]
+    assert api.post("/api/admin/activity/signin/flag",
+                    {"activity_id": ACT, "enabled": True}).get_json()["signin_flag"] == "是"
+    assert [c for c in fake.writes() if c[0] == "update"] == updates_before, "幂等：不重复写"
+    assert api.post("/api/admin/activity/signin/flag",
+                    {"activity_id": ACT, "enabled": False}).get_json()["signin_flag"] == "否"
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == len(updates_before) + 1
+    assert updates[-1][3] == {"签到功能开启": "否"}
 
 
 # ---------------------------------------------------------------- 审查必修 1/2/5：去重口径

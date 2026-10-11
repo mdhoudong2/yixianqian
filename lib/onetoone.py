@@ -611,6 +611,18 @@ def _execute_locked(activity_id, *, client, activity, find_user_by_openid):
         return dict(base, code="SELECTIONS_SEARCH_FAILED", restored=restored)
     participants, selections, skipped = _scan_selections(selections_records)
 
+    # ③.5 现场签到执行池过滤（设计 §3.3/§3.4，与 lib.grouping.execute_round 同一
+    # 兜底）：只挡提交挡不住「早提交、活动当天未到」；读失败（None）fail-closed，
+    # 恢复「收集中」再明报，绝不带着「读不到」把全部人放进来。
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(rec_activity_id, client=client)
+        if attendance is None:
+            restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                                 {f["onetoone_status"]: "收集中"}))
+            return dict(base, code="SIGNIN_QUERY_FAILED", restored=restored)
+        participants = [p for p in participants
+                        if lib_grouping.is_checked_in(attendance.get(p["id"]))]
+
     # ④ 没有参与者：恢复状态，维持原文案
     if not participants:
         restored = bool(client.update_record(t["activity_table_id"], record_id,

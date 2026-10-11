@@ -232,6 +232,7 @@ FIELD_OTO_TARGET_OID = "必聊对象open_id"
 FIELD_OTO_TARGET_NAME = "必聊对象昵称"
 FIELD_ACT_ONETOONE_STATUS = "一对一状态"  # 单选：收集中/已截止/已完成（空=未开始）
 FIELD_ACT_ONETOONE_FLAG = "一对一功能开启"  # 单选(是/否)：控制 H5 我的页「我的一对一」入口
+FIELD_ACT_SIGNIN_FLAG = "签到功能开启"  # 单选(是/否)：现场签到准入总闸（默认关，空=否）
 
 # 邀请功能
 FIELD_INVITER_ID = "邀请人ID"  # 邀请人的用户ID（如U-0003）

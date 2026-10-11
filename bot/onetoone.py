@@ -12,6 +12,7 @@ from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 
+from lib import grouping as lib_grouping
 from lib import onetoone as lib_onetoone
 from lib.onetoone import (  # noqa: F401 — re-export 兼容旧入口，勿删
     ONETOONE_UNSELECTED_SCORE,
@@ -219,6 +220,13 @@ def handle_onetoone_command(sender_id):
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
 
     participants = get_activity_signups(activity_id)
+    # 现场签到（条件开启）：候选展示池只留已到者；查不到名单时照常发卡（提交路径
+    # 会 fail-closed 拦住未到者）。桩表/未迁移环境无该栏位 → 不触发，行为不变。
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(activity_id, client=bitable)
+        if attendance is not None:
+            participants = [p for p in participants
+                            if lib_grouping.is_checked_in(attendance.get(p["open_id"]))]
     existing = get_user_onetoone_selection(activity_id, sender_id)
 
     card = build_onetoone_select_card(
@@ -254,6 +262,17 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     if not signups:
         return {"toast": {"type": "error", "content": "你未报名此活动"}}
 
+    # 现场签到准入（条件开启）：本人须已到；查询失败 fail-closed（业务准入）。
+    # 活动表没有「签到功能开启」栏位（parity 桩表/未迁移环境）→ 不触发，行为不变。
+    attendance = None
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(activity_id, client=bitable)
+        if attendance is None:
+            return {"toast": {"type": "error", "content": "签到信息查询失败，请重试"}}
+        if not lib_grouping.is_checked_in(attendance.get(operator_open_id)):
+            return {"toast": {"type": "error",
+                              "content": "本活动需现场签到后才能填志愿，请联系管理员"}}
+
     user_recs = find_user_by_openid(operator_open_id)
     if not user_recs:
         return {"toast": {"type": "error", "content": "用户信息异常"}}
@@ -262,6 +281,10 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     user_gender = get_field_text(uf, FIELD_GENDER)
 
     participants = get_activity_signups(activity_id)
+    if attendance is not None:
+        # 候选池同样只留已到异性（与 H5 candidates 同口径）
+        participants = [p for p in participants
+                        if lib_grouping.is_checked_in(attendance.get(p["open_id"]))]
 
     choices = []
     if form_value:

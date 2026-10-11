@@ -89,6 +89,7 @@ def configure_grouping_lib(lock_dir):
             "group_flag": F_ACTIVITY_GROUP_FLAG,
             "onetoone_flag": F_ACTIVITY_ONETOONE_FLAG,
             "onetoone_status": F_ACTIVITY_ONETOONE_STATUS,
+            "signin_flag": F_ACTIVITY_SIGNIN_FLAG,
             "gs_activity_id": F_GS_ACTIVITY_ID,
             "gs_selector_oid": F_GS_SELECTOR_OID,
             "gs_selector_gender": F_GS_SELECTOR_GENDER,
@@ -103,6 +104,7 @@ def configure_grouping_lib(lock_dir):
             "signup_status": F_SIGNUP_STATUS,
             "signup_openid": F_SIGNUP_OPENID,
             "signup_nickname": F_SIGNUP_NICKNAME,
+            "signup_attendance": F_SIGNUP_ATTENDANCE,
             "gender": F_GENDER,
             "user_id": F_USER_ID,
         },
@@ -3501,6 +3503,16 @@ def activity_detail(activity_id):
     act = format_activity(act_record)
     act["my_signup"] = bool(snap_signup(text_act_id, open_id))
 
+    # 现场签到三态（本人视角，不泄露他人；设计 §3.6）：signin_enabled 控制前端
+    # 填志愿入口是否停用。查询失败按「未签到」显示——门禁侧一律 fail-closed。
+    af = act_record.get("fields", {})
+    act["signin_enabled"] = lib_grouping.signin_enabled(af)
+    act["my_attendance"] = ""
+    if act["signin_enabled"]:
+        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
+        if attendance is not None:
+            act["my_attendance"] = attendance.get(open_id, "")
+
     # 获取报名人数列表（不返回open_id）
     signups = snap_signups_by_activity(text_act_id)
     act["signup_users"] = [bitable.get_field_text(s.get("fields", {}), F_SIGNUP_NICKNAME) for s in signups]
@@ -5643,6 +5655,19 @@ def group_candidates(activity_id):
     if not signup:
         return jsonify({"error": "你未报名此活动"}), 403
 
+    # 现场签到闸门（条件开启，设计 §3.2/§3.3）：本人须已报到；查询失败 fail-closed
+    # ——业务准入上 fail-open 会把未到场者放进来。attendance=None 表示未开启。
+    af = act_record.get("fields", {})
+    attendance = None
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
+        if attendance is None:
+            return jsonify({"error": "签到信息查询失败，请重试",
+                            "code": "SIGNIN_QUERY_FAILED"}), 503
+        if not lib_grouping.is_checked_in(attendance.get(open_id)):
+            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
+                            "code": "SIGNIN_REQUIRED"}), 403
+
     # 获取报名的异性（直读飞书，避免报名快照 stale 导致「0 可选人」——快照为跨 worker 内存态，
     # 刷新前新增的报名会被漏掉，历史 bug：提交志愿页一个候选都没有）
     signups = bitable.get_signups(text_act_id)
@@ -5658,6 +5683,8 @@ def group_candidates(activity_id):
         s_openid = bitable.get_field_text(fields, F_SIGNUP_OPENID)
         if s_openid == open_id:
             continue
+        if attendance is not None and not lib_grouping.is_checked_in(attendance.get(s_openid)):
+            continue  # 候选池只留已到异性（与提交闸门同一口径）
         # 获取该用户的性别信息
         u = snap_find_user_by_openid(s_openid)
         if u:
@@ -5715,6 +5742,17 @@ def group_select(activity_id):
     signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
     if not signup:
         return jsonify({"error": "你未报名此活动"}), 403
+
+    # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
+    af = act_record.get("fields", {})
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
+        if attendance is None:
+            return jsonify({"error": "签到信息查询失败，请重试",
+                            "code": "SIGNIN_QUERY_FAILED"}), 503
+        if not lib_grouping.is_checked_in(attendance.get(open_id)):
+            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
+                            "code": "SIGNIN_REQUIRED"}), 403
 
     # 获取用户信息（快照）
     me = snap_self_user()
@@ -6317,6 +6355,7 @@ def admin_group_status():
         "onetoone_status": (bitable.get_field_text(f, F_ACTIVITY_ONETOONE_STATUS)
                             or lib_grouping.STATUS_NOT_STARTED),
         "onetoone_flag": bitable.get_field_text(f, F_ACTIVITY_ONETOONE_FLAG) or "否",
+        "signin_flag": (bitable.get_field_text(f, F_ACTIVITY_SIGNIN_FLAG) or "否"),
         "onetoone_submitted_count": len(oto_submitted_oids),
         "onetoone_unsubmitted_count": oto_unsubmitted_count,
         "onetoone_result_count": len(oto_results),
@@ -7118,6 +7157,191 @@ def admin_activity_mode():
     })
 
 
+# ========== 管理员现场签到（R3） ==========
+# 零 schema 变更：复用报名表既有「签到状态」（按时/迟到/未到；空=未签到）与环境
+# 新开关「签到功能开启」。UI 只有两态（已到→按时 / 未到→未到，D13）；「已到」判定
+# = 值 ∈ {按时, 迟到}（历史遗留的迟到也算到，来了就是来了）。名册 fresh 直读报名表
+# （现场场景必须最新值），不走快照。读失败 fail-closed：名录类回 500 明报，不静默
+# 吞成空名单。
+
+def _signin_resolve(activity_id):
+    """解析活动（fresh）→ (act, act_id, None) 或 (None, None, (resp, code))。"""
+    act, act_id = snap_resolve_activity(activity_id, fresh=True)
+    if not act:
+        return None, None, (jsonify({"error": "活动不存在"}), 404)
+    return act, act_id, None
+
+
+def _signin_signup_records(act_id, open_id=None):
+    """该活动（可选限定某人）的「已报名」记录：raw client 直读，失败回 None。
+
+    与 lib.grouping.attendance_map 同一口径（状态=已报名）；多条由调用端明确处理。
+    """
+    conds = [
+        {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [act_id]},
+        {"field_name": F_SIGNUP_STATUS, "operator": "is", "value": ["已报名"]},
+    ]
+    if open_id:
+        conds.append({"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]})
+    return _grouping_client.search_records(
+        SIGNUP_TABLE_ID, {"conjunction": "and", "conditions": conds})
+
+
+def _signin_roster_item(rec):
+    """报名记录 → 名册条目（头像 emoji 由前端按 gender 渲染）。"""
+    sf = rec.get("fields", {})
+    oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+    nick = bitable.get_field_text(sf, F_SIGNUP_NICKNAME)
+    state = bitable.get_field_text(sf, F_SIGNUP_ATTENDANCE)
+    uid = gender = ""
+    u = snap_find_user_by_openid(oid) if oid else None
+    if u:
+        uf = u.get("fields", {})
+        uid = bitable.get_field_text(uf, F_USER_ID)
+        gender = bitable.get_select_value(uf, F_GENDER)
+        if not nick:
+            nick = bitable.get_field_text(uf, F_NICKNAME)
+    return {"open_id": oid, "nickname": nick, "user_id": uid, "gender": gender,
+            "state": state, "checked_in": lib_grouping.is_checked_in(state)}
+
+
+@app.route("/api/admin/activity/signin", methods=["GET"])
+def admin_activity_signin():
+    """现场签到名册＋计数（fresh 直读报名表：管理台现场要用最新值）。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(30, 60, "signin_admin")
+    if rl:
+        return rl
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+    act, act_id, miss = _signin_resolve(activity_id)
+    if miss:
+        return miss
+
+    records = _signin_signup_records(act_id)
+    if records is None:
+        return jsonify({"error": "签到信息查询失败，请重试",
+                        "code": "SIGNIN_QUERY_FAILED"}), 500
+
+    roster = [_signin_roster_item(r) for r in records]
+    checked = sum(1 for it in roster if it["checked_in"])
+    return jsonify({
+        "ok": True,
+        "activity_id": act_id,
+        "name": bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_NAME),
+        "signin_enabled": lib_grouping.signin_enabled(act.get("fields", {})),
+        "stats": {"checked_in": checked, "signed_up": len(roster),
+                  "not_checked_in": len(roster) - checked},
+        "roster": roster,
+    })
+
+
+@app.route("/api/admin/activity/signin", methods=["POST"])
+def admin_activity_signin_write():
+    """单笔 {activity_id, open_id, state} 或批次补空 {activity_id, all_pending: true}。
+
+    UI 只有两态：已到→「按时」、未到→「未到」；显式拒绝「迟到」（D13；历史值仍按
+    已到判定）。直接对报名记录盲写（同活动/人只有一条；多条 → 明确报错，照 bot
+    签到指令的处理），不需要锁。批次只补空值，不覆盖已标记的。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(20, 60, "signin_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    act, act_id, miss = _signin_resolve(activity_id.strip())
+    if miss:
+        return miss
+
+    if data.get("all_pending"):
+        records = _signin_signup_records(act_id)
+        if records is None:
+            return jsonify({"error": "签到信息查询失败，请重试",
+                            "code": "SIGNIN_QUERY_FAILED"}), 500
+        pending = [rec for rec in records
+                   if not bitable.get_field_text(rec.get("fields", {}), F_SIGNUP_ATTENDANCE)]
+        skipped = len(records) - len(pending)
+        # 一次 batch_update，不是逐条 update：逐条写在几十人规模就会超过浏览器
+        # 15s fetch 预算（E2E 实测 15 人 >15s），前端会 abort 并误报失败。
+        updated = _grouping_client.batch_update_records(
+            SIGNUP_TABLE_ID,
+            [{"record_id": rec.get("record_id"),
+              "fields": {F_SIGNUP_ATTENDANCE: "按时"}} for rec in pending]) or 0
+        failed = len(pending) - updated
+        if updated:
+            refresh_snapshot_table_async("signups")
+            app.logger.info(f"管理员批量签到: {act_id} 补标记 {updated} 人")
+        return jsonify({"ok": True, "activity_id": act_id, "updated": updated,
+                        "skipped": skipped, "failed": failed})
+
+    target = data.get("open_id")
+    state = data.get("state")
+    if not isinstance(target, str) or not target.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if state not in ("按时", "未到"):
+        return jsonify({"error": "state 只能是「按时」或「未到」"}), 400
+    records = _signin_signup_records(act_id, target.strip())
+    if records is None:
+        return jsonify({"error": "签到信息查询失败，请重试",
+                        "code": "SIGNIN_QUERY_FAILED"}), 500
+    if not records:
+        return jsonify({"error": "该用户没有报名此活动"}), 404
+    if len(records) > 1:
+        return jsonify({"error": "该用户在此活动有多条报名记录，请先在表格里核对"}), 400
+    if not _grouping_client.update_record(SIGNUP_TABLE_ID, records[0].get("record_id"),
+                                          {F_SIGNUP_ATTENDANCE: state}):
+        return jsonify({"error": "写入失败，请稍后重试"}), 500
+    refresh_snapshot_table_async("signups")
+    app.logger.info(f"管理员现场签到: {target} {act_id} -> {state}")
+    return jsonify({"ok": True, "activity_id": act_id, "open_id": target, "state": state})
+
+
+@app.route("/api/admin/activity/signin/flag", methods=["POST"])
+def admin_activity_signin_flag():
+    """签到功能开关：走 lib 写入器（检查返回值）；幂等——已是目标值不重写。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "signin_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    enabled = data.get("enabled")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(enabled, bool):
+        return jsonify({"error": "请求体不合法"}), 400
+    act, act_id, miss = _signin_resolve(activity_id.strip())
+    if miss:
+        return miss
+
+    target = "是" if enabled else "否"
+    name = bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_NAME)
+    if bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_SIGNIN_FLAG) == target:
+        return jsonify({"ok": True, "activity_id": act_id, "name": name,
+                        "signin_flag": target})
+
+    res = lib_grouping.set_signin_flag(act_id, enabled, client=_grouping_client, activity=act)
+    if res.get("code") != "OK":
+        return jsonify({"error": "签到开关写入失败，请稍后重试",
+                        "code": res.get("code")}), 500
+    refresh_snapshot_table_async("activities")
+    return jsonify({"ok": True, "activity_id": act_id, "name": name,
+                    "signin_flag": target})
+
+
 # ========== 一对一接口 ==========
 
 @app.route("/api/activities/<activity_id>/onetoone/candidates", methods=["GET"])
@@ -7142,6 +7366,18 @@ def onetoone_candidates(activity_id):
     if not signup:
         return jsonify({"error": "你未报名此活动"}), 403
 
+    # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
+    af = act_record.get("fields", {})
+    attendance = None
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
+        if attendance is None:
+            return jsonify({"error": "签到信息查询失败，请重试",
+                            "code": "SIGNIN_QUERY_FAILED"}), 503
+        if not lib_grouping.is_checked_in(attendance.get(open_id)):
+            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
+                            "code": "SIGNIN_REQUIRED"}), 403
+
     signups = bitable.get_signups(text_act_id)
     me = snap_self_user()
     if not me:
@@ -7155,6 +7391,8 @@ def onetoone_candidates(activity_id):
         s_openid = bitable.get_field_text(fields, F_SIGNUP_OPENID)
         if s_openid == open_id:
             continue
+        if attendance is not None and not lib_grouping.is_checked_in(attendance.get(s_openid)):
+            continue  # 候选池只留已到异性（与提交闸门同一口径）
         u = snap_find_user_by_openid(s_openid)
         if u:
             u_gender = bitable.get_select_value(u.get("fields", {}), F_GENDER)
@@ -7176,13 +7414,19 @@ def onetoone_candidates(activity_id):
                 })
     return jsonify({"candidates": candidates})
 
-def _onetoone_candidate_oids(act_id, open_id, my_gender):
-    """本活动「异性＋已报名」候选 open_id 集合（与 candidates 端点同口径）。"""
+def _onetoone_candidate_oids(act_id, open_id, my_gender, attendance=None):
+    """本活动「异性＋已报名」候选 open_id 集合（与 candidates 端点同口径）。
+
+    attendance 非 None（签到开启且查询成功）时只留已到者，与 candidates 的池过滤
+    和提交闸门同一口径。
+    """
     target_gender = "女性" if my_gender == "男性" else "男性"
     candidates = set()
     for s in bitable.get_signups(act_id):
         s_openid = bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID)
         if not s_openid or s_openid == open_id:
+            continue
+        if attendance is not None and not lib_grouping.is_checked_in(attendance.get(s_openid)):
             continue
         u = snap_find_user_by_openid(s_openid)
         if u and bitable.get_select_value(u.get("fields", {}), F_GENDER) == target_gender:
@@ -7222,6 +7466,18 @@ def onetoone_select(activity_id):
     if not signup:
         return jsonify({"error": "你未报名此活动"}), 403
 
+    # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
+    af = act_record.get("fields", {})
+    attendance = None
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
+        if attendance is None:
+            return jsonify({"error": "签到信息查询失败，请重试",
+                            "code": "SIGNIN_QUERY_FAILED"}), 503
+        if not lib_grouping.is_checked_in(attendance.get(open_id)):
+            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
+                            "code": "SIGNIN_REQUIRED"}), 403
+
     me = snap_self_user()
     if not me:
         return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
@@ -7232,7 +7488,7 @@ def onetoone_select(activity_id):
     # 与 bot 统一为 1..7：无重复 + 每个志愿都必须是本活动已报名的异性（错误具体到第N个）
     if len(set(choices)) != len(choices):
         return jsonify({"error": "不能重复选择同一人"}), 400
-    candidates = _onetoone_candidate_oids(text_act_id, open_id, my_gender)
+    candidates = _onetoone_candidate_oids(text_act_id, open_id, my_gender, attendance=attendance)
     for i, c in enumerate(choices):
         if c not in candidates:
             return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400
@@ -7937,6 +8193,9 @@ def my_groups():
         if s_fields:
             my_count = sum(1 for cf in F_GS_CHOICES if bitable.get_field_text(s_fields, cf))
         act_data["my_choice_count"] = my_count
+        # 现场签到三态（本人视角）：卡片标注 + 未到时停用操作钮（设计 §3.6）
+        act_data["signin_enabled"] = lib_grouping.signin_enabled(act.get("fields", {}))
+        act_data["my_attendance"] = bitable.get_field_text(fields, F_SIGNUP_ATTENDANCE)
         result.append(act_data)
     return jsonify({"activities": result})
 
@@ -8001,6 +8260,9 @@ def my_onetoone():
         if s_fields:
             my_count = sum(1 for cf in F_OTO_CHOICES if bitable.get_field_text(s_fields, cf))
         act_data["my_choice_count"] = my_count
+        # 现场签到三态（本人视角）：卡片标注 + 未到时停用操作钮（设计 §3.6）
+        act_data["signin_enabled"] = lib_grouping.signin_enabled(act.get("fields", {}))
+        act_data["my_attendance"] = bitable.get_field_text(fields, F_SIGNUP_ATTENDANCE)
         result.append(act_data)
     return jsonify({"activities": result})
 

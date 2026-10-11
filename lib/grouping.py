@@ -195,11 +195,12 @@ def grouping_lock(activity_id, timeout):
 _REQUIRED_FIELDS = (
     "activity_id", "activity_name",
     "group_status", "male_per_group", "female_per_group", "group_flag",
-    "onetoone_flag", "onetoone_status",
+    "onetoone_flag", "onetoone_status", "signin_flag",
     "gs_activity_id", "gs_selector_oid", "gs_selector_gender", "gs_choices",
     "gr_activity_id", "gr_group_no", "gr_user_oid", "gr_user_name",
     "gr_user_gender", "gr_round",
     "signup_activity_id", "signup_status", "signup_openid", "signup_nickname",
+    "signup_attendance",
     "gender", "user_id",
 )
 _cfg = {"tables": {}, "fields": {}}
@@ -346,6 +347,64 @@ def set_mode(activity_id, mode, *, client, activity=None):
         return dict(base, code="WRITE_FAILED", changed=False)
     log(f"管理员设置活动模式: {activity_name}({activity_id}) -> {mode}")
     return dict(base, code="OK", changed=True)
+
+
+# ---------------------------------------------------------------- 现场签到（R3）
+
+# 签到状态取值（复用报名表既有单选：按时/迟到/未到；空=未签到）。
+ATTENDANCE_ON_TIME = "按时"
+ATTENDANCE_LATE = "迟到"
+ATTENDANCE_ABSENT = "未到"
+# 「已到」判定 = {按时, 迟到}：迟到是历史遗留值，「来了就是来了」（产品决策 D13）。
+ATTENDANCE_PRESENT = (ATTENDANCE_ON_TIME, ATTENDANCE_LATE)
+
+
+def signin_enabled(activity_fields):
+    """活动「签到功能开启」==「是」？未注入该栏位时不启用（旧进程/桩表语义）。
+
+    签到准入只在活动明确开启时生效；关闭或栏位缺失时一切行为保持现状——这是
+    parity 桩表与未迁移环境「行为逐字不变」的开关。
+    """
+    f = _cfg["fields"]
+    if "signin_flag" not in f:
+        return False
+    return get_field_text(activity_fields or {}, f["signin_flag"]) == "是"
+
+
+def attendance_map(activity_id, *, client):
+    """该活动「已报名」记录的 {open_id: 签到状态}；raw client 读失败回 None。
+
+    只收「状态=已报名」的行：取消报名的人不拿准入（「报名」口径 = 已报名记录）。
+    状态原样回传（按时/迟到/未到/空串），是否已到由 is_checked_in 判定；查询失败
+    回 None 而不是空表——调用端必须能区分「读不到」与「没人签到」。
+    """
+    f = _cfg["fields"]
+    t = _cfg["tables"]
+    if not t.get("signup_table_id"):
+        return None
+    if any(k not in f for k in ("signup_activity_id", "signup_openid",
+                                "signup_status", "signup_attendance")):
+        return None
+    records = client.search_records(t["signup_table_id"], {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": f["signup_activity_id"], "operator": "is", "value": [activity_id]},
+            {"field_name": f["signup_status"], "operator": "is", "value": [SIGNUP_STATUS_SIGNED]},
+        ]})
+    if records is None:
+        return None
+    out = {}
+    for r in records:
+        sf = r.get("fields", {})
+        oid = get_field_text(sf, f["signup_openid"])
+        if oid:
+            out[oid] = get_field_text(sf, f["signup_attendance"])
+    return out
+
+
+def is_checked_in(state):
+    """已到 = 值 ∈ {按时, 迟到}；未到 / 空 / None = 否。"""
+    return state in ATTENDANCE_PRESENT
 
 
 # 分组算法评分（与 JS 版一致）。这是算法的一部分而不是环境配置，两端永远相同，
@@ -1015,6 +1074,19 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_CLOSED})
 
     participants, selections, skipped = _collect_selections(client, rec_activity_id)
+
+    # 现场签到执行池过滤（设计 §3.3/§3.4）：只挡提交挡不住「早提交志愿、活动当天
+    # 没到」；执行时必须以「已到」为准再过滤一次。读失败 fail-closed：恢复「收集中」
+    # 并明报，绝不带着「读不到」把全部人放进来。
+    if signin_enabled(af):
+        attendance = attendance_map(rec_activity_id, client=client)
+        if attendance is None:
+            client.update_record(t["activity_table_id"], record_id,
+                                 {f["group_status"]: STATUS_COLLECTING})
+            return dict(base, code="SIGNIN_QUERY_FAILED")
+        participants = [p for p in participants
+                        if is_checked_in(attendance.get(p["id"]))]
+
     n_males = sum(1 for p in participants if p["gender"] == "male")
     n_females = sum(1 for p in participants if p["gender"] == "female")
 
@@ -1108,3 +1180,23 @@ def set_group_flag(activity_id, enabled, *, client, activity):
     log(f"管理员设置分组功能开关: {activity_name}({activity_id}) -> {flag}")
     return {"code": "OK", "activity_id": activity_id, "name": activity_name,
             "group_flag": flag, "enabled": enabled}
+
+
+def set_signin_flag(activity_id, enabled, *, client, activity):
+    """开启/关闭活动的「签到功能开启」开关（现场签到准入的总闸）。
+
+    不与其他功能联动、不加锁：与 set_group_flag 同一取舍（只写明确值的盲写，
+    后写者胜）。写失败如实回 WRITE_FAILED（检查 update_record 返回值，不报成功）。
+    """
+    _require_configured()
+    f = _cfg["fields"]
+    flag = "是" if enabled else "否"
+    af = activity.get("fields", {})
+    activity_name = get_field_text(af, f["activity_name"])
+    if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                activity.get("record_id"), {f["signin_flag"]: flag}):
+        return {"code": "WRITE_FAILED", "activity_id": activity_id,
+                "name": activity_name, "signin_flag": "", "enabled": enabled}
+    log(f"管理员设置签到功能开关: {activity_name}({activity_id}) -> {flag}")
+    return {"code": "OK", "activity_id": activity_id, "name": activity_name,
+            "signin_flag": flag, "enabled": enabled}

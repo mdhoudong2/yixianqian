@@ -5940,6 +5940,9 @@ def admin_group_activities():
     selections = _snap_fresh("group_selections")
     results = _snap_fresh("group_results")
 
+    # 总览需要按活动分别计数，这里一次遍历全表；去重口径（非空 open_id 去重）与
+    # lib.summarize_selections 等价，是该口径在总览端的等价实现（逐活动调用会在
+    # 活动×记录上重复扫描）。状态/预览/名单等执行路径仍统一走 lib。
     submitted = {}
     for r in selections:
         f = r.get("fields", {})

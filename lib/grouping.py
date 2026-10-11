@@ -498,7 +498,7 @@ def _selection_rows(client, activity_id):
 
 
 def _scan_selections(records, activity_id=None):
-    """单遍扫描志愿记录，产出管理台计数与算法输入（**去重口径的唯一实现**）。
+    """单遍扫描志愿记录，产出管理台计数与算法输入（**去重口径的统一实现**）。
 
     返回 (submitted_oids, participants, selections, skipped, by_oid)：
     - submitted_oids：非空 open_id 去重列表（首次出现顺序）。「已提交 N 人」与
@@ -933,8 +933,8 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     return dict(base, code="OK", group_count=len(groups), participant_count=len(participants),
                 groups=[{"group_id": g["group_id"],
                          "members": [{"open_id": oid, "gender": gender,
-                                      # 写入栏位缺昵称是空串，给管理员看的名单缺昵称退回 open_id
-                                      "display_name": oid_to_nickname.get(oid, oid)}
+                                      # 昵称为空（或不在报名名单里）时退回 open_id，与 fetch_result 同口径
+                                      "display_name": oid_to_nickname.get(oid) or oid}
                                      for oid, gender in _group_members(g)]}
                         for g in groups])
 

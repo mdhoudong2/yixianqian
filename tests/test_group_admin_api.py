@@ -155,6 +155,23 @@ def _poll_job(api, job_id, timeout=10.0):
     raise AssertionError("job 未在期限内结束")
 
 
+def _wait_refresh_calls(api, expected, timeout=5.0):
+    """等 job 线程补齐刷新调用后再断言（有上限，不是睡死等）。
+
+    产品路径是「终态先落盘、再调 refresh_snapshot_table_async」（见 _run_grouping_job），
+    轮询线程可能在两次调用之间就观察到终态；审计 400 次复现约 5% 首察未记录、
+    50ms 内 100% 补齐。这里等调用集合收敛，避免把窗口竞态误报成产品漏刷。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if set(api.refresh_calls) >= set(expected):
+            return
+        time.sleep(0.01)
+    raise AssertionError(
+        f"刷新调用未在 {timeout}s 内收敛：expected {sorted(expected)}, "
+        f"actual {sorted(api.refresh_calls)}")
+
+
 ENDPOINTS = [
     ("GET", "/api/admin/group/activities", None),
     ("GET", "/api/admin/group/status?activity_id=" + ACT, None),
@@ -487,6 +504,9 @@ def test_job_exception_is_recorded_as_failed_and_releases_lock(api, monkeypatch)
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "failed"
     assert "写表炸了" in job["error"] and job["result"] is None
+    # 终态落盘与两次刷新调用之间存在窗口（审计 400 次复现约 5% 先看到 failed）。
+    # 先等刷新收敛，再做严格 `==` 断言——修的是竞态，不是放宽检查。
+    _wait_refresh_calls(api, {"activities", "group_results"})
     assert set(api.refresh_calls) == {"activities", "group_results"}
 
     # 异常路径也必须把锁放掉，否则整场活动再也跑不了分组
@@ -607,6 +627,30 @@ def test_result_endpoint_serves_history_rounds_isomorphic_with_job(api):
     assert api.get("/api/admin/group/result?activity_id=" + ACT + "&round=abc").status_code == 400
     assert api.get("/api/admin/group/result?activity_id=" + ACT + "&round=0").status_code == 400
     assert api.get("/api/admin/group/result?activity_id=A-9999").status_code == 404
+
+
+def test_result_display_name_fallback_matches_job_when_nickname_empty(api):
+    """必修 2：报名昵称为空时，job result.groups 与 /result 的 display_name
+    都退回 open_id，同一轮分组的展示口径完全一致。"""
+    signups = [_signup("ou_m0", ""), _signup("ou_m1", ""),
+               _signup("ou_f0", ""), _signup("ou_f1", "")]
+    selections = [_sel("ou_m0", "男性"), _sel("ou_m1", "男性"),
+                  _sel("ou_f0", "女性"), _sel("ou_f1", "女性")]
+    api.install(signups=signups, selections=selections)
+
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done" and job["result"]["code"] == "OK"
+
+    body = api.get("/api/admin/group/result?activity_id=" + ACT).get_json()
+    job_groups = job["result"]["groups"]
+    assert len(job_groups) == len(body["groups"]) == 1
+
+    job_names = {m["open_id"]: m["display_name"] for m in job_groups[0]["members"]}
+    res_names = {m["open_id"]: m["display_name"] for m in body["groups"][0]["members"]}
+    assert job_names == res_names, "job 与 /result 的 display_name 必须一致"
+    assert all(name == oid for oid, name in job_names.items()), "空昵称必须退回 open_id"
 
 
 # ---------------------------------------------------------------- 审查必修 3：job TTL 兜底

@@ -6011,7 +6011,7 @@ createApp({
 
     const gaDetailId = ref(''), gaDetail = ref(null);
     const gaDetailLoading = ref(false), gaDetailError = ref(false), gaDetailTab = ref(0);
-    const gaFlag = ref(null);         // '是'/'否'：/status 不回此字段，从列表项带入
+    const gaFlag = ref(null);         // '是'/'否'：以 /status 回传为准，进入时先用列表项占位
     const gaFlagSaving = ref(false);
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
@@ -6118,7 +6118,7 @@ createApp({
     }
     function openGroupDetail(a) {
       gaDetailId.value = a.activity_id; gaDetail.value = null; gaDetailError.value = false; gaDetailTab.value = 0;
-      gaFlag.value = a.group_flag || '否';
+      gaFlag.value = a.group_flag || '否';   // 首屏占位；/status 回来后会以其为准
       gaGroups.value = []; gaGroupsRound.value = 0; gaResultRound.value = 0; gaRunTip.value = '';
       gaResultLoading.value = false; gaResultError.value = false;
       gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false;
@@ -6130,7 +6130,9 @@ createApp({
       try {
         const d = await api('/api/admin/group/status?activity_id=' + encodeURIComponent(gaDetailId.value));
         gaDetail.value = d;
-        if (gaFlag.value === null) gaFlagFromList();
+        // group_flag 以 /status 为第一来源（列表项可能过期）；/status 缺该字段时才补拉列表
+        if (d.group_flag) gaFlag.value = d.group_flag;
+        else if (gaFlag.value === null) gaFlagFromList();
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
         if (gaDetailTab.value === 2 && gaResultRound.value && gaGroupsRound.value !== gaResultRound.value) {
           loadGroupResult(gaResultRound.value);   // 状态比结果 tab 先到：补拉当前轮次
@@ -6140,6 +6142,7 @@ createApp({
       gaDetailLoading.value = false;
     }
     async function gaFlagFromList() {
+      // fallback：/status 未回 group_flag（旧后端）时从列表补拉
       try {
         const data = await api('/api/admin/group/activities');
         const it = (data.activities || []).find(x => x.activity_id === gaDetailId.value);

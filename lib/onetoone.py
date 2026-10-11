@@ -718,14 +718,22 @@ def _resolve_activity(activity_id, activity, client):
 def set_onetoone_flag(activity_id, enabled, *, client, activity=None):
     """开启/关闭活动的「一对一功能开启」开关（控制 H5「我的一对一」入口）。
 
-    - 开启：走 lib.grouping.set_mode(activity_id, "onetoone")——一次 PUT 同时写
-      「一对一=是 + 分组=否」两个栏位（互斥写入器），与 bot「开启一对一功能」、
-      H5 模式切换同一套语义；
+    - 开启：走 lib.grouping.set_mode(activity_id, "onetoone")——整体持活动锁后一次
+      PUT 同时写「一对一=是 + 分组=否」两个栏位（互斥写入器），与 bot
+      「开启一对一功能」、H5 模式切换同一套语义；
     - 关闭：只写自身「一对一功能开启=否」（设计 §2.2：关闭时只写自身=否；不碰
       分组栏位，也不在「双是」的历史脏数据上做隐式纠偏——那由控制台一键纠偏）。
+      该独立写同样整段持 grouping_lock。
 
-    `activity` 可省（省时按 activity_id 查一次）。写失败如实回 WRITE_FAILED
-    （检查 update_record 返回值，不报成功）。
+    **不可重入**：开启路已委托给带锁的 set_mode，本函数外层不得再持同一把锁——
+    否则嵌套死锁。两种路径的写都与分组/模式切换互相串行化：飞书单条记录 update
+    不是整笔事务，并发双栏位 PUT 会栏位级交错留下「双是」（见
+    lib.grouping.FLAG_LOCK_TIMEOUT 与 docs/读取一致性.md）。抢不到锁（执行作业
+    分钟级持锁）快速失败回 BUSY。
+
+    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里；
+    真实 base 的「活动ID」是自动编号，按字符串过滤查不到，必须传记录）；缺省时在
+    锁内查一次。写失败如实回 WRITE_FAILED（检查 update_record 返回值，不报成功）。
     返回 {"code", "activity_id", "name", "onetoone_flag", "enabled"}。
     """
     _require_configured()
@@ -736,20 +744,26 @@ def set_onetoone_flag(activity_id, enabled, *, client, activity=None):
             "code": res["code"],
             "activity_id": res.get("activity_id", activity_id),
             "name": res.get("name", ""),
-            "onetoone_flag": res.get("onetoone_flag", "是"),
+            "onetoone_flag": res.get("onetoone_flag", "是") if res["code"] == "OK" else "",
             "enabled": True,
         }
 
-    activity, error = _resolve_activity(activity_id, activity, client)
-    if error:
-        return {"code": error, "activity_id": activity_id, "name": "",
+    # 关闭：单栏位独立写，整段持活动锁。锁不可重入，这里不能再调已带锁的 set_mode。
+    name_hint = get_field_text((activity or {}).get("fields", {}), f["activity_name"])
+    try:
+        with grouping_lock(activity_id, timeout=lib_grouping.FLAG_LOCK_TIMEOUT):
+            act, error = _resolve_activity(activity_id, activity, client)
+            if error:
+                return {"code": error, "activity_id": activity_id, "name": name_hint,
+                        "onetoone_flag": "", "enabled": False}
+            activity_name = get_field_text(act.get("fields", {}), f["activity_name"])
+            if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                        act.get("record_id"), {f["onetoone_flag"]: "否"}):
+                return {"code": "WRITE_FAILED", "activity_id": activity_id,
+                        "name": activity_name, "onetoone_flag": "", "enabled": False}
+            log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> 否")
+            return {"code": "OK", "activity_id": activity_id, "name": activity_name,
+                    "onetoone_flag": "否", "enabled": False}
+    except GroupingBusy:
+        return {"code": "BUSY", "activity_id": activity_id, "name": name_hint,
                 "onetoone_flag": "", "enabled": False}
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, f["activity_name"])
-    if not client.update_record(_cfg["tables"]["activity_table_id"],
-                                activity.get("record_id"), {f["onetoone_flag"]: "否"}):
-        return {"code": "WRITE_FAILED", "activity_id": activity_id,
-                "name": activity_name, "onetoone_flag": "", "enabled": False}
-    log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> 否")
-    return {"code": "OK", "activity_id": activity_id, "name": activity_name,
-            "onetoone_flag": "否", "enabled": False}

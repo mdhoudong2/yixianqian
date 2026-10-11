@@ -19,6 +19,9 @@ from lib import grouping as lib_grouping
 from lib import onetoone as lib_onetoone
 from lib.quota import MONTHLY_REAL_HEARTS
 
+# 模式开关与执行作业（分钟级持锁）撞锁时的快速失败文案；与 H5 端 409 文案同口径。
+MODE_FLAG_BUSY_REPLY = "当前有分组/一对一任务在执行中，请稍候再试。"
+
 
 def handle_register_command(sender_id):
     """发送注册表单链接"""
@@ -618,6 +621,10 @@ def handle_admin_toggle_group_flag(keyword):
         return f"未找到活动：{activity_id}"
 
     res = lib_grouping.set_group_flag(activity_id, enabled, client=bitable, activity=activity)
+    if res.get("code") == "BUSY":
+        return MODE_FLAG_BUSY_REPLY
+    if res.get("code") != "OK":
+        return f"分组功能开关设置失败：活动「{res.get('name') or activity_id}」状态写入失败，请稍后重试。"
     return (f"已{'开启' if res['group_flag'] == '是' else '关闭'}活动「{res['name']}」的分组功能。\n"
             f"开启后，报名该活动的用户可在 H5「我的」页看到「我的分组」入口。"
             + ("\n（活动结束后记得关闭，入口即隐藏）" if res["group_flag"] == "是" else ""))
@@ -649,6 +656,8 @@ def handle_admin_toggle_onetoone_flag(keyword):
     # （与 H5 模式切换同一套语义）；关闭时只写自身=否。写失败如实回错误，不报成功。
     res = lib_onetoone.set_onetoone_flag(activity_id, flag == "是", client=bitable,
                                          activity=activity)
+    if res.get("code") == "BUSY":
+        return MODE_FLAG_BUSY_REPLY
     if res.get("code") != "OK":
         return f"一对一功能开关设置失败：活动「{activity_name}」状态写入失败，请稍后重试。"
     log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> {res['onetoone_flag']}")

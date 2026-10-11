@@ -6696,7 +6696,15 @@ def admin_group_flag():
         # 幂等：盲写同值没有意义，还会白刷一次快照、多一条「管理员设置分组功能开关」日志
         return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
 
-    lib_grouping.set_group_flag(act_id, enabled, client=_grouping_client, activity=act)
+    res = lib_grouping.set_group_flag(act_id, enabled, client=_grouping_client, activity=act)
+    res_code = res.get("code")
+    if res_code == "BUSY":
+        # flag 写入与执行作业共用活动锁：撞上分钟级作业快速失败，不占请求线程
+        return jsonify({"error": "当前有分组/一对一任务在执行中，请稍候再试",
+                        "busy_activity_id": act_id}), 409
+    if res_code != "OK":
+        # 写失败/查询失败如实回错误，绝不回 {"ok": true}（静默写失败已修）
+        return jsonify({"error": "分组开关写入失败，请稍后重试", "code": res_code}), 500
     refresh_snapshot_table_async("activities")
     return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
 
@@ -6704,8 +6712,10 @@ def admin_group_flag():
 # ========== 管理员一对一管理台 ==========
 # 与分组管理台同构：读端点全部 fresh=True 实时读飞书；写端点复用 lib.onetoone /
 # lib.grouping 的实现与跨进程活动锁（与 bot 进程互斥）；run 走独立 job 文件
-# （yixianqian_onetoone_jobs.json）+ 轮询。模式互斥的 L1 由 set_mode 的双栏位
-# 单笔 PUT 保证，L2 由 lib 的动作层 guard（EXCLUSIVE_MODE）保证。
+# （yixianqian_onetoone_jobs.json）+ 轮询。模式互斥的 L1 由「flag 写入全部纳入
+# 活动锁串行化」保证（飞书单条 update 并不是整笔事务，2026-10-12 已证伪：
+# 并发双栏位 PUT 会栏位级交错，详见 docs/读取一致性.md「模式 flag 互斥」节）；
+# L2 由 lib 的动作层 guard（EXCLUSIVE_MODE）保证。
 
 
 def _onetoone_or_404(activity_id):
@@ -7084,8 +7094,12 @@ def admin_onetoone_flag():
                             "onetoone_flag": target})
 
     res = lib_onetoone.set_onetoone_flag(act_id, enabled, client=_grouping_client, activity=act)
-    if res.get("code") != "OK":
-        return jsonify({"error": "开关设置失败，请稍后重试", "code": res.get("code")}), 500
+    res_code = res.get("code")
+    if res_code == "BUSY":
+        return jsonify({"error": "当前有分组/一对一任务在执行中，请稍候再试",
+                        "busy_activity_id": act_id}), 409
+    if res_code != "OK":
+        return jsonify({"error": "开关设置失败，请稍后重试", "code": res_code}), 500
     refresh_snapshot_table_async("activities")
     return jsonify({"ok": True, "activity_id": act_id, "name": name,
                     "onetoone_flag": res["onetoone_flag"]})
@@ -7139,6 +7153,10 @@ def admin_activity_mode():
 
     res = lib_grouping.set_mode(act_id, mode, client=_grouping_client, activity=act)
     res_code = res.get("code")
+    if res_code == "BUSY":
+        # 执行作业持锁分钟级：flag 写入快速失败（5s 预算），前端可提示稍候再试
+        return jsonify({"error": "当前有分组/一对一任务在执行中，请稍候再试",
+                        "busy_activity_id": act_id}), 409
     if res_code == "WRITE_FAILED":
         return jsonify({"error": "模式切换写入失败，请稍后重试", "code": res_code}), 500
     if res_code != "OK":

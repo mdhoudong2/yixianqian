@@ -365,10 +365,23 @@ def handle_admin_start_group(keyword):
     # 就会删掉一半旧结果、写进去一半新结果。
     try:
         with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
-            lib_grouping.start_group(activity_id, m_per, f_per,
-                                     client=bitable, activity=activity)
+            res = lib_grouping.start_group(activity_id, m_per, f_per,
+                                           client=bitable, activity=activity)
     except GroupingBusy:
         return GROUPING_BUSY_REPLY
+
+    # start_group 的回传码不能丢。lib 里 SEARCH_FAILED 只有在
+    # treat_search_failure_as_empty=False 且「读历史分组结果失败」时才可能返回；
+    # bot 走默认 True，所以今天这行恒为 OK（parity 42 案例为证）——但正因如此，
+    # 一旦日后有人照 H5 的接法改成传 False，「清历史失败」就会被静默吞掉，管理员
+    # 仍收到「志愿填写已开始」。这里钉一道断言，让那种改动在这里立刻炸掉，
+    # 而不是悄悄发一条与事实相反的回执。抛异常由 _admin_task_worker 统一兜成
+    # 「任务处理失败：…」，不会把错误伪装成成功。
+    if res.get("code") != "OK":
+        raise RuntimeError(
+            f"start_group 未成功（code={res.get('code')}），不发送成功回执。"
+            "bot 应保持默认 treat_search_failure_as_empty=True；若确需改为严格模式，"
+            "请一并为该分支补上面向管理员的失败文案。")
 
     # 不再向报名者群发通知（现场活动，用户自查 H5）。管理员收到开始指令回执即可。
     log(f"管理员开始填志愿: {activity_name} {m_per}男{f_per}女")

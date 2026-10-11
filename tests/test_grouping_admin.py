@@ -402,3 +402,57 @@ def test_business_functions_require_configure(monkeypatch):
     monkeypatch.setitem(lib_grouping._cfg, "fields", {})
     with pytest.raises(RuntimeError, match="未 configure"):
         lib_grouping.fetch_status(ACT, client=object(), activity={}, find_user_by_openid=_find_user)
+
+
+def test_incomplete_config_names_the_missing_items(monkeypatch):
+    """只注入一部分（这里只给 activity_table_id）时，要点名缺哪几项。
+
+    否则报错要等到业务跑深了才炸成 KeyError('group_result_table')，看不出根因；
+    Phase 2 接 H5 端点时最容易踩这个。
+    """
+    # 栏位名补齐，只留三张表不注入
+    monkeypatch.setitem(lib_grouping._cfg, "tables", {"activity_table_id": ACTIVITY_TABLE_ID})
+    monkeypatch.setitem(lib_grouping._cfg, "fields",
+                        {k: f"F_{k}" for k in lib_grouping._REQUIRED_FIELDS})
+    with pytest.raises(RuntimeError) as ei:
+        lib_grouping.fetch_status(ACT, client=object(), activity={},
+                                 find_user_by_openid=_find_user)
+    msg = str(ei.value)
+    for missing in ("group_select_table", "group_result_table", "signup_table_id"):
+        assert missing in msg, f"报错应点名缺少 {missing}，实际：{msg}"
+    assert "activity_table_id" not in msg, "已注入的表不该被列进缺失清单"
+
+
+def test_bot_start_group_refuses_to_claim_success_on_failure(configured, monkeypatch):
+    """bot 不能在「清历史失败」后仍回「志愿填写已开始」。
+
+    今天 bot 走默认 treat_search_failure_as_empty=True，SEARCH_FAILED 不可达（parity
+    佐证），所以这条用桩把 lib 的回传码换成失败，钉住 bot/grouping.py 里那道
+    「回传码不能被丢」的断言——否则日后照 H5 改成传 False，就会静默回一条
+    与事实相反的成功回执。
+    """
+    signups, selections = _balanced(2, 2)
+    fake = FakeBitable(_tables(signups=signups, selections=selections))
+    monkeypatch.setattr(bot_grouping, "bitable", fake)
+    monkeypatch.setattr(bot_grouping, "find_activity_by_id", lambda aid: _find_act(fake, aid))
+    monkeypatch.setattr(bot_grouping, "log", lambda *a, **k: None)
+
+    real_start = lib_grouping.start_group
+    monkeypatch.setattr(
+        lib_grouping, "start_group",
+        lambda *a, **k: dict(real_start(*a, **k), code="SEARCH_FAILED"))
+
+    with pytest.raises(RuntimeError, match="start_group 未成功"):
+        bot_grouping.handle_admin_start_group(f"{ACT} 2 2")
+
+
+def test_bot_start_group_still_returns_verbatim_success_reply(configured, monkeypatch):
+    """对照组：正常路径的回执一字都不能变（红线：parity 84 条全绿靠它）。"""
+    signups, selections = _balanced(2, 2)
+    fake = FakeBitable(_tables(signups=signups, selections=selections))
+    monkeypatch.setattr(bot_grouping, "bitable", fake)
+    monkeypatch.setattr(bot_grouping, "find_activity_by_id", lambda aid: _find_act(fake, aid))
+    monkeypatch.setattr(bot_grouping, "log", lambda *a, **k: None)
+
+    reply = bot_grouping.handle_admin_start_group(f"{ACT} 2 2")
+    assert reply.startswith("志愿填写已开始：") and "已开放，未发送群发通知。" in reply

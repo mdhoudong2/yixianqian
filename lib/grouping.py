@@ -71,19 +71,56 @@ def _sanitize(activity_id):
 
 
 _locks_guard = threading.Lock()
+# path -> [threading.Lock, 在用计数]。值是强引用，见 _thread_lock 的说明。
 _thread_locks = {}
+_MAX_THREAD_LOCKS = 256
 
 
 def _thread_lock(path):
-    """同一路径共用一把进程内锁。挡掉最常见的「同一进程的 4 条管理指令线程」竞争。"""
+    """取该路径的进程内锁，并登记「有人在用」。
+
+    调用方**必须**在临界区（含等 flock）结束后调 _unpin_thread_lock(path)，否则
+    这把锁永远淘汰不掉。挡掉的是最常见的「同一进程的 4 条管理指令线程」竞争。
+
+    为什么不用 WeakValueDictionary（审查点名的坑）：弱引用下锁对象在 with 结束、
+    局部变量消失后就可能被 GC 回收，同一路径下一次进来会拿到一把**全新的**锁，
+    「同一路径两线程互斥」静默失效——比多留几十 bytes 危险得多。强引用下只要还
+    可能有人在用，字典就是它的强引用，GC 不会动它。
+
+    为什么要上限：bot 是常驻进程，每见过一个活动 ID 就永久多一把锁，是无界结构。
+    但单纯「按插入顺序删没在用的」有竞态：另一个线程可能刚拿到引用、还没 acquire，
+    这时它手上的锁被删掉换成新锁，两者同时「持有」。所以淘汰的判据是**在用计数**
+    而不是 locked()：每次取锁都 +1、用完才 -1，计数归零才保证没有线程还攥着引用。
+    """
     with _locks_guard:
-        if path not in _thread_locks:
-            _thread_locks[path] = threading.Lock()
-        return _thread_locks[path]
+        entry = _thread_locks.get(path)
+        if entry is None:
+            entry = [threading.Lock(), 0]
+            _thread_locks[path] = entry
+        entry[1] += 1
+        return entry[0]
+
+
+def _unpin_thread_lock(path):
+    """解除登记，并顺带把超过上限、且无人再用的锁清掉。"""
+    with _locks_guard:
+        entry = _thread_locks.get(path)
+        if entry is None:
+            return
+        entry[1] -= 1
+        if len(_thread_locks) <= _MAX_THREAD_LOCKS:
+            return
+        for old_path in [k for k, v in _thread_locks.items() if v[1] == 0]:
+            del _thread_locks[old_path]
+            if len(_thread_locks) <= _MAX_THREAD_LOCKS:
+                break
 
 
 def _flock_wait(f, deadline, activity_id):
     """等跨进程 flock，等到截止时间为止。
+
+    抢到回 True（调用方据此决定要不要 LOCK_UN）；抢不到抛 GroupingBusy，**不会**回
+    False——没拿到的锁不必去解，否则 finally 会对一把从未持有的 fd 调 LOCK_UN。
 
     用 LOCK_NB 轮询而不是阻塞版 flock：阻塞版没有逾时，而分组是分钟级作业，
     对端要是卡住不动，一个 flock 就足以把调用方的执行线程池（bot 4 条、gunicorn
@@ -91,11 +128,11 @@ def _flock_wait(f, deadline, activity_id):
     跨进程争用上，进程内的常规竞争早被线程锁挡掉了。
     """
     if not fcntl:
-        return
+        return False
     while True:
         try:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
+            return True
         except OSError:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -122,20 +159,33 @@ def grouping_lock(activity_id, timeout):
     path = os.path.join(_lock_dir, f"yixianqian_grouping_{_sanitize(activity_id)}.lock")
     deadline = time.monotonic() + timeout if timeout > 0 else time.monotonic()
     tl = _thread_lock(path)
-    # 进程内先挡，剩下的预算拿去等 flock。注意 timeout 不能原样传给 acquire()：
-    # threading 把负数当「无限等待」，正好把要防的情况放进来。
-    if not tl.acquire(timeout=max(0.0, deadline - time.monotonic())):
-        raise GroupingBusy(activity_id)
-    # 锁文件与数据分离（同 lib/storage._FileLock）：锁不能跟着数据被 rename 走。
-    f = open(path, "a+")
     try:
-        _flock_wait(f, deadline, activity_id)
-        yield
+        # 进程内先挡，剩下的预算拿去等 flock。注意 timeout 不能原样传给 acquire()：
+        # threading 把负数当「无限等待」，正好把要防的情况放进来。
+        if not tl.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            raise GroupingBusy(activity_id)
+        # 锁文件与数据分离（同 lib/storage._FileLock）：锁不能跟着数据被 rename 走。
+        try:
+            f = open(path, "a+")
+            try:
+                held = _flock_wait(f, deadline, activity_id)
+                try:
+                    yield
+                finally:
+                    # 只在真的抢到时才解锁：GroupingBusy 是从 _flock_wait 抛出来的，
+                    # 那时这把 fd 上的 flock 并不属于我们。
+                    if held:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            finally:
+                f.close()
+        finally:
+            # open() 自己抛错（锁目录没了等）也必须走到这里，否则这把进程内锁
+            # 永远不释放，后面同活动的分组全部超时。
+            tl.release()
     finally:
-        if fcntl:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-        f.close()
-        tl.release()
+        # 顺序不能反：先 release 再解除登记。反过来的话登记已清而锁还攥在手里，
+        # 并发的淘汰会把这条路径删掉、下一个调用者新建一把锁，两把同时「持有」。
+        _unpin_thread_lock(path)
 
 
 # ---------------------------------------------------------------- 运行配置
@@ -154,11 +204,30 @@ _REQUIRED_FIELDS = (
 _cfg = {"tables": {}, "fields": {}}
 
 
+_REQUIRED_TABLES = ("activity_table_id", "group_select_table",
+                    "group_result_table", "signup_table_id")
+
+
 def _require_configured():
-    if not _cfg["tables"] or not _cfg["fields"]:
+    """业务入口的配置闸门：表 ID 与栏位名必须齐全，缺哪几项直接点名。
+
+    为什么不能只看「非空」：configure() 允许分多次注入，若只给 activity_table_id
+    就开工，前置检查会放行，真正的 KeyError 要等到业务跑深了才炸，报的还是
+    'group_result_table' 这种看不出根因的字样。改成在这里就核对**齐全**，并把
+    缺的具体项列出来——Phase 2 接 H5 端点时，一眼就知道漏注了哪个。
+    """
+    missing = [k for k in _REQUIRED_TABLES if not _cfg["tables"].get(k)]
+    missing_fields = [k for k in _REQUIRED_FIELDS if k not in _cfg["fields"]]
+    if missing or missing_fields:
+        detail = []
+        if missing:
+            detail.append(f"缺少表 ID：{missing}")
+        if missing_fields:
+            detail.append(f"缺少栏位名：{missing_fields}")
         raise RuntimeError(
-            "lib.grouping 未 configure(...)，不能执行分组业务。"
-            "表 ID 与栏位名必须由调用端注入——沉默的默认值等于写进错误的 base")
+            "lib.grouping 未 configure 完整，不能执行分组业务（"
+            + "；".join(detail)
+            + "）。表 ID 与栏位名必须由调用端注入——沉默的默认值等于写进错误的 base。")
 
 
 # 分组状态（写进「分组状态」单选栏位的取值）

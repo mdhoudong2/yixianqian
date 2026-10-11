@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""测试环境「Phase 2 验收演示」数据种子：A-0014 分组 / A-0015 一对一（只允许在 /opt/yixianqian-test 执行）。
+"""测试环境「Phase 2 验收演示」数据种子：A-0016 分组 / A-0017 一对一（只允许在 /opt/yixianqian-test 执行）。
 
 给使用者亲手走完整流程的两个新活动，**从「未设定模式」开始**：
 
@@ -12,9 +12,9 @@
   第 9~13 男 / 第 8~12 女，与 A-0011 种子已用的前 8 男/前 7 女错开）；
 - 签到三态：6 人已到（按时）、2 人未到、4 人未标记（含两个真号——使用者可以
   真号实测「未签到被挡」，再由管理员标记已到解锁）；
-- A-0014 预填 10 个假号分组志愿（轮转法照 seed_test_grouping.py：按 uid 升序
+- A-0016 预填 10 个假号分组志愿（轮转法照 seed_test_grouping.py：按 uid 升序
   的第 k 位跳过同位异性、选其余 N-1 位，保证每人被多人选中），两个真号留白；
-- A-0015 预填 10 个假号一对一志愿（每人填满全部异性，6 栏），两个真号留白。
+- A-0017 预填 10 个假号一对一志愿（每人填满全部异性，6 栏），两个真号留白。
 
 不预执行分组/一对一（让使用者自己按）。不触碰 A-0011/A-0012/A-0013 的任何数据。
 
@@ -33,8 +33,13 @@
   4) 必须显式 YIXIANQIAN_ENV=dev（不认 YX_DEV_ALLOW 兜底）。
   反向测试钩子：SEED_FORCE_BAD=base|table 模拟「base 相等 / 表 ID 不符」。
 
-模式 flag 红线：本脚本绝不设置/清除 A-0014/A-0015 的分组/一对一 flag 与状态；
+模式 flag 红线：本脚本绝不设置/清除 A-0016/A-0017 的分组/一对一 flag 与状态；
 发现它们非空时报错停手（flag 一旦被使用者选过，种子不越权改动）。
+
+自动编号锚点：审计过程用临时活动烧掉了 A-0014/A-0015（飞书自动编号删除不复用），
+所以「max(现存)+1」会低估。plan 先把活动表现存最大编号与锚点核对（见
+_ANCHOR_EXISTING_MAX / _ANCHOR_ISSUED_MAX），完全一致才信任「下一编号」；
+不一致时停在 plan 阶段并报告，绝不盲建。创建后仍逐条核对真实 ID，不符即停手。
 """
 import os
 import re
@@ -62,8 +67,14 @@ _EXPECTED_TABLES = {
 }
 _GROUP_ACT_NAME = "验收演示·分组"
 _OTO_ACT_NAME = "验收演示·一对一"
-_GROUP_EXPECTED_ID = "A-0014"
-_OTO_EXPECTED_ID = "A-0015"
+_GROUP_EXPECTED_ID = "A-0016"
+_OTO_EXPECTED_ID = "A-0017"
+# 自动编号锚点（2026-10-12 实测）：审计临时活动烧掉 A-0014/A-0015 后，
+# 活动表现存最大编号=A-0013，已发编号上限=A-0015（删除不复用）。
+# 新建前必须核对「现存最大编号」与 _ANCHOR_EXISTING_MAX 完全一致（期间无人新建/删除），
+# 此时下一编号 = _ANCHOR_ISSUED_MAX + 1；不一致则停手，人工核对后更新锚点。
+_ANCHOR_EXISTING_MAX = 13
+_ANCHOR_ISSUED_MAX = 15
 _REAL_MALE_UID = "U-0001"
 _REAL_FEMALE_UID = "U-0006"
 _FAKE_MALE_OFFSET = 8    # A-0011 种子已用前 8 假男（uid 升序），演示人群与其错开
@@ -317,10 +328,13 @@ def _read_oto_selections(act_id):
     }), f"一对一选择表({act_id})")
 
 
+def _id_num(activity_id):
+    m = re.match(r"A-(\d+)$", activity_id or "")
+    return int(m.group(1)) if m else 0
+
+
 def _next_activity_num(acts):
-    nums = [int(m.group(1)) for m in
-            (re.match(r"A-(\d+)$", a["id"] or "") for a in acts) if m]
-    return max(nums) if nums else 0
+    return max([_id_num(a["id"]) for a in acts], default=0)
 
 
 def _compute_plan():
@@ -337,22 +351,39 @@ def _compute_plan():
         if found and found[0]["id"] != expected:
             _fail(f"{label}演示活动已存在但活动ID={found[0]['id']}≠预期 {expected}（自动编号被什么改过？停手）")
 
-    next_num = _next_activity_num(acts)
+    # 下一编号：飞书自动编号删除不复用，只能靠「现存编号与锚点完全吻合」来信任。
+    # 任何不一致（新建/删除/又烧号）都停手回報，由人工核对后更新锚点常量。
+    observed_max = _next_activity_num(acts)
     expected_new = []
-    if not found_group:
-        next_num += 1
-        expected_new.append(("group", f"A-{next_num:04d}"))
-    if not found_oto:
-        next_num += 1
-        expected_new.append(("oto", f"A-{next_num:04d}"))
+    if found_group and found_oto:
+        pass  # 两个都已建：幂等，无需预测
+    elif not found_group and not found_oto:
+        if observed_max != _ANCHOR_EXISTING_MAX:
+            _fail(f"自动编号锚点核对失败：活动表现存最大编号 A-{observed_max:04d}≠锚点 "
+                  f"A-{_ANCHOR_EXISTING_MAX:04d}（已发上限锚点 A-{_ANCHOR_ISSUED_MAX:04d} 依据："
+                  f"A-0014/A-0015 被审计临时活动烧掉、删除不复用）。无法可靠推断真实下一编号，"
+                  f"请人工核对活动表后更新脚本锚点常量；不创建，停手回報")
+        next_num = _ANCHOR_ISSUED_MAX + 1
+        expected_new = [("group", f"A-{next_num:04d}"), ("oto", f"A-{next_num + 1:04d}")]
+    else:
+        # run 中断重跑：已建的那个必须是最高编号，才能确定下一个编号；否则停手。
+        existing = (found_group or found_oto)[0]
+        existing_num = _id_num(existing["id"])
+        if observed_max != existing_num:
+            _fail(f"自动编号核对失败：已存在演示活动 {existing['id']}，但活动表现存最大编号 "
+                  f"A-{observed_max:04d}≠A-{existing_num:04d}（期间有新建/删除，删除不复用）。"
+                  f"无法可靠推断下一个编号，请人工核对；不创建，停手回報")
+        next_num = existing_num + 1
+        expected_new.append(("group" if not found_group else "oto", f"A-{next_num:04d}"))
     for kind, eid in expected_new:
         want = _GROUP_EXPECTED_ID if kind == "group" else _OTO_EXPECTED_ID
         if eid != want:
-            _fail(f"活动表下一个自动编号将是 {eid}，与预期 {want} 不符；不创建，停手回報")
+            _fail(f"活动表下一自动编号推算为 {eid}，与预期 {want} 不符；不创建，停手回報")
 
     return {"cast": cast, "acts": acts,
             "group": found_group[0] if found_group else None,
             "oto": found_oto[0] if found_oto else None,
+            "observed_max": observed_max,
             "expected_new": expected_new}
 
 
@@ -379,6 +410,10 @@ def _print_plan(plan):
         else:
             exp = dict(plan["expected_new"]).get(key, "?")
             print(f"  + {label}演示：不存在 → 将创建「{name}」（活动ID 自动编号，预期 {exp}）")
+    if plan["expected_new"]:
+        exp_ids = "、".join(eid for _, eid in plan["expected_new"])
+        print(f"    自动编号锚点核对通过：现存最大 A-{plan['observed_max']:04d}，"
+              f"下一编号 {exp_ids}（删除不复用；锚点=现存 {_ANCHOR_EXISTING_MAX}/已发 {_ANCHOR_ISSUED_MAX}）")
     print(f"    创建字段：活动状态=报名中、当前报名人数=12、报名人数上限=无、时间三栏；"
           f"签到功能开启随后单独置「是」；分组/一对一状态与 flag 保持空。")
 
@@ -396,18 +431,20 @@ def _print_plan(plan):
 
     gplan = _writable(_group_rotation(cast))
     oplan = _writable(_oto_all_opposite(cast))
-    print(f"\n【A-0014 分组志愿】将创建/对齐 {len(gplan)} 条（两真号留白走 H5）：")
+    gid = plan["group"]["id"] if plan["group"] else _GROUP_EXPECTED_ID
+    oid = plan["oto"]["id"] if plan["oto"] else _OTO_EXPECTED_ID
+    print(f"\n【{gid} 分组志愿】将创建/对齐 {len(gplan)} 条（两真号留白走 H5）：")
     for item in gplan:
         sel = item["selector"]
         print(f"  + {sel['uid']}({sel['gender']}) {len(item['targets'])} 个志愿 -> "
               + ",".join(t["uid"] for t in item["targets"]))
-    print(f"【A-0015 一对一志愿】将创建/对齐 {len(oplan)} 条（两真号留白走 H5）：")
+    print(f"【{oid} 一对一志愿】将创建/对齐 {len(oplan)} 条（两真号留白走 H5）：")
     for item in oplan:
         sel = item["selector"]
         print(f"  + {sel['uid']}({sel['gender']}) {len(item['targets'])} 个志愿 -> "
               + ",".join(t["uid"] for t in item["targets"]))
 
-    print("\n【不触碰】A-0011（双模式冲突，保持原样）/ A-0012 / A-0013 的任何数据。")
+    print("\n【不触碰】A-0011（当前为分组模式）/ A-0012 / A-0013 的任何数据。")
     print("（plan 模式：未执行任何写入。确认无误后用 run 执行。）")
 
 
@@ -583,12 +620,12 @@ def _cmd_run():
         print(f"  {act['id']}：创建 {c} 条，对齐签到状态 {u} 条")
 
     _init_choice_fields()
-    print("[3/5] 分组志愿（A-0014）：")
+    print(f"[3/5] 分组志愿（{group['id']}）：")
     c, u = _write_choices(C.GROUP_SELECT_TABLE, _GROUP_FIELDS, _writable(_group_rotation(cast)),
                           group["id"])
     print(f"  {group['id']}：创建 {c} 条，覆盖更新 {u} 条（两真号留白）")
 
-    print("[4/5] 一对一志愿（A-0015）：")
+    print(f"[4/5] 一对一志愿（{oto['id']}）：")
     c, u = _write_choices(C.ONETOONE_SELECT_TABLE, _OTO_FIELDS, _writable(_oto_all_opposite(cast)),
                           oto["id"])
     print(f"  {oto['id']}：创建 {c} 条，覆盖更新 {u} 条（两真号留白）")
@@ -611,7 +648,7 @@ def _verify_state(group_id, oto_id, cast):
     by_id = {a["id"]: a for a in acts}
 
     # 场景 30 秒对账前「当前报名人数」可能短暂滞后，只做报告不做判据
-    for aid, label in ((group_id, "A-0014 分组"), (oto_id, "A-0015 一对一")):
+    for aid, label in ((group_id, f"{group_id} 分组"), (oto_id, f"{oto_id} 一对一")):
         act = by_id.get(aid)
         if not act:
             issues.append(f"{aid} 找不到")
@@ -661,7 +698,7 @@ def _verify_state(group_id, oto_id, cast):
         if extra or dup or wrong:
             issues.append(f"{aid} 报名异常：extra={extra} dup={dup} 状态不符={wrong}")
 
-    # A-0014 分组志愿
+    # 分组志愿
     gplan = _writable(_group_rotation(cast))
     sels = _read_group_selections(group_id)
     sel_by_oid = {}
@@ -676,23 +713,23 @@ def _verify_state(group_id, oto_id, cast):
         sel = item["selector"]
         recs = sel_by_oid.get(sel["oid"], [])
         if len(recs) != 1:
-            issues.append(f"A-0014 志愿记录数异常：{sel['uid']} x{len(recs)}")
+            issues.append(f"{group_id} 志愿记录数异常：{sel['uid']} x{len(recs)}")
             n_bad += 1
             continue
         got = [get_field_text(recs[0].get("fields", {}), cf) for cf in C.FIELD_GS_CHOICES]
         want = [t["oid"] for t in item["targets"]]
         if got != want + [""] * (len(C.FIELD_GS_CHOICES) - len(want)):
-            issues.append(f"A-0014 志愿不符：{sel['uid']} 得 {got} 应 {want}+空")
+            issues.append(f"{group_id} 志愿不符：{sel['uid']} 得 {got} 应 {want}+空")
             n_bad += 1
         else:
             n_ok += 1
     extra_sel = [oid for oid in sel_by_oid if oid not in {i['selector']['oid'] for i in gplan}]
-    lines.append(f"[A-0014 志愿] {len(sels)} 条（期望 10）；逐条与轮转计划一致 {n_ok}/{len(gplan)}；"
+    lines.append(f"[{group_id} 志愿] {len(sels)} 条（期望 10）；逐条与轮转计划一致 {n_ok}/{len(gplan)}；"
                  f"两真号留白={'是' if not real_has else '否'}；多余记录={extra_sel}")
     if len(sels) != len(gplan) or n_bad or real_has or extra_sel:
-        issues.append(f"A-0014 志愿状态异常（{n_bad} 条不符）")
+        issues.append(f"{group_id} 志愿状态异常（{n_bad} 条不符）")
 
-    # A-0015 一对一志愿
+    # 一对一志愿
     oplan = _writable(_oto_all_opposite(cast))
     sels2 = _read_oto_selections(oto_id)
     sel_by_oid2 = {}
@@ -704,24 +741,24 @@ def _verify_state(group_id, oto_id, cast):
         sel = item["selector"]
         recs = sel_by_oid2.get(sel["oid"], [])
         if len(recs) != 1:
-            issues.append(f"A-0015 志愿记录数异常：{sel['uid']} x{len(recs)}")
+            issues.append(f"{oto_id} 志愿记录数异常：{sel['uid']} x{len(recs)}")
             n_bad2 += 1
             continue
         got = [get_field_text(recs[0].get("fields", {}), cf) for cf in C.FIELD_OTO_CHOICES]
         want = [t["oid"] for t in item["targets"]]
         if got != want + [""] * (len(C.FIELD_OTO_CHOICES) - len(want)):
-            issues.append(f"A-0015 志愿不符：{sel['uid']} 得 {got} 应全部异性")
+            issues.append(f"{oto_id} 志愿不符：{sel['uid']} 得 {got} 应全部异性")
             n_bad2 += 1
         else:
             n_ok2 += 1
     real_has2 = [oid for oid in real_oids if oid in sel_by_oid2]
-    lines.append(f"[A-0015 志愿] {len(sels2)} 条（期望 10）；逐条=全部异性 {n_ok2}/{len(oplan)}；"
+    lines.append(f"[{oto_id} 志愿] {len(sels2)} 条（期望 10）；逐条=全部异性 {n_ok2}/{len(oplan)}；"
                  f"两真号留白={'是' if not real_has2 else '否'}")
     if len(sels2) != len(oplan) or n_bad2 or real_has2:
-        issues.append(f"A-0015 志愿状态异常（{n_bad2} 条不符）")
+        issues.append(f"{oto_id} 志愿状态异常（{n_bad2} 条不符）")
 
-    # 既有活动：只报告，不动（A-0011 双模式冲突保持原样）
-    for aid, expect_desc in (("A-0011", "17 已报名+4 已取消（双模式冲突，保持原样）"),
+    # 既有活动：只报告，不动（A-0011 当前为分组模式，保持原样）
+    for aid, expect_desc in (("A-0011", "17 已报名+4 已取消（当前为分组模式，保持原样）"),
                              ("A-0012", "100 已报名"), ("A-0013", "1 已报名")):
         su = _read_signups(aid)
         cnt = {}

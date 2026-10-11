@@ -16,6 +16,8 @@
 案例覆盖每个 handle_* 的每个 return 分支。新增字串不在这个范围内（黄金副本里本来
 就没有），必须在 PR 说明里单独列出。
 """
+import re
+
 import commands as bot_commands
 import grouping as bot_grouping
 import pytest
@@ -381,3 +383,46 @@ def test_side_effects_are_identical(monkey_and_lockdir, case):
     assert new.writes() == old.writes(), (
         f"副作用漂移\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
     assert new.tables == old.tables
+
+
+def test_dirty_duplicate_row_counts_add_up_intentional_fix(monkey_and_lockdir):
+    """【此處為刻意的 bug fix，非回歸】重复志愿行下，bot 两条指令的数字必须同口径。
+
+    旧实现「分组状态」按记录**行数**报已提交（3 行 → 3 人），而「查看未提交」按
+    去重 open_id 报（2 人已交 → 1 人未交），3+1 超过报名总数 3，自相矛盾。
+    本次修正后两处都走去重口径：已提交 2 + 未提交 1 == 报名 3。
+
+    本用例是唯一一处「新旧回传文字刻意不同」的案例，其余 CASES 必须保持逐字全绿。
+    """
+    tables = {
+        ACTIVITY_TABLE_ID: [_act()],
+        SIGNUP_TABLE_ID: [_signup("ou_m1", "小北"), _signup("ou_f1", "阿南"),
+                          _signup("ou_f2", "小西")],
+        GROUP_SELECT_TABLE: [
+            _sel("ou_m1", "男性", ("ou_f1",)),
+            _sel("ou_m1", "男性", ("ou_f2",)),      # 同一人的重复志愿行（脏数据）
+            _sel("ou_f1", "女性", ("ou_m1",)),
+        ],
+        GROUP_RESULT_TABLE: [],
+    }
+    case_status = Case("status/重复志愿行", "status", ACT, tables=tables)
+    case_unsub = Case("unsubmitted/重复志愿行", "unsubmitted", ACT, tables=tables)
+
+    # 旧实现（黄金副本）确实按行数报 3——记录在案，证明这是刻意的行为变化
+    old_fake = _build(case_status)
+    _patch_golden(monkey_and_lockdir, old_fake, case_status)
+    old_status = _run_golden(case_status)
+    assert "已提交选择：3人" in old_status
+
+    new_fake = _build(case_status)
+    _patch_new(monkey_and_lockdir, new_fake, case_status)
+    new_status = _run_new(case_status)
+
+    unsub_fake = _build(case_unsub)
+    _patch_new(monkey_and_lockdir, unsub_fake, case_unsub)
+    new_unsub = _run_new(case_unsub)
+
+    assert "已提交选择：2人" in new_status, "去重后只算 2 人（旧口径是 3）"
+    submitted = int(re.search(r"已提交选择：(\d+)人", new_status).group(1))
+    unsubmitted = int(re.search(r"未提交志愿（(\d+)人）", new_unsub).group(1))
+    assert submitted + unsubmitted == 3, "已提交（去重）+ 未提交 == 报名总数"

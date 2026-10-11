@@ -164,6 +164,7 @@ ENDPOINTS = [
      {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2}),
     ("POST", "/api/admin/group/run", {"activity_id": ACT, "round": 1}),
     ("GET", "/api/admin/group/job?job_id=x", None),
+    ("GET", "/api/admin/group/result?activity_id=" + ACT, None),
     ("POST", "/api/admin/group/flag", {"activity_id": ACT, "enabled": True}),
 ]
 ENDPOINT_IDS = [p.split("?")[0].rsplit("/", 1)[-1] for m, p, _ in ENDPOINTS]
@@ -515,3 +516,189 @@ def test_payload_validation_and_missing_resources(api):
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
     assert api.post("/api/admin/group/run",
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
+
+
+# ---------------------------------------------------------------- 审查必修 1/2/5：去重口径
+
+def _dirty_signups_and_selections():
+    """首行性别缺失 + 次行有效 + 重复行：旧 H5 口径会吞人/多算行数。"""
+    signups = [_signup("ou_m0", "小北"), _signup("ou_m1", "阿北"), _signup("ou_f0", "阿南")]
+    selections = [
+        _sel("ou_m0", "", ("ou_f0",)),        # 首行性别缺失
+        _sel("ou_m0", "男性", ("ou_f0",)),    # 次行有效（旧 H5 把人整个吞掉）
+        _sel("ou_m0", "男性", ("ou_f0",)),    # 重复志愿行
+        _sel("ou_f0", "女性", ("ou_m0",)),
+    ]
+    return signups, selections
+
+
+def test_status_shares_lib_dedup_and_adds_up_with_unsubmitted(api):
+    """必修 1/2/5：H5 状态、名单与 lib 共用去重口径，已提交 + 未提交 == 报名总数。"""
+    signups, selections = _dirty_signups_and_selections()
+    api.install(signups=signups, selections=selections)
+
+    st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert st["submitted_count"] == 2, "重复行只算一次"
+    assert st["male_count"] == 1 and st["female_count"] == 1, "首行缺失不吞人"
+    assert st["unsubmitted_count"] == 1
+
+    # 与 preview（lib 路径）同一口径——旧实现这里 H5 是 0、preview 是 1
+    pv = api.post("/api/admin/group/preview", {"activity_id": ACT, "round": 1}).get_json()
+    assert (pv["male_count"], pv["female_count"]) == (st["male_count"], st["female_count"])
+    assert pv["skipped_no_gender"] == 1
+
+    un = api.get("/api/admin/group/unsubmitted?activity_id=" + ACT).get_json()
+    assert un["total"] == 1 and un["all_submitted"] is False
+    assert len(un["submitted"]) == 2, "已填写名单与去重集合同口径"
+    by_oid = {x["open_id"]: x for x in un["submitted"]}
+    assert set(by_oid) == {"ou_m0", "ou_f0"}
+    assert by_oid["ou_m0"]["user_id"] == "U-0001"
+    assert by_oid["ou_m0"]["gender"] == "男性"
+    assert by_oid["ou_m0"]["nickname"] == "小北"
+    assert by_oid["ou_f0"]["user_id"] == "U-0003"
+
+    assert st["submitted_count"] + un["total"] == st["signup_count"] == 3
+
+
+def test_status_group_flag_is_yes_or_no(api):
+    """必修 6：/status 带 group_flag（是/否），前端不必再补拉 /activities。"""
+    api.install()
+    st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert st["group_flag"] == "否"
+
+    api.install(activity=_act(分组功能开启="是"))
+    st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert st["group_flag"] == "是"
+
+
+# ---------------------------------------------------------------- 审查必修 4：完整结果端点
+
+def _result(oid, group_no, round_no, gender="男性"):
+    rec = _res(oid, group_no, round_no)
+    rec["record_id"] = f"rec_res_{round_no}_{group_no}_{oid}"
+    rec["fields"]["用户性别"] = gender
+    return rec
+
+
+def test_result_endpoint_serves_history_rounds_isomorphic_with_job(api):
+    """必修 4：任何历史轮次都能查，结构与 job result.groups 同构。"""
+    signups, selections = _balanced(2, 2)
+    results = [
+        _result("ou_m0", 1, "1"), _result("ou_f0", 1, "1", "女性"),
+        _result("ou_f0", 1, "2", "女性"), _result("ou_m0", 1, "2"),
+    ]
+    api.install(signups=signups, selections=selections, results=results)
+
+    body = api.get("/api/admin/group/result?activity_id=" + ACT).get_json()
+    assert body["activity_id"] == ACT and body["name"] == "关系自洽"
+    assert body["round"] == 2 and body["rounds"] == [1, 2]
+    assert len(body["groups"]) == 1
+    g = body["groups"][0]
+    assert set(g) == {"group_id", "members"}
+    assert g["group_id"] == 1
+    assert [m["open_id"] for m in g["members"]] == ["ou_m0", "ou_f0"], "男先女后"
+    assert all(set(m) == {"open_id", "gender", "display_name"} for m in g["members"])
+    assert g["members"][0]["display_name"] == "ou_m0", "结果表昵称为空 → 退回 open_id"
+
+    b1 = api.get("/api/admin/group/result?activity_id=" + ACT + "&round=1").get_json()
+    assert b1["round"] == 1
+    assert [m["open_id"] for m in b1["groups"][0]["members"]] == ["ou_m0", "ou_f0"]
+
+    assert api.get("/api/admin/group/result?activity_id=" + ACT + "&round=abc").status_code == 400
+    assert api.get("/api/admin/group/result?activity_id=" + ACT + "&round=0").status_code == 400
+    assert api.get("/api/admin/group/result?activity_id=A-9999").status_code == 404
+
+
+# ---------------------------------------------------------------- 审查必修 3：job TTL 兜底
+
+def _job_record(state="running", created_at=None, started_at=None, activity_id=ACT,
+                round_no=1, pid=None):
+    now = int(time.time())
+    return {"activity_id": activity_id, "round": round_no, "operator": "ou_test_admin",
+            "state": state, "pid": os.getpid() if pid is None else pid, "progress": "",
+            "created_at": now if created_at is None else created_at,
+            "started_at": now if started_at is None else started_at,
+            "finished_at": None, "result": None, "error": ""}
+
+
+def test_same_pid_stale_job_reports_unknown_and_allows_rerun(api):
+    """必修 3 负向验证：pid 相同但超过执行上限的 job 不再永久 409。"""
+    old = int(time.time()) - app.GROUPING_JOB_MAX_RUNTIME - 60
+    stale = _job_record(created_at=old, started_at=old)
+    storage.update_json(app.GROUPING_JOBS_FILE, {}, lambda jobs: {**jobs, "stalejob0001": stale})
+
+    r = api.get("/api/admin/group/job?job_id=stalejob0001")
+    assert r.status_code == 200 and r.get_json()["state"] == "unknown"
+
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections)
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    assert r.status_code == 202, "pid 相同的过期 job 不能永久挡住重跑"
+    assert _poll_job(api, r.get_json()["job_id"])["state"] == "done"
+
+
+def test_job_conflict_branch_prunes_expired_records(api):
+    """必修 3：冲突分支也要跑 TTL 清理（旧实现冲突早退，过期记录永远清不掉）。"""
+    now = int(time.time())
+    active = _job_record(created_at=now, started_at=now)
+    expired = _job_record(state="done", created_at=now - app.GROUPING_JOB_TTL - 10,
+                          started_at=now - app.GROUPING_JOB_TTL - 10)
+    storage.update_json(app.GROUPING_JOBS_FILE, {},
+                        lambda jobs: {**jobs, "activejob001": active,
+                                      "expiredjob01": expired})
+
+    conflict = app._create_grouping_job("newjob000001", ACT, 1, "ou_test_admin")
+
+    assert conflict == "activejob001"
+    jobs = storage.load_json(app.GROUPING_JOBS_FILE, {})
+    assert "expiredjob01" not in jobs, "冲突时 TTL 清理必须照样跑"
+    assert "newjob000001" not in jobs, "冲突时不入列"
+
+
+# ---------------------------------------------------------------- 审查必修 7：提交志愿的竞态
+
+def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
+    """必修 7：决定 create/update 的查询必须在 file_lock 内。
+
+    锁外双查双空 → 双击产生两行重复志愿。这里用调用顺序钉死修法：查到没有后
+    才 create，且整段在锁内。
+    """
+    events = []
+
+    class _SpyLock:
+        def __enter__(self):
+            events.append("lock_enter")
+            return self
+
+        def __exit__(self, *exc):
+            events.append("lock_exit")
+            return False
+
+    fake = api.install()
+    monkeypatch.setattr(app, "file_lock", _SpyLock())
+    monkeypatch.setattr(app, "active_gate", lambda oid: None)
+    act = api.snapshot["activities"][0]
+    monkeypatch.setattr(app, "snap_resolve_activity", lambda aid, fresh=False: (act, ACT))
+    monkeypatch.setattr(app, "snap_signup",
+                        lambda aid, oid: {"record_id": "rec_s", "fields": {}})
+    monkeypatch.setattr(app, "snap_self_user",
+                        lambda: {"record_id": "rec_u",
+                                 "fields": {"昵称": "小北", "性别": "男性"}})
+    monkeypatch.setattr(app, "snap_group_selection", lambda aid, oid: None)
+
+    def _lookup(aid, oid):
+        events.append("lookup")
+        return None
+
+    monkeypatch.setattr(app.bitable, "get_user_group_selection", _lookup)
+
+    def _create(table_id, fields):
+        events.append("create")
+        return fake.create_record(table_id, fields)
+
+    monkeypatch.setattr(app.bitable, "create_record", _create)
+
+    r = api.post("/api/activities/" + ACT + "/group/select", {"choices": ["ou_f0"]})
+    assert r.status_code == 200
+    assert events == ["lock_enter", "lookup", "create", "lock_exit"], \
+        "查 existing 与 create/update 必须同处锁内，且查询在前"

@@ -1317,7 +1317,7 @@
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
                     <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || (r.open_id||'').slice(0,8) }} · {{ r.gender || '性别未填' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc" />
                 </div>
@@ -1327,9 +1327,23 @@
               </div>
             </template>
             <template v-else>
-              <div style="text-align:center; padding:16px 0;">
-                <div class="ga-stat" style="display:inline-block; min-width:120px;"><div class="ga-stat-num ok">{{ gaRosterSubmitted }}</div><div class="ga-stat-label">已填写志愿</div></div>
-                <div class="ga-row-sub" style="margin-top:10px;">这份名单暂时看不了，先专心催还没填的吧</div>
+              <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
+                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              </div>
+              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿" />
+              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人" />
+              <div v-else>
+                <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                  </div>
+                  <van-icon name="arrow" color="#c8c9cc" />
+                </div>
+                <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
+                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+                </div>
               </div>
             </template>
           </template>
@@ -1341,9 +1355,10 @@
           <van-empty v-if="!gaDetail.rounds.length" description="还没有分组结果" />
           <template v-else>
             <div class="round-tabs" style="padding-top:0;" v-if="gaDetail.rounds.length">
-              <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="gaResultRound=r">第{{ r }}轮</span>
+              <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="selectGaResultRound(r)">第{{ r }}轮</span>
             </div>
-            <template v-if="gaGroupsRound===gaResultRound && gaGroups.length">
+            <div v-if="gaResultLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+            <template v-else-if="gaGroupsRound===gaResultRound && gaGroups.length">
               <div class="ga-row-sub" style="text-align:center; margin:4px 0 10px;">共 {{ gaGroups.length }} 组 · 每组 {{ gaDetail.males_per_group }}男{{ gaDetail.females_per_group }}女</div>
               <div v-for="(g, gi) in gaGroups" :key="gi" class="ga-group-card">
                 <div class="ga-card-title" style="margin-bottom:6px;">第 {{ g.group_id }} 组 <span class="ga-row-sub" style="margin:0;">{{ (g.members||[]).length }} 人</span></div>
@@ -1353,7 +1368,7 @@
               </div>
             </template>
             <div v-else class="ga-tip" style="margin-top:4px;">
-              🗂 第{{ gaResultRound }}轮已经分好啦。详细名单会在每次执行完成后直接展示，更早轮次的完整名单暂时还看不到。
+              {{ gaResultError ? '这一轮的结果没载出来，检查一下网络后再点一次轮次。' : ('第' + gaResultRound + '轮没有可展示的分组结果。') }}
             </div>
           </template>
         </div>
@@ -1387,7 +1402,7 @@
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
             <div class="ga-row-main">
               <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-              <div class="ga-row-sub">{{ r.user_id || (r.open_id||'').slice(0,8) }} · {{ r.gender || '性别未填' }}</div>
+              <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
             </div>
             <van-icon name="arrow" color="#c8c9cc" />
           </div>
@@ -1397,9 +1412,23 @@
         </div>
       </template>
       <template v-else>
-        <div style="text-align:center; padding:16px 0;">
-          <div class="ga-stat" style="display:inline-block; min-width:120px;"><div class="ga-stat-num ok">{{ gaRosterSubmitted }}</div><div class="ga-stat-label">已填写志愿</div></div>
-          <div class="ga-row-sub" style="margin-top:10px;">这份名单暂时看不了，先专心催还没填的吧</div>
+        <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
+          <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+        </div>
+        <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿" />
+        <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人" />
+        <div v-else>
+          <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+            <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+            <div class="ga-row-main">
+              <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+              <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+            </div>
+            <van-icon name="arrow" color="#c8c9cc" />
+          </div>
+          <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
+            <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+          </div>
         </div>
       </template>
     </template>
@@ -5987,6 +6016,7 @@ createApp({
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
+    const gaRosterSubmittedList = ref([]);   // /unsubmitted 的 submitted 数组（已填写 tab）
     const gaRosterLoading = ref(false), gaRosterError = ref(false), gaRosterShown = ref(30);
 
     const gaStartShow = ref(false), gaStartM = ref(3), gaStartF = ref(3), gaStartBusy = ref(false);
@@ -5997,6 +6027,7 @@ createApp({
     const gaJobId = ref(''), gaJobRound = ref(1), gaJobActivityName = ref(''), gaJobProgress = ref('');
     const gaMaskSecs = ref(0), gaRunTip = ref(''), gaUnknownShow = ref(false);
     const gaGroups = ref([]), gaGroupsRound = ref(0), gaResultRound = ref(0);
+    const gaResultLoading = ref(false), gaResultError = ref(false);
     let gaPollTimer = null, gaPollCount = 0, gaPollFails = 0, gaMaskTimer = null, gaJobStartedAt = 0;
     const GA_POLL_MS = 2000, GA_POLL_MAX = 120, GA_JOB_KEY = 'yxq_ga_job_';  // 2s 一次、最多 4 分钟：超时只提示，不报错
 
@@ -6034,6 +6065,12 @@ createApp({
       return gaRosterList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q) || String(r.user_id || '').toLowerCase().includes(q));
     });
     const gaRosterVisible = computed(() => gaRosterFiltered.value.slice(0, gaRosterShown.value));
+    const gaSubmittedFiltered = computed(() => {
+      const q = gaRosterQuery.value.trim().toLowerCase();
+      if (!q) return gaRosterSubmittedList.value;
+      return gaRosterSubmittedList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q) || String(r.user_id || '').toLowerCase().includes(q));
+    });
+    const gaSubmittedVisible = computed(() => gaSubmittedFiltered.value.slice(0, gaRosterShown.value));
     const gaStartExpected = computed(() => {
       const d = gaDetail.value;
       if (!d || gaStartM.value < 1 || gaStartF.value < 1) return 0;
@@ -6083,7 +6120,8 @@ createApp({
       gaDetailId.value = a.activity_id; gaDetail.value = null; gaDetailError.value = false; gaDetailTab.value = 0;
       gaFlag.value = a.group_flag || '否';
       gaGroups.value = []; gaGroupsRound.value = 0; gaResultRound.value = 0; gaRunTip.value = '';
-      gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterShown.value = 30; gaRosterError.value = false;
+      gaResultLoading.value = false; gaResultError.value = false;
+      gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false;
       page.value = 'group_detail';
     }
     async function refreshGroupDetail() {
@@ -6094,6 +6132,9 @@ createApp({
         gaDetail.value = d;
         if (gaFlag.value === null) gaFlagFromList();
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
+        if (gaDetailTab.value === 2 && gaResultRound.value && gaGroupsRound.value !== gaResultRound.value) {
+          loadGroupResult(gaResultRound.value);   // 状态比结果 tab 先到：补拉当前轮次
+        }
         restoreGaJob();
       } catch(e) { if (!gaAuthBack(e)) { gaDetailError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
       gaDetailLoading.value = false;
@@ -6128,11 +6169,31 @@ createApp({
       try {
         const data = await api('/api/admin/group/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
         gaRosterList.value = data.unsubmitted || []; gaRosterTotal.value = data.total || 0; gaRosterShown.value = 30;
+        gaRosterSubmittedList.value = data.submitted || [];
         if (gaRosterTab.value === 0 && !gaRosterList.value.length && gaRosterSubmitted.value > 0) gaRosterTab.value = 1;
       } catch(e) { if (!gaAuthBack(e)) { gaRosterError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
       gaRosterLoading.value = false;
     }
     function openGroupRoster() { page.value = 'group_roster'; gaRosterQuery.value = ''; }
+    async function loadGroupResult(r) {
+      if (!gaDetailId.value || !r) return;
+      const wanted = r;
+      gaResultLoading.value = true; gaResultError.value = false;
+      try {
+        const data = await api('/api/admin/group/result?activity_id=' + encodeURIComponent(gaDetailId.value) + '&round=' + wanted);
+        if (gaResultRound.value !== data.round) return;   // 已切到别的轮次：丢弃过期响应
+        gaGroups.value = data.groups || []; gaGroupsRound.value = data.round || 0;
+      } catch(e) {
+        if (!gaAuthBack(e)) { gaResultError.value = true; }
+      } finally {
+        if (gaResultRound.value === wanted) gaResultLoading.value = false;
+      }
+    }
+    function selectGaResultRound(r) {
+      if (gaResultRound.value === r && gaGroupsRound.value === r && !gaResultError.value) return;
+      gaResultRound.value = r;
+      loadGroupResult(r);
+    }
     async function gaOpenUser(openid) {
       if (!openid) return;
       userDetailFromSheet.value = false;
@@ -6299,6 +6360,7 @@ createApp({
       refreshGroupDetail();
       if (res.code === 'OK') {
         gaGroups.value = res.groups || []; gaGroupsRound.value = res.round || gaJobRound.value; gaResultRound.value = gaGroupsRound.value;
+        gaResultError.value = false;
         vant.showToast('分好啦，共 ' + (res.group_count || gaGroups.value.length) + ' 组 🎉');
         if (page.value === 'group_detail') gaDetailTab.value = 2;
         return;
@@ -6349,6 +6411,8 @@ createApp({
 
     watch(gaDetailTab, (v) => {
       if (v === 1 && !gaRosterList.value.length && !gaRosterLoading.value && gaDetailId.value) loadGroupRoster();
+      // 结果 tab：手上没有当前轮的数据才补拉（job 完成的轮次已有 canonical 结果）
+      if (v === 2 && gaGroupsRound.value !== gaResultRound.value && !gaResultLoading.value) loadGroupResult(gaResultRound.value);
     });
     watch(gaRosterQuery, () => { gaRosterShown.value = 30; });
 
@@ -6428,10 +6492,10 @@ createApp({
       gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaFilteredList, gaStats, gaChipClass, gaRowSub, openGroupDetail,
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaFlag, gaFlagSaving, onGaFlagChange, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
       gaShowStartMain, gaShowDanger, refreshGroupDetail,
-      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, loadGroupRoster, openGroupRoster, gaOpenUser,
+      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
       gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartPreviewData, gaStartExpected, openStartPopup, closeStartPopup, submitStartPreview,
       gaConfirmShow, gaConfirmInput, gaConfirmN, gaConfirmOk, cancelGaConfirm, doStartGroup,
-      gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
+      gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, gaResultLoading, gaResultError, selectGaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
     };
   }
 }).use(vant).mount('#app');

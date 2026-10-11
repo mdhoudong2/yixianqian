@@ -280,6 +280,97 @@ def test_duplicate_selector_oid_keeps_first(configured):
     assert p0[0]["gender"] == "male", "应该保留第一条（男性）"
 
 
+def test_summarize_selections_dedupes_dirty_rows(configured):
+    """必修 1/2 的共同实现：非空 open_id 去重；首行性别缺失不吞人（后续有效行仍算）。
+
+    同一实现同时喂 bot「分组状态」、preview 与 H5 端点，三处口径不可能再漂移。
+    """
+    records = [
+        _sel("ou_dup", ""),                      # 首行性别缺失：算已提交，但不吞掉这个人
+        _sel("ou_dup", "男性", ("ou_pf0",)),     # 次行有效：参与分组
+        _sel("ou_m1", "男性"),
+        _sel("", "男性"),                         # 空 open_id：整行忽略
+    ]
+
+    summary = lib_grouping.summarize_selections(records)
+
+    assert summary["submitted_count"] == 2
+    assert summary["submitted_oids"] == ["ou_dup", "ou_m1"]
+    assert (summary["male_count"], summary["female_count"]) == (2, 0)
+    assert summary["skipped"] == 1
+
+
+def test_fetch_status_and_unsubmitted_share_dedup(configured):
+    """必修 1 的负向验证（lib 层）：已提交 + 未提交 == 报名总数，重复行只算一次。"""
+    signups, selections = _balanced(2, 2)
+    dup = _sel("ou_pm0", "女性", ())                   # 同一人的第二行
+    dup["record_id"] = "rec_g_dup"
+    fake = FakeBitable(_tables(signups=signups, selections=selections + [dup]))
+
+    st = lib_grouping.fetch_status(ACT, client=fake, activity=_activity(fake),
+                                   find_user_by_openid=_find_user)
+    un = lib_grouping.fetch_unsubmitted(ACT, client=fake, activity=_activity(fake),
+                                        find_user_by_openid=_find_user)
+
+    assert st["submitted_count"] == 4, "重复行只算一次（不是 5）"
+    assert st["submitted_count"] + un["total"] == st["signup_count"] == 4
+
+
+def test_first_gender_missing_second_valid_still_participates(configured):
+    """必修 2：首行性别缺失、次行有效时，人必须仍参与分组（与 preview 计数一致）。"""
+    records = [_sel("ou_pm0", ""), _sel("ou_pm0", "男性"), _sel("ou_pf0", "女性")]
+    fake = FakeBitable(_tables(activity=_act(), selections=records))
+
+    summary = lib_grouping.summarize_selections(records)
+
+    assert summary["male_count"] == 1
+    assert summary["female_count"] == 1
+    preview = lib_grouping.preview_round(ACT, 1, client=fake, activity=_activity(fake),
+                                         find_user_by_openid=_find_user)
+    assert preview["male_count"] == summary["male_count"] == 1
+    assert preview["female_count"] == summary["female_count"] == 1
+
+
+def test_fetch_result_returns_rounds_and_isomorphic_groups(configured):
+    """必修 4：结果读取按轮次过滤、默认最新轮，结构与 execute_round 的 groups 同构。"""
+    def _result(oid, group_no, round_no, gender):
+        rec = _res(oid, group_no, round_no)
+        rec["record_id"] = f"rec_res_{round_no}_{group_no}_{oid}"
+        rec["fields"]["用户性别"] = gender
+        return rec
+
+    results = [
+        _result("ou_pm0", 1, "1", "男性"), _result("ou_pf0", 1, "1", "女性"),
+        _result("ou_pf0", 1, "2", "女性"), _result("ou_pm0", 1, "2", "男性"),
+    ]
+    fake = FakeBitable(_tables(results=results))
+
+    latest = lib_grouping.fetch_result(ACT, None, client=fake, activity=_activity(fake))
+    assert latest["name"] == "关系自洽"
+    assert latest["rounds"] == [1, 2] and latest["round"] == 2
+    assert len(latest["groups"]) == 1
+    g = latest["groups"][0]
+    assert set(g) == {"group_id", "members"}
+    # 成员键与 job result.groups 同构；男先女后；昵称空串退回 oid
+    assert [m["open_id"] for m in g["members"]] == ["ou_pm0", "ou_pf0"]
+    assert all(set(m) == {"open_id", "gender", "display_name"} for m in g["members"])
+    assert g["members"][0]["display_name"] == "ou_pm0"
+
+    first = lib_grouping.fetch_result(ACT, 1, client=fake, activity=_activity(fake))
+    assert first["round"] == 1
+    assert [m["open_id"] for m in first["groups"][0]["members"]] == ["ou_pm0", "ou_pf0"]
+
+    missing = lib_grouping.fetch_result(ACT, 9, client=fake, activity=_activity(fake))
+    assert missing["round"] == 9 and missing["groups"] == []
+    assert missing["rounds"] == [1, 2]
+
+
+def test_fetch_result_empty_table(configured):
+    fake = FakeBitable(_tables())
+    res = lib_grouping.fetch_result(ACT, None, client=fake, activity=_activity(fake))
+    assert res["round"] is None and res["rounds"] == [] and res["groups"] == []
+
+
 # ---------------------------------------------------------------- 迁移红线
 
 def test_preview_round_writes_nothing(configured):

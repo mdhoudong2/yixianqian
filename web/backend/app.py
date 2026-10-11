@@ -62,6 +62,10 @@ points_db.set_db_path(POINTS_DB_FILE)
 # 跨进程互斥才成立。
 GROUPING_API_LOCK_TIMEOUT = 5  # H5 抢活动锁预算（秒）：快速失败回 409，不占 gunicorn 线程池
 GROUPING_JOB_TTL = 24 * 3600   # job 记录保留 24 小时
+# job 执行上限：pending/running 超过这个时长视为死任务。pid 会被操作系统重用，
+# 一个重启后拿到同 pid 的新进程会把旧 job 永远当成「本进程仍在跑」——时间兜底
+# 是唯一不依赖 pid 的判活方式（审查必修 3）。
+GROUPING_JOB_MAX_RUNTIME = 30 * 60
 GROUPING_JOBS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_grouping_jobs.json")
 
 
@@ -5584,9 +5588,6 @@ def group_select(activity_id):
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
 
-    # 检查是否已提交过（允许覆盖；统一用 text_act_id 查询，修复旧代码混用 record_id 的不一致）
-    existing = snap_group_selection(text_act_id, open_id) or bitable.get_user_group_selection(text_act_id, open_id)
-
     fields = {
         F_GS_ACTIVITY_ID: text_act_id,
         F_GS_SELECTOR_OID: open_id,
@@ -5601,6 +5602,11 @@ def group_select(activity_id):
             fields[F_GS_CHOICES[i]] = choice_oid
 
     with file_lock:
+        # 决定 create/update 的这次查询必须在锁内：锁外查空的双击请求会各插一行，
+        # 产生重复志愿行（审查必修 7，也是「已提交人数」脏数据的源头之一）。
+        # 快照优先、未命中回退实时，与旧实现同一读取路径，只是换了执行时机。
+        existing = (snap_group_selection(text_act_id, open_id)
+                    or bitable.get_user_group_selection(text_act_id, open_id))
         if existing:
             ok = bitable.update_record(GROUP_SELECT_TABLE, existing["record_id"], fields)
         else:
@@ -5775,16 +5781,6 @@ def _group_selection_rows(selections, activity_id):
             if bitable.get_field_text(r.get("fields", {}), F_GS_ACTIVITY_ID) == activity_id]
 
 
-def _group_submitted_oids(selections, activity_id):
-    """已提交志愿的 open_id 集合（去重；空 open_id 的行不算，与 lib 同口径）。"""
-    oids = set()
-    for r in _group_selection_rows(selections, activity_id):
-        oid = bitable.get_field_text(r.get("fields", {}), F_GS_SELECTOR_OID)
-        if oid:
-            oids.add(oid)
-    return oids
-
-
 def _group_signup_rows(signups, activity_id):
     """该活动「已报名」的报名记录（空 open_id 跳过，与 lib.collect_participants 同口径）。"""
     rows = []
@@ -5805,10 +5801,32 @@ def _read_grouping_jobs():
     return jobs if isinstance(jobs, dict) else {}
 
 
-def _job_is_active(job):
+def _job_age_seconds(job, now):
+    """job 已存活的秒数；两条时间戳都没有（老记录/手工造的记录）返回 None。"""
+    ts = _job_int(job.get("started_at")) or _job_int(job.get("created_at"))
+    return now - ts if ts else None
+
+
+def _job_timed_out(job, now=None):
+    """pending/running 是否已超过执行上限。超时即视为死任务（pid 重用兜底）。"""
+    now = now if now is not None else int(time.time())
+    age = _job_age_seconds(job, now)
+    return age is not None and age > GROUPING_JOB_MAX_RUNTIME
+
+
+def _job_is_active(job, now=None):
     """本进程里仍在排队的 job。pid 对不上 = 上个进程的残留（daemon thread 已随重启消失），
-    呈现为 unknown 且不参与幂等拦截，否则管理员会永远卡在「已有任务」上。"""
-    return job.get("state") in ("pending", "running") and job.get("pid") == os.getpid()
+    呈现为 unknown 且不参与幂等拦截，否则管理员会永远卡在「已有任务」上。
+
+    再加一层时间兜底（审查必修 3）：pid 相同不保证是本进程的 job——pid 会被
+    操作系统重用，重启后拿到同 pid 的进程会把旧 job 当成活跃，冲突分支又跳过了
+    TTL 清理，该轮次就被永久 409 卡死。超过执行上限一律视为不活跃。
+    """
+    if job.get("state") not in ("pending", "running"):
+        return False
+    if job.get("pid") != os.getpid():
+        return False
+    return not _job_timed_out(job, now)
 
 
 def _update_grouping_job(job_id, mutator):
@@ -5831,21 +5849,28 @@ def _create_grouping_job(job_id, activity_id, round_no, operator):
     conflict = []
 
     def _mut(jobs):
-        for jid, job in jobs.items():
-            if (job.get("activity_id") == activity_id
-                    and _job_int(job.get("round")) == round_no
-                    and _job_is_active(job)):
-                conflict.append(jid)
-                return None
+        # TTL 清理必须先跑，且**所有分支都必须返回 jobs**（审查必修 3）：
+        # update_json 的 mutator 返回 None 等于放弃写入——旧实现的冲突分支直接
+        # return None，过期记录不仅不会被清，连先做的清理都会白做。
         for jid in [jid for jid, job in jobs.items()
                     if now - _job_int(job.get("created_at")) > GROUPING_JOB_TTL]:
             del jobs[jid]
-        jobs[job_id] = {
-            "activity_id": activity_id, "round": round_no, "operator": operator,
-            "state": "pending", "pid": os.getpid(), "progress": "已入列，等待执行",
-            "created_at": now, "started_at": None, "finished_at": None,
-            "result": None, "error": "",
-        }
+        conflict_job = None
+        for jid, job in jobs.items():
+            if (job.get("activity_id") == activity_id
+                    and _job_int(job.get("round")) == round_no
+                    and _job_is_active(job, now)):
+                conflict_job = jid
+                break
+        if conflict_job is None:
+            jobs[job_id] = {
+                "activity_id": activity_id, "round": round_no, "operator": operator,
+                "state": "pending", "pid": os.getpid(), "progress": "已入列，等待执行",
+                "created_at": now, "started_at": None, "finished_at": None,
+                "result": None, "error": "",
+            }
+        else:
+            conflict.append(conflict_job)
         return jobs
 
     storage.update_json(GROUPING_JOBS_FILE, {}, _mut)
@@ -5974,23 +5999,10 @@ def admin_group_status():
     f = act.get("fields", {})
 
     selections = _group_selection_rows(_snap_fresh("group_selections"), act_id)
-    submitted_oids = set()
-    male_count = female_count = 0
-    seen = set()
-    for r in selections:
-        sf = r.get("fields", {})
-        oid = bitable.get_field_text(sf, F_GS_SELECTOR_OID)
-        if not oid:
-            continue
-        submitted_oids.add(oid)
-        if oid in seen:  # 同人重复提交只算一次（与 lib 同口径）
-            continue
-        seen.add(oid)
-        gender = bitable.get_field_text(sf, F_GS_SELECTOR_GENDER)
-        if gender == "男性":
-            male_count += 1
-        elif gender == "女性":
-            female_count += 1
+    # 计数一律走 lib 的去重口径（与 bot「分组状态」同一份实现）：
+    # 旧实现「首行性别缺失即吞掉整人」会让 male/female 与 preview 对不上（审查必修 2）。
+    summary = lib_grouping.summarize_selections(selections)
+    submitted_oids = set(summary["submitted_oids"])
 
     signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
     unsubmitted_count = sum(
@@ -6006,10 +6018,11 @@ def admin_group_status():
         "males_per_group": int(bitable.get_field_number(f, F_ACTIVITY_MALE_PER_GROUP, 0)),
         "females_per_group": int(bitable.get_field_number(f, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
         "signup_count": len(signup_rows),
-        "submitted_count": len(submitted_oids),
+        "submitted_count": summary["submitted_count"],
         "unsubmitted_count": unsubmitted_count,
-        "male_count": male_count,
-        "female_count": female_count,
+        "male_count": summary["male_count"],
+        "female_count": summary["female_count"],
+        "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG) or "否",
         "rounds": rounds,
         "latest_round": rounds[-1] if rounds else None,
     })
@@ -6031,28 +6044,47 @@ def admin_group_unsubmitted():
         return jsonify({"error": "活动不存在"}), 404
     f = act.get("fields", {})
 
-    submitted_oids = _group_submitted_oids(_snap_fresh("group_selections"), act_id)
+    selection_rows = _group_selection_rows(_snap_fresh("group_selections"), act_id)
+    # 与「分组状态」/bot 指令共用 lib 的去重口径（必修 1/5），不再本地另算一份
+    summary = lib_grouping.summarize_selections(selection_rows)
+    submitted_oids = set(summary["submitted_oids"])
     signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
 
+    def _user_fields(oid):
+        return (snap_find_user_by_openid(oid) or {}).get("fields", {})
+
+    nickname_by_oid = {}
     items = []
     for s in signup_rows:
         sf = s.get("fields", {})
         oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+        nickname_by_oid[oid] = bitable.get_field_text(sf, F_SIGNUP_NICKNAME)
         if oid in submitted_oids:
             continue
-        u = snap_find_user_by_openid(oid)
-        uf = (u or {}).get("fields", {})
+        uf = _user_fields(oid)
         items.append({
             "open_id": oid,
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
         })
+
+    # 已填写名单（加法字段）：顺序与去重集合一致，前端一次载入即可切换两个名单
+    submitted = []
+    for oid in summary["submitted_oids"]:
+        uf = _user_fields(oid)
+        submitted.append({
+            "open_id": oid,
+            "user_id": bitable.get_field_text(uf, F_USER_ID),
+            "gender": bitable.get_field_text(uf, F_GENDER),
+            "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+        })
     return jsonify({
         "activity_id": act_id,
         "name": bitable.get_field_text(f, F_ACTIVITY_NAME),
         "total": len(items),
         "unsubmitted": items,
+        "submitted": submitted,
         "all_submitted": not items,
     })
 
@@ -6234,7 +6266,10 @@ def admin_group_job():
     state = job.get("state")
     # H5 重启（部署/max_requests 轮替）会带走 daemon thread 但留下 job 记录：
     # pending/running 且 pid 不是本进程 → unknown，由前端出三分支指引（DESIGN 5.3.2）。
-    if state in ("pending", "running") and job.get("pid") != os.getpid():
+    # pid 相同但超过执行上限的同样归为 unknown：pid 可能被新进程重用，线程实际
+    # 早已不在（审查必修 3），不能让前端永远等一个不会结束的 job。
+    if state in ("pending", "running") and (
+            job.get("pid") != os.getpid() or _job_timed_out(job)):
         state = "unknown"
 
     return jsonify({
@@ -6249,6 +6284,39 @@ def admin_group_job():
         "result": job.get("result"),
         "error": job.get("error", ""),
     })
+
+
+@app.route("/api/admin/group/result", methods=["GET"])
+def admin_group_result():
+    """完整分组结果（管理台结果 tab）：按轮次读 GROUP_RESULT_TABLE，与 job 的
+    result.groups 同构，历史轮次随时可查（此前前端只能拿到最近一次 H5 执行的结果）。
+
+    经 _grouping_client 直读飞书（实时读，非快照），与四个既有读端点的 fresh=True
+    同一口径；round 省略时取最新轮次。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+    round_arg = (request.args.get("round") or "").strip()
+    round_no = None
+    if round_arg:
+        try:
+            round_no = int(round_arg)
+        except ValueError:
+            return jsonify({"error": "round 必须是整数"}), 400
+        if round_no < 1:
+            return jsonify({"error": "round 必须大于0"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id, fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    return jsonify(lib_grouping.fetch_result(
+        act_id, round_no, client=_grouping_client, activity=act))
 
 
 @app.route("/api/admin/group/flag", methods=["POST"])

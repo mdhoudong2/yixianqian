@@ -491,29 +491,48 @@ def _rows_of(client, table_key, conditions):
         "conjunction": "and", "conditions": conditions}) or []
 
 
-def _collect_selections(client, activity_id):
-    """把该活动的志愿记录收成算法要的形状。
+def _selection_rows(client, activity_id):
+    """该活动的志愿记录（读类路径统一把「读不到」当空表）。"""
+    return _rows_of(client, "group_select_table", [
+        {"field_name": _cfg["fields"]["gs_activity_id"], "operator": "is", "value": [activity_id]}])
 
-    回传 (参与者, 选择表, 因性别缺失被跳过的人数)。性别不是「男性/女性」的直接
-    跳过：算法只认 male/female，留着只会让人数统计虚高。
+
+def _scan_selections(records, activity_id=None):
+    """单遍扫描志愿记录，产出管理台计数与算法输入（**去重口径的唯一实现**）。
+
+    返回 (submitted_oids, participants, selections, skipped, by_oid)：
+    - submitted_oids：非空 open_id 去重列表（首次出现顺序）。「已提交 N 人」与
+      「未提交名单」都从它派生，同一人多条记录只算一次；
+    - participants / selections：同人取**首条性别有效**的记录；性别缺失的行不占
+      去重位——首行性别缺失、次行有效时人仍参与分组（H5 旧实现会把人整个吞掉，
+      与算法输入对不上，这是刻意修正）；
+    - skipped：性别无效且尚未计入 participants 的行数（沿用旧算法口径）；
+    - by_oid：open_id -> 首条有效性别记录的 fields（名单展示用）。
     """
     f = _cfg["fields"]
+    submitted_oids = []
+    submitted_set = set()
     participants = []
-    seen_oids = set()
     selections = {}
     skipped = 0
-
-    for sr in _rows_of(client, "group_select_table", [
-            {"field_name": f["gs_activity_id"], "operator": "is", "value": [activity_id]}]):
+    by_oid = {}
+    for sr in records:
         sf = sr.get("fields", {})
-        oid = get_field_text(sf, f["gs_selector_oid"])
-        gender = get_field_text(sf, f["gs_selector_gender"])
-        if not oid or oid in seen_oids:
+        if activity_id is not None and get_field_text(sf, f["gs_activity_id"]) != activity_id:
             continue
+        oid = get_field_text(sf, f["gs_selector_oid"])
+        if not oid:
+            continue
+        if oid not in submitted_set:
+            submitted_set.add(oid)
+            submitted_oids.append(oid)
+        if oid in by_oid:
+            continue
+        gender = get_field_text(sf, f["gs_selector_gender"])
         if gender not in ("男性", "女性"):
             skipped += 1
             continue
-        seen_oids.add(oid)
+        by_oid[oid] = sf
         participants.append({"id": oid, "gender": "male" if gender == "男性" else "female"})
         choices = []
         for i, cf in enumerate(f["gs_choices"]):
@@ -522,7 +541,41 @@ def _collect_selections(client, activity_id):
                 choices.append({"id": val, "priority": i + 1})
         if choices:
             selections[oid] = choices
+    return submitted_oids, participants, selections, skipped, by_oid
 
+
+def summarize_selections(records, activity_id=None):
+    """管理台口径的志愿汇总（**去重是刻意语义，不是重构产物**）。
+
+    `fetch_status`（bot「分组状态」）、`preview_round` 与 H5 管理台端点统一走这里。
+    旧实现按记录**行数**计数：同一人有重复志愿行时，bot「已提交选择：N人」会和
+    「查看未提交」的去重口径对不上（两个数字相加超过报名总数）。本函数按非空
+    open_id 去重，只在脏数据（重复行/空 oid）下数字才与旧版不同。
+
+    records：原始记录列表（飞书 search 结果或 H5 快照均同构）；
+    activity_id：非空时只统计该活动的记录。
+    """
+    _require_configured()
+    submitted_oids, participants, _selections, skipped, _by_oid = _scan_selections(
+        records, activity_id)
+    n_males = sum(1 for p in participants if p["gender"] == "male")
+    return {
+        "submitted_count": len(submitted_oids),
+        "submitted_oids": submitted_oids,
+        "male_count": n_males,
+        "female_count": len(participants) - n_males,
+        "skipped": skipped,
+    }
+
+
+def _collect_selections(client, activity_id):
+    """把该活动的志愿记录收成算法要的形状。
+
+    回传 (参与者, 选择表, 因性别缺失被跳过的人数)；去重规则全在 _scan_selections。
+    性别不是「男性/女性」的直接跳过：算法只认 male/female，留着只会让人数统计虚高。
+    """
+    rows = _selection_rows(client, activity_id)
+    _submitted, participants, selections, skipped, _by_oid = _scan_selections(rows, activity_id)
     return participants, selections, skipped
 
 
@@ -573,8 +626,7 @@ def fetch_status(activity_id, *, client, activity, find_user_by_openid):
     f = _cfg["fields"]
     af = activity.get("fields", {})
     signups = collect_participants(activity_id, client=client, find_user_by_openid=find_user_by_openid)
-    selections = _rows_of(client, "group_select_table", [
-        {"field_name": f["gs_activity_id"], "operator": "is", "value": [activity_id]}])
+    summary = summarize_selections(_selection_rows(client, activity_id), activity_id)
     return {
         "activity_id": activity_id,
         "name": get_field_text(af, f["activity_name"]),
@@ -582,7 +634,8 @@ def fetch_status(activity_id, *, client, activity, find_user_by_openid):
         "males_per_group": get_field_number(af, f["male_per_group"], 0),
         "females_per_group": get_field_number(af, f["female_per_group"], 0),
         "signup_count": len(signups),
-        "submitted_count": len(selections),
+        # 去重非空 open_id 数，与 fetch_unsubmitted 同口径（刻意修正旧的「行数」口径）
+        "submitted_count": summary["submitted_count"],
     }
 
 
@@ -592,12 +645,8 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
     f = _cfg["fields"]
     act_name = get_field_text(activity.get("fields", {}), f["activity_name"])
     signups = collect_participants(activity_id, client=client, find_user_by_openid=find_user_by_openid)
-    selections = _rows_of(client, "group_select_table", [
-        {"field_name": f["gs_activity_id"], "operator": "is", "value": [activity_id]}])
-    submitted_oids = {
-        get_field_text(s.get("fields", {}), f["gs_selector_oid"])
-        for s in selections if get_field_text(s.get("fields", {}), f["gs_selector_oid"])
-    }
+    summary = summarize_selections(_selection_rows(client, activity_id), activity_id)
+    submitted_oids = set(summary["submitted_oids"])
 
     unsubmitted = []
     for s in signups:
@@ -634,9 +683,10 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
     m_per = int(get_field_number(af, f["male_per_group"], 0))
     f_per = int(get_field_number(af, f["female_per_group"], 0))
 
-    participants, _selections, skipped = _collect_selections(client, activity_id)
-    n_males = sum(1 for p in participants if p["gender"] == "male")
-    n_females = sum(1 for p in participants if p["gender"] == "female")
+    summary = summarize_selections(_selection_rows(client, activity_id), activity_id)
+    n_males = summary["male_count"]
+    n_females = summary["female_count"]
+    skipped = summary["skipped"]
     expected = min(n_males // m_per, n_females // f_per) if m_per > 0 and f_per > 0 else 0
 
     all_results = _rows_of(client, "group_result_table", [
@@ -667,7 +717,7 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
         "females_per_group": f_per,
         "male_count": n_males,
         "female_count": n_females,
-        "participant_count": len(participants),
+        "participant_count": n_males + n_females,
         "skipped_no_gender": skipped,
         "expected_groups": expected,
         "existing_rounds": existing_rounds,
@@ -676,6 +726,59 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
         "historical_rounds_to_clear": existing_rounds,
         "can_execute": not blockers,
         "blockers": blockers,
+    }
+
+
+def fetch_result(activity_id, round_no, *, client, activity):
+    """读取某活动某轮次的分组结果（与 execute_round 回传的 groups 同构）。
+
+    `round_no=None` 时取最新轮次。结果表由 bot 与 H5 共同写入，H5 端必须用直读
+    client（_grouping_client，实时读飞书），不吃快照——轮次切换要立刻可见。
+
+    返回 {"activity_id", "name", "round", "rounds", "groups"}；对应轮次没有
+    记录时 groups=[]（round 为 None 或调用方指定的轮次），由调用端决定怎么呈现。
+    """
+    _require_configured()
+    f = _cfg["fields"]
+    af = (activity or {}).get("fields", {})
+    rows = _rows_of(client, "group_result_table", [
+        {"field_name": f["gr_activity_id"], "operator": "is", "value": [activity_id]}])
+
+    rounds = sorted({int(rv) for rv in
+                     (get_field_text(r.get("fields", {}), f["gr_round"]) for r in rows)
+                     if rv.strip().isdigit()})
+    wanted = int(round_no) if round_no is not None else (rounds[-1] if rounds else None)
+
+    by_group = {}
+    if wanted is not None:
+        for r in rows:
+            sf = r.get("fields", {})
+            if get_field_text(sf, f["gr_round"]) != str(wanted):
+                continue
+            oid = get_field_text(sf, f["gr_user_oid"])
+            if not oid:
+                continue
+            group_no = int(get_field_number(sf, f["gr_group_no"], 0))
+            by_group.setdefault(group_no, []).append({
+                "open_id": oid,
+                "gender": get_field_text(sf, f["gr_user_gender"]),
+                # 写入栏位缺昵称时退回 open_id（与 execute_round 的展示口径一致）
+                "display_name": get_field_text(sf, f["gr_user_name"]) or oid,
+            })
+
+    groups = []
+    for group_no in sorted(by_group):
+        members = by_group[group_no]
+        # 与 execute_round 的成员顺序一致：男先女后；同性别保持结果表里的原始顺序
+        members.sort(key=lambda m: 0 if m["gender"] == "男性" else (1 if m["gender"] == "女性" else 2))
+        groups.append({"group_id": group_no, "members": members})
+
+    return {
+        "activity_id": activity_id,
+        "name": get_field_text(af, f["activity_name"]),
+        "round": wanted,
+        "rounds": rounds,
+        "groups": groups,
     }
 
 

@@ -446,6 +446,90 @@
   .invite-row-main { flex: 1; min-width: 0; }
   .invite-row-time { font-size: 11px; color: #c8c9cc; margin-top: 2px; }
   .invite-row-status { flex-shrink: 0; font-size: 12px; color: #969799; }
+  /* ========== 管理员·活动分组管理台（ga-，DESIGN §3/§4） ========== */
+  :root {
+    /* 管理台语义色（新增，不动既有 token） */
+    --yxq-st-neutral-bg: #f2f3f5;  --yxq-st-neutral-fg: #646566;
+    --yxq-st-progress-bg: #fff7e6; --yxq-st-progress-fg: #b8860b;
+    --yxq-st-run-bg: #e8f1ff;     --yxq-st-run-fg: #0055d4;
+    --yxq-st-done-bg: #e8f8ee;    --yxq-st-done-fg: #0a8f4d;
+    --yxq-st-danger-bg: #ffece8;  --yxq-st-danger-fg: #ee0a24;
+    --yxq-r-sm: 8px; --yxq-r-md: 12px; --yxq-r-lg: 16px;
+    --yxq-tap-min: 44px;
+  }
+  .ga-page { padding: 12px; }
+  .ga-title { font-size: 18px; font-weight: 600; color: #323233; padding: 12px 16px 0; }
+  .ga-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+  .ga-card-title { font-size: 15px; font-weight: 600; color: #323233; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+  .ga-stats { display: flex; gap: 8px; margin: 12px 0 8px; }
+  .ga-stat { flex: 1; min-width: 0; background: #f7f8fa; border-radius: 12px; padding: 10px 4px; text-align: center; }
+  .ga-stat-num { font-size: 22px; font-weight: 700; color: #ff6b81; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .ga-stat-num.warn { color: var(--yxq-st-danger-fg); }
+  .ga-stat-num.ok { color: var(--yxq-st-done-fg); }
+  .ga-stat-label { font-size: 11px; color: #969799; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ga-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--yxq-st-neutral-bg); color: var(--yxq-st-neutral-fg); }
+  .ga-chip.collecting { background: var(--yxq-st-progress-bg); color: var(--yxq-st-progress-fg); }
+  .ga-chip.running { background: var(--yxq-st-run-bg); color: var(--yxq-st-run-fg); }
+  .ga-chip.done { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
+  .ga-chip.danger { background: var(--yxq-st-danger-bg); color: var(--yxq-st-danger-fg); }
+  .ga-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .ga-filters { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; }
+  .ga-filter-chip { cursor: pointer; padding: 10px 14px; position: relative; } .ga-filter-chip::after { content: ''; position: absolute; inset: -5px -4px; } .ga-filter-chip.active { background: #ff6b81; color: #fff; }
+  .ga-act-row { cursor: pointer; } .ga-act-row .ga-chip { margin-bottom: 5px; }
+  .ga-row { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid #f2f3f5; }
+  .ga-row:last-child { border-bottom: none; }
+  .ga-row-main { flex: 1; min-width: 0; }
+  .ga-row-name { font-size: 15px; color: #323233; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ga-row-sub { font-size: 12px; color: #646566; margin-top: 3px; line-height: 1.5; }
+  .ga-row-id { font-size: 11px; color: #969799; margin-left: 6px; }
+  .ga-main-btn { min-height: var(--yxq-tap-min); margin-top: 10px; }
+  .ga-actions { display: flex; gap: 10px; margin-top: 16px; } .ga-actions .van-button { flex: 1; min-height: var(--yxq-tap-min); }
+  .ga-danger-zone { margin-top: 8px; padding: 12px; border-radius: 12px; background: var(--yxq-st-danger-bg); }
+  .ga-danger-hint { font-size: 12px; line-height: 1.6; color: var(--yxq-st-danger-fg); }
+  .ga-steps { display: flex; align-items: center; padding: 6px 0 2px; }
+  .ga-step { flex: 1; text-align: center; position: relative; }
+  .ga-step-dot { position: relative; z-index: 1; width: 24px; height: 24px; border-radius: 50%; margin: 0 auto 5px; background: var(--yxq-st-neutral-bg); color: var(--yxq-st-neutral-fg); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .ga-step.on .ga-step-dot { background: #ff6b81; color: #fff; }
+  .ga-step.done .ga-step-dot { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
+  .ga-step-label { font-size: 11px; color: #969799; }
+  .ga-step.on .ga-step-label { color: #ff6b81; font-weight: 600; }
+  .ga-step-line { position: absolute; top: 11px; left: 50%; width: 100%; height: 2px; background: #ebedf0; }
+  .ga-step.done .ga-step-line { background: var(--yxq-st-done-bg); }
+  .ga-empty { text-align: center; padding: 40px 20px; } .ga-empty-retry { margin-top: 12px; }
+  .ga-form-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f2f3f5; } .ga-form-row .van-switch { padding: 10px; }
+  .ga-form-label { flex: 1; min-width: 0; font-size: 14px; color: #646566; }
+  .ga-num { width: 64px; text-align: center; font-size: 16px; font-weight: 600; padding: 8px 0; border: 1px solid #ebedf0; border-radius: 8px; background: #f7f8fa; color: #323233; }
+  .ga-step-btn { width: 44px; height: 44px; border: none; border-radius: 10px; background: #f7f8fa; color: #323233; font-size: 20px; font-weight: 600; }
+  .ga-step-btn:disabled { opacity: .4; }
+  .ga-step-btn:active { background: #ebedf0; }
+  .ga-tip { margin-top: 10px; padding: 10px 12px; background: #fff7e6; color: #b8860b; border-radius: 8px; font-size: 13px; line-height: 1.5; } .ga-tip-ok { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
+  .ga-link { color: #ff6b81; text-decoration: underline; }
+  .ga-roster-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .ga-roster-tab { flex: 1; text-align: center; padding: 8px 0; border-radius: 10px; background: #f2f3f5; color: #646566; font-size: 13px; font-weight: 600; position: relative; } .ga-roster-tab::after { content: ''; position: absolute; inset: -6px 0; }
+  .ga-roster-tab.active { background: #ff6b81; color: #fff; }
+  .ga-avatar { width: 40px; height: 40px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .ga-group-card { background: #f7f8fa; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .ga-group-members { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ga-member-chip { background: #fff; border-radius: 12px; padding: 4px 10px; font-size: 12px; color: #323233; }
+  .ga-more { text-align: center; padding: 10px 0 0; }
+  .ga-start-popup { padding: 18px 16px 24px; }
+  .ga-start-head { display: flex; align-items: center; justify-content: space-between; font-size: 16px; font-weight: 600; color: #323233; margin-bottom: 4px; }
+  .ga-confirm-body { padding: 4px 0 8px; } .ga-confirm-box { background: #f7f8fa; border-radius: 10px; padding: 10px 12px; margin-top: 8px; }
+  .ga-confirm-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: #646566; padding: 4px 0; line-height: 1.5; }
+  .ga-confirm-row b { color: #323233; font-weight: 600; text-align: right; }
+  .ga-confirm-row b.danger { color: #ee0a24; }
+  .ga-confirm-input { width: 100%; padding: 10px 12px; border: 1px solid #ebedf0; border-radius: 8px; font-size: 15px; color: #323233; background: #fff; box-sizing: border-box; outline: none; -webkit-user-select: text; user-select: text; }
+  .ga-run-mask { position: fixed; inset: 0; z-index: 4100; background: rgba(0,0,0,.72); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 0 30px; text-align: center; }
+  .ga-run-mask-icon { font-size: 44px; }
+  .ga-run-mask-title { font-size: 19px; font-weight: 600; }
+  .ga-run-mask-sub { font-size: 14px; color: rgba(255,255,255,.85); }
+  .ga-run-mask-progress { font-size: 13px; color: rgba(255,255,255,.65); line-height: 1.6; }
+  .ga-run-mask-secs { font-size: 15px; color: #ffd666; font-variant-numeric: tabular-nums; }
+  .ga-run-mask-tip { font-size: 13px; color: rgba(255,255,255,.6); margin-top: 8px; }
+  @media (min-width: 600px) {
+    .ga-page, .ga-title { max-width: 560px; margin-left: auto; margin-right: auto; }
+    .ga-stats { gap: 12px; } .ga-stat-num { font-size: 26px; }
+  }
   /* 夜间模式 */
   .van-theme-dark { --van-background: #1a1a1c; --van-background-2: #222226; --van-background-3: #2c2c30; --van-border-color: #3a3a3e; --van-active-color: #3a3a3e; --van-field-placeholder-text-color: #8a8a8e; }
   .van-theme-dark html, .van-theme-dark body, html.van-theme-dark, html.van-theme-dark body { background: #1a1a1c; color: #f5f5f5; }
@@ -516,6 +600,29 @@
   .van-theme-dark .redeem-order { border-color: #3a3a3e; }
   .van-theme-dark .redeem-order-label { color: #f5f5f5; }
   .van-theme-dark .wish-chosen { background: rgba(255,107,129,0.14); }
+  /* 分组管理台：深色覆写（DESIGN §3.2/§5.1；漏一个就白底穿帮） */
+  .van-theme-dark { --yxq-st-neutral-bg:#2c2c30; --yxq-st-neutral-fg:#a0a0a4; --yxq-st-progress-bg:#3a3324; --yxq-st-progress-fg:#ffd666; --yxq-st-run-bg:#1e2a3a; --yxq-st-run-fg:#7cb0ff; --yxq-st-done-bg:#1c3326; --yxq-st-done-fg:#5cd48a; --yxq-st-danger-bg:#3a1f22; --yxq-st-danger-fg:#ff7a85; }
+  .van-theme-dark .ga-card { background: #222226; }
+  .van-theme-dark .ga-title, .van-theme-dark .ga-card-title, .van-theme-dark .ga-row-name,
+  .van-theme-dark .ga-start-head, .van-theme-dark .ga-confirm-row b { color: #f5f5f5; }
+  .van-theme-dark .ga-row-sub, .van-theme-dark .ga-row-id, .van-theme-dark .ga-form-label,
+  .van-theme-dark .ga-stat-label, .van-theme-dark .ga-step-label, .van-theme-dark .ga-confirm-row { color: #c8c9cc; }
+  .van-theme-dark .ga-row, .van-theme-dark .ga-form-row { border-color: #3a3a3e; }
+  .van-theme-dark .ga-step-line { background: #3a3a3e; }
+  .van-theme-dark .ga-stat { background: #2c2c30; }
+  .van-theme-dark .ga-num, .van-theme-dark .ga-step-btn { background: #2c2c30; border-color: #3a3a3e; color: #f5f5f5; }
+  .van-theme-dark .ga-step-btn:active { background: #3a3a3e; }
+  .van-theme-dark .ga-tip { background: #2b2413; color: #e8c97a; }
+  .van-theme-dark .ga-tip-ok { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
+  .van-theme-dark .ga-roster-tab { background: #2c2c30; color: #c8c9cc; }
+  .van-theme-dark .ga-roster-tab.active { background: #ff6b81; color: #fff; }
+  .van-theme-dark .ga-filter-chip.active { background: #ff6b81; color: #fff; }
+  .van-theme-dark .ga-avatar { background: rgba(255,107,129,0.14); }
+  .van-theme-dark .ga-group-card { background: #2c2c30; }
+  .van-theme-dark .ga-member-chip { background: #222226; color: #f5f5f5; }
+  .van-theme-dark .ga-confirm-box { background: #2c2c30; }
+  .van-theme-dark .ga-confirm-row b.danger { color: #ff7a85; }
+  .van-theme-dark .ga-confirm-input { background: #1a1a1c; border-color: #3a3a3e; color: #f5f5f5; }
   /* 四 Tab 间流畅过渡 */
   .tab-main { position: relative; min-height: calc(100vh - 60px); }
   .tab-transition-enter-active { transition: opacity 0.10s ease, transform 0.10s cubic-bezier(0.32,0.72,0,1); will-change: opacity, transform; }
@@ -943,6 +1050,7 @@
       <van-cell v-if="user.is_admin" title="🌾 麦穗管理" is-link @click="openPointsAdmin"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
       <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
+      <van-cell v-if="user.is_admin" title="👥 活动分组管理" :value="gaAdminBadge" is-link @click="openGroupAdmin"></van-cell>
     </van-cell-group>
   </div>
   <div style="padding:12px 12px 24px;">
@@ -1077,6 +1185,225 @@
       </div>
     </div>
   </van-popup>
+</div>
+<!-- ========== 管理员·活动分组管理（总览） ========== -->
+<div v-else-if="page==='group_admin'" key="group_admin" class="page ga-page">
+  <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
+  <div class="ga-title">👥 活动分组管理</div>
+
+  <div v-if="gaLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+  <template v-else>
+    <div class="ga-stats">
+      <div class="ga-stat"><div class="ga-stat-num">{{ gaStats.progress }}</div><div class="ga-stat-label">进行中</div></div>
+      <div class="ga-stat"><div class="ga-stat-num">{{ gaStats.closed }}</div><div class="ga-stat-label">待分组</div></div>
+      <div class="ga-stat"><div class="ga-stat-num ok">{{ gaStats.done }}</div><div class="ga-stat-label">已完成</div></div>
+    </div>
+
+    <div class="ga-card">
+      <div class="candidate-search-box" style="margin-bottom:0;">
+        <input v-model="gaQ" placeholder="搜活动名称或 A-0002" class="candidate-search-input" />
+      </div>
+      <div class="ga-filters">
+        <span v-for="f in gaFilters" :key="f" class="ga-chip ga-filter-chip" :class="{active: gaStatusFilter===f}" @click="gaStatusFilter = (gaStatusFilter===f ? '' : f)">{{ f }}</span>
+      </div>
+    </div>
+
+    <div v-if="gaError" class="ga-empty">
+      <van-empty image="error" description="活动没载出来，检查一下网络" />
+      <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupAdminList()">重新载入</van-button>
+    </div>
+    <van-empty v-else-if="!gaList.length" description="还没有要管理的活动" />
+    <van-empty v-else-if="!gaFilteredList.length" :description="gaQ ? ('没有符合「'+gaQ+'」的活动') : '没有符合筛选的活动'" />
+    <div v-else>
+      <div v-for="a in gaFilteredList" :key="a.record_id" class="ga-card ga-act-row" @click="openGroupDetail(a)">
+        <div :class="'ga-chip ' + gaChipClass(a.group_status)"><span class="ga-chip-dot"></span>{{ a.group_status }}</div>
+        <div class="ga-row-name">{{ a.name || '(未命名活动)' }}<span class="ga-row-id">{{ a.activity_id }}</span></div>
+        <div class="ga-row-sub">{{ gaRowSub(a) }}</div>
+      </div>
+    </div>
+  </template>
+</div>
+<!-- ========== 管理员·活动分组控制台 ========== -->
+<div v-else-if="page==='group_detail'" key="group_detail" class="page ga-page">
+  <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
+  <div class="ga-title" style="display:flex; align-items:center; gap:8px;">
+    <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ gaDetail ? (gaDetail.name || '未命名活动') : '活动' }}</span>
+    <span v-if="gaDetail" class="ga-chip" :class="gaChipClass(gaDetail.group_status)"><span class="ga-chip-dot"></span>{{ gaDetail.group_status }}</span>
+  </div>
+  <div style="padding:2px 16px 0; font-size:12px; color:#646566;">{{ gaDetailId }} · {{ gaFlag==='是' ? '已开启分组功能' : '分组功能未开启' }}</div>
+
+  <div v-if="gaDetailLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+  <div v-else-if="gaDetailError" class="ga-empty">
+    <van-empty image="error" description="活动没载出来，检查一下网络" />
+    <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
+  </div>
+  <template v-else-if="gaDetail">
+    <van-tabs v-model:active="gaDetailTab" class="ga-detail-tabs">
+      <van-tab title="进度">
+        <div class="ga-card" style="margin-top:12px;">
+          <div class="ga-steps">
+            <div v-for="(s, i) in gaStepDefs" :key="s" class="ga-step" :class="{on: gaStepIndex===i, done: gaStepIndex>i}">
+              <div v-if="i < gaStepDefs.length-1" class="ga-step-line"></div>
+              <div class="ga-step-dot">{{ gaStepIndex>i ? '✓' : (i+1) }}</div>
+              <div class="ga-step-label">{{ s }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ga-card">
+          <div class="ga-stats" style="margin-top:0;">
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaDetail.signup_count }}</div><div class="ga-stat-label">报名</div></div>
+            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaDetail.submitted_count }}</div><div class="ga-stat-label">已填</div></div>
+            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaDetail.unsubmitted_count>0}">{{ gaDetail.unsubmitted_count }}</div><div class="ga-stat-label">未填</div></div>
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaExpectedGroups===null ? '—' : gaExpectedGroups }}</div><div class="ga-stat-label">预计组数</div></div>
+          </div>
+          <div class="ga-row-sub" style="margin-top:4px;">
+            <template v-if="gaDetail.males_per_group>0 && gaDetail.females_per_group>0">每组 {{ gaDetail.males_per_group }}男{{ gaDetail.females_per_group }}女 · </template>
+            <template v-else>还没设置每组人数 · </template>
+            男生 {{ gaDetail.male_count }} · 女生 {{ gaDetail.female_count }}
+          </div>
+          <div v-if="gaDetail.group_status==='收集中' && gaDetail.unsubmitted_count>0" class="ga-tip" @click="openGroupRoster()">⚠ 还有 {{ gaDetail.unsubmitted_count }} 人没填志愿，点这里看名单</div>
+          <div v-else-if="gaDetail.group_status==='收集中' && gaDetail.submitted_count>0" class="ga-tip ga-tip-ok">大家都填好啦，可以分组了 🎉</div>
+          <div v-if="gaRunTip" class="ga-tip">⏳ {{ gaRunTip }} <span class="ga-link" @click="resumeGaPolling()">继续查看</span></div>
+        </div>
+
+        <div class="ga-card">
+          <van-button v-if="gaShowStartMain" type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaStartBusy" @click="openStartPopup()">开始填志愿</van-button>
+          <van-button v-else-if="gaDetail.group_status==='收集中'" type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaRunBusy" @click="startRunFlow()">执行分组（第 {{ gaNextRound }} 轮）</van-button>
+          <van-button v-else-if="gaDetail.group_status==='已完成'" plain type="primary" color="#ff6b81" block class="ga-main-btn" @click="gaDetailTab=2">查看分组结果</van-button>
+          <div v-else-if="gaDetail.group_status==='已截止'" style="text-align:center; padding:12px 0;">
+            <van-loading size="20px">分组执行中…</van-loading>
+            <div class="ga-row-sub" style="margin-top:8px;">如果一直没动静，重新载入看看最新状态</div>
+            <van-button class="ga-empty-retry" size="small" plain type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
+          </div>
+          <van-button v-if="gaDetail.group_status==='收集中'" plain type="primary" color="#ff6b81" block style="margin-top:10px; min-height:44px;" @click="openGroupRoster()">查看未填写名单</van-button>
+        </div>
+
+        <div v-if="gaShowDanger" class="ga-card">
+          <div class="ga-danger-zone">
+            <div class="ga-danger-hint">⚠ 重新开放会清空历史结果。该活动已有 {{ gaDetail.rounds.length }} 轮分组结果，将被永久删除，无法恢复。</div>
+            <van-button type="danger" color="#ee0a24" block size="small" style="margin-top:10px; min-height:44px;" @click="openStartPopup()">重新开放填志愿</van-button>
+          </div>
+        </div>
+
+        <div class="ga-card">
+          <div class="ga-form-row" style="border-bottom:none;">
+            <div class="ga-form-label">我的分组入口<br><span style="font-size:11px; color:#969799;">开启后，报名者能看到自己的分组</span></div>
+            <van-switch :model-value="gaFlag==='是'" @update:model-value="onGaFlagChange" :loading="gaFlagSaving" size="24px" active-color="#ff6b81" />
+          </div>
+        </div>
+      </van-tab>
+
+      <van-tab title="名单">
+        <div class="ga-card" style="margin-top:12px;">
+          <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="gaRosterError" class="ga-empty">
+            <van-empty image="error" description="名单没载出来，检查一下网络" />
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
+          </div>
+          <template v-else>
+            <div class="ga-roster-tabs">
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+            </div>
+            <template v-if="gaRosterTab===0">
+              <div v-if="gaRosterList.length" class="candidate-search-box">
+                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              </div>
+              <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉" />
+              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人" />
+              <div v-else>
+                <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || (r.open_id||'').slice(0,8) }} · {{ r.gender || '性别未填' }}</div>
+                  </div>
+                  <van-icon name="arrow" color="#c8c9cc" />
+                </div>
+                <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
+                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div style="text-align:center; padding:16px 0;">
+                <div class="ga-stat" style="display:inline-block; min-width:120px;"><div class="ga-stat-num ok">{{ gaRosterSubmitted }}</div><div class="ga-stat-label">已填写志愿</div></div>
+                <div class="ga-row-sub" style="margin-top:10px;">这份名单暂时看不了，先专心催还没填的吧</div>
+              </div>
+            </template>
+          </template>
+        </div>
+      </van-tab>
+
+      <van-tab title="结果">
+        <div class="ga-card" style="margin-top:12px;">
+          <van-empty v-if="!gaDetail.rounds.length" description="还没有分组结果" />
+          <template v-else>
+            <div class="round-tabs" style="padding-top:0;" v-if="gaDetail.rounds.length">
+              <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="gaResultRound=r">第{{ r }}轮</span>
+            </div>
+            <template v-if="gaGroupsRound===gaResultRound && gaGroups.length">
+              <div class="ga-row-sub" style="text-align:center; margin:4px 0 10px;">共 {{ gaGroups.length }} 组 · 每组 {{ gaDetail.males_per_group }}男{{ gaDetail.females_per_group }}女</div>
+              <div v-for="(g, gi) in gaGroups" :key="gi" class="ga-group-card">
+                <div class="ga-card-title" style="margin-bottom:6px;">第 {{ g.group_id }} 组 <span class="ga-row-sub" style="margin:0;">{{ (g.members||[]).length }} 人</span></div>
+                <div class="ga-group-members">
+                  <span v-for="m in g.members" :key="m.open_id" class="ga-member-chip">{{ m.gender==='男性' ? '👨' : (m.gender==='女性' ? '👩' : '👤') }} {{ m.display_name }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-else class="ga-tip" style="margin-top:4px;">
+              🗂 第{{ gaResultRound }}轮已经分好啦。详细名单会在每次执行完成后直接展示，更早轮次的完整名单暂时还看不到。
+            </div>
+          </template>
+        </div>
+      </van-tab>
+    </van-tabs>
+  </template>
+</div>
+<!-- ========== 管理员·报名名单 ========== -->
+<div v-else-if="page==='group_roster'" key="group_roster" class="page ga-page">
+  <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
+  <div class="ga-title">{{ gaDetail ? (gaDetail.name || '活动') : '' }} 报名名单</div>
+  <div class="ga-card" style="margin-top:12px;">
+    <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+    <div v-else-if="gaRosterError" class="ga-empty">
+      <van-empty image="error" description="名单没载出来，检查一下网络" />
+      <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
+    </div>
+    <template v-else>
+      <div class="ga-roster-tabs">
+        <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+        <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+      </div>
+      <template v-if="gaRosterTab===0">
+        <div v-if="gaRosterList.length" class="candidate-search-box">
+          <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+        </div>
+        <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉" />
+        <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人" />
+        <div v-else>
+          <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+            <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+            <div class="ga-row-main">
+              <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+              <div class="ga-row-sub">{{ r.user_id || (r.open_id||'').slice(0,8) }} · {{ r.gender || '性别未填' }}</div>
+            </div>
+            <van-icon name="arrow" color="#c8c9cc" />
+          </div>
+          <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
+            <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <div style="text-align:center; padding:16px 0;">
+          <div class="ga-stat" style="display:inline-block; min-width:120px;"><div class="ga-stat-num ok">{{ gaRosterSubmitted }}</div><div class="ga-stat-label">已填写志愿</div></div>
+          <div class="ga-row-sub" style="margin-top:10px;">这份名单暂时看不了，先专心催还没填的吧</div>
+        </div>
+      </template>
+    </template>
+  </div>
 </div>
 <!-- ========== 我的资料详情 ========== -->
 <div v-else-if="page==='profile_detail'" key="profile_detail">
@@ -2158,6 +2485,74 @@
     <div class="update-notes-item">· 喜欢额度改为每月刷新：匿名 10 次 + 实名 1 次</div>
   </div>
 </van-dialog>
+<!-- ========== 分组管理台：开始填志愿设置层 ========== -->
+<van-popup v-model:show="gaStartShow" position="bottom" round :close-on-click-overlay="!gaStartBusy">
+  <div class="ga-start-popup">
+    <div class="ga-start-head">开始填写志愿 <van-icon name="cross" color="#c8c9cc" @click="closeStartPopup()" /></div>
+    <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
+    <div class="ga-form-row">
+      <div class="ga-form-label">每组男生数</div>
+      <button class="ga-step-btn" :disabled="gaStartM<=1" @click="gaStartM = Math.max(1, gaStartM-1)">−</button>
+      <div class="ga-num">{{ gaStartM }}</div>
+      <button class="ga-step-btn" :disabled="gaStartM>=20" @click="gaStartM = Math.min(20, gaStartM+1)">+</button>
+    </div>
+    <div class="ga-form-row">
+      <div class="ga-form-label">每组女生数</div>
+      <button class="ga-step-btn" :disabled="gaStartF<=1" @click="gaStartF = Math.max(1, gaStartF-1)">−</button>
+      <div class="ga-num">{{ gaStartF }}</div>
+      <button class="ga-step-btn" :disabled="gaStartF>=20" @click="gaStartF = Math.min(20, gaStartF+1)">+</button>
+    </div>
+    <div class="ga-row-sub" style="margin-top:10px;" v-if="gaDetail">报名 {{ gaDetail.signup_count }} 人：{{ gaDetail.male_count }} 男 / {{ gaDetail.female_count }} 女；按此设置预计可分 {{ gaStartExpected }} 组</div>
+    <div class="ga-danger-zone" v-if="gaDetail && gaDetail.rounds.length"><div class="ga-danger-hint">⚠ 这会清空该活动已有的 {{ gaDetail.rounds.length }} 轮历史分组结果，且无法恢复。</div></div>
+    <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaStartBusy" :disabled="gaStartBusy" @click="submitStartPreview()">下一步：确认影响</van-button>
+  </div>
+</van-popup>
+<!-- 破坏性确认：自定义 van-dialog（三个动态数字塞不进 showConfirmDialog 的 message） -->
+<van-dialog v-model:show="gaConfirmShow" title="重新开放志愿填写" :show-confirm-button="false" :show-cancel-button="false" :close-on-click-overlay="false">
+  <div class="ga-confirm-body">
+    <div v-if="gaConfirmN>0" class="ga-danger-hint" style="font-size:13px;">⚠ 这会永久删除 {{ gaDetailId }} 的历史分组结果</div>
+    <div v-else class="ga-row-sub">这个活动没有历史结果，将直接开放志愿填写。</div>
+    <div class="ga-confirm-box">
+      <div class="ga-confirm-row"><span>将被删除</span><b class="danger">{{ gaConfirmN }} 条结果</b></div>
+      <div class="ga-confirm-row"><span>当前状态</span><b>{{ gaDetail ? gaDetail.group_status : '' }}</b></div>
+      <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaStartPreviewData ? gaStartPreviewData.participant_count : 0 }} 人（{{ gaStartPreviewData ? gaStartPreviewData.male_count : 0 }}男{{ gaStartPreviewData ? gaStartPreviewData.female_count : 0 }}女）</b></div>
+      <div class="ga-confirm-row"><span>删除后</span><b>状态回到「收集中」，所有人需重新填写志愿</b></div>
+    </div>
+    <div v-if="gaConfirmN>0" style="margin-top:10px;">
+      <div class="ga-row-sub" style="margin-bottom:6px;">这项操作无法撤销。请输入活动编号 {{ gaDetailId }} 以确认：</div>
+      <input v-model="gaConfirmInput" class="ga-confirm-input" :placeholder="gaDetailId" />
+      <div v-if="gaConfirmInput && !gaConfirmOk" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">活动编号不对，再确认一下喔</div>
+    </div>
+    <div class="ga-actions">
+      <van-button plain @click="cancelGaConfirm()">取消</van-button>
+      <van-button :color="gaConfirmN>0 ? '#ee0a24' : '#ff6b81'" :disabled="!gaConfirmOk || gaStartBusy" :loading="gaStartBusy" @click="doStartGroup()">确认重新开放</van-button>
+    </div>
+  </div>
+</van-dialog>
+<!-- 执行中断（后端重启导致 job 失联）三分支指引 -->
+<van-dialog v-model:show="gaUnknownShow" title="执行中断（后端重启）" :show-confirm-button="false" :show-cancel-button="false" close-on-click-overlay>
+  <div class="ga-confirm-body">
+    <div class="ga-row-sub" style="line-height:1.8;">
+      分组状态可能已经写了一半。请切到「进度」确认当前状态：<br>
+      · 显示「已完成」→ 结果已生成，直接看结果<br>
+      · 显示「收集中」→ 没分完，可以安全重试<br>
+      · 显示「已截止」→ 卡在中途，需要人工检查
+    </div>
+    <div class="ga-actions">
+      <van-button size="small" plain type="primary" color="#ff6b81" @click="gaUnknownReload()">重新载入</van-button>
+      <van-button size="small" type="primary" color="#ff6b81" @click="gaUnknownRetry()">我要重跑本轮</van-button>
+    </div>
+  </div>
+</van-dialog>
+<!-- 执行中遮罩：不可关闭、点击无反应、返回手势被忽略（popstate 里吞掉） -->
+<div v-if="gaRunShow" class="ga-run-mask" @click.stop>
+  <div class="ga-run-mask-icon">⏳</div>
+  <div class="ga-run-mask-title">正在执行分组…</div>
+  <div class="ga-run-mask-sub">{{ gaJobActivityName }} 第{{ gaJobRound }}轮</div>
+  <div class="ga-run-mask-progress">{{ gaJobProgress || '正在准备…' }}</div>
+  <div class="ga-run-mask-secs">已运行 {{ gaMaskSecs }} 秒</div>
+  <div class="ga-run-mask-tip">请不要离开这个页面</div>
+</div>
 <!-- 筛选弹层 -->
 <van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
@@ -2362,7 +2757,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin'];
+    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -3470,6 +3865,7 @@ createApp({
       user.value = data.user;
       if (data.user) loadPointsBalance(); // 麦穗余额：入口单元格要显示数字，静默拉，失败不打扰
       if (data.user && data.user.is_admin) setTimeout(()=>{ try{ refreshReportedCount(); }catch(e){} }, 600);
+      if (data.user && data.user.is_admin) setTimeout(()=>{ try{ refreshAdminBadge(); }catch(e){} }, 900);
       if (data.register_form_url) registerFormUrl.value = data.register_form_url;
       if (data.promo_activity_id) promoActivityId.value = data.promo_activity_id;
       cards.value = data.cards || []; cardIndex.value = 0; photoIndex.value = 0;
@@ -5028,6 +5424,11 @@ createApp({
     function handlePopState(e){
       if(ignoreNextPop){ ignoreNextPop=false; return; }
       isHandlingPopState = true;
+      // 分组管理台：执行中遮罩吞掉返回；其余弹层关掉并停在原页（re-push 防 history 漂移）
+      if(gaRunShow.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaConfirmShow.value){ gaConfirmShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaStartShow.value){ gaStartShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaUnknownShow.value){ gaUnknownShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(showPhotoViewer.value){
         const p = viewerLightbox && viewerLightbox.pswp;
         if (p && !p.isDestroying) p.close();
@@ -5077,6 +5478,7 @@ createApp({
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
         'my_activities': 'profile', 'my_groups': 'profile', 'my_onetoone': 'profile', 'points': 'profile', 'points_admin': 'profile',
+        'group_admin': 'profile', 'group_detail': 'group_admin', 'group_roster': 'group_detail',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
@@ -5091,10 +5493,18 @@ createApp({
     }
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
+      // 分组管理台：离开详情页时清弹层与定时器（不取消后端 job）
+      if (p !== 'group_detail') {
+        gaStartShow.value = false; gaConfirmShow.value = false; gaUnknownShow.value = false;
+        stopGaPolling(false);
+      }
+      if (p === 'group_admin') loadGroupAdminList();
+      if (p === 'group_detail' && gaDetailId.value) refreshGroupDetail();
+      if (p === 'group_roster' && gaDetailId.value) loadGroupRoster(true);
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); maybeShowUpdateNotes(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
-      if (p === 'profile') { checkGroupEntry(); checkOnetooneEntry(); loadPraiseState(); if (user.value && user.value.is_admin) refreshReportedCount(); }
+      if (p === 'profile') { checkGroupEntry(); checkOnetooneEntry(); loadPraiseState(); if (user.value && user.value.is_admin) { refreshReportedCount(); refreshAdminBadge(); } }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
@@ -5563,6 +5973,385 @@ createApp({
     }
     window.addEventListener('keydown', onKeydown);
 
+    // ==================== 管理员·活动分组管理台（ga-） ====================
+    // 三个页面：group_admin 总览 / group_detail 控制台 / group_roster 名单。
+    // 破坏性的是「开始填志愿」（会清空该活动全部历史结果），不是「执行分组」（有幂等保护）。见 DESIGN.md §2。
+    const gaLoading = ref(false), gaError = ref(false), gaList = ref([]);
+    const gaQ = ref(''), gaStatusFilter = ref(''), gaFilters = ['收集中', '已截止', '已完成', '未开始'];
+    const gaAdminBadge = ref(''); let gaBadgeAt = 0;
+
+    const gaDetailId = ref(''), gaDetail = ref(null);
+    const gaDetailLoading = ref(false), gaDetailError = ref(false), gaDetailTab = ref(0);
+    const gaFlag = ref(null);         // '是'/'否'：/status 不回此字段，从列表项带入
+    const gaFlagSaving = ref(false);
+
+    const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
+    const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
+    const gaRosterLoading = ref(false), gaRosterError = ref(false), gaRosterShown = ref(30);
+
+    const gaStartShow = ref(false), gaStartM = ref(3), gaStartF = ref(3), gaStartBusy = ref(false);
+    const gaStartPreviewData = ref(null);
+    const gaConfirmShow = ref(false), gaConfirmInput = ref(''), gaConfirmN = ref(0);
+
+    const gaRunShow = ref(false), gaRunBusy = ref(false);
+    const gaJobId = ref(''), gaJobRound = ref(1), gaJobActivityName = ref(''), gaJobProgress = ref('');
+    const gaMaskSecs = ref(0), gaRunTip = ref(''), gaUnknownShow = ref(false);
+    const gaGroups = ref([]), gaGroupsRound = ref(0), gaResultRound = ref(0);
+    let gaPollTimer = null, gaPollCount = 0, gaPollFails = 0, gaMaskTimer = null, gaJobStartedAt = 0;
+    const GA_POLL_MS = 2000, GA_POLL_MAX = 120, GA_JOB_KEY = 'yxq_ga_job_';  // 2s 一次、最多 4 分钟：超时只提示，不报错
+
+    const gaStepDefs = ['未开始', '填志愿', '执行分组', '完成'];
+    function gaChipClass(s) { return ({ '收集中': 'collecting', '已截止': 'running', '已完成': 'done' })[s] || ''; }
+    const gaStepIndex = computed(() => {
+      const s = gaDetail.value && gaDetail.value.group_status;
+      return s === '收集中' ? 1 : (s === '已截止' ? 2 : (s === '已完成' ? 3 : 0));
+    });
+    const gaFilteredList = computed(() => {
+      const q = gaQ.value.trim().toLowerCase();
+      return gaList.value.filter(a => (!gaStatusFilter.value || a.group_status === gaStatusFilter.value)
+        && (!q || String(a.name || '').toLowerCase().includes(q) || String(a.activity_id || '').toLowerCase().includes(q)));
+    });
+    const gaStats = computed(() => {
+      const c = { '收集中': 0, '已截止': 0, '已完成': 0 };
+      gaList.value.forEach(a => { if (c[a.group_status] !== undefined) c[a.group_status] += 1; });
+      return { progress: c['收集中'], closed: c['已截止'], done: c['已完成'] };
+    });
+    const gaExpectedGroups = computed(() => {
+      const d = gaDetail.value;
+      return (!d || d.males_per_group < 1 || d.females_per_group < 1) ? null
+        : Math.min(Math.floor(d.male_count / d.males_per_group), Math.floor(d.female_count / d.females_per_group));
+    });
+    const gaNextRound = computed(() => (gaDetail.value && gaDetail.value.latest_round) ? gaDetail.value.latest_round + 1 : 1);
+    const gaShowStartMain = computed(() => { const d = gaDetail.value; return !!d && d.group_status === '未开始' && !(d.rounds && d.rounds.length); });
+    const gaShowDanger = computed(() => {
+      const d = gaDetail.value;
+      return !!d && d.rounds && d.rounds.length > 0 && ['未开始', '收集中', '已完成'].includes(d.group_status);
+    });
+    const gaRosterSubmitted = computed(() => (gaDetail.value && gaDetail.value.submitted_count) || 0);
+    const gaRosterFiltered = computed(() => {
+      const q = gaRosterQuery.value.trim().toLowerCase();
+      if (!q) return gaRosterList.value;
+      return gaRosterList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q) || String(r.user_id || '').toLowerCase().includes(q));
+    });
+    const gaRosterVisible = computed(() => gaRosterFiltered.value.slice(0, gaRosterShown.value));
+    const gaStartExpected = computed(() => {
+      const d = gaDetail.value;
+      if (!d || gaStartM.value < 1 || gaStartF.value < 1) return 0;
+      return Math.min(Math.floor(d.male_count / gaStartM.value), Math.floor(d.female_count / gaStartF.value));
+    });
+    const gaConfirmOk = computed(() => gaConfirmN.value <= 0
+      || String(gaConfirmInput.value || '').trim().toLowerCase() === String(gaDetailId.value || '').trim().toLowerCase());
+
+    function gaMsg(e, fallback) { return (e && e.message) ? e.message : fallback; }
+    function gaAuthBack(e) {
+      const m = gaMsg(e, '');
+      if (m.includes('未登录') || m.includes('没有权限')) { vant.showToast(m); page.value = 'profile'; return true; }
+      return false;
+    }
+    function gaRowSub(a) {
+      const per = (a.males_per_group > 0 && a.females_per_group > 0)
+        ? ('每组' + a.males_per_group + '男' + a.females_per_group + '女') : '还没设置每组人数';
+      if (a.group_status === '未开始') return '报名 ' + a.signup_count + ' 人 · 尚未开放填志愿';
+      if (a.group_status === '已截止') return '已填 ' + a.submitted_count + '/' + a.signup_count + ' · 分组执行中…';
+      if (a.group_status === '已完成') return '已分 ' + ((a.available_rounds || []).length || 1) + ' 轮 · ' + per + ' · 第' + a.latest_round + '轮';
+      return '已填 ' + a.submitted_count + '/' + a.signup_count + ' 人 · ' + per;
+    }
+    async function refreshAdminBadge() {
+      if (!user.value || !user.value.is_admin) { gaAdminBadge.value = ''; return; }
+      if (Date.now() - gaBadgeAt < 30000) return;   // 30 秒缓存，避免每次切页都打实时接口
+      try {
+        const data = await api('/api/admin/group/activities');
+        const n = (data.activities || []).filter(a => a.group_status === '收集中').length;
+        gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
+      } catch(e) { /* 入口徽标静默失败，不打扰 */ }
+    }
+    function openGroupAdmin() { gaQ.value = ''; gaStatusFilter.value = ''; gaError.value = false; page.value = 'group_admin'; }
+    async function loadGroupAdminList() {
+      if (gaLoading.value) return;
+      gaLoading.value = true; gaError.value = false;
+      try {
+        const data = await api('/api/admin/group/activities');
+        gaList.value = data.activities || [];
+        const n = gaList.value.filter(a => a.group_status === '收集中').length;
+        gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
+      } catch(e) {
+        if (!gaAuthBack(e)) { gaError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
+      }
+      gaLoading.value = false;
+    }
+    function openGroupDetail(a) {
+      gaDetailId.value = a.activity_id; gaDetail.value = null; gaDetailError.value = false; gaDetailTab.value = 0;
+      gaFlag.value = a.group_flag || '否';
+      gaGroups.value = []; gaGroupsRound.value = 0; gaResultRound.value = 0; gaRunTip.value = '';
+      gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterShown.value = 30; gaRosterError.value = false;
+      page.value = 'group_detail';
+    }
+    async function refreshGroupDetail() {
+      if (gaDetailLoading.value || !gaDetailId.value) return;
+      gaDetailLoading.value = true; gaDetailError.value = false;
+      try {
+        const d = await api('/api/admin/group/status?activity_id=' + encodeURIComponent(gaDetailId.value));
+        gaDetail.value = d;
+        if (gaFlag.value === null) gaFlagFromList();
+        gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
+        restoreGaJob();
+      } catch(e) { if (!gaAuthBack(e)) { gaDetailError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
+      gaDetailLoading.value = false;
+    }
+    async function gaFlagFromList() {
+      try {
+        const data = await api('/api/admin/group/activities');
+        const it = (data.activities || []).find(x => x.activity_id === gaDetailId.value);
+        gaFlag.value = it ? (it.group_flag || '否') : '否';
+      } catch(e) { gaFlag.value = '否'; }
+    }
+    async function onGaFlagChange(v) {
+      if (gaFlagSaving.value) return;
+      const old = gaFlag.value;
+      gaFlag.value = v ? '是' : '否'; gaFlagSaving.value = true;
+      try {
+        const data = await api('/api/admin/group/flag', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, enabled: !!v }) });
+        gaFlag.value = data.group_flag || gaFlag.value;
+        const it = gaList.value.find(x => x.activity_id === gaDetailId.value);
+        if (it) it.group_flag = gaFlag.value;
+        vant.showToast(v ? '已开启，报名者能看到「我的分组」入口' : '已关闭，报名者看不到「我的分组」入口');
+      } catch(e) {
+        gaFlag.value = old;
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '开关没设上，再试一次'));
+      }
+      gaFlagSaving.value = false;
+    }
+    async function loadGroupRoster(force) {
+      if (gaRosterLoading.value) return;
+      if (!force && gaRosterList.value.length) return;
+      gaRosterLoading.value = true; gaRosterError.value = false;
+      try {
+        const data = await api('/api/admin/group/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
+        gaRosterList.value = data.unsubmitted || []; gaRosterTotal.value = data.total || 0; gaRosterShown.value = 30;
+        if (gaRosterTab.value === 0 && !gaRosterList.value.length && gaRosterSubmitted.value > 0) gaRosterTab.value = 1;
+      } catch(e) { if (!gaAuthBack(e)) { gaRosterError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
+      gaRosterLoading.value = false;
+    }
+    function openGroupRoster() { page.value = 'group_roster'; gaRosterQuery.value = ''; }
+    async function gaOpenUser(openid) {
+      if (!openid) return;
+      userDetailFromSheet.value = false;
+      userDetailFrom.value = (page.value === 'group_roster') ? 'group_roster' : 'group_detail';
+      page.value = 'user_detail'; userDetail.value = null;
+      try {
+        const data = await api('/api/users/' + openid + '/public');
+        if (data && (data.liked || justLiked.has(openid))) { data.liked = true; data.can_like = false; }
+        userDetail.value = data;
+      } catch(e) { vant.showToast(gaMsg(e, '资料没载出来，再试一次')); }
+    }
+    function openStartPopup() {
+      const d = gaDetail.value;
+      gaStartM.value = (d && d.males_per_group > 0) ? d.males_per_group : 3;
+      gaStartF.value = (d && d.females_per_group > 0) ? d.females_per_group : 3;
+      gaStartShow.value = true;
+    }
+
+    function closeStartPopup() { if (!gaStartBusy.value) gaStartShow.value = false; }
+    async function submitStartPreview() {
+      if (gaStartBusy.value || !gaDetailId.value) return;
+      if (gaStartM.value < 1 || gaStartM.value > 20 || gaStartF.value < 1 || gaStartF.value > 20) { vant.showToast('每组人数要在 1~20 之间'); return; }
+      gaStartBusy.value = true;
+      try {
+        const data = await api('/api/admin/group/preview', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, round: (gaDetail.value && gaDetail.value.latest_round) || 1 }) });
+        gaStartPreviewData.value = data;
+        gaConfirmN.value = data.historical_results_to_clear || 0; gaConfirmInput.value = '';
+        gaConfirmShow.value = true;   // 设置层留在下面：取消就回到它（保留已填数字）
+      } catch(e) { if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
+      gaStartBusy.value = false;
+    }
+    function cancelGaConfirm() { gaConfirmShow.value = false; }
+    async function doStartGroup() {
+      if (!gaConfirmOk.value || gaStartBusy.value) return;
+      gaStartBusy.value = true;
+      try {
+        await api('/api/admin/group/start', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, males_per_group: gaStartM.value, females_per_group: gaStartF.value }) });
+        gaConfirmShow.value = false; gaStartShow.value = false;
+        const pv = gaStartPreviewData.value || {};
+        const exp = Math.min(Math.floor((pv.male_count || 0) / gaStartM.value), Math.floor((pv.female_count || 0) / gaStartF.value));
+        vant.showToast(exp > 0 ? ('已开放，' + exp + ' 组每组 ' + gaStartM.value + '男' + gaStartF.value + '女') : '已开放，等人再多一些就可以分组啦');
+        gaRosterList.value = []; gaRosterTotal.value = 0;
+        gaDetailTab.value = 1;      // 按设计：开完志愿直接去看谁还没填
+        refreshGroupDetail();
+      } catch(e) { if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没开放成功，再试一次')); }
+      gaStartBusy.value = false;
+    }
+    async function gaApi(url, options = {}) {
+      // run 需要读 409 body 里的 job_id（既有 api() 会把它吞掉），单独一份轻量请求
+      const csrf = (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || '';
+      const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+      if (csrf) headers['X-CSRF-Token'] = csrf;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      try {
+        const resp = await fetch(BASE_PATH + url, { credentials: 'same-origin',
+          headers: { ...headers, ...(options.headers || {}) }, signal: controller.signal, ...options });
+        clearTimeout(timeout);
+        const data = await resp.json().catch(() => ({}));
+        return { status: resp.status, data };
+      } catch(e) {
+        clearTimeout(timeout);
+        if (e.name === 'AbortError') throw new Error('请求超时，请检查网络后重试');
+        throw e;
+      }
+    }
+    async function startRunFlow() {
+      if (gaRunBusy.value || !gaDetailId.value) return;
+      gaRunBusy.value = true;
+      const rd = gaNextRound.value;
+      try {
+        const pv = await api('/api/admin/group/preview', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
+        if (!pv.can_execute) {
+          gaRunBusy.value = false;
+          const msg = (pv.blockers && pv.blockers.length) ? pv.blockers.join('\n') : '现在还跑不了，稍后再试';
+          vant.showConfirmDialog({ title: '还差一点', message: msg, showCancelButton: false, confirmButtonColor: '#ff6b81' }).catch(() => {});
+          return;
+        }
+        try {
+          await vant.showConfirmDialog({
+            title: '执行第 ' + rd + ' 轮分组',
+            message: '将依 ' + pv.participant_count + ' 份志愿执行第 ' + rd + ' 轮分组，预计 ' + pv.expected_groups + ' 组。\n执行后状态变为「已完成」，期间大家不能再改志愿。',
+            confirmButtonColor: '#ff6b81'
+          });
+        } catch(e) { gaRunBusy.value = false; return; }  // 取消
+        await doGaRun(rd);
+      } catch(e) {
+        gaRunBusy.value = false;
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
+      }
+    }
+    async function doGaRun(rd) {
+      const name = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
+      try {
+        const r = await gaApi('/api/admin/group/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
+        if ((r.status === 202 || r.status === 200) && r.data && r.data.job_id) {
+          attachGaJob(r.data.job_id, rd, name);
+        } else if (r.status === 409 && r.data && r.data.job_id) {
+          attachGaJob(r.data.job_id, r.data.round || rd, name);
+          vant.showToast('这轮已经在跑了，帮你接上进度');
+        } else {
+          vant.showToast((r.data && r.data.error) || '没跑起来，再试一次');
+        }
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
+      }
+      gaRunBusy.value = false;
+    }
+    function attachGaJob(jobId, rd, name) {
+      gaJobId.value = jobId; gaJobRound.value = rd; gaJobActivityName.value = name; gaJobProgress.value = '';
+      try { localStorage.setItem(GA_JOB_KEY + gaDetailId.value, jobId); } catch(e) {}
+      openGaMask(); startGaPolling();
+    }
+    function clearGaJobRecord() { try { localStorage.removeItem(GA_JOB_KEY + gaDetailId.value); } catch(e) {} }
+    function openGaMask() {
+      gaRunShow.value = true; gaMaskSecs.value = 0; gaJobStartedAt = Date.now();
+      clearInterval(gaMaskTimer);
+      gaMaskTimer = setInterval(() => { gaMaskSecs.value = Math.floor((Date.now() - gaJobStartedAt) / 1000); }, 1000);
+    }
+    function closeGaMask() { gaRunShow.value = false; clearInterval(gaMaskTimer); gaMaskTimer = null; }
+    function stopGaPolling(keepMask) {
+      clearTimeout(gaPollTimer); gaPollTimer = null; gaPollCount = 0; gaPollFails = 0;
+      if (!keepMask) closeGaMask();
+    }
+    function startGaPolling() {
+      gaPollCount = 0; gaPollFails = 0;
+      if (!gaRunShow.value) openGaMask();
+      pollGaJob();
+    }
+    function resumeGaPolling() { if (gaJobId.value && !gaPollTimer) startGaPolling(); }
+    async function pollGaJob() {
+      if (!gaJobId.value) return;
+      gaPollCount += 1;
+      if (gaPollCount > GA_POLL_MAX) {
+        stopGaPolling(false);
+        gaRunTip.value = '还在跑，可能人比较多。稍后回来看看就好';
+        try { vant.showToast(gaRunTip.value); } catch(e) {}
+        return;
+      }
+      try {
+        const data = await api('/api/admin/group/job?job_id=' + encodeURIComponent(gaJobId.value));
+        gaPollFails = 0; gaJobProgress.value = data.progress || '';
+        const st = data.state;
+        if (st === 'pending' || st === 'running') { gaPollTimer = setTimeout(pollGaJob, GA_POLL_MS); return; }
+        stopGaPolling(false); clearGaJobRecord();
+        if (st === 'done') { handleGaJobDone(data); return; }
+        if (st === 'unknown') { gaUnknownShow.value = true; return; }
+        refreshGroupDetail();
+        vant.showToast(data.error || '这次没分成功，状态已经恢复成收集中，稍后再试一次就好');
+      } catch(e) {
+        gaPollFails += 1;
+        if (gaPollFails >= 10) {  // 连续 10 次失败才放弃（可能只是短暂断网）
+          stopGaPolling(false); refreshGroupDetail();
+          vant.showToast('连不上，稍后回来看看就好');
+          return;
+        }
+        gaPollTimer = setTimeout(pollGaJob, GA_POLL_MS);
+      }
+    }
+    function handleGaJobDone(data) {
+      const res = data.result || {};
+      refreshGroupDetail();
+      if (res.code === 'OK') {
+        gaGroups.value = res.groups || []; gaGroupsRound.value = res.round || gaJobRound.value; gaResultRound.value = gaGroupsRound.value;
+        vant.showToast('分好啦，共 ' + (res.group_count || gaGroups.value.length) + ' 组 🎉');
+        if (page.value === 'group_detail') gaDetailTab.value = 2;
+        return;
+      }
+      if (res.code === 'ALREADY_DONE') {
+        const rd = res.round || gaJobRound.value;
+        vant.showConfirmDialog({ title: '第 ' + rd + ' 轮已经分过组啦', message: '要重跑的话，得先重新开放志愿。', confirmButtonText: '重新开放', cancelButtonText: '先不用', confirmButtonColor: '#ff6b81' })
+          .then(() => { openStartPopup(); }).catch(() => {});
+        return;
+      }
+      if (res.code === 'NOT_ENOUGH_PEOPLE') {
+        vant.showToast('人还不够：' + res.males + ' 男 ' + res.females + ' 女，每组要 ' + res.males_per_group + ' 男 ' + res.females_per_group + ' 女。再等等人吧');
+        return;
+      }
+      if (res.code === 'SEARCH_FAILED') { vant.showToast('读取志愿时网络打了个喷嚏，没分成。状态已经恢复，稍后再试'); return; }
+      if (res.code === 'ALGORITHM_ERROR') { vant.showToast('分组没成功：' + (res.error || '再试一次看看')); return; }
+      if (res.code === 'EMPTY_GROUPS') { vant.showToast('没有可分组的人，先确认报名和志愿'); return; }
+      if (res.code === 'PARTIAL_WRITE') { vant.showToast('结果只写了一半，已经回滚，状态恢复。稍后再试'); return; }
+      vant.showToast('这次没分成功，状态已经恢复成收集中，稍后再试一次就好');
+    }
+    async function restoreGaJob() {
+      if (gaPollTimer || gaRunShow.value) return;
+      let jobId = '';
+      try { jobId = localStorage.getItem(GA_JOB_KEY + gaDetailId.value) || ''; } catch(e) {}
+      if (!jobId) return;
+      try {
+        const data = await api('/api/admin/group/job?job_id=' + encodeURIComponent(jobId));
+        const st = data.state;
+        if (st === 'pending' || st === 'running') {
+          gaJobId.value = jobId; gaJobRound.value = data.round || gaNextRound.value;
+          gaJobActivityName.value = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
+          gaJobProgress.value = data.progress || '';
+          gaJobStartedAt = (data.started_at || data.created_at || Math.floor(Date.now() / 1000)) * 1000;
+          gaMaskSecs.value = Math.max(0, Math.floor((Date.now() - gaJobStartedAt) / 1000));
+          openGaMask(); startGaPolling();
+        } else if (st === 'done') {
+          clearGaJobRecord();
+          const res = data.result || {};
+          if (res.code === 'OK') {
+            gaGroups.value = res.groups || []; gaGroupsRound.value = res.round || 0;
+            gaResultRound.value = gaGroupsRound.value || gaResultRound.value;
+          }
+        } else { clearGaJobRecord(); }
+      } catch(e) { clearGaJobRecord(); }
+    }
+    function gaUnknownReload() { gaUnknownShow.value = false; gaDetailTab.value = 0; refreshGroupDetail(); }
+    function gaUnknownRetry() { gaUnknownShow.value = false; startRunFlow(); }
+
+    watch(gaDetailTab, (v) => {
+      if (v === 1 && !gaRosterList.value.length && !gaRosterLoading.value && gaDetailId.value) loadGroupRoster();
+    });
+    watch(gaRosterQuery, () => { gaRosterShown.value = 30; });
+
     return {
       page, pageTransition, user, loggingIn, loginError, showPersonalGuide, loginTip,
       showClaim, claimName, claimPhone, claiming, submitClaim, backToLogin,
@@ -5635,7 +6424,14 @@ createApp({
       paLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
       paUserDetail, paUserDetailShow, paUserDetailLoading, paUserDetailOid,
-      openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter
+      openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,
+      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaFilteredList, gaStats, gaChipClass, gaRowSub, openGroupDetail,
+      gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaFlag, gaFlagSaving, onGaFlagChange, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
+      gaShowStartMain, gaShowDanger, refreshGroupDetail,
+      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, loadGroupRoster, openGroupRoster, gaOpenUser,
+      gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartPreviewData, gaStartExpected, openStartPopup, closeStartPopup, submitStartPreview,
+      gaConfirmShow, gaConfirmInput, gaConfirmN, gaConfirmOk, cancelGaConfirm, doStartGroup,
+      gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
     };
   }
 }).use(vant).mount('#app');

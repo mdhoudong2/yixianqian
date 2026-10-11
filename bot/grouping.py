@@ -1,13 +1,18 @@
 """活动分组：卫星滚动分组算法、分组卡片、分组指令处理。"""
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 
-# 分组指令互斥锁：防止管理员并发两次“执行分组”互相删除/覆盖结果
-_grouping_lock = threading.Lock()
+from lib.grouping import GroupingBusy, grouping_lock
+
+# 分组指令互斥锁：防止并发「执行分组」「开始填志愿」互相删除/覆盖结果。
+# bot 与 H5 后端是两个进程、共用同一个数据目录，单纯的 threading.Lock 挡不住对面，
+# 所以走 lib.grouping 的 flock 版本。
+GROUPING_LOCK_TIMEOUT = 180
+# 抢锁逾时的提示。整条路径是新增的（原先是无限等待，压根等不到这个分支）。
+GROUPING_BUSY_REPLY = "当前已有分组任务在执行中，请稍候再试。"
 
 
 def _user_selection_score(priority):
@@ -560,20 +565,27 @@ def handle_admin_start_group(keyword):
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
     record_id = activity.get("record_id")
 
-    update_record(ACTIVITY_TABLE_ID, record_id, {
-        FIELD_ACT_GROUP_STATUS: "收集中",
-        FIELD_ACT_MALE_PER_GROUP: m_per,
-        FIELD_ACT_FEMALE_PER_GROUP: f_per
-    })
+    # 改状态 + 清历史结果必须整段持锁。原先这段完全不持锁，而管理指令跑在
+    # ADMIN_TASK_EXECUTOR（4 条线程）上，同时来「开始填志愿」和「执行分组」
+    # 就会删掉一半旧结果、写进去一半新结果。
+    try:
+        with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
+            update_record(ACTIVITY_TABLE_ID, record_id, {
+                FIELD_ACT_GROUP_STATUS: "收集中",
+                FIELD_ACT_MALE_PER_GROUP: m_per,
+                FIELD_ACT_FEMALE_PER_GROUP: f_per
+            })
 
-    # 重新开放志愿收集：清除该活动历史分组结果，否则「执行分组」的幂等保护会拦截重跑同一轮次
-    old_results = search_records(GROUP_RESULT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-    if old_results:
-        batch_delete_records(GROUP_RESULT_TABLE, [r["record_id"] for r in old_results])
-        log(f"重新开放志愿收集，已清除 {len(old_results)} 条历史分组结果: {activity_name}")
+            # 重新开放志愿收集：清除该活动历史分组结果，否则「执行分组」的幂等保护会拦截重跑同一轮次
+            old_results = search_records(GROUP_RESULT_TABLE, {
+                "conjunction": "and",
+                "conditions": [{"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
+            })
+            if old_results:
+                batch_delete_records(GROUP_RESULT_TABLE, [r["record_id"] for r in old_results])
+                log(f"重新开放志愿收集，已清除 {len(old_results)} 条历史分组结果: {activity_name}")
+    except GroupingBusy:
+        return GROUPING_BUSY_REPLY
 
     # 不再向报名者群发通知（现场活动，用户自查 H5）。管理员收到开始指令回执即可。
     log(f"管理员开始填志愿: {activity_name} {m_per}男{f_per}女")
@@ -612,24 +624,27 @@ def handle_admin_stop_group(keyword):
     if m_per < 1 or f_per < 1:
         return f"每组男女人数必须大于0（当前：{m_per}男{f_per}女），请先设置再截止"
 
-    with _grouping_lock:
-        # 幂等保护：该活动本轮已生成过结果则拒绝重跑（多轮分组可轮次递进），
-        # 防止并发/重复执行互相删除覆盖分组结果。
-        existing_results = search_records(GROUP_RESULT_TABLE, {
-            "conjunction": "and",
-            "conditions": [
-                {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-                {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
-            ]
-        })
-        if existing_results:
-            return (f"活动「{activity_name}」第{round_no}轮已生成过分组结果，请勿重复执行。"
-                    f"如需重新分组，请先发送「开始填志愿 {activity_id} {m_per} {f_per}」重新开放，再执行分组。")
-        return _do_grouping(activity, round_no)
+    try:
+        with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
+            # 幂等保护：该活动本轮已生成过结果则拒绝重跑（多轮分组可轮次递进），
+            # 防止并发/重复执行互相删除覆盖分组结果。
+            existing_results = search_records(GROUP_RESULT_TABLE, {
+                "conjunction": "and",
+                "conditions": [
+                    {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+                    {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
+                ]
+            })
+            if existing_results:
+                return (f"活动「{activity_name}」第{round_no}轮已生成过分组结果，请勿重复执行。"
+                        f"如需重新分组，请先发送「开始填志愿 {activity_id} {m_per} {f_per}」重新开放，再执行分组。")
+            return _do_grouping(activity, round_no)
+    except GroupingBusy:
+        return GROUPING_BUSY_REPLY
 
 
 def _do_grouping(activity, round_no):
-    """执行分组（调用方需已持有 _grouping_lock）"""
+    """执行分组（调用方需已持有 grouping_lock(activity_id)）"""
     af = activity.get("fields", {})
     activity_id = get_field_text(af, FIELD_ACTIVITY_ID) or ""
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
@@ -809,5 +824,3 @@ def handle_admin_unsubmitted(keyword):
     for _, user_id, gender, nick in unsubmitted:
         lines.append(f"{user_id or '-'} · {gender or '-'} · {nick}")
     return "\n".join(lines)
-
-

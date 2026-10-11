@@ -113,6 +113,8 @@ from praise_admin import praise_stats_text, praise_weekly_loop
 from queries import find_user_by_openid
 from store import load_bindings, load_welcomed, update_p2p_chat
 
+from lib import grouping as lib_grouping
+
 # WebSocket健康检查
 _last_ws_event_time = time.time()
 _ws_client_ref = None
@@ -681,6 +683,9 @@ def main():
     print("=" * 60)
 
     init_points_db()
+
+    # 分组锁必须落在 bot 与 H5 共享的目录：两个进程各锁各的等于没锁。
+    lib_grouping.configure(lock_dir=SHARED_DATA_DIR)
 
     # 启动业务线程（只启动一次，长连接重连时不重复启动）
     start_worker_threads()

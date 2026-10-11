@@ -1209,11 +1209,11 @@
     </div>
 
     <div v-if="gaError" class="ga-empty">
-      <van-empty image="error" description="活动没载出来，检查一下网络" />
+      <van-empty image="error" description="活动没载出来，检查一下网络"></van-empty>
       <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupAdminList()">重新载入</van-button>
     </div>
-    <van-empty v-else-if="!gaList.length" description="还没有要管理的活动" />
-    <van-empty v-else-if="!gaFilteredList.length" :description="gaQ ? ('没有符合「'+gaQ+'」的活动') : '没有符合筛选的活动'" />
+    <van-empty v-else-if="!gaList.length" description="还没有要管理的活动"></van-empty>
+    <van-empty v-else-if="!gaFilteredList.length" :description="gaQ ? ('没有符合「'+gaQ+'」的活动') : '没有符合筛选的活动'"></van-empty>
     <div v-else>
       <div v-for="a in gaFilteredList" :key="a.record_id" class="ga-card ga-act-row" @click="openGroupDetail(a)">
         <div :class="'ga-chip ' + gaChipClass(a.group_status)"><span class="ga-chip-dot"></span>{{ a.group_status }}</div>
@@ -1234,7 +1234,7 @@
 
   <div v-if="gaDetailLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
   <div v-else-if="gaDetailError" class="ga-empty">
-    <van-empty image="error" description="活动没载出来，检查一下网络" />
+    <van-empty image="error" description="活动没载出来，检查一下网络"></van-empty>
     <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
   </div>
   <template v-else-if="gaDetail">
@@ -1289,7 +1289,7 @@
         <div class="ga-card">
           <div class="ga-form-row" style="border-bottom:none;">
             <div class="ga-form-label">我的分组入口<br><span style="font-size:11px; color:#969799;">开启后，报名者能看到自己的分组</span></div>
-            <van-switch :model-value="gaFlag==='是'" @update:model-value="onGaFlagChange" :loading="gaFlagSaving" size="24px" active-color="#ff6b81" />
+            <van-switch :model-value="gaFlag==='是'" @update:model-value="onGaFlagChange" :loading="gaFlagSaving" size="24px" active-color="#ff6b81"></van-switch>
           </div>
         </div>
       </van-tab>
@@ -1298,7 +1298,7 @@
         <div class="ga-card" style="margin-top:12px;">
           <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
           <div v-else-if="gaRosterError" class="ga-empty">
-            <van-empty image="error" description="名单没载出来，检查一下网络" />
+            <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
             <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
           </div>
           <template v-else>
@@ -1310,8 +1310,8 @@
               <div v-if="gaRosterList.length" class="candidate-search-box">
                 <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
               </div>
-              <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉" />
-              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人" />
+              <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
+              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
               <div v-else>
                 <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -1319,7 +1319,7 @@
                     <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
                     <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
-                  <van-icon name="arrow" color="#c8c9cc" />
+                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
                 </div>
                 <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
                   <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
@@ -1330,8 +1330,8 @@
               <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
                 <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
               </div>
-              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿" />
-              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人" />
+              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
+              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
               <div v-else>
                 <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -1339,7 +1339,7 @@
                     <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
                     <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
-                  <van-icon name="arrow" color="#c8c9cc" />
+                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
                 </div>
                 <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
                   <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
@@ -1352,7 +1352,7 @@
 
       <van-tab title="结果">
         <div class="ga-card" style="margin-top:12px;">
-          <van-empty v-if="!gaDetail.rounds.length" description="还没有分组结果" />
+          <van-empty v-if="!gaDetail.rounds.length" description="还没有分组结果"></van-empty>
           <template v-else>
             <div class="round-tabs" style="padding-top:0;" v-if="gaDetail.rounds.length">
               <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="selectGaResultRound(r)">第{{ r }}轮</span>
@@ -1383,7 +1383,7 @@
   <div class="ga-card" style="margin-top:12px;">
     <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
     <div v-else-if="gaRosterError" class="ga-empty">
-      <van-empty image="error" description="名单没载出来，检查一下网络" />
+      <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
       <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
     </div>
     <template v-else>
@@ -1395,8 +1395,8 @@
         <div v-if="gaRosterList.length" class="candidate-search-box">
           <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
         </div>
-        <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉" />
-        <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人" />
+        <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
+        <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
         <div v-else>
           <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -1404,7 +1404,7 @@
               <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
               <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
             </div>
-            <van-icon name="arrow" color="#c8c9cc" />
+            <van-icon name="arrow" color="#c8c9cc"></van-icon>
           </div>
           <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
             <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
@@ -1415,8 +1415,8 @@
         <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
           <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
         </div>
-        <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿" />
-        <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人" />
+        <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
+        <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
         <div v-else>
           <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -1424,7 +1424,7 @@
               <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
               <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
             </div>
-            <van-icon name="arrow" color="#c8c9cc" />
+            <van-icon name="arrow" color="#c8c9cc"></van-icon>
           </div>
           <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
             <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
@@ -2517,7 +2517,7 @@
 <!-- ========== 分组管理台：开始填志愿设置层 ========== -->
 <van-popup v-model:show="gaStartShow" position="bottom" round :close-on-click-overlay="!gaStartBusy">
   <div class="ga-start-popup">
-    <div class="ga-start-head">开始填写志愿 <van-icon name="cross" color="#c8c9cc" @click="closeStartPopup()" /></div>
+    <div class="ga-start-head">开始填写志愿 <van-icon name="cross" color="#c8c9cc" @click="closeStartPopup()"></van-icon></div>
     <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
     <div class="ga-form-row">
       <div class="ga-form-label">每组男生数</div>

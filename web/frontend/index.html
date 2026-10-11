@@ -6114,7 +6114,30 @@ createApp({
       return (pv && typeof pv.results_preserved === 'number') ? pv.results_preserved : 0;
     });
 
-    function gaMsg(e, fallback) { return (e && e.message) ? e.message : fallback; }
+    // 网络层失败（fetch 断连/换网）→ 浏览器原文是 "Failed to fetch"/"Load failed"，用户看不懂
+    function gaNetError(e) {
+      if (!e) return false;
+      if (e.name === 'TypeError') return true;   // fetch 网络层失败的典型形态
+      const m = String(e.message || '');
+      return m.includes('Failed to fetch') || m.includes('Load failed') || m.includes('NetworkError');
+    }
+    function gaMsg(e, fallback) {
+      const m = (e && e.message) ? e.message : '';
+      if (!m) return fallback;
+      if (gaNetError(e)) return '网络不太稳，再试一次看看';
+      return m;   // 含「请求超时，请检查网络后重试」等既有文案，原样透出
+    }
+    // 分组管理台只读 GET：网络层失败隔 600ms 自动重试一次。
+    // 写操作（start/run/flag/preview）绝不能走这里——自动重试可能造成重复执行。
+    async function gaGet(url) {
+      try {
+        return await api(url);
+      } catch(e) {
+        if (!gaNetError(e)) throw e;
+        await new Promise(r => setTimeout(r, 600));
+        return api(url);
+      }
+    }
     function gaAuthBack(e) {
       const m = gaMsg(e, '');
       if (m.includes('未登录') || m.includes('没有权限')) { vant.showToast(m); page.value = 'profile'; return true; }
@@ -6132,7 +6155,7 @@ createApp({
       if (!user.value || !user.value.is_admin) { gaAdminBadge.value = ''; return; }
       if (Date.now() - gaBadgeAt < 30000) return;   // 30 秒缓存，避免每次切页都打实时接口
       try {
-        const data = await api('/api/admin/group/activities');
+        const data = await gaGet('/api/admin/group/activities');
         const n = (data.activities || []).filter(a => a.group_status === '收集中').length;
         gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
       } catch(e) { /* 入口徽标静默失败，不打扰 */ }
@@ -6142,7 +6165,7 @@ createApp({
       if (gaLoading.value) return;
       gaLoading.value = true; gaError.value = false;
       try {
-        const data = await api('/api/admin/group/activities');
+        const data = await gaGet('/api/admin/group/activities');
         gaList.value = data.activities || [];
         const n = gaList.value.filter(a => a.group_status === '收集中').length;
         gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
@@ -6163,7 +6186,7 @@ createApp({
       if (gaDetailLoading.value || !gaDetailId.value) return;
       gaDetailLoading.value = true; gaDetailError.value = false;
       try {
-        const d = await api('/api/admin/group/status?activity_id=' + encodeURIComponent(gaDetailId.value));
+        const d = await gaGet('/api/admin/group/status?activity_id=' + encodeURIComponent(gaDetailId.value));
         gaDetail.value = d;
         // group_flag 以 /status 为第一来源（列表项可能过期）；/status 缺该字段时才补拉列表
         if (d.group_flag) gaFlag.value = d.group_flag;
@@ -6179,7 +6202,7 @@ createApp({
     async function gaFlagFromList() {
       // fallback：/status 未回 group_flag（旧后端）时从列表补拉
       try {
-        const data = await api('/api/admin/group/activities');
+        const data = await gaGet('/api/admin/group/activities');
         const it = (data.activities || []).find(x => x.activity_id === gaDetailId.value);
         gaFlag.value = it ? (it.group_flag || '否') : '否';
       } catch(e) { gaFlag.value = '否'; }
@@ -6205,7 +6228,7 @@ createApp({
       if (!force && gaRosterList.value.length) return;
       gaRosterLoading.value = true; gaRosterError.value = false;
       try {
-        const data = await api('/api/admin/group/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
+        const data = await gaGet('/api/admin/group/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
         gaRosterList.value = data.unsubmitted || []; gaRosterTotal.value = data.total || 0; gaRosterShown.value = 30;
         gaRosterSubmittedList.value = data.submitted || [];
         if (gaRosterTab.value === 0 && !gaRosterList.value.length && gaRosterSubmitted.value > 0) gaRosterTab.value = 1;
@@ -6218,7 +6241,7 @@ createApp({
       const wanted = r;
       gaResultLoading.value = true; gaResultError.value = false;
       try {
-        const data = await api('/api/admin/group/result?activity_id=' + encodeURIComponent(gaDetailId.value) + '&round=' + wanted);
+        const data = await gaGet('/api/admin/group/result?activity_id=' + encodeURIComponent(gaDetailId.value) + '&round=' + wanted);
         if (gaResultRound.value !== data.round) return;   // 已切到别的轮次：丢弃过期响应
         gaGroups.value = data.groups || []; gaGroupsRound.value = data.round || 0;
       } catch(e) {
@@ -6384,7 +6407,7 @@ createApp({
         return;
       }
       try {
-        const data = await api('/api/admin/group/job?job_id=' + encodeURIComponent(gaJobId.value));
+        const data = await gaGet('/api/admin/group/job?job_id=' + encodeURIComponent(gaJobId.value));
         gaPollFails = 0; gaJobProgress.value = data.progress || '';
         const st = data.state;
         if (st === 'pending' || st === 'running') { gaPollTimer = setTimeout(pollGaJob, GA_POLL_MS); return; }
@@ -6435,7 +6458,7 @@ createApp({
       try { jobId = localStorage.getItem(GA_JOB_KEY + gaDetailId.value) || ''; } catch(e) {}
       if (!jobId) return;
       try {
-        const data = await api('/api/admin/group/job?job_id=' + encodeURIComponent(jobId));
+        const data = await gaGet('/api/admin/group/job?job_id=' + encodeURIComponent(jobId));
         const st = data.state;
         if (st === 'pending' || st === 'running') {
           gaJobId.value = jobId; gaJobRound.value = data.round || gaNextRound.value;

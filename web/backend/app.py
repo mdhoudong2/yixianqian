@@ -389,6 +389,32 @@ _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
 SNAPSHOT_FAIL_COOLDOWN = 30  # 秒：取 30 的理由见 docs/读取一致性.md
 _SNAPSHOT_FAIL_UNTIL = {}  # key -> 冷却截止时间戳；只在失败时写，成功时 pop
 
+# 快照抓取的「单飞 + 短窗合并」：
+# - 单飞（single-flight）：per-key 互斥锁保证同一张表同一时刻只有一次 fetch 在途，后来者
+#   排队等它完成后按各自的 coalesce 参数决定复用还是重抓——页面级并发不再重复读全表；
+# - 合并窗口（coalesce）：该表在 coalesce 秒内已**成功**抓过（_snapshot_last_ok）则跳过本次
+#   抓取；失败不写 _snapshot_last_ok，所以失败后的下一次调用必然重抓。
+# 为什么是 2 秒：管理台首页一次加载会并发触发 activities/group_selections/signups/group_results
+# 的 fresh 读，重复全表抓取在 10 req/s 令牌桶后排队，把页面拖到十几秒（前端 15s 超时 + 手机
+# 网络换手就是 Failed to fetch）。2 秒恰好覆盖「同一屏并发请求」窗口，又远小于背景刷新间隔
+# （20–300s）与 _SNAPSHOT_STALE 阈值（60–600s）：最坏情况读取只陈旧 2 秒，远严于系统既有
+# 容忍度，不破坏 docs/读取一致性.md 的决定性读取语义；写后刷新与背景 loop 均传 coalesce=0，
+# 必须真抓，保证写后快照不回退。
+SNAPSHOT_FRESH_COALESCE_SECONDS = 2.0
+_snapshot_fetch_locks = {}  # key -> threading.Lock：同表 fetch 串行化（single-flight）
+_snapshot_fetch_locks_guard = threading.Lock()  # 只保护上面的 dict；取锁时绝不持有 _snapshot_lock
+
+def _snapshot_fetch_lock(key):
+    """按表取抓取锁（惰性创建）。**锁顺序：per-key 锁 → _snapshot_lock**。
+    任何调用方都不得在持有 _snapshot_lock 时调用 refresh_snapshot_table，
+    否则可能与「持 per-key 锁等 _snapshot_lock」的在途 fetch 形成 AB-BA 死锁。"""
+    with _snapshot_fetch_locks_guard:
+        lock = _snapshot_fetch_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _snapshot_fetch_locks[key] = lock
+        return lock
+
 def _snapshot_mark_failed(key):
     """记一次实时读失败：该表进入冷却期，期间读请求不再打飞书。"""
     with _snapshot_lock:
@@ -400,35 +426,62 @@ def _snapshot_failing(key):
         until = _SNAPSHOT_FAIL_UNTIL.get(key)
         return bool(until) and time.time() < until
 
-def refresh_snapshot_table(key):
-    """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）"""
+def refresh_snapshot_table(key, coalesce=0.0):
+    """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）。
+
+    coalesce > 0：该表在窗口内已成功抓过就直接复用，不再打飞书（页面并发去重）。
+    同表 fetch 由 per-key 锁串行化（single-flight）：后到的调用排队等前一次完成，
+    醒来后二次检查合并窗口决定复用还是重抓。`coalesce=0`（写后刷新/背景 loop/全量刷新）
+    即使排在在途 fetch 后面也一定会再抓一次，保证写后快照不回退。
+    锁顺序：per-key 锁 → _snapshot_lock；详见 _snapshot_fetch_lock 的注释。
+    """
     fetcher = _SNAPSHOT_FETCHERS.get(key)
     if not fetcher:
         return
-    try:
-        data = fetcher()
-        if data is None:
-            logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+    with _snapshot_fetch_lock(key):
+        if coalesce > 0:
+            # 拿锁后二次检查：等锁期间前一次抓取可能已失败并进入冷却。此时继续重抓会让
+            # 排队请求在故障期被 single-flight 串行放大成 N 次飞书往返（改动前它们是并行的），
+            # 与冷却「避免用请求量放大限流」的初衷相悖；直接复用现有快照即可。
+            # coalesce=0 的写后刷新不受这段影响：必须真抓（红线 2）。
+            if _snapshot_failing(key):
+                return
+            with _snapshot_lock:
+                last_ok = _snapshot_last_ok.get(key)
+            if last_ok and time.time() - last_ok < coalesce:
+                return
+        try:
+            data = fetcher()
+            if data is None:
+                logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+                _snapshot_mark_failed(key)
+                return
+            with _snapshot_lock:
+                _snapshot[key] = data
+                _snapshot_loaded.add(key)
+                _snapshot_last_ok[key] = time.time()
+                _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
+                # 成功即解除冷却：冷却只压失败重试，绝不能压住自愈路径
+                _SNAPSHOT_FAIL_UNTIL.pop(key, None)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
             _snapshot_mark_failed(key)
-            return
-        with _snapshot_lock:
-            _snapshot[key] = data
-            _snapshot_loaded.add(key)
-            _snapshot_last_ok[key] = time.time()
-            _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
-            # 成功即解除冷却：冷却只压失败重试，绝不能压住自愈路径
-            _SNAPSHOT_FAIL_UNTIL.pop(key, None)
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
-        _snapshot_mark_failed(key)
+    # users 后处理放在 per-key 锁外：_photo_reapply_pending 会拿 _snapshot_lock，
+    # _rebuild_cards_cache 也会读 users 快照；锁内调用会与锁顺序约定纠缠、且一旦
+    # 以后有人在回调里触发抓取就是重入死锁（threading.Lock 不可重入）。
     if key == "users":
         _photo_reapply_pending()
         _rebuild_cards_cache()
 
 def refresh_snapshot_table_async(key):
-    """后台线程异步刷新单个快照表（写接口回包后调用，避免同步刷新拖慢写请求）"""
+    """后台线程异步刷新单个快照表（写接口回包后调用，避免同步刷新拖慢写请求）。
+
+    coalesce=0 显式传参：写后刷新必须真的抓——在途的那次 fetch 可能发生在写之前，
+    若被合并窗口吞掉，快照会停在写前状态（审查红线 2）。
+    """
     try:
-        threading.Thread(target=refresh_snapshot_table, args=(key,), daemon=True).start()
+        threading.Thread(target=refresh_snapshot_table, args=(key,),
+                         kwargs={"coalesce": 0.0}, daemon=True).start()
     except Exception as e:
         logging.getLogger(__name__).warning(f"异步刷新快照表 {key} 失败: {e}")
 
@@ -517,13 +570,18 @@ def _snap_fresh(key):
     都必须走这里——bot 与 H5 内存不共享，吃周期快照会让用户白等一个刷新间隔
     （分组表 300s，用户体感就是「管理员说开始了，大家却进不去」）。
 
+    页面并发去重：传 SNAPSHOT_FRESH_COALESCE_SECONDS（2 秒）合并窗口 + single-flight
+    抓取锁。同一屏多个端点并发调用同一张表时只抓一次，最坏把读取结果陈旧 2 秒——
+    远小于背景刷新间隔与 _SNAPSHOT_STALE 阈值，不改变「判定结果必须来自飞书」的语义；
+    写后刷新走 coalesce=0 不受此窗口影响。
+
     规则见 docs/读取一致性.md。
     """
     if _snapshot_failing(key):
         return _snap(key)
     if not _SNAPSHOT_FETCHERS.get(key):
         return _snap(key)
-    refresh_snapshot_table(key)
+    refresh_snapshot_table(key, coalesce=SNAPSHOT_FRESH_COALESCE_SECONDS)
     return _snap(key)
 
 # ---- 快照读取辅助（镜像 bitable 常用查询；快照未就绪/过期时回退到飞书，保证可用） ----

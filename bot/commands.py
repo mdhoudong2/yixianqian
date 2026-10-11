@@ -15,6 +15,7 @@ from store import (
     unreserve_notified,
 )
 
+from lib import grouping as lib_grouping
 from lib.quota import MONTHLY_REAL_HEARTS
 
 
@@ -605,9 +606,9 @@ def handle_admin_toggle_group_flag(keyword):
         return "格式：开启分组功能 活动ID 开/关\n例如：开启分组功能 A-0002 开"
     activity_id, state = parts[0], parts[1].lower()
     if state in ("开", "on", "1", "是", "true"):
-        flag = "是"
+        enabled = True
     elif state in ("关", "off", "0", "否", "false"):
-        flag = "否"
+        enabled = False
     else:
         return "第二参数需为 开/关（on/off）"
 
@@ -615,14 +616,10 @@ def handle_admin_toggle_group_flag(keyword):
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_FLAG: flag})
-    log(f"管理员设置分组功能开关: {activity_name}({activity_id}) -> {flag}")
-    return (f"已{'开启' if flag == '是' else '关闭'}活动「{activity_name}」的分组功能。\n"
+    res = lib_grouping.set_group_flag(activity_id, enabled, client=bitable, activity=activity)
+    return (f"已{'开启' if res['group_flag'] == '是' else '关闭'}活动「{res['name']}」的分组功能。\n"
             f"开启后，报名该活动的用户可在 H5「我的」页看到「我的分组」入口。"
-            + ("\n（活动结束后记得关闭，入口即隐藏）" if flag == "是" else ""))
+            + ("\n（活动结束后记得关闭，入口即隐藏）" if res["group_flag"] == "是" else ""))
 
 
 

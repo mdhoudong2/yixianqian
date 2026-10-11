@@ -1,0 +1,383 @@
+"""等价性安全网：迁移后的 bot 分组指令，回传文字与副作用必须与旧实作**一字不差**。
+
+同一个桩表、同一个输入，旧路（tests/_golden_*_impl.py，从 base commit 8d68f41 冻结）
+与新路（lib.grouping + bot 渲染层）各跑一遍，断言：
+
+注意 keyword 是**去掉指令前缀之后**的尾巴（bot/yixianqian_bot_ws.py 用
+`text[len("开始填志愿"):].strip()` 切出来再丢进来），不是整句聊天原文。
+写错了不会让测试红，只会让所有案例都掉进同一个早退分支——看起来全绿，
+其实什么都没测。改这里之前先跑 /tmp/dump 类的脚本把实际回传印出来核对。
+
+    回传字符串完全相同  且  写入调用序列与最终表内容完全相同
+
+桩的只是「存取」，规则（幂等判断、回滚、算法、状态流转）全跑真实现——桩掉规则就
+只剩在测 mock 了（与 tests/test_praise_api.py 的 FakeTable 同一取舍）。
+
+案例覆盖每个 handle_* 的每个 return 分支。新增字串不在这个范围内（黄金副本里本来
+就没有），必须在 PR 说明里单独列出。
+"""
+import commands as bot_commands
+import grouping as bot_grouping
+import pytest
+from constants import (
+    ACTIVITY_TABLE_ID,
+    FIELD_GS_CHOICES,
+    FIELD_GS_SELECTOR_GENDER,
+    GROUP_RESULT_TABLE,
+    GROUP_SELECT_TABLE,
+    SIGNUP_TABLE_ID,
+)
+
+from lib import grouping as lib_grouping
+from tests import _golden_commands_impl as golden_commands
+from tests import _golden_grouping_impl as golden_grouping
+
+ACT = "A-0002"
+
+
+# ---------------------------------------------------------------- 假表
+
+class FakeBitable:
+    """够用的内存假表：只实现分组流程用到的 `operator: is` / `isNot`。
+
+    真实的 lib.bitable_client 不桩——它只做 HTTP，桩掉等于没测。
+    """
+
+    def __init__(self, tables=None, fail_create_after=None, search_fails=None):
+        # 必须连 fields 一起深拷贝：同一个 Case 会被建两次（旧路一次、新路一次），
+        # 只拷外层 dict 的话两条路共用同一批 fields，第一条跑完就把第二条的起点改了。
+        self.tables = {k: [{"record_id": r["record_id"], "fields": dict(r["fields"])}
+                           for r in v] for k, v in (tables or {}).items()}
+        self.fail_create_after = fail_create_after
+        self.search_fails = search_fails or set()
+        self.calls = []
+        self._seq = 0
+
+    # -- 读 --
+    def search_records(self, table_id, filter_conditions=None, *a, **k):
+        self.calls.append(("search", table_id))
+        if table_id in self.search_fails:
+            return None          # 模拟飞书限流/网络抖动时 lib 的原始返回
+        conds = (filter_conditions or {}).get("conditions", [])
+        return [r for r in self.tables.get(table_id, []) if self._match(r, conds)]
+
+    @staticmethod
+    def _match(row, conds):
+        for c in conds:
+            want = (c.get("value") or [""])[0]
+            got = row["fields"].get(c.get("field_name"), "")
+            if isinstance(got, list):
+                got = "".join(x.get("text", "") for x in got)
+            if c.get("operator") == "isNot":
+                if got == want:
+                    return False
+            elif got != want:
+                return False
+        return True
+
+    # -- 写 --
+    def update_record(self, table_id, record_id, fields):
+        self.calls.append(("update", table_id, record_id, dict(fields)))
+        for r in self.tables.get(table_id, []):
+            if r["record_id"] == record_id:
+                r["fields"].update(fields)
+                return r
+        return None
+
+    def create_record(self, table_id, fields):
+        self._seq += 1
+        row = {"record_id": f"rec_new{self._seq}", "fields": dict(fields)}
+        self.tables.setdefault(table_id, []).append(row)
+        self.calls.append(("create", table_id, dict(fields)))
+        return row
+
+    def batch_create_records(self, table_id, records_fields):
+        self.calls.append(("batch_create", table_id, [dict(r) for r in records_fields]))
+        rows = self.tables.setdefault(table_id, [])
+        created = 0
+        for fields in records_fields:
+            if self.fail_create_after is not None and created >= self.fail_create_after:
+                break
+            self._seq += 1
+            rows.append({"record_id": f"rec_new{self._seq}", "fields": dict(fields)})
+            created += 1
+        return created
+
+    def batch_delete_records(self, table_id, record_ids):
+        self.calls.append(("batch_delete", table_id, list(record_ids)))
+        keep = [r for r in self.tables.get(table_id, []) if r["record_id"] not in record_ids]
+        self.tables[table_id] = keep
+        return len(keep)
+
+    # -- 断言辅助 --
+    def writes(self):
+        """只留写操作；search 是读，比它没意义，还会被调用次数差异误伤。"""
+        return [c for c in self.calls if c[0] != "search"]
+
+
+def _act(**over):
+    fields = {"活动ID": ACT, "活动名称": "关系自洽", "分组状态": "收集中",
+              "每组男生数": 2, "每组女生数": 2, "分组功能开启": "否"}
+    fields.update(over)
+    return {"record_id": "rec_act", "fields": fields}
+
+
+def _signup(oid, nick="某人"):
+    return {"record_id": f"rec_s_{oid}",
+            "fields": {"活动ID": ACT, "报名人open_id": oid,
+                       "报名人昵称": nick, "状态": "已报名"}}
+
+
+def _sel(oid, gender, choices=()):
+    fields = {"活动ID": ACT, "选择人open_id": oid, FIELD_GS_SELECTOR_GENDER: gender}
+    for i, cf in enumerate(FIELD_GS_CHOICES):
+        fields[cf] = choices[i] if i < len(choices) else ""
+    return {"record_id": f"rec_g_{oid}", "fields": fields}
+
+
+def _res(oid, group_no, round_no="1"):
+    return {"record_id": f"rec_r_{group_no}_{oid}",
+            "fields": {"活动ID": ACT, "组号": group_no, "用户open_id": oid,
+                       "用户昵称": "", "用户性别": "男性", "轮次": round_no}}
+
+
+USERS = {
+    "ou_m1": {"用户ID": "U-0001", "性别": "男性"},
+    "ou_m2": {"用户ID": "U-0002", "性别": "男性"},
+    "ou_f1": {"用户ID": "U-0003", "性别": "女性"},
+    "ou_f2": {"用户ID": "U-0004", "性别": "女性"},
+    "ou_f3": {"用户ID": "U-0005", "性别": "女性"},
+    "ou_ng": {},                      # 用户表查得到、但用户ID与性别都空
+    "ou_nogender": {"用户ID": "U-0007"},
+    "ou_missing": {},                 # 用户表查不到
+}
+
+
+def _find_user(oid):
+    fields = USERS.get(oid)
+    return [] if fields is None else [{"record_id": f"rec_u_{oid}", "fields": dict(fields)}]
+
+
+def _find_act(fake, activity_id):
+    for r in fake.tables.get(ACTIVITY_TABLE_ID, []):
+        if r["fields"].get("活动ID") == activity_id:
+            return r
+    return None
+
+
+# ---------------------------------------------------------------- 案例
+
+class Case:
+    """一个待验分支：跑哪条指令、喂什么输入、桩表长什么样。"""
+
+    def __init__(self, name, handler, keyword, tables=None, fail_create_after=None,
+                 search_fails=None, algorithm=None):
+        self.name = name
+        self.handler = handler
+        self.keyword = keyword
+        self.tables = _default_tables() if tables is None else tables
+        self.fail_create_after = fail_create_after
+        self.search_fails = search_fails
+        self.algorithm = algorithm
+
+
+def _default_tables():
+    """4 男 1 女已交志愿——足够跑通一次成功分组。"""
+    return {
+        ACTIVITY_TABLE_ID: [_act()],
+        SIGNUP_TABLE_ID: [_signup(o, n) for o, n in (
+            ("ou_m1", "小北"), ("ou_m2", "阿北"), ("ou_f1", "阿南"), ("ou_f2", "小西"),
+            ("ou_f3", "小东"), ("ou_ng", "无号"), ("ou_nogender", "无性别"))],
+        GROUP_SELECT_TABLE: [
+            _sel("ou_m1", "男性", ("ou_f1",)), _sel("ou_m2", "男性", ("ou_f2",)),
+            _sel("ou_f1", "女性", ("ou_m1",)), _sel("ou_f2", "女性", ("ou_m2",)),
+            _sel("ou_f3", "女性", ()),
+        ],
+        GROUP_RESULT_TABLE: [],
+    }
+
+
+def _raise(exc):
+    def _boom(*a, **k):
+        raise exc
+    return _boom
+
+
+def _empty_groups(*a, **k):
+    return []
+
+
+CASES = [
+    # ---- 开始填志愿（6）----
+    Case("start/格式错误", "start", ""),
+    Case("start/非数字", "start", "A-0002 x 3"),
+    Case("start/每组为零", "start", "A-0002 0 3"),
+    Case("start/活动不存在", "start", "A-9999 2 2"),
+    Case("start/成功有历史", "start", "A-0002 3 3",
+         tables={**_default_tables(),
+                 GROUP_RESULT_TABLE: [_res("ou_m1", 1, "1"), _res("ou_m2", 1, "1"),
+                                      _res("ou_f1", 2, "2")]}),
+    Case("start/成功无历史", "start", "A-0002 3 3"),
+
+    # ---- 执行分组（13）----
+    Case("stop/格式错误", "stop", ""),
+    Case("stop/轮次非数字", "stop", "A-0002 第三轮"),
+    Case("stop/轮次为零", "stop", "A-0002 0"),
+    Case("stop/活动不存在", "stop", "A-9999"),
+    Case("stop/每组为零", "stop", "A-0002",
+         tables={**_default_tables(),
+                 ACTIVITY_TABLE_ID: [_act(每组男生数=0, 每组女生数=0)]}),
+    Case("stop/幂等拦截", "stop", "A-0002 2",
+         tables={**_default_tables(),
+                 GROUP_RESULT_TABLE: [_res("ou_m1", 1, "2")]}),
+    Case("stop/执行成功", "stop", "A-0002"),
+    Case("stop/执行成功第二轮", "stop", "A-0002 2",
+         tables={**_default_tables(),
+                 GROUP_RESULT_TABLE: [_res("ou_m1", 1, "1")]}),
+    Case("stop/人数不足", "stop", "A-0002",
+         tables={**_default_tables(),
+                 GROUP_SELECT_TABLE: [_sel("ou_m1", "男性"), _sel("ou_f1", "女性")]}),
+    Case("stop/人数不足含跳过", "stop", "A-0002",
+         tables={**_default_tables(), GROUP_SELECT_TABLE: [
+             _sel("ou_m1", "男性"), _sel("ou_f1", "女性"), _sel("ou_nogender", "")]}),
+    Case("stop/算法异常", "stop", "A-0002",
+         algorithm=_raise(ValueError("炸了"))),
+    Case("stop/算法返回空", "stop", "A-0002", algorithm=_empty_groups),
+    Case("stop/写入不完整", "stop", "A-0002", fail_create_after=3),
+    Case("stop/幂等查询读失败", "stop", "A-0002",
+         search_fails={GROUP_RESULT_TABLE}),
+
+    # ---- 分组状态（3）----
+    Case("status/格式错误", "status", "   "),
+    Case("status/活动不存在", "status", "A-9999"),
+    Case("status/成功", "status", ACT),
+
+    # ---- 查看未提交（6）----
+    Case("unsubmitted/格式错误", "unsubmitted", "   "),
+    Case("unsubmitted/活动不存在", "unsubmitted", "A-9999"),
+    Case("unsubmitted/全部已提交", "unsubmitted", ACT,
+         tables={**_default_tables(),
+                 SIGNUP_TABLE_ID: [_signup("ou_m1", "小北"), _signup("ou_f1", "阿南")]}),
+    Case("unsubmitted/部分未提交", "unsubmitted", ACT),
+    Case("unsubmitted/缺用户ID", "unsubmitted", ACT,
+         tables={**_default_tables(), SIGNUP_TABLE_ID: [_signup("ou_ng", "无号")]}),
+    Case("unsubmitted/缺性别", "unsubmitted", ACT,
+         tables={**_default_tables(), SIGNUP_TABLE_ID: [_signup("ou_nogender", "无性别")],
+                 GROUP_SELECT_TABLE: []}),
+
+    # ---- 分组功能开关（13）----
+    Case("flag/格式错误", "flag", ""),
+    Case("flag/非法状态", "flag", "A-0002 也许"),
+    Case("flag/活动不存在", "flag", "A-9999 开"),
+]
+
+for _alias in ("开", "on", "1", "是", "true"):
+    CASES.append(Case(f"flag/开启-{_alias}", "flag", f"{ACT} {_alias}"))
+for _alias in ("关", "off", "0", "否", "false"):
+    CASES.append(Case(f"flag/关闭-{_alias}", "flag", f"{ACT} {_alias}"))
+
+
+# ---------------------------------------------------------------- 驱动
+
+def _patch_golden(monkey, fake, case):
+    """把冻结旧实作接到假表上。
+
+    `search_records` 外面包一层 None→[]，与 bot/clients.py 原本的语义一模一样；
+    新路 lib 内部调的是 raw 的 client.search_records，由 execute_round 自己决定怎么
+    解释 None。两条路最终行为必须一致——这正是要验的东西。
+    """
+    noop = lambda *a, **k: None  # noqa: E731
+    # 算法评分常量已随算法搬进 lib，bot/constants.py 那边没有了。黄金副本是从
+    # `from constants import *` 拿它们的，不喂就是 NameError → 被当成「算法出错」
+    # 吞掉，两条路都返回「算法出错」，测试照样全绿——那种绿是假的。
+    # 喂的就是 lib 现在用的那一份，两边算法输入完全一致（数值由
+    # tests/test_grouping_admin.py 的 test_scores_survived_the_move 钉死）。
+    for name in ("PRIORITY_SCORES", "MATCHMAKER_STAR_SCORES",
+                 "WEIGHT_USER_SELECTION", "WEIGHT_MATCHMAKER_PICK"):
+        monkey.setattr(golden_grouping, name, getattr(lib_grouping, name), raising=False)
+    for mod in (golden_grouping, golden_commands):
+        monkey.setattr(mod, "search_records",
+                       lambda *a, **k: fake.search_records(*a, **k) or [], raising=False)
+        monkey.setattr(mod, "update_record", fake.update_record, raising=False)
+        monkey.setattr(mod, "batch_create_records", fake.batch_create_records, raising=False)
+        monkey.setattr(mod, "batch_delete_records", fake.batch_delete_records, raising=False)
+        monkey.setattr(mod, "create_record", fake.create_record, raising=False)
+        monkey.setattr(mod, "find_activity_by_id", lambda aid: _find_act(fake, aid), raising=False)
+        monkey.setattr(mod, "find_user_by_openid", _find_user, raising=False)
+        monkey.setattr(mod, "log", noop, raising=False)
+    if case.algorithm is not None:
+        monkey.setattr(golden_grouping, "run_grouping_algorithm", case.algorithm)
+
+
+def _patch_new(monkey, fake, case):
+    """新路：lib 拿到的是 client 实例与 find_user_by_openid 注入。"""
+    monkey.setattr(bot_grouping, "bitable", fake)
+    monkey.setattr(bot_commands, "bitable", fake)
+    monkey.setattr(bot_grouping, "find_activity_by_id", lambda aid: _find_act(fake, aid))
+    monkey.setattr(bot_commands, "find_activity_by_id", lambda aid: _find_act(fake, aid))
+    monkey.setattr(bot_grouping, "find_user_by_openid", _find_user)
+    monkey.setattr(lib_grouping, "log", lambda *a, **k: None)
+    if case.algorithm is not None:
+        monkey.setattr(lib_grouping, "run_grouping_algorithm", case.algorithm)
+
+
+def _run_golden(case):
+    if case.handler == "flag":
+        return golden_commands.handle_admin_toggle_group_flag(case.keyword)
+    if case.handler == "start":
+        return golden_grouping.handle_admin_start_group(case.keyword)
+    if case.handler == "stop":
+        return golden_grouping.handle_admin_stop_group(case.keyword)
+    if case.handler == "status":
+        return golden_grouping.handle_admin_group_status(case.keyword)
+    return golden_grouping.handle_admin_unsubmitted(case.keyword)
+
+
+def _run_new(case):
+    if case.handler == "flag":
+        return bot_commands.handle_admin_toggle_group_flag(case.keyword)
+    if case.handler == "start":
+        return bot_grouping.handle_admin_start_group(case.keyword)
+    if case.handler == "stop":
+        return bot_grouping.handle_admin_stop_group(case.keyword)
+    if case.handler == "status":
+        return bot_grouping.handle_admin_group_status(case.keyword)
+    return bot_grouping.handle_admin_unsubmitted(case.keyword)
+
+
+@pytest.fixture
+def monkey_and_lockdir(monkeypatch, tmp_path):
+    """两条路共用同一份注入：表 ID / 栏位名 / 锁目录都走同一个入口，别各配各的。"""
+    bot_grouping.configure_grouping_lib(str(tmp_path))
+    return monkeypatch
+
+
+def _build(case):
+    return FakeBitable(case.tables, case.fail_create_after, case.search_fails)
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
+def test_bot_text_is_identical_to_frozen_impl(monkey_and_lockdir, case):
+    """新旧两条路的回传字符串必须逐字相同——这是本次的红线。"""
+    old, new = _build(case), _build(case)
+    _patch_golden(monkey_and_lockdir, old, case)
+    old_text = _run_golden(case)
+    _patch_new(monkey_and_lockdir, new, case)
+    new_text = _run_new(case)
+
+    assert new_text == old_text, (
+        f"文案漂移\n--- 旧 ---\n{old_text!r}\n--- 新 ---\n{new_text!r}")
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
+def test_side_effects_are_identical(monkey_and_lockdir, case):
+    """文字相同还不够：写进飞书的每一条也要相同，否则表已经被改了话才算对。"""
+    old, new = _build(case), _build(case)
+    _patch_golden(monkey_and_lockdir, old, case)
+    _run_golden(case)
+    _patch_new(monkey_and_lockdir, new, case)
+    _run_new(case)
+
+    assert new.writes() == old.writes(), (
+        f"副作用漂移\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
+    assert new.tables == old.tables

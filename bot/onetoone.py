@@ -14,6 +14,7 @@ from grouping import get_activity_signups
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 
 from lib import recommend
+from lib.grouping import PRIORITY_SCORES
 
 # 一对一执行互斥锁：防止管理员并发两次「执行一对一」互相删除/覆盖结果
 _onetoone_lock = threading.Lock()

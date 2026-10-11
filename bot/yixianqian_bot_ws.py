@@ -82,6 +82,7 @@ from commands import (
 )
 from constants import *
 from grouping import (
+    configure_grouping_lib,
     handle_admin_group_status,
     handle_admin_start_group,
     handle_admin_stop_group,
@@ -112,8 +113,6 @@ from points_admin import (
 from praise_admin import praise_stats_text, praise_weekly_loop
 from queries import find_user_by_openid
 from store import load_bindings, load_welcomed, update_p2p_chat
-
-from lib import grouping as lib_grouping
 
 # WebSocket健康检查
 _last_ws_event_time = time.time()
@@ -684,8 +683,10 @@ def main():
 
     init_points_db()
 
-    # 分组锁必须落在 bot 与 H5 共享的目录：两个进程各锁各的等于没锁。
-    lib_grouping.configure(lock_dir=SHARED_DATA_DIR)
+    # 分组锁必须落在 bot 与 H5 共享的目录：两个进程各锁各的等于没锁；
+    # 表 ID 与栏位名由 bot/grouping.py 一并注入（lib.grouping 不 import bot 的
+    # constants，写错 base 时必须报错而不是静默写到别的表）。
+    configure_grouping_lib(SHARED_DATA_DIR)
 
     # 启动业务线程（只启动一次，长连接重连时不重复启动）
     start_worker_threads()

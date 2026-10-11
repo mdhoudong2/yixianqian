@@ -1,271 +1,86 @@
-"""活动分组：卫星滚动分组算法、分组卡片、分组指令处理。"""
-import threading
-from concurrent.futures import ThreadPoolExecutor
+"""活动分组（bot 侧）：**渲染层 + re-export**，业务逻辑在 lib/grouping.py。
+
+管理员那五条指令的算法、读写、幂等判断都搬进了 `lib.grouping`，这里只做两件事：
+把 lib 回传的结构化结果拼成给管理员看的中文，以及把用户侧的分组卡片流程原样留着
+（用户侧 H5 已经完整实现，飞书卡片是旧通道，本次不迁移）。
+
+回传的每一句中文字符串与迁移前逐字相同，并由 tests/test_grouping_parity.py 对着
+从 base commit 冻结的旧实作逐案比对钉死——改文案必红灯。
+
+保留的 re-export 是为了让旧入口继续可用：bot/onetoone.py 与
+scripts/dev/seed_test_grouping.py 直接 `from grouping import ...`。
+"""
 
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 
-# 分组指令互斥锁：防止管理员并发两次“执行分组”互相删除/覆盖结果
-_grouping_lock = threading.Lock()
+from lib import grouping as lib_grouping
+from lib.grouping import (  # noqa: F401 — re-export 兼容旧入口，勿删
+    PRIORITY_SCORES,
+    GroupingBusy,
+    _dup_nicknames,
+    _mutual_affinity_score,
+    _option_label,
+    collect_participants,
+    grouping_lock,
+    run_grouping_algorithm,
+)
+
+# 分组指令互斥锁：防止并发「执行分组」「开始填志愿」互相删除/覆盖结果。
+# bot 与 H5 后端是两个进程、共用同一个数据目录，单纯的 threading.Lock 挡不住对面，
+# 所以走 lib.grouping 的 flock 版本。
+GROUPING_LOCK_TIMEOUT = 180
+# 抢锁逾时的提示。整条路径是新增的（原先是无限等待，压根等不到这个分支）。
+GROUPING_BUSY_REPLY = "当前已有分组任务在执行中，请稍候再试。"
 
 
-def _user_selection_score(priority):
-    return PRIORITY_SCORES.get(priority, 0)
+def configure_grouping_lib(lock_dir):
+    """把本进程用的表 ID / 栏位名注入 lib.grouping。
 
-
-
-
-def _mutual_affinity_score(p1_id, p2_id, selections, matchmaker_picks=None):
-    """计算互有好感分数（双向分数相加，含权重）—— 严格对照JS版"""
-    if matchmaker_picks is None:
-        matchmaker_picks = []
-
-    # p1 -> p2
-    us1 = 0
-    if p1_id in selections:
-        for s in selections[p1_id]:
-            if s["id"] == p2_id:
-                us1 = _user_selection_score(s["priority"])
-                break
-    # p2 -> p1
-    us2 = 0
-    if p2_id in selections:
-        for s in selections[p2_id]:
-            if s["id"] == p1_id:
-                us2 = _user_selection_score(s["priority"])
-                break
-
-    # 红娘推荐分数
-    ms1 = ms2 = 0
-    for pick in matchmaker_picks:
-        if pick.get("person1_id") == p1_id and pick.get("person2_id") == p2_id:
-            ms1 = max(ms1, MATCHMAKER_STAR_SCORES.get(pick.get("stars", 0), 0))
-        if pick.get("person1_id") == p2_id and pick.get("person2_id") == p1_id:
-            ms2 = max(ms2, MATCHMAKER_STAR_SCORES.get(pick.get("stars", 0), 0))
-
-    final1 = us1 * WEIGHT_USER_SELECTION + ms1 * WEIGHT_MATCHMAKER_PICK
-    final2 = us2 * WEIGHT_USER_SELECTION + ms2 * WEIGHT_MATCHMAKER_PICK
-    return final1 + final2
-
-
-
-
-def _group_affinity_score(candidate_id, group_member_ids, selections, matchmaker_picks=None):
-    """候选人与小组所有成员的亲和力总分"""
-    total = 0
-    for mid in group_member_ids:
-        total += _mutual_affinity_score(candidate_id, mid, selections, matchmaker_picks)
-    return total
-
-
-
-
-def _create_pair_scores_table(males, females, selections, matchmaker_picks=None):
-    """创建所有男女配对的分数表，按分数降序"""
-    table = []
-    for m in males:
-        for f in females:
-            table.append({
-                "maleId": m, "femaleId": f,
-                "score": _mutual_affinity_score(m, f, selections, matchmaker_picks)
-            })
-    table.sort(key=lambda x: x["score"], reverse=True)
-    return table
-
-
-
-
-def _find_core_pair(pair_scores, assigned):
-    """找第一个双方都未分配的配对"""
-    for pair in pair_scores:
-        if pair["maleId"] not in assigned and pair["femaleId"] not in assigned:
-            return pair
-    return None
-
-
-
-
-def _add_unassigned_to_group(group, males, females, assigned):
-    """核心配对找不到时，各加一个未分配的男女"""
-    um = [m for m in males if m not in assigned]
-    uf = [f for f in females if f not in assigned]
-    if um:
-        group["male_ids"].append(um[0])
-        assigned.add(um[0])
-    if uf:
-        group["female_ids"].append(uf[0])
-        assigned.add(uf[0])
-
-
-
-
-def _determine_target_gender(group, target_male, target_female):
-    """确定需要添加的性别"""
-    if len(group["male_ids"]) < target_male and len(group["female_ids"]) < target_female:
-        return "male" if len(group["male_ids"]) <= len(group["female_ids"]) else "female"
-    elif len(group["male_ids"]) < target_male:
-        return "male"
-    elif len(group["female_ids"]) < target_female:
-        return "female"
-    return None
-
-
-
-
-def _expand_group_to_full(group, males, females, assigned, target_male, target_female,
-                          selections, matchmaker_picks=None):
-    """扩充小组到满编"""
-    max_iter = max(target_male, target_female) * 2
-    for _ in range(max_iter):
-        if len(group["male_ids"]) >= target_male and len(group["female_ids"]) >= target_female:
-            break
-        gender = _determine_target_gender(group, target_male, target_female)
-        if not gender:
-            break
-        pool = [x for x in (males if gender == "male" else females) if x not in assigned]
-        if not pool:
-            break
-        members = group["male_ids"] + group["female_ids"]
-        scored = [{"id": c, "score": _group_affinity_score(c, members, selections, matchmaker_picks)}
-                  for c in pool]
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        best = scored[0]["id"]
-        if gender == "male":
-            group["male_ids"].append(best)
-        else:
-            group["female_ids"].append(best)
-        assigned.add(best)
-
-
-
-
-def _distribute_remaining(groups, all_remaining, males_set, females_set, full_count):
-    """剩余人员平均分配到各满编组"""
-    if not all_remaining or full_count == 0:
-        return
-    rem_males = [x for x in all_remaining if x in males_set]
-    rem_females = [x for x in all_remaining if x in females_set]
-    m_per = len(rem_males) // full_count
-    m_extra = len(rem_males) % full_count
-    f_per = len(rem_females) // full_count
-    f_extra = len(rem_females) % full_count
-    mi = fi = 0
-    for gi in range(full_count):
-        g = groups[gi]
-        mc = m_per + (1 if gi < m_extra else 0)
-        fc = f_per + (1 if gi < f_extra else 0)
-        for _ in range(mc):
-            if mi < len(rem_males):
-                g["male_ids"].append(rem_males[mi])
-                mi += 1
-        for _ in range(fc):
-            if fi < len(rem_females):
-                g["female_ids"].append(rem_females[fi])
-                fi += 1
-
-
-
-
-def run_grouping_algorithm(participants, selections, males_per_group, females_per_group,
-                           matchmaker_picks=None):
+    放在这里而不是 bot/yixianqian_bot_ws.py，是为了让「lib 需要哪些栏位」只有一处
+    定义——main() 和 tests/test_grouping_parity.py 调的是同一个函数，两边不会各配
+    各的、各配错的。H5 后端另有一份自己那份注入。
     """
-    卫星滚动分组法 —— 严格对照JS版generateGroups
-    participants: [{"id": "xxx", "gender": "male"/"female"}, ...]
-    selections: {user_id: [{"id": target_id, "priority": 1-7}, ...], ...}
-    matchmaker_picks: [] (红娘推荐，暂不使用)
-    返回: [{"group_id": 1, "male_ids": [...], "female_ids": [...]}, ...]
-    """
-    if matchmaker_picks is None:
-        matchmaker_picks = []
+    lib_grouping.configure(
+        activity_table_id=ACTIVITY_TABLE_ID,
+        group_select_table=GROUP_SELECT_TABLE,
+        group_result_table=GROUP_RESULT_TABLE,
+        signup_table_id=SIGNUP_TABLE_ID,
+        fields={
+            "activity_id": FIELD_ACTIVITY_ID,
+            "activity_name": FIELD_ACTIVITY_NAME,
+            "group_status": FIELD_ACT_GROUP_STATUS,
+            "male_per_group": FIELD_ACT_MALE_PER_GROUP,
+            "female_per_group": FIELD_ACT_FEMALE_PER_GROUP,
+            "group_flag": FIELD_ACT_GROUP_FLAG,
+            "gs_activity_id": FIELD_GS_ACTIVITY_ID,
+            "gs_selector_oid": FIELD_GS_SELECTOR_OID,
+            "gs_selector_gender": FIELD_GS_SELECTOR_GENDER,
+            "gs_choices": FIELD_GS_CHOICES,
+            "gr_activity_id": FIELD_GR_ACTIVITY_ID,
+            "gr_group_no": FIELD_GR_GROUP_NO,
+            "gr_user_oid": FIELD_GR_USER_OID,
+            "gr_user_name": FIELD_GR_USER_NAME,
+            "gr_user_gender": FIELD_GR_USER_GENDER,
+            "gr_round": FIELD_GR_ROUND,
+            "signup_activity_id": FIELD_SIGNUP_ACTIVITY_ID,
+            "signup_status": FIELD_SIGNUP_STATUS,
+            "signup_openid": FIELD_SIGNUP_OPENID,
+            "signup_nickname": FIELD_SIGNUP_NICKNAME,
+            "gender": FIELD_GENDER,
+            "user_id": "用户ID",
+        },
+        lock_dir=lock_dir,
+    )
 
-    # 参数校验
-    if males_per_group < 1 or females_per_group < 1:
-        raise ValueError("每组男女人数必须大于0")
-
-    males = [p["id"] for p in participants if p.get("gender") == "male"]
-    females = [p["id"] for p in participants if p.get("gender") == "female"]
-    males_set = set(males)
-    females_set = set(females)
-
-    max_by_males = len(males) // males_per_group
-    max_by_females = len(females) // females_per_group
-    full_count = min(max_by_males, max_by_females)
-
-    if full_count == 0:
-        return []
-
-    pair_scores = _create_pair_scores_table(males, females, selections, matchmaker_picks)
-    assigned = set()
-    groups = []
-
-    for gi in range(full_count):
-        group = {"group_id": gi + 1, "male_ids": [], "female_ids": []}
-        core = _find_core_pair(pair_scores, assigned)
-        if not core:
-            _add_unassigned_to_group(group, males, females, assigned)
-        else:
-            group["male_ids"].append(core["maleId"])
-            group["female_ids"].append(core["femaleId"])
-            assigned.add(core["maleId"])
-            assigned.add(core["femaleId"])
-
-        _expand_group_to_full(group, males, females, assigned, males_per_group,
-                              females_per_group, selections, matchmaker_picks)
-
-        if len(group["male_ids"]) >= males_per_group and len(group["female_ids"]) >= females_per_group:
-            groups.append(group)
-        else:
-            # 不满编，退回人员，停止创建
-            for mid in group["male_ids"] + group["female_ids"]:
-                assigned.discard(mid)
-            break
-
-    # 剩余人员
-    remaining = [x for x in males if x not in assigned] + [x for x in females if x not in assigned]
-    if remaining and len(groups) > 0:
-        _distribute_remaining(groups, remaining, males_set, females_set, len(groups))
-
-    return groups
 
 
 
 def get_activity_signups(activity_id):
-    """获取活动的已报名用户列表"""
-    signups = search_records(SIGNUP_TABLE_ID, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-            {"field_name": FIELD_SIGNUP_STATUS, "operator": "is", "value": ["已报名"]}
-        ]
-    })
-
-    # 逐人查用户表取性别是串行 API 的耗时瓶颈（大活动尤其明显）。
-    # 用线程池并发查，显著降低延迟。
-    signup_rows = []
-    for s in signups:
-        sf = s.get("fields", {})
-        oid = get_field_text(sf, FIELD_SIGNUP_OPENID)
-        nickname = get_field_text(sf, FIELD_SIGNUP_NICKNAME)
-        if oid:
-            signup_rows.append((oid, nickname))
-
-    def _fetch(row):
-        oid, nickname = row
-        gender = ""
-        uid = ""
-        user_recs = find_user_by_openid(oid)
-        if user_recs:
-            uf = user_recs[0].get("fields", {})
-            gender = get_field_text(uf, FIELD_GENDER)
-            uid = get_field_text(uf, "用户ID")
-        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid}
-
-    users = []
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="signup-gender") as pool:
-        for u in pool.map(_fetch, signup_rows):
-            users.append(u)
-    return users
+    """获取活动的已报名用户列表（bot/onetoone.py 仍在用这个入口）。"""
+    return lib_grouping.collect_participants(
+        activity_id, client=bitable, find_user_by_openid=find_user_by_openid)
 
 
 
@@ -290,19 +105,6 @@ def get_user_group_selection(activity_id, open_id):
     return {"record_id": records[0]["record_id"], "choices": choices}
 
 
-
-
-def _dup_nicknames(participants):
-    """参与者昵称是否存在重复（决定下拉选项是否需要追加编号消歧）"""
-    names = [p.get("nickname", "") for p in participants]
-    return len(names) != len(set(names))
-
-
-def _option_label(nickname, user_id, with_uid):
-    """下拉选项文案：有重名时统一追加编号，避免选错人；缺编号时退回纯昵称"""
-    if with_uid and user_id:
-        return f"{nickname}（{user_id}）"
-    return nickname
 
 
 def build_group_select_card(activity_id, activity_name, participants, user_gender, existing_choices=None):
@@ -556,30 +358,71 @@ def handle_admin_start_group(keyword):
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
+    activity_name = get_field_text(activity.get("fields", {}), FIELD_ACTIVITY_NAME)
 
-    update_record(ACTIVITY_TABLE_ID, record_id, {
-        FIELD_ACT_GROUP_STATUS: "收集中",
-        FIELD_ACT_MALE_PER_GROUP: m_per,
-        FIELD_ACT_FEMALE_PER_GROUP: f_per
-    })
+    # 改状态 + 清历史结果必须整段持锁。原先这段完全不持锁，而管理指令跑在
+    # ADMIN_TASK_EXECUTOR（4 条线程）上，同时来「开始填志愿」和「执行分组」
+    # 就会删掉一半旧结果、写进去一半新结果。
+    try:
+        with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
+            res = lib_grouping.start_group(activity_id, m_per, f_per,
+                                           client=bitable, activity=activity)
+    except GroupingBusy:
+        return GROUPING_BUSY_REPLY
 
-    # 重新开放志愿收集：清除该活动历史分组结果，否则「执行分组」的幂等保护会拦截重跑同一轮次
-    old_results = search_records(GROUP_RESULT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-    if old_results:
-        batch_delete_records(GROUP_RESULT_TABLE, [r["record_id"] for r in old_results])
-        log(f"重新开放志愿收集，已清除 {len(old_results)} 条历史分组结果: {activity_name}")
+    # start_group 的回传码不能丢。lib 里 SEARCH_FAILED 只有在
+    # treat_search_failure_as_empty=False 且「读历史分组结果失败」时才可能返回；
+    # bot 走默认 True，所以今天这行恒为 OK（parity 42 案例为证）——但正因如此，
+    # 一旦日后有人照 H5 的接法改成传 False，「清历史失败」就会被静默吞掉，管理员
+    # 仍收到「志愿填写已开始」。这里钉一道断言，让那种改动在这里立刻炸掉，
+    # 而不是悄悄发一条与事实相反的回执。抛异常由 _admin_task_worker 统一兜成
+    # 「任务处理失败：…」，不会把错误伪装成成功。
+    if res.get("code") != "OK":
+        raise RuntimeError(
+            f"start_group 未成功（code={res.get('code')}），不发送成功回执。"
+            "bot 应保持默认 treat_search_failure_as_empty=True；若确需改为严格模式，"
+            "请一并为该分支补上面向管理员的失败文案。")
 
     # 不再向报名者群发通知（现场活动，用户自查 H5）。管理员收到开始指令回执即可。
     log(f"管理员开始填志愿: {activity_name} {m_per}男{f_per}女")
     return (f"志愿填写已开始：{activity_name}（每组{m_per}男{f_per}女）\n"
             f"已开放，未发送群发通知。\n"
             f"请让用户在 H5 页面自查并提交志愿（现场活动）。")
+
+
+
+
+def _render_grouping_result(res, round_no):
+    """把 execute_round 的结构化结果拼成给管理员看的中文。
+
+    文案归渲染层：lib 只给数据。改这里的字必须同步改 tests/_golden_grouping_impl.py
+    之外的那份断言——等价性测试会直接红。
+    """
+    code = res["code"]
+    if code == "NOT_ENOUGH_PEOPLE":
+        return (f"人数不足，无法分组：{res['males']}男{res['females']}女，"
+                f"每组需要{res['males_per_group']}男{res['females_per_group']}女。\n"
+                f"状态已恢复为「收集中」，等人够了再截止。"
+                + (f"\n（{res['skipped']}人因性别信息缺失被跳过）" if res["skipped"] else ""))
+    if code == "ALGORITHM_ERROR":
+        return f"分组算法出错：{res['error']}，状态已恢复为「收集中」"
+    if code == "EMPTY_GROUPS":
+        return "分组失败，人数不足以组成完整小组，状态已恢复为「收集中」"
+    if code == "PARTIAL_WRITE":
+        return (f"分组结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚，"
+                f"状态恢复为「收集中」，请稍后重试。")
+
+    # 走到这里就是 OK。bot 侧永远不会拿到 SEARCH_FAILED——execute_round 默认
+    # treat_search_failure_as_empty=True，那条是留给 H5 用的。
+    lines = [f"🎉 活动「{res['activity_name']}」第{round_no}轮 分组结果",
+             f"共{res['group_count']}组，参与{res['participant_count']}人，"
+             f"每组{res['males_per_group']}男{res['females_per_group']}女。", ""]
+    for g in res["groups"]:
+        names = "、".join(m["display_name"] for m in g["members"])
+        lines.append(f"第{g['group_id']}组：{names}")
+    lines.append("")
+    lines.append("用户可自查 H5 查看自己的分组结果。")
+    return "\n".join(lines)
 
 
 
@@ -605,141 +448,23 @@ def handle_admin_stop_group(keyword):
 
     af = activity.get("fields", {})
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
     m_per = int(get_field_number(af, FIELD_ACT_MALE_PER_GROUP, 3))
     f_per = int(get_field_number(af, FIELD_ACT_FEMALE_PER_GROUP, 3))
 
     if m_per < 1 or f_per < 1:
         return f"每组男女人数必须大于0（当前：{m_per}男{f_per}女），请先设置再截止"
 
-    with _grouping_lock:
-        # 幂等保护：该活动本轮已生成过结果则拒绝重跑（多轮分组可轮次递进），
-        # 防止并发/重复执行互相删除覆盖分组结果。
-        existing_results = search_records(GROUP_RESULT_TABLE, {
-            "conjunction": "and",
-            "conditions": [
-                {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-                {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
-            ]
-        })
-        if existing_results:
-            return (f"活动「{activity_name}」第{round_no}轮已生成过分组结果，请勿重复执行。"
-                    f"如需重新分组，请先发送「开始填志愿 {activity_id} {m_per} {f_per}」重新开放，再执行分组。")
-        return _do_grouping(activity, round_no)
-
-
-def _do_grouping(activity, round_no):
-    """执行分组（调用方需已持有 _grouping_lock）"""
-    af = activity.get("fields", {})
-    activity_id = get_field_text(af, FIELD_ACTIVITY_ID) or ""
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
-    m_per = int(get_field_number(af, FIELD_ACT_MALE_PER_GROUP, 3))
-    f_per = int(get_field_number(af, FIELD_ACT_FEMALE_PER_GROUP, 3))
-
-    # 更新状态为已截止
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "已截止"})
-
-    # 收集选择数据
-    selections_records = search_records(GROUP_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_GS_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-
-    participants = []
-    seen_oids = set()
-    selections = {}
-    skipped = 0
-
-    for sr in selections_records:
-        sf = sr.get("fields", {})
-        oid = get_field_text(sf, FIELD_GS_SELECTOR_OID)
-        gender = get_field_text(sf, FIELD_GS_SELECTOR_GENDER)
-        if not oid or oid in seen_oids:
-            continue
-        if gender not in ("男性", "女性"):
-            skipped += 1
-            continue
-        seen_oids.add(oid)
-        participants.append({"id": oid, "gender": "male" if gender == "男性" else "female"})
-        choices = []
-        for i, cf in enumerate(FIELD_GS_CHOICES):
-            val = get_field_text(sf, cf)
-            if val:
-                choices.append({"id": val, "priority": i + 1})
-        if choices:
-            selections[oid] = choices
-
-    n_males = sum(1 for p in participants if p["gender"] == "male")
-    n_females = sum(1 for p in participants if p["gender"] == "female")
-
-    if n_males < m_per or n_females < f_per:
-        # 人数不足，恢复状态为收集中
-        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "收集中"})
-        return (f"人数不足，无法分组：{n_males}男{n_females}女，"
-                f"每组需要{m_per}男{f_per}女。\n"
-                f"状态已恢复为「收集中」，等人够了再截止。"
-                + (f"\n（{skipped}人因性别信息缺失被跳过）" if skipped else ""))
-
-    # 运行算法
     try:
-        groups = run_grouping_algorithm(participants, selections, m_per, f_per)
-    except Exception as e:
-        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "收集中"})
-        return f"分组算法出错：{e}，状态已恢复为「收集中」"
-
-    if not groups:
-        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "收集中"})
-        return "分组失败，人数不足以组成完整小组，状态已恢复为「收集中」"
-
-    # 保存结果（用户自查 H5 查询），不再逐人群发通知（现场活动）。
-    # 批量写入分组结果，避免逐条 create_record 在大活动下（数百条）拖到好几分钟。
-    oid_to_nickname = {p["open_id"]: p["nickname"] for p in get_activity_signups(activity_id)}
-    result_records = []
-    for g in groups:
-        group_no = g["group_id"]
-        all_members = [(mid, "男性") for mid in g["male_ids"]] + [(fid, "女性") for fid in g["female_ids"]]
-        for oid, gender in all_members:
-            result_records.append({
-                FIELD_GR_ACTIVITY_ID: activity_id,
-                FIELD_GR_GROUP_NO: group_no,
-                FIELD_GR_USER_OID: oid,
-                FIELD_GR_USER_NAME: oid_to_nickname.get(oid, ""),
-                FIELD_GR_USER_GENDER: gender,
-                FIELD_GR_ROUND: str(round_no)
-            })
-    created = batch_create_records(GROUP_RESULT_TABLE, result_records)
-    if created < len(result_records):
-        # 写入不完整：回滚已写入的部分结果 + 恢复状态，允许重试（避免「0 条结果却显示已完成」）
-        partial = search_records(GROUP_RESULT_TABLE, {
-            "conjunction": "and",
-            "conditions": [
-                {"field_name": FIELD_GR_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-                {"field_name": FIELD_GR_ROUND, "operator": "is", "value": [str(round_no)]}
-            ]
-        })
-        if partial:
-            batch_delete_records(GROUP_RESULT_TABLE, [p["record_id"] for p in partial])
-        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "收集中"})
-        return (f"分组结果写入失败（成功 {created}/{len(result_records)} 条），已回滚，"
-                f"状态恢复为「收集中」，请稍后重试。")
-
-    # 构建给管理员的完整分组结果文案
-    lines = [f"🎉 活动「{activity_name}」第{round_no}轮 分组结果", f"共{len(groups)}组，参与{len(participants)}人，每组{m_per}男{f_per}女。", ""]
-    for g in groups:
-        all_members = [(mid, "男性") for mid in g["male_ids"]] + [(fid, "女性") for fid in g["female_ids"]]
-        names = "、".join(oid_to_nickname.get(oid, oid) for oid, _ in all_members)
-        lines.append(f"第{g['group_id']}组：{names}")
-    lines.append("")
-    lines.append("用户可自查 H5 查看自己的分组结果。")
-
-    # 更新状态为已完成
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_GROUP_STATUS: "已完成"})
-
-    log(f"第{round_no}轮分组完成: {activity_name}, {len(groups)}组, {len(participants)}人")
-    return "\n".join(lines)
-
-
+        with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
+            res = lib_grouping.execute_round(
+                activity_id, round_no, client=bitable, activity=activity,
+                find_user_by_openid=find_user_by_openid)
+            if res["code"] == "ALREADY_DONE":
+                return (f"活动「{res['activity_name']}」第{round_no}轮已生成过分组结果，请勿重复执行。"
+                        f"如需重新分组，请先发送「开始填志愿 {activity_id} {m_per} {f_per}」重新开放，再执行分组。")
+            return _render_grouping_result(res, round_no)
+    except GroupingBusy:
+        return GROUPING_BUSY_REPLY
 
 
 def handle_admin_group_status(keyword):
@@ -752,23 +477,13 @@ def handle_admin_group_status(keyword):
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    status = get_field_text(af, FIELD_ACT_GROUP_STATUS) or "未开始"
-    m_per = get_field_number(af, FIELD_ACT_MALE_PER_GROUP, 0)
-    f_per = get_field_number(af, FIELD_ACT_FEMALE_PER_GROUP, 0)
-
-    signups = get_activity_signups(activity_id)
-    selections = search_records(GROUP_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_GS_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-
-    return (f"活动「{activity_name}」分组状态：\n"
-            f"状态：{status}\n"
-            f"每组：{int(m_per)}男{int(f_per)}女\n"
-            f"报名人数：{len(signups)}\n"
-            f"已提交选择：{len(selections)}人")
+    res = lib_grouping.fetch_status(activity_id, client=bitable, activity=activity,
+                                    find_user_by_openid=find_user_by_openid)
+    return (f"活动「{res['name']}」分组状态：\n"
+            f"状态：{res['group_status']}\n"
+            f"每组：{int(res['males_per_group'])}男{int(res['females_per_group'])}女\n"
+            f"报名人数：{res['signup_count']}\n"
+            f"已提交选择：{res['submitted_count']}人")
 
 
 
@@ -781,33 +496,15 @@ def handle_admin_unsubmitted(keyword):
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
-    act_name = get_field_text(activity.get("fields", {}), FIELD_ACTIVITY_NAME)
 
-    signups = get_activity_signups(activity_id)          # list of {open_id, nickname, gender}
-    selections = search_records(GROUP_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_GS_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-    submitted_oids = {
-        get_field_text(s.get("fields", {}), FIELD_GS_SELECTOR_OID)
-        for s in selections if get_field_text(s.get("fields", {}), FIELD_GS_SELECTOR_OID)
-    }
-
-    unsubmitted = []
-    for s in signups:
-        oid = s["open_id"]
-        if oid in submitted_oids:
-            continue
-        user_id = ""
-        for rec in find_user_by_openid(oid):            # returns a list
-            user_id = rec.get("fields", {}).get("用户ID", "") or ""
-        unsubmitted.append((oid, user_id, s["gender"], s["nickname"]))
+    res = lib_grouping.fetch_unsubmitted(activity_id, client=bitable, activity=activity,
+                                         find_user_by_openid=find_user_by_openid)
+    act_name = res["name"]
+    unsubmitted = res["unsubmitted"]
 
     if not unsubmitted:
         return f"活动「{act_name}」所有报名者均已提交志愿。"
     lines = [f"「{act_name}」未提交志愿（{len(unsubmitted)}人）："]
-    for _, user_id, gender, nick in unsubmitted:
-        lines.append(f"{user_id or '-'} · {gender or '-'} · {nick}")
+    for u in unsubmitted:
+        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u['nickname']}")
     return "\n".join(lines)
-
-

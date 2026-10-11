@@ -1,4 +1,5 @@
 """一线牵 H5 后端服务 - Flask"""
+import contextlib
 import hashlib
 import hmac as _hmac
 import io
@@ -35,6 +36,7 @@ import bitable
 import tencent_face
 from config import *
 
+from lib import grouping as lib_grouping
 from lib import (
     points,
     points_config,
@@ -52,6 +54,67 @@ from lib.util import order_cards_seeded
 # 覆盖 SHARED_DATA_DIR，而 default_db_path() 只会算出 <仓库根>/data。两处不一致
 # 的话 bot 和 H5 会各写一个库，「余额 = 流水求和」当场不成立。
 points_db.set_db_path(POINTS_DB_FILE)
+
+# ========== 管理员分组台：与 bot 共用 lib/grouping ==========
+# 表 ID / 栏位名 / 锁目录在 import 时注入一次；这份对照表必须与 bot/grouping.py 的
+# configure_grouping_lib 逐栏一致（tests/test_group_admin_api.py 直接比对两边注入参数）。
+# 锁目录 = SHARED_DATA_DIR：与 bot 进程共用同一批 yixianqian_grouping_<活动>.lock，
+# 跨进程互斥才成立。
+GROUPING_API_LOCK_TIMEOUT = 5  # H5 抢活动锁预算（秒）：快速失败回 409，不占 gunicorn 线程池
+GROUPING_JOB_TTL = 24 * 3600   # job 记录保留 24 小时
+# job 执行上限：pending/running 超过这个时长视为死任务。pid 会被操作系统重用，
+# 一个重启后拿到同 pid 的新进程会把旧 job 永远当成「本进程仍在跑」——时间兜底
+# 是唯一不依赖 pid 的判活方式（审查必修 3）。
+GROUPING_JOB_MAX_RUNTIME = 30 * 60
+GROUPING_JOBS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_grouping_jobs.json")
+
+
+def configure_grouping_lib(lock_dir):
+    """把本进程用的表 ID / 栏位名注入 lib.grouping（与 bot 端 configure_grouping_lib 同构）。"""
+    lib_grouping.configure(
+        activity_table_id=ACTIVITY_TABLE_ID,
+        group_select_table=GROUP_SELECT_TABLE,
+        group_result_table=GROUP_RESULT_TABLE,
+        signup_table_id=SIGNUP_TABLE_ID,
+        fields={
+            "activity_id": F_ACTIVITY_ID,
+            "activity_name": F_ACTIVITY_NAME,
+            "group_status": F_ACTIVITY_GROUP_STATUS,
+            "male_per_group": F_ACTIVITY_MALE_PER_GROUP,
+            "female_per_group": F_ACTIVITY_FEMALE_PER_GROUP,
+            "group_flag": F_ACTIVITY_GROUP_FLAG,
+            "gs_activity_id": F_GS_ACTIVITY_ID,
+            "gs_selector_oid": F_GS_SELECTOR_OID,
+            "gs_selector_gender": F_GS_SELECTOR_GENDER,
+            "gs_choices": F_GS_CHOICES,
+            "gr_activity_id": F_GR_ACTIVITY_ID,
+            "gr_group_no": F_GR_GROUP_NO,
+            "gr_user_oid": F_GR_USER_OID,
+            "gr_user_name": F_GR_USER_NAME,
+            "gr_user_gender": F_GR_USER_GENDER,
+            "gr_round": F_GR_ROUND,
+            "signup_activity_id": F_SIGNUP_ACTIVITY_ID,
+            "signup_status": F_SIGNUP_STATUS,
+            "signup_openid": F_SIGNUP_OPENID,
+            "signup_nickname": F_SIGNUP_NICKNAME,
+            "gender": F_GENDER,
+            "user_id": F_USER_ID,
+        },
+        lock_dir=lock_dir,
+    )
+
+
+configure_grouping_lib(SHARED_DATA_DIR)
+
+# lib 业务函数的 client：复用 bitable 模块那一只（同一份 token/连接/限流令牌桶），不另起实例。
+_grouping_client = bitable._client
+
+
+def _grouping_find_user_by_openid(open_id):
+    """lib 的 find_user_by_openid 契约要求返回记录列表；H5 走快照版（含观察员表、单身优先）。"""
+    user = snap_find_user_by_openid(open_id)
+    return [user] if user else []
+
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 
@@ -320,6 +383,32 @@ _SNAPSHOT_FETCHERS = {k: v for k, v in _SNAPSHOT_FETCHERS.items() if v}
 SNAPSHOT_FAIL_COOLDOWN = 30  # 秒：取 30 的理由见 docs/读取一致性.md
 _SNAPSHOT_FAIL_UNTIL = {}  # key -> 冷却截止时间戳；只在失败时写，成功时 pop
 
+# 快照抓取的「单飞 + 短窗合并」：
+# - 单飞（single-flight）：per-key 互斥锁保证同一张表同一时刻只有一次 fetch 在途，后来者
+#   排队等它完成后按各自的 coalesce 参数决定复用还是重抓——页面级并发不再重复读全表；
+# - 合并窗口（coalesce）：该表在 coalesce 秒内已**成功**抓过（_snapshot_last_ok）则跳过本次
+#   抓取；失败不写 _snapshot_last_ok，所以失败后的下一次调用必然重抓。
+# 为什么是 2 秒：管理台首页一次加载会并发触发 activities/group_selections/signups/group_results
+# 的 fresh 读，重复全表抓取在 10 req/s 令牌桶后排队，把页面拖到十几秒（前端 15s 超时 + 手机
+# 网络换手就是 Failed to fetch）。2 秒恰好覆盖「同一屏并发请求」窗口，又远小于背景刷新间隔
+# （20–300s）与 _SNAPSHOT_STALE 阈值（60–600s）：最坏情况读取只陈旧 2 秒，远严于系统既有
+# 容忍度，不破坏 docs/读取一致性.md 的决定性读取语义；写后刷新与背景 loop 均传 coalesce=0，
+# 必须真抓，保证写后快照不回退。
+SNAPSHOT_FRESH_COALESCE_SECONDS = 2.0
+_snapshot_fetch_locks = {}  # key -> threading.Lock：同表 fetch 串行化（single-flight）
+_snapshot_fetch_locks_guard = threading.Lock()  # 只保护上面的 dict；取锁时绝不持有 _snapshot_lock
+
+def _snapshot_fetch_lock(key):
+    """按表取抓取锁（惰性创建）。**锁顺序：per-key 锁 → _snapshot_lock**。
+    任何调用方都不得在持有 _snapshot_lock 时调用 refresh_snapshot_table，
+    否则可能与「持 per-key 锁等 _snapshot_lock」的在途 fetch 形成 AB-BA 死锁。"""
+    with _snapshot_fetch_locks_guard:
+        lock = _snapshot_fetch_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _snapshot_fetch_locks[key] = lock
+        return lock
+
 def _snapshot_mark_failed(key):
     """记一次实时读失败：该表进入冷却期，期间读请求不再打飞书。"""
     with _snapshot_lock:
@@ -331,35 +420,62 @@ def _snapshot_failing(key):
         until = _SNAPSHOT_FAIL_UNTIL.get(key)
         return bool(until) and time.time() < until
 
-def refresh_snapshot_table(key):
-    """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）"""
+def refresh_snapshot_table(key, coalesce=0.0):
+    """只刷新快照中的单个表（写操作后调用，保证读到的数据最新）。
+
+    coalesce > 0：该表在窗口内已成功抓过就直接复用，不再打飞书（页面并发去重）。
+    同表 fetch 由 per-key 锁串行化（single-flight）：后到的调用排队等前一次完成，
+    醒来后二次检查合并窗口决定复用还是重抓。`coalesce=0`（写后刷新/背景 loop/全量刷新）
+    即使排在在途 fetch 后面也一定会再抓一次，保证写后快照不回退。
+    锁顺序：per-key 锁 → _snapshot_lock；详见 _snapshot_fetch_lock 的注释。
+    """
     fetcher = _SNAPSHOT_FETCHERS.get(key)
     if not fetcher:
         return
-    try:
-        data = fetcher()
-        if data is None:
-            logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+    with _snapshot_fetch_lock(key):
+        if coalesce > 0:
+            # 拿锁后二次检查：等锁期间前一次抓取可能已失败并进入冷却。此时继续重抓会让
+            # 排队请求在故障期被 single-flight 串行放大成 N 次飞书往返（改动前它们是并行的），
+            # 与冷却「避免用请求量放大限流」的初衷相悖；直接复用现有快照即可。
+            # coalesce=0 的写后刷新不受这段影响：必须真抓（红线 2）。
+            if _snapshot_failing(key):
+                return
+            with _snapshot_lock:
+                last_ok = _snapshot_last_ok.get(key)
+            if last_ok and time.time() - last_ok < coalesce:
+                return
+        try:
+            data = fetcher()
+            if data is None:
+                logging.getLogger(__name__).warning(f"刷新快照表 {key} 跳过：飞书查询失败，保留旧快照 {len(_snapshot.get(key, []))} 条")
+                _snapshot_mark_failed(key)
+                return
+            with _snapshot_lock:
+                _snapshot[key] = data
+                _snapshot_loaded.add(key)
+                _snapshot_last_ok[key] = time.time()
+                _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
+                # 成功即解除冷却：冷却只压失败重试，绝不能压住自愈路径
+                _SNAPSHOT_FAIL_UNTIL.pop(key, None)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
             _snapshot_mark_failed(key)
-            return
-        with _snapshot_lock:
-            _snapshot[key] = data
-            _snapshot_loaded.add(key)
-            _snapshot_last_ok[key] = time.time()
-            _snapshot_version[key] = _snapshot_version.get(key, 0) + 1
-            # 成功即解除冷却：冷却只压失败重试，绝不能压住自愈路径
-            _SNAPSHOT_FAIL_UNTIL.pop(key, None)
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"刷新快照表 {key} 失败: {e}")
-        _snapshot_mark_failed(key)
+    # users 后处理放在 per-key 锁外：_photo_reapply_pending 会拿 _snapshot_lock，
+    # _rebuild_cards_cache 也会读 users 快照；锁内调用会与锁顺序约定纠缠、且一旦
+    # 以后有人在回调里触发抓取就是重入死锁（threading.Lock 不可重入）。
     if key == "users":
         _photo_reapply_pending()
         _rebuild_cards_cache()
 
 def refresh_snapshot_table_async(key):
-    """后台线程异步刷新单个快照表（写接口回包后调用，避免同步刷新拖慢写请求）"""
+    """后台线程异步刷新单个快照表（写接口回包后调用，避免同步刷新拖慢写请求）。
+
+    coalesce=0 显式传参：写后刷新必须真的抓——在途的那次 fetch 可能发生在写之前，
+    若被合并窗口吞掉，快照会停在写前状态（审查红线 2）。
+    """
     try:
-        threading.Thread(target=refresh_snapshot_table, args=(key,), daemon=True).start()
+        threading.Thread(target=refresh_snapshot_table, args=(key,),
+                         kwargs={"coalesce": 0.0}, daemon=True).start()
     except Exception as e:
         logging.getLogger(__name__).warning(f"异步刷新快照表 {key} 失败: {e}")
 
@@ -448,13 +564,18 @@ def _snap_fresh(key):
     这里——bot 与 H5 内存不共享，吃周期快照会让用户白等一个刷新间隔（分组表
     300s，用户体感就是「管理员说开始了，大家却进不去」）。
 
+    页面并发去重：传 SNAPSHOT_FRESH_COALESCE_SECONDS（2 秒）合并窗口 + single-flight
+    抓取锁。同一屏多个端点并发调用同一张表时只抓一次，最坏把读取结果陈旧 2 秒——
+    远小于背景刷新间隔与 _SNAPSHOT_STALE 阈值，不改变「判定结果必须来自飞书」的语义；
+    写后刷新走 coalesce=0 不受此窗口影响。
+
     规则见 docs/读取一致性.md。
     """
     if _snapshot_failing(key):
         return _snap(key)
     if not _SNAPSHOT_FETCHERS.get(key):
         return _snap(key)
-    refresh_snapshot_table(key)
+    refresh_snapshot_table(key, coalesce=SNAPSHOT_FRESH_COALESCE_SECONDS)
     return _snap(key)
 
 # ---- 快照读取辅助（镜像 bitable 常用查询；快照未就绪/过期时回退到飞书，保证可用） ----
@@ -5499,9 +5620,6 @@ def group_select(activity_id):
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
 
-    # 检查是否已提交过（允许覆盖；统一用 text_act_id 查询，修复旧代码混用 record_id 的不一致）
-    existing = snap_group_selection(text_act_id, open_id) or bitable.get_user_group_selection(text_act_id, open_id)
-
     fields = {
         F_GS_ACTIVITY_ID: text_act_id,
         F_GS_SELECTOR_OID: open_id,
@@ -5516,6 +5634,11 @@ def group_select(activity_id):
             fields[F_GS_CHOICES[i]] = choice_oid
 
     with file_lock:
+        # 决定 create/update 的这次查询必须在锁内：锁外查空的双击请求会各插一行，
+        # 产生重复志愿行（审查必修 7，也是「已提交人数」脏数据的源头之一）。
+        # 快照优先、未命中回退实时，与旧实现同一读取路径，只是换了执行时机。
+        existing = (snap_group_selection(text_act_id, open_id)
+                    or bitable.get_user_group_selection(text_act_id, open_id))
         if existing:
             ok = bitable.update_record(GROUP_SELECT_TABLE, existing["record_id"], fields)
         else:
@@ -5641,6 +5764,635 @@ def group_result(activity_id):
         "round": req_round,
         "rounds": available_rounds
     })
+
+# ========== 管理员：分组管理台（H5） ==========
+# 对应 bot 的 5 条管理员分组指令（开始填志愿 / 执行分组 / 分组状态 / 查看未提交 /
+# 分组功能开关），外加活动总览与「执行影响面预览」两个新能力。
+# - 写操作复用 lib/grouping 的实现与跨进程活动锁（与 bot 进程互斥）；
+# - 读端点全部 fresh=True 实时读飞书并回填快照（docs/读取一致性.md 规则一：
+#   分组状态/结果由 bot 进程写入，判定与展示都不得吃周期快照）；
+# - 读端点不做逐人用户表查询（那是 bot 指令 40s 下限的来源），直接数快照里的
+#   报名/志愿记录——这正是 H5 能在前端 15s 超时内返回的前提。
+#
+# job 机制（RFC 4.6）：长耗时执行放 daemon thread，接口立即回 202 + job_id，
+# 前端轮询 GET /job。job 记录落文件（lib/storage.update_json，自带原子写与锁），
+# 不引入任何新依赖。
+
+
+def _job_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _group_round(value):
+    """轮次字段值 -> int；空/非数字回 0（0 只是哨兵，不进轮次列表）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _group_rounds(results, activity_id):
+    """该活动分组结果里的轮次（升序去重 int 列表）。"""
+    rounds = set()
+    for r in results:
+        f = r.get("fields", {})
+        if bitable.get_field_text(f, F_GR_ACTIVITY_ID) != activity_id:
+            continue
+        rnd = _group_round(bitable.get_field_text(f, F_GR_ROUND))
+        if rnd > 0:
+            rounds.add(rnd)
+    return sorted(rounds)
+
+
+def _group_selection_rows(selections, activity_id):
+    """该活动的志愿记录。"""
+    return [r for r in selections
+            if bitable.get_field_text(r.get("fields", {}), F_GS_ACTIVITY_ID) == activity_id]
+
+
+def _group_signup_rows(signups, activity_id):
+    """该活动「已报名」的报名记录（空 open_id 跳过，与 lib.collect_participants 同口径）。"""
+    rows = []
+    for s in signups:
+        f = s.get("fields", {})
+        if bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID) != activity_id:
+            continue
+        if bitable.get_field_text(f, F_SIGNUP_STATUS) != "已报名":
+            continue
+        if not bitable.get_field_text(f, F_SIGNUP_OPENID):
+            continue
+        rows.append(s)
+    return rows
+
+
+def _read_grouping_jobs():
+    jobs = storage.load_json(GROUPING_JOBS_FILE, {})
+    return jobs if isinstance(jobs, dict) else {}
+
+
+def _job_age_seconds(job, now):
+    """job 已存活的秒数；两条时间戳都没有（老记录/手工造的记录）返回 None。"""
+    ts = _job_int(job.get("started_at")) or _job_int(job.get("created_at"))
+    return now - ts if ts else None
+
+
+def _job_timed_out(job, now=None):
+    """pending/running 是否已超过执行上限。超时即视为死任务（pid 重用兜底）。"""
+    now = now if now is not None else int(time.time())
+    age = _job_age_seconds(job, now)
+    return age is not None and age > GROUPING_JOB_MAX_RUNTIME
+
+
+def _job_is_active(job, now=None):
+    """本进程里仍在排队的 job。pid 对不上 = 上个进程的残留（daemon thread 已随重启消失），
+    呈现为 unknown 且不参与幂等拦截，否则管理员会永远卡在「已有任务」上。
+
+    再加一层时间兜底（审查必修 3）：pid 相同不保证是本进程的 job——pid 会被
+    操作系统重用，重启后拿到同 pid 的进程会把旧 job 当成活跃，冲突分支又跳过了
+    TTL 清理，该轮次就被永久 409 卡死。超过执行上限一律视为不活跃。
+    """
+    if job.get("state") not in ("pending", "running"):
+        return False
+    if job.get("pid") != os.getpid():
+        return False
+    return not _job_timed_out(job, now)
+
+
+def _update_grouping_job(job_id, mutator):
+    def _mut(jobs):
+        job = jobs.get(job_id)
+        if not job:
+            return None
+        mutator(job)
+        return jobs
+    storage.update_json(GROUPING_JOBS_FILE, {}, _mut)
+
+
+def _create_grouping_job(job_id, activity_id, round_no, operator):
+    """原子创建 job；同 (活动, 轮次) 已有本进程 pending/running 的 job 时返回它的 job_id。
+
+    检查与写入在同一次 update_json 里完成（进程内锁 + flock），并发提交不会各查各的
+    都查空、再双双入列。job 记录顺手清理 24h 前的旧条目。
+    """
+    now = int(time.time())
+    conflict = []
+
+    def _mut(jobs):
+        # TTL 清理必须先跑，且**所有分支都必须返回 jobs**（审查必修 3）：
+        # update_json 的 mutator 返回 None 等于放弃写入——旧实现的冲突分支直接
+        # return None，过期记录不仅不会被清，连先做的清理都会白做。
+        for jid in [jid for jid, job in jobs.items()
+                    if now - _job_int(job.get("created_at")) > GROUPING_JOB_TTL]:
+            del jobs[jid]
+        conflict_job = None
+        for jid, job in jobs.items():
+            if (job.get("activity_id") == activity_id
+                    and _job_int(job.get("round")) == round_no
+                    and _job_is_active(job, now)):
+                conflict_job = jid
+                break
+        if conflict_job is None:
+            jobs[job_id] = {
+                "activity_id": activity_id, "round": round_no, "operator": operator,
+                "state": "pending", "pid": os.getpid(), "progress": "已入列，等待执行",
+                "created_at": now, "started_at": None, "finished_at": None,
+                "result": None, "error": "",
+            }
+        else:
+            conflict.append(conflict_job)
+        return jobs
+
+    storage.update_json(GROUPING_JOBS_FILE, {}, _mut)
+    return conflict[0] if conflict else None
+
+
+def _run_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack):
+    """job 线程主体：执行 lib.execute_round，并负责释放请求线程抢到的活动锁。
+
+    锁跨线程释放是刻意的（请求线程抢锁快速回 409，job 线程持锁跑长任务）：
+    threading.Lock 不绑线程、flock 跟着 fd，ExitStack.close() 幂等且可跨线程调用。
+    """
+    err = None
+    res = None
+    try:
+        _update_grouping_job(job_id, lambda j: j.update(
+            state="running", started_at=int(time.time()),
+            progress="正在执行分组（读取志愿、运行算法、写入结果）…"))
+        res = lib_grouping.execute_round(
+            activity_id, round_no, client=_grouping_client, activity=activity_record,
+            find_user_by_openid=_grouping_find_user_by_openid,
+            treat_search_failure_as_empty=False)
+    except Exception as e:  # noqa: BLE001 — job 边界必须兜住异常并落盘，不能无声死掉
+        err = e
+    finally:
+        try:
+            lock_stack.close()
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("分组 job 释放活动锁失败: %s", job_id, exc_info=True)
+    if err is not None:
+        try:
+            _update_grouping_job(job_id, lambda j: j.update(
+                state="failed", finished_at=int(time.time()), progress="", error=str(err)))
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("分组 job 失败状态落盘失败: %s", job_id, exc_info=True)
+        # 异常可能发生在状态写到一半的位置：失败也要刷快照，让管理台看到真实状态（RFC 6.1）
+        refresh_snapshot_table_async("activities")
+        refresh_snapshot_table_async("group_results")
+        return
+    try:
+        _update_grouping_job(job_id, lambda j: j.update(
+            state="done", finished_at=int(time.time()), progress="", result=res))
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("分组 job 完成状态落盘失败: %s", job_id, exc_info=True)
+    # 快照刷新在锁释放之后（RFC 6.1），避免刷新线程读到锁内的中间态
+    refresh_snapshot_table_async("activities")
+    refresh_snapshot_table_async("group_results")
+
+
+def _start_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack):
+    threading.Thread(
+        target=_run_grouping_job, name=f"grouping-job-{job_id}", daemon=True,
+        args=(job_id, activity_id, round_no, activity_record, lock_stack)).start()
+
+
+@app.route("/api/admin/group/activities", methods=["GET"])
+def admin_group_activities():
+    """活动总览：管理台首页要的每个活动的分组进度。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    status_filter = (request.args.get("status") or "").strip()
+    keyword = (request.args.get("q") or "").strip().casefold()
+
+    activities = _snap_fresh("activities")
+    selections = _snap_fresh("group_selections")
+    results = _snap_fresh("group_results")
+
+    # 总览需要按活动分别计数，这里一次遍历全表；去重口径（非空 open_id 去重）与
+    # lib.summarize_selections 等价，是该口径在总览端的等价实现（逐活动调用会在
+    # 活动×记录上重复扫描）。状态/预览/名单等执行路径仍统一走 lib。
+    submitted = {}
+    for r in selections:
+        f = r.get("fields", {})
+        aid = bitable.get_field_text(f, F_GS_ACTIVITY_ID)
+        oid = bitable.get_field_text(f, F_GS_SELECTOR_OID)
+        if aid and oid:
+            submitted.setdefault(aid, set()).add(oid)
+
+    items = []
+    for a in activities:
+        f = a.get("fields", {})
+        activity_id = bitable.get_field_text(f, F_ACTIVITY_ID)
+        if not activity_id:
+            continue
+        name = bitable.get_field_text(f, F_ACTIVITY_NAME)
+        group_status = (bitable.get_field_text(f, F_ACTIVITY_GROUP_STATUS)
+                        or lib_grouping.STATUS_NOT_STARTED)
+        if status_filter and group_status != status_filter:
+            continue
+        if keyword and keyword not in activity_id.casefold() and keyword not in name.casefold():
+            continue
+        rounds = _group_rounds(results, activity_id)
+        items.append({
+            "record_id": a.get("record_id"),
+            "activity_id": activity_id,
+            "name": name,
+            "activity_status": bitable.get_field_text(f, F_ACTIVITY_STATUS),
+            "group_status": group_status,
+            "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG),
+            "males_per_group": int(bitable.get_field_number(f, F_ACTIVITY_MALE_PER_GROUP, 0)),
+            "females_per_group": int(bitable.get_field_number(f, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
+            # 报名数用 bot 每 30s 对账写入的「当前报名人数」，不在管理台逐活动数报名表
+            "signup_count": int(bitable.get_field_number(f, F_ACTIVITY_CURRENT_SIGNUP, 0)),
+            "submitted_count": len(submitted.get(activity_id, ())),
+            "has_results": bool(rounds),
+            "latest_round": rounds[-1] if rounds else None,
+            "available_rounds": rounds,
+        })
+    items.sort(key=lambda x: x["activity_id"])
+    return jsonify({"activities": items})
+
+
+@app.route("/api/admin/group/status", methods=["GET"])
+def admin_group_status():
+    """分组状态：对应 bot「分组状态 A-0001」，并多给男女数/轮次（管理台预览的输入）。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id, fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+    f = act.get("fields", {})
+
+    selections = _group_selection_rows(_snap_fresh("group_selections"), act_id)
+    # 计数一律走 lib 的去重口径（与 bot「分组状态」同一份实现）：
+    # 旧实现「首行性别缺失即吞掉整人」会让 male/female 与 preview 对不上（审查必修 2）。
+    summary = lib_grouping.summarize_selections(selections)
+    submitted_oids = set(summary["submitted_oids"])
+
+    signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+    unsubmitted_count = sum(
+        1 for s in signup_rows
+        if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_oids)
+
+    rounds = _group_rounds(_snap_fresh("group_results"), act_id)
+    return jsonify({
+        "activity_id": act_id,
+        "name": bitable.get_field_text(f, F_ACTIVITY_NAME),
+        "group_status": (bitable.get_field_text(f, F_ACTIVITY_GROUP_STATUS)
+                         or lib_grouping.STATUS_NOT_STARTED),
+        "males_per_group": int(bitable.get_field_number(f, F_ACTIVITY_MALE_PER_GROUP, 0)),
+        "females_per_group": int(bitable.get_field_number(f, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
+        "signup_count": len(signup_rows),
+        "submitted_count": summary["submitted_count"],
+        "unsubmitted_count": unsubmitted_count,
+        "male_count": summary["male_count"],
+        "female_count": summary["female_count"],
+        "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG) or "否",
+        "rounds": rounds,
+        "latest_round": rounds[-1] if rounds else None,
+    })
+
+
+@app.route("/api/admin/group/unsubmitted", methods=["GET"])
+def admin_group_unsubmitted():
+    """未提交志愿名单：对应 bot「查看未提交 A-0001」。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id, fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+    f = act.get("fields", {})
+
+    selection_rows = _group_selection_rows(_snap_fresh("group_selections"), act_id)
+    # 与「分组状态」/bot 指令共用 lib 的去重口径（必修 1/5），不再本地另算一份
+    summary = lib_grouping.summarize_selections(selection_rows)
+    submitted_oids = set(summary["submitted_oids"])
+    signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+
+    def _user_fields(oid):
+        return (snap_find_user_by_openid(oid) or {}).get("fields", {})
+
+    nickname_by_oid = {}
+    items = []
+    for s in signup_rows:
+        sf = s.get("fields", {})
+        oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+        nickname_by_oid[oid] = bitable.get_field_text(sf, F_SIGNUP_NICKNAME)
+        if oid in submitted_oids:
+            continue
+        uf = _user_fields(oid)
+        items.append({
+            "open_id": oid,
+            "user_id": bitable.get_field_text(uf, F_USER_ID),
+            "gender": bitable.get_field_text(uf, F_GENDER),
+            "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
+        })
+
+    # 已填写名单（加法字段）：顺序与去重集合一致，前端一次载入即可切换两个名单
+    submitted = []
+    for oid in summary["submitted_oids"]:
+        uf = _user_fields(oid)
+        submitted.append({
+            "open_id": oid,
+            "user_id": bitable.get_field_text(uf, F_USER_ID),
+            "gender": bitable.get_field_text(uf, F_GENDER),
+            "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+        })
+    return jsonify({
+        "activity_id": act_id,
+        "name": bitable.get_field_text(f, F_ACTIVITY_NAME),
+        "total": len(items),
+        "unsubmitted": items,
+        "submitted": submitted,
+        "all_submitted": not items,
+    })
+
+
+@app.route("/api/admin/group/preview", methods=["POST"])
+def admin_group_preview():
+    """执行影响面预览（RFC R8 红线：零写入，绝不碰「分组状态」）。
+
+    lib.preview_round 是与 execute_round 完全独立的只读路径；这里只补 400 校验与
+    活动解析。前端「开始填志愿」的确认框用 historical_results_to_clear 显示真实笔数。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "group_preview")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    round_no = data.get("round")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    res = lib_grouping.preview_round(
+        act_id, round_no, client=_grouping_client, activity=act,
+        find_user_by_openid=_grouping_find_user_by_openid)
+    # 轮次在 lib 内是单选字段的字符串原值；对外统一成数字（RFC 响应示例是数字）
+    res["existing_rounds"] = sorted({_group_round(r) for r in res["existing_rounds"]} - {0})
+    res["historical_rounds_to_clear"] = sorted(
+        {_group_round(r) for r in res["historical_rounds_to_clear"]} - {0})
+    res["rounds_preserved"] = sorted(
+        {_group_round(r) for r in res["rounds_preserved"]} - {0})
+    return jsonify(res)
+
+
+@app.route("/api/admin/group/start", methods=["POST"])
+def admin_group_start():
+    """开始填志愿：开放志愿收集；clear_results=True（默认）时清空全部历史结果。
+
+    `clear_results=False` 是「开启新一轮」——保留该活动全部历史轮次结果，只开放
+    收集，供已分过组的活动接着跑第 N+1 轮（算法确定性，重跑旧轮次无意义）。
+    前端必须已走过 preview 确认（DESIGN 5.3.3）；这里只保证「写操作与预览一致地
+    走 lib + 活动锁」。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(5, 60, "group_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    m_per = data.get("males_per_group")
+    f_per = data.get("females_per_group")
+    clear_results = data.get("clear_results", True)
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if (not isinstance(m_per, int) or isinstance(m_per, bool) or m_per < 1
+            or not isinstance(f_per, int) or isinstance(f_per, bool) or f_per < 1):
+        return jsonify({"error": "每组人数必须是大于0的整数"}), 400
+    if not isinstance(clear_results, bool):
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    try:
+        with lib_grouping.grouping_lock(act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
+            res = lib_grouping.start_group(
+                act_id, m_per, f_per, client=_grouping_client, activity=act,
+                treat_search_failure_as_empty=False, clear_results=clear_results)
+    except lib_grouping.GroupingBusy:
+        return jsonify({"error": "另一场分组正在执行中，请稍候",
+                        "busy_activity_id": act_id}), 409
+
+    if res.get("code") != "OK":
+        # SEARCH_FAILED：lib 先写「收集中」再查历史结果，查失败时状态已开、结果未删。
+        # 如实回错误并刷新状态快照，让管理员看到真实状态后重试；不吞成成功。
+        refresh_snapshot_table_async("activities")
+        return jsonify({
+            "error": "读取历史分组结果失败，历史结果未清除；分组状态已置为「收集中」，请稍后重试",
+            "code": res.get("code")}), 500
+
+    refresh_snapshot_table_async("activities")
+    refresh_snapshot_table_async("group_results")
+    return jsonify({
+        "ok": True,
+        "activity_id": act_id,
+        "name": res["activity_name"],
+        "group_status": lib_grouping.STATUS_COLLECTING,
+        "males_per_group": m_per,
+        "females_per_group": f_per,
+        "cleared_results": res["cleared_results"],
+    })
+
+
+@app.route("/api/admin/group/run", methods=["POST"])
+def admin_group_run():
+    """执行分组：抢到锁后立即回 202 + job_id，前端轮询 /job（RFC 4.6）。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(5, 60, "group_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    round_no = data.get("round")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    # 排队层幂等（RFC 4.6/6.3）：同 (活动, 轮次) 已有本进程 pending/running 的 job
+    # → 409 + 既有 job_id，前端直接接上去轮询；与 lib 内的数据层幂等互补，两层都要有。
+    for jid, job in _read_grouping_jobs().items():
+        if (job.get("activity_id") == act_id and _job_int(job.get("round")) == round_no
+                and _job_is_active(job)):
+            return jsonify({"ok": False, "error": "该轮分组任务已在执行中",
+                            "job_id": jid, "activity_id": act_id, "round": round_no}), 409
+
+    # 请求线程抢锁（5s 预算）→ 抢不到立刻 409，前端能提示「另一场在跑」而不是
+    # 202 之后在轮询里看到 failed。锁由 job 线程在任务结束时释放（见 _run_grouping_job）。
+    lock_stack = contextlib.ExitStack()
+    try:
+        lock_stack.enter_context(
+            lib_grouping.grouping_lock(act_id, timeout=GROUPING_API_LOCK_TIMEOUT))
+    except lib_grouping.GroupingBusy:
+        return jsonify({"error": "另一场分组正在执行中，请稍候",
+                        "busy_activity_id": act_id}), 409
+
+    job_id = _uuid.uuid4().hex[:12]
+    try:
+        existing = _create_grouping_job(job_id, act_id, round_no, open_id)
+    except Exception:  # noqa: BLE001
+        lock_stack.close()
+        logging.getLogger(__name__).warning("创建分组 job 失败", exc_info=True)
+        return jsonify({"error": "创建任务失败，请重试"}), 500
+    if existing:
+        lock_stack.close()
+        return jsonify({"ok": False, "error": "该轮分组任务已在执行中",
+                        "job_id": existing, "activity_id": act_id, "round": round_no}), 409
+
+    try:
+        _start_grouping_job(job_id, act_id, round_no, act, lock_stack)
+    except Exception:  # noqa: BLE001
+        _update_grouping_job(job_id, lambda j: j.update(
+            state="failed", finished_at=int(time.time()), progress="", error="任务线程启动失败"))
+        lock_stack.close()
+        logging.getLogger(__name__).warning("分组 job 线程启动失败", exc_info=True)
+        return jsonify({"error": "任务启动失败，请重试"}), 500
+
+    return jsonify({"ok": True, "job_id": job_id, "activity_id": act_id,
+                    "round": round_no, "state": "pending"}), 202
+
+
+@app.route("/api/admin/group/job", methods=["GET"])
+def admin_group_job():
+    """job 轮询：读本地 job 文件，不打飞书。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    job_id = (request.args.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "缺少 job_id"}), 400
+
+    job = _read_grouping_jobs().get(job_id)
+    if not job:
+        return jsonify({"error": "任务不存在"}), 404
+
+    state = job.get("state")
+    # H5 重启（部署/max_requests 轮替）会带走 daemon thread 但留下 job 记录：
+    # pending/running 且 pid 不是本进程 → unknown，由前端出三分支指引（DESIGN 5.3.2）。
+    # pid 相同但超过执行上限的同样归为 unknown：pid 可能被新进程重用，线程实际
+    # 早已不在（审查必修 3），不能让前端永远等一个不会结束的 job。
+    if state in ("pending", "running") and (
+            job.get("pid") != os.getpid() or _job_timed_out(job)):
+        state = "unknown"
+
+    return jsonify({
+        "job_id": job_id,
+        "activity_id": job.get("activity_id"),
+        "round": job.get("round"),
+        "state": state,
+        "created_at": job.get("created_at"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "progress": job.get("progress", ""),
+        "result": job.get("result"),
+        "error": job.get("error", ""),
+    })
+
+
+@app.route("/api/admin/group/result", methods=["GET"])
+def admin_group_result():
+    """完整分组结果（管理台结果 tab）：按轮次读 GROUP_RESULT_TABLE，与 job 的
+    result.groups 同构，历史轮次随时可查（此前前端只能拿到最近一次 H5 执行的结果）。
+
+    经 _grouping_client 直读飞书（实时读，非快照），与四个既有读端点的 fresh=True
+    同一口径；round 省略时取最新轮次。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+    round_arg = (request.args.get("round") or "").strip()
+    round_no = None
+    if round_arg:
+        try:
+            round_no = int(round_arg)
+        except ValueError:
+            return jsonify({"error": "round 必须是整数"}), 400
+        if round_no < 1:
+            return jsonify({"error": "round 必须大于0"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id, fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    return jsonify(lib_grouping.fetch_result(
+        act_id, round_no, client=_grouping_client, activity=act))
+
+
+@app.route("/api/admin/group/flag", methods=["POST"])
+def admin_group_flag():
+    """分组功能开关：对应 bot 的开关指令（幂等：已是目标值时不重复写）。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "group_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    enabled = data.get("enabled")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(enabled, bool):
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    target = "是" if enabled else "否"
+    name = bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_NAME)
+    if bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_GROUP_FLAG) == target:
+        # 幂等：盲写同值没有意义，还会白刷一次快照、多一条「管理员设置分组功能开关」日志
+        return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
+
+    lib_grouping.set_group_flag(act_id, enabled, client=_grouping_client, activity=act)
+    refresh_snapshot_table_async("activities")
+    return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
+
 
 # ========== 个人中心 ==========
 

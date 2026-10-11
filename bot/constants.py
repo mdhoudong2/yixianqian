@@ -257,13 +257,8 @@ PRAISE_WEEK_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_praise_week.json")
 WS_HEALTH_CHECK_INTERVAL = 60      # 每60秒检查一次
 WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连
 
-# 分组算法评分（与 JS 版一致）
-PRIORITY_SCORES = {1: 100, 2: 90, 3: 80, 4: 70, 5: 65, 6: 60, 7: 55, 8: 50, 9: 45, 10: 40}
-# 红娘星级分数
-MATCHMAKER_STAR_SCORES = {5: 100, 4: 90, 3: 80, 2: 75, 1: 70}
-# 权重
-WEIGHT_USER_SELECTION = 0.7
-WEIGHT_MATCHMAKER_PICK = 0.3
+# 分组算法评分（优先级得分 / 红娘星级 / 权重）已随算法搬进 lib/grouping.py，
+# 两端共用同一份，不再在这里另存。
 
 def is_admin(open_id):
     return open_id in ADMIN_OPEN_IDS

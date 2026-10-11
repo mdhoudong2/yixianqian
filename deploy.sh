@@ -79,6 +79,7 @@ deploy_h5() {
   echo "🌐 部署 H5 ($ENV)..."
   ssh $SERVER "cd $REMOTE_DIR && git pull --ff-only origin $BRANCH" || { echo "❌ pull 失败"; exit 1; }
   ssh $SERVER "$REMOTE_DIR/web/backend/venv/bin/python -m compileall -q $REMOTE_DIR/web/backend $REMOTE_DIR/lib $REMOTE_DIR/bot" || { echo "❌ H5 语法错误"; exit 1; }
+  ssh $SERVER "cd $REMOTE_DIR && $REMOTE_DIR/web/backend/venv/bin/python scripts/dev/check_inline_template.py" || { echo "❌ 内联模板检查未通过（自闭合非 void 标签）"; exit 1; }
   ssh $SERVER "systemctl restart $H5_UNIT" && wait_http "$H5_UNIT" "$PORT" && echo "✅ $H5_UNIT 已重启且 /api/version 可达"
 }
 case "$TARGET" in

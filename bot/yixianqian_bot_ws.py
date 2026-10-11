@@ -80,6 +80,7 @@ from commands import (
 )
 from constants import *
 from grouping import (
+    configure_grouping_lib,
     handle_admin_group_status,
     handle_admin_start_group,
     handle_admin_stop_group,
@@ -634,6 +635,11 @@ def main():
     print("=" * 60)
 
     init_points_db()
+
+    # 分组锁必须落在 bot 与 H5 共享的目录：两个进程各锁各的等于没锁；
+    # 表 ID 与栏位名由 bot/grouping.py 一并注入（lib.grouping 不 import bot 的
+    # constants，写错 base 时必须报错而不是静默写到别的表）。
+    configure_grouping_lib(SHARED_DATA_DIR)
 
     # 启动业务线程（只启动一次，长连接重连时不重复启动）
     start_worker_threads()

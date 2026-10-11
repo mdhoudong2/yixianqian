@@ -15,6 +15,7 @@
 """
 from concurrent.futures import ThreadPoolExecutor
 
+from lib import grouping as lib_grouping
 from lib import recommend
 from lib.bitable_client import get_field_text, get_multi_select_value
 from lib.grouping import PRIORITY_SCORES, GroupingBusy, grouping_lock
@@ -29,6 +30,7 @@ _REQUIRED_TABLES = ("activity_table_id", "signup_table_id",
 # 任何一端的命名习惯，两端各自把自己的常量翻译过来。
 _REQUIRED_FIELDS = (
     "activity_id", "activity_name", "onetoone_status", "onetoone_flag",
+    "group_flag", "group_status",
     "oto_activity_id", "oto_selector_oid", "oto_selector_name", "oto_selector_gender",
     "oto_choices", "oto_rank", "oto_user_oid", "oto_user_name", "oto_user_gender",
     "oto_target_oid", "oto_target_name",
@@ -485,7 +487,11 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None):
     「执行一对一」会互相删除/覆盖结果。删除数不足必须明报失败——报成功会让
     管理员以为可以重跑，实际被残留结果卡住。
 
-    返回 code：OK / BUSY / STATUS_FAILED / RESULTS_SEARCH_FAILED / DELETE_INCOMPLETE。
+    动作层互斥（设计 §2.3）：对面分组 flag=「是」或状态 ∈ {收集中, 已截止} →
+    拒绝（EXCLUSIVE_MODE），不自动动对面数据。假表缺分组栏位 → 不触发。
+
+    返回 code：OK / BUSY / EXCLUSIVE_MODE / STATUS_FAILED / RESULTS_SEARCH_FAILED /
+    DELETE_INCOMPLETE。
     """
     if lock_timeout is None:
         lock_timeout = START_LOCK_TIMEOUT
@@ -496,6 +502,9 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None):
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
     base = {"activity_id": activity_id, "activity_name": activity_name}
+    if lib_grouping.counterpart_start_active(activity, flag_field=f["group_flag"],
+                                             status_field=f["group_status"]):
+        return dict(base, code="EXCLUSIVE_MODE", blocked_by="group")
     try:
         with grouping_lock(activity_id, timeout=lock_timeout):
             if not client.update_record(t["activity_table_id"], record_id,
@@ -550,6 +559,10 @@ def execute(activity_id, *, client, activity, find_user_by_openid, lock_timeout=
     f = _cfg["fields"]
     activity_name = get_field_text(activity.get("fields", {}), f["activity_name"])
     base = {"activity_id": activity_id, "activity_name": activity_name}
+    # 动作层互斥：执行一对一前对面分组 flag=「是」→ 拒绝（不自动动对面数据）。
+    # 假表缺分组栏位 → 不触发；锁前判定，命中时零写入零等待。
+    if lib_grouping.counterpart_execute_active(activity, flag_field=f["group_flag"]):
+        return dict(base, code="EXCLUSIVE_MODE", blocked_by="group")
     try:
         with grouping_lock(activity_id, timeout=lock_timeout):
             return _execute_locked(activity_id, client=client, activity=activity,
@@ -672,3 +685,59 @@ def _execute_locked(activity_id, *, client, activity, find_user_by_openid):
 
     log(f"一对一匹配完成: {activity_name}, {len(participants)}人, {total_pairs}条必聊")
     return dict(base, code="OK", participant_count=len(participants), total_pairs=total_pairs)
+
+
+def _resolve_activity(activity_id, activity, client):
+    """activity 缺省时按 activity_id 查一次活动表。返回 (activity, error_code)。"""
+    if activity is not None:
+        return activity, None
+    f = _cfg["fields"]
+    records = client.search_records(_cfg["tables"]["activity_table_id"], {
+        "conjunction": "and",
+        "conditions": [{"field_name": f["activity_id"], "operator": "is",
+                        "value": [activity_id]}]})
+    if records is None:
+        return None, "SEARCH_FAILED"
+    if not records:
+        return None, "NOT_FOUND"
+    return records[0], None
+
+
+def set_onetoone_flag(activity_id, enabled, *, client, activity=None):
+    """开启/关闭活动的「一对一功能开启」开关（控制 H5「我的一对一」入口）。
+
+    - 开启：走 lib.grouping.set_mode(activity_id, "onetoone")——一次 PUT 同时写
+      「一对一=是 + 分组=否」两个栏位（互斥写入器），与 bot「开启一对一功能」、
+      H5 模式切换同一套语义；
+    - 关闭：只写自身「一对一功能开启=否」（设计 §2.2：关闭时只写自身=否；不碰
+      分组栏位，也不在「双是」的历史脏数据上做隐式纠偏——那由控制台一键纠偏）。
+
+    `activity` 可省（省时按 activity_id 查一次）。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
+    返回 {"code", "activity_id", "name", "onetoone_flag", "enabled"}。
+    """
+    _require_configured()
+    f = _cfg["fields"]
+    if enabled:
+        res = lib_grouping.set_mode(activity_id, "onetoone", client=client, activity=activity)
+        return {
+            "code": res["code"],
+            "activity_id": res.get("activity_id", activity_id),
+            "name": res.get("name", ""),
+            "onetoone_flag": res.get("onetoone_flag", "是"),
+            "enabled": True,
+        }
+
+    activity, error = _resolve_activity(activity_id, activity, client)
+    if error:
+        return {"code": error, "activity_id": activity_id, "name": "",
+                "onetoone_flag": "", "enabled": False}
+    af = activity.get("fields", {})
+    activity_name = get_field_text(af, f["activity_name"])
+    if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                activity.get("record_id"), {f["onetoone_flag"]: "否"}):
+        return {"code": "WRITE_FAILED", "activity_id": activity_id,
+                "name": activity_name, "onetoone_flag": "", "enabled": False}
+    log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> 否")
+    return {"code": "OK", "activity_id": activity_id, "name": activity_name,
+            "onetoone_flag": "否", "enabled": False}

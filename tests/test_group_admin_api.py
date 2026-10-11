@@ -138,6 +138,9 @@ def api(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "snap_find_user_by_openid", _find_user)
     monkeypatch.setattr(app.bitable, "search_records", lambda *a, **k: [])
     monkeypatch.setattr(app, "GROUPING_JOBS_FILE", str(tmp_path / "grouping_jobs.json"))
+    # 状态端点的活跃 job 探测会读两个 job 文件：一对一那个也要重定向到 tmp，
+    # 否则单测会去读真实数据目录（污染 + 非确定性）。
+    monkeypatch.setattr(app, "ONETOONE_JOBS_FILE", str(tmp_path / "onetoone_jobs.json"))
     lib_grouping.configure(lock_dir=str(tmp_path))
     app._rate_store.clear()
     return Api(monkeypatch, tmp_path)
@@ -418,21 +421,28 @@ def test_a9_read_endpoints_use_fresh_snapshots(api):
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/activities")
     assert r.status_code == 200
-    assert set(api.fresh_calls) == {"activities", "group_selections", "group_results"}
+    assert set(api.fresh_calls) == {"activities", "group_selections", "group_results",
+                                    "onetoone_selections"}
     act = r.get_json()["activities"][0]
     assert act["activity_id"] == ACT and act["group_status"] == "收集中"
     assert act["available_rounds"] == [1, 2] and act["latest_round"] == 2
     assert act["submitted_count"] == 4 and act["has_results"] is True
+    # C3 加法字段：模式派生值（默认活动无一对一栏位 → none/否）
+    assert act["mode"] == "none" and act["conflict"] is False
+    assert act["onetoone_flag"] == "否" and act["onetoone_status"] == "未开始"
+    assert act["onetoone_submitted_count"] == 0
 
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/status?activity_id=" + ACT)
     assert r.status_code == 200
     assert set(api.fresh_calls) == {"activities", "group_selections", "signups",
-                                    "group_results"}
+                                    "group_results", "onetoone_selections",
+                                    "onetoone_results"}
     st = r.get_json()
     assert st["signup_count"] == 5 and st["submitted_count"] == 4
     assert st["unsubmitted_count"] == 1 and st["male_count"] == 2 and st["female_count"] == 2
     assert st["rounds"] == [1, 2] and st["latest_round"] == 2
+    assert st["mode"] == "none" and st["active_job"] is None
 
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/unsubmitted?activity_id=" + ACT)
@@ -800,3 +810,79 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
     assert r.status_code == 200
     assert events == ["lock_enter", "lookup", "create", "lock_exit"], \
         "查 existing 与 create/update 必须同处锁内，且查询在前"
+
+
+# ---------------------------------------------------------------- C3：互斥 guard 与条件合并
+
+def test_group_start_blocked_when_onetoone_active(api):
+    """「开始填志愿」：对面一对一 flag=是 或状态∈{收集中,已截止} → 409 零写入。"""
+    fake = api.install(activity=_act(一对一功能开启="是"))
+    r = api.post("/api/admin/group/start",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    assert r.status_code == 409
+    assert r.get_json()["code"] == "EXCLUSIVE_MODE"
+    assert fake.writes() == []
+
+    fake2 = api.install(activity=_act(一对一状态="收集中"))
+    r2 = api.post("/api/admin/group/start",
+                  {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    assert r2.status_code == 409
+    assert r2.get_json()["code"] == "EXCLUSIVE_MODE"
+    assert fake2.writes() == []
+
+
+def test_group_run_blocked_when_onetoone_flag_on(api):
+    """「执行分组」：对面一对一 flag=是 → job 结果 EXCLUSIVE_MODE、零写入。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(activity=_act(一对一功能开启="是"),
+                       signups=signups, selections=selections)
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done"
+    assert job["result"]["code"] == "EXCLUSIVE_MODE"
+    assert fake.writes() == []
+
+
+def test_group_guard_noop_without_onetoone_fields(api):
+    """no-op 对照：活动表没有一对一栏位时（既有生产/parity 桩表形态），
+    execute_round 照常跑到幂等分支——guard 没有改变旧行为。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(activity=_act(), signups=signups, selections=selections,
+                       results=[_res("ou_m0", 1, "1")])
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["result"]["code"] == "ALREADY_DONE", "无对侧栏位 → 不触发 guard"
+    assert not [c for c in fake.writes() if c[0] == "batch_delete"]
+
+
+def test_set_group_flag_merges_onetoone_off_conditionally(api):
+    """条件合并：开启分组且一对一现值=是 → 同一笔 update 里带上「一对一=否」。"""
+    fake = api.install(activity=_act(分组功能开启="否", 一对一功能开启="是"))
+    r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1, "必须是同一笔 update（单笔事务）"
+    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
+
+
+def test_set_group_flag_no_merge_when_onetoone_off(api):
+    """条件不成立（一对一=否 或栏位缺失）→ 写序列与旧行为逐字相同（parity 保护面）。"""
+    fake = api.install(activity=_act(分组功能开启="否", 一对一功能开启="否"))
+    api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是"}
+
+    fake2 = api.install(activity=_act(分组功能开启="否"))
+    api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    updates2 = [c for c in fake2.writes() if c[0] == "update"]
+    assert len(updates2) == 1 and updates2[0][3] == {"分组功能开启": "是"}
+
+
+def test_set_group_flag_disable_never_touches_onetoone(api):
+    """关闭分组只写自身=否；即使一对一=是（脏数据）也不合并不动它。"""
+    fake = api.install(activity=_act(分组功能开启="是", 一对一功能开启="是"))
+    api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": False})
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "否"}

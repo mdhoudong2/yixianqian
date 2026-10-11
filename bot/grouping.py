@@ -54,6 +54,8 @@ def configure_grouping_lib(lock_dir):
             "male_per_group": FIELD_ACT_MALE_PER_GROUP,
             "female_per_group": FIELD_ACT_FEMALE_PER_GROUP,
             "group_flag": FIELD_ACT_GROUP_FLAG,
+            "onetoone_flag": FIELD_ACT_ONETOONE_FLAG,
+            "onetoone_status": FIELD_ACT_ONETOONE_STATUS,
             "gs_activity_id": FIELD_GS_ACTIVITY_ID,
             "gs_selector_oid": FIELD_GS_SELECTOR_OID,
             "gs_selector_gender": FIELD_GS_SELECTOR_GENDER,
@@ -377,6 +379,12 @@ def handle_admin_start_group(keyword):
     # 仍收到「志愿填写已开始」。这里钉一道断言，让那种改动在这里立刻炸掉，
     # 而不是悄悄发一条与事实相反的回执。抛异常由 _admin_task_worker 统一兜成
     # 「任务处理失败：…」，不会把错误伪装成成功。
+    if res.get("code") == "EXCLUSIVE_MODE":
+        # 动作层互斥（设计 §2.3）：对面一对一开着或没收尾，明确让管理员先关对面。
+        # 新分支只在活动表有一对一栏位且命中时出现，parity 桩表不触发。
+        return ("无法开始填志愿：该活动的一对一模式正在使用中。\n"
+                "为避免两边混着跑，请先在 H5「活动管理」把模式切换为「分组」"
+                "（或等一对一收尾）后再试。")
     if res.get("code") != "OK":
         raise RuntimeError(
             f"start_group 未成功（code={res.get('code')}），不发送成功回执。"
@@ -399,6 +407,9 @@ def _render_grouping_result(res, round_no):
     之外的那份断言——等价性测试会直接红。
     """
     code = res["code"]
+    if code == "EXCLUSIVE_MODE":
+        return (f"无法执行分组：活动「{res['activity_name']}」的一对一模式已开启。\n"
+                f"请先在 H5「活动管理」把模式切换为「分组」再执行。")
     if code == "NOT_ENOUGH_PEOPLE":
         return (f"人数不足，无法分组：{res['males']}男{res['females']}女，"
                 f"每组需要{res['males_per_group']}男{res['females_per_group']}女。\n"

@@ -16,6 +16,7 @@ from store import (
 )
 
 from lib import grouping as lib_grouping
+from lib import onetoone as lib_onetoone
 from lib.quota import MONTHLY_REAL_HEARTS
 
 
@@ -644,15 +645,16 @@ def handle_admin_toggle_onetoone_flag(keyword):
 
     af = activity.get("fields", {})
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
-    rec = update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_FLAG: flag})
-    if not rec:
-        # 写失败不得报成功：否则管理员以为开了入口，H5 却看不到
+    # 走 lib 的互斥写入器：开启时一次 PUT 同时写「一对一=是 + 分组=否」两个栏位
+    # （与 H5 模式切换同一套语义）；关闭时只写自身=否。写失败如实回错误，不报成功。
+    res = lib_onetoone.set_onetoone_flag(activity_id, flag == "是", client=bitable,
+                                         activity=activity)
+    if res.get("code") != "OK":
         return f"一对一功能开关设置失败：活动「{activity_name}」状态写入失败，请稍后重试。"
-    log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> {flag}")
-    return (f"已{'开启' if flag == '是' else '关闭'}活动「{activity_name}」的一对一功能。\n"
+    log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> {res['onetoone_flag']}")
+    return (f"已{'开启' if res['onetoone_flag'] == '是' else '关闭'}活动「{activity_name}」的一对一功能。\n"
             f"开启后，报名该活动的用户可在 H5「我的」页看到「我的一对一」入口。"
-            + ("\n（活动结束后记得关闭，入口即隐藏）" if flag == "是" else ""))
+            + ("\n（活动结束后记得关闭，入口即隐藏）" if res["onetoone_flag"] == "是" else ""))
 
 
 def handle_onetoone_help():

@@ -195,6 +195,7 @@ def grouping_lock(activity_id, timeout):
 _REQUIRED_FIELDS = (
     "activity_id", "activity_name",
     "group_status", "male_per_group", "female_per_group", "group_flag",
+    "onetoone_flag", "onetoone_status",
     "gs_activity_id", "gs_selector_oid", "gs_selector_gender", "gs_choices",
     "gr_activity_id", "gr_group_no", "gr_user_oid", "gr_user_name",
     "gr_user_gender", "gr_round",
@@ -239,6 +240,113 @@ SIGNUP_STATUS_SIGNED = "已报名"
 # 「轮次」是单选栏位，飞书侧只配了 1-10。写入更大的值会整批失败并触发回滚，
 # 所以只在 preview 里事前挡住；执行路径刻意不拦——bot 端拦了就改了既有行为。
 MAX_ROUND = 10
+
+# ---------------------------------------------------------------- 分组/一对一互斥
+
+# 「动作层」互斥的错误码：对面模式开着（或还没收尾）时，本模式的
+# 开始/执行动作拒绝执行。文案归渲染层，lib 只回结构化结果。
+EXCLUSIVE_MODE = "EXCLUSIVE_MODE"
+
+# 模式派生值与 set_mode 的合法取值。模式是「两个 flag」的派生值，不落新栏位。
+MODE_GROUP = "group"
+MODE_ONETOONE = "onetoone"
+MODE_NONE = "none"
+MODE_CONFLICT = "conflict"
+MODES = (MODE_GROUP, MODE_ONETOONE, MODE_NONE)
+
+# set_mode(mode) → (分组功能开启, 一对一功能开启)。
+# 「group」「onetoone」是双栏位单笔 PUT：并发切换时最终态必为一方是/另一方否，
+# 不变量不需要锁（飞书单条记录 update 是整笔事务）。
+_MODE_FLAGS = {
+    MODE_GROUP: ("是", "否"),
+    MODE_ONETOONE: ("否", "是"),
+    MODE_NONE: ("否", "否"),
+}
+
+
+def derive_mode(activity):
+    """两个 flag 的派生模式：group / onetoone / none / conflict。
+
+    conflict 是历史脏数据（两个都「是」）——控制台显示警告让管理员一键纠偏，
+    不做自动修正：静默关掉某一边会违背「切换不删/不动数据」的承诺。
+    """
+    f = _cfg["fields"]
+    af = (activity or {}).get("fields", {})
+    g = get_field_text(af, f["group_flag"]) == "是"
+    o = get_field_text(af, f["onetoone_flag"]) == "是"
+    if g and o:
+        return MODE_CONFLICT
+    if g:
+        return MODE_GROUP
+    if o:
+        return MODE_ONETOONE
+    return MODE_NONE
+
+
+def counterpart_start_active(activity, *, flag_field, status_field):
+    """「开始」动作的对面模式检查：对面 flag=「是」或状态 ∈ {收集中, 已截止}。
+
+    栏位名由调用方注入（lib.onetoone 用自己的 configure 里那份）：假表/旧表缺该
+    栏位时 get_field_text 读到空串 → 不触发，保证 parity 桩表的行为逐字不变。
+    """
+    af = (activity or {}).get("fields", {})
+    if get_field_text(af, flag_field) == "是":
+        return True
+    return get_field_text(af, status_field) in (STATUS_COLLECTING, STATUS_CLOSED)
+
+
+def counterpart_execute_active(activity, *, flag_field):
+    """「执行」动作的对面模式检查：对面 flag=「是」才拦。
+
+    执行不拦「收集中」状态：开始方没开 flag 时，执行方（如历史遗留流程）应当被
+    动作层放行，不然 flag 层不管的路径会被状态层意外锁死。
+    """
+    af = (activity or {}).get("fields", {})
+    return get_field_text(af, flag_field) == "是"
+
+
+def set_mode(activity_id, mode, *, client, activity=None):
+    """模式互斥写入器：一次 PUT 同时写「分组功能开启」「一对一功能开启」两个栏位。
+
+    mode="group" → (是, 否)；"onetoone" → (否, 是)；"none" → (否, 否)。
+    两个并发的模式切换不会产生「双是」：飞书单条记录 update 是整笔事务，后写者
+    的整笔覆盖里对面必为「否」——flag 不变量由写入原子性保证，不需要锁。
+
+    `activity` 可省（省时按 activity_id 查一次）；两端正常路径都会传锁外解析好的
+    记录。栏位已是目标值时跳过写入（幂等），返回 changed=False。
+    写失败如实回 WRITE_FAILED（检查 update_record 返回值，不报成功）。
+    """
+    _require_configured()
+    f = _cfg["fields"]
+    if mode not in _MODE_FLAGS:
+        return {"code": "INVALID_MODE", "activity_id": activity_id, "mode": mode}
+    if activity is None:
+        records = client.search_records(_cfg["tables"]["activity_table_id"], {
+            "conjunction": "and",
+            "conditions": [{"field_name": f["activity_id"], "operator": "is",
+                            "value": [activity_id]}]})
+        if records is None:
+            return {"code": "SEARCH_FAILED", "activity_id": activity_id, "mode": mode}
+        if not records:
+            return {"code": "NOT_FOUND", "activity_id": activity_id, "mode": mode}
+        activity = records[0]
+
+    target_group, target_onetoone = _MODE_FLAGS[mode]
+    af = activity.get("fields", {})
+    activity_name = get_field_text(af, f["activity_name"])
+    base = {"activity_id": activity_id, "name": activity_name, "mode": mode,
+            "group_flag": target_group, "onetoone_flag": target_onetoone}
+    if (get_field_text(af, f["group_flag"]) == target_group
+            and get_field_text(af, f["onetoone_flag"]) == target_onetoone):
+        return dict(base, code="OK", changed=False)
+
+    payload = {f["group_flag"]: target_group, f["onetoone_flag"]: target_onetoone}
+    if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                activity.get("record_id"), payload):
+        return dict(base, code="WRITE_FAILED", changed=False)
+    log(f"管理员设置活动模式: {activity_name}({activity_id}) -> {mode}")
+    return dict(base, code="OK", changed=True)
+
 
 # 分组算法评分（与 JS 版一致）。这是算法的一部分而不是环境配置，两端永远相同，
 # 所以住在 lib 里，bot/constants.py 不再另存一份。
@@ -814,6 +922,13 @@ def start_group(activity_id, males_per_group, females_per_group, *, client, acti
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
 
+    # 动作层互斥（设计 §2.3）：对面一对一开着或没收尾时拒绝开始，不自动动对面数据。
+    # 假表缺一对一栏位 → 读到空串 → 不触发（parity 写序列逐字不变）。
+    if counterpart_start_active(activity, flag_field=f["onetoone_flag"],
+                                status_field=f["onetoone_status"]):
+        return {"code": EXCLUSIVE_MODE, "blocked_by": MODE_ONETOONE,
+                "activity_id": activity_id, "activity_name": activity_name}
+
     client.update_record(_cfg["tables"]["activity_table_id"], record_id, {
         f["group_status"]: STATUS_COLLECTING,
         f["male_per_group"]: males_per_group,
@@ -877,6 +992,10 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     rec_activity_id = get_field_text(af, f["activity_id"]) or ""
     base = {"activity_id": activity_id, "round": round_no, "activity_name": activity_name,
             "males_per_group": m_per, "females_per_group": f_per}
+
+    # 动作层互斥：执行分组时对面一对一 flag 为「是」→ 拒绝。假表无该栏位 → 不触发。
+    if counterpart_execute_active(activity, flag_field=f["onetoone_flag"]):
+        return dict(base, code=EXCLUSIVE_MODE, blocked_by=MODE_ONETOONE)
 
     # 幂等保护：该活动本轮已生成过结果则拒绝重跑（多轮分组可轮次递进），
     # 防止并发/重复执行互相删除覆盖分组结果。
@@ -969,16 +1088,23 @@ def _group_members(g):
 def set_group_flag(activity_id, enabled, *, client, activity):
     """开启/关闭活动的分组功能（控制 H5「我的分组」入口显不显示）。
 
-    不加分组锁：只写一个与分组执行不相干的栏位，且两边都是「设定成明确值」的盲写，
+    不加分组锁：只写与分组执行不相干的栏位，且都是「设定成明确值」的盲写，
     后写者胜，不存在读-改-写丢更新。与 commands.py 里既有的开关联动同一口径。
+
+    **条件合并**（设计 §2.3 第 2 行）：enabled=True 且活动现值「一对一功能开启」
+    为「是」时，把「一对一功能开启=否」合进**同一笔** update——飞书单条记录
+    update 是整笔事务，不会出现「双是」。条件刻意不做成无条件双写：parity 桩表
+    没有一对一栏位（读到空串）→ 不触发 → 写入序列与迁移前逐字相同。
     """
     _require_configured()
     f = _cfg["fields"]
     flag = "是" if enabled else "否"
     af = activity.get("fields", {})
     activity_name = get_field_text(af, f["activity_name"])
-    client.update_record(_cfg["tables"]["activity_table_id"], activity.get("record_id"),
-                         {f["group_flag"]: flag})
+    payload = {f["group_flag"]: flag}
+    if enabled and get_field_text(af, f["onetoone_flag"]) == "是":
+        payload[f["onetoone_flag"]] = "否"
+    client.update_record(_cfg["tables"]["activity_table_id"], activity.get("record_id"), payload)
     log(f"管理员设置分组功能开关: {activity_name}({activity_id}) -> {flag}")
     return {"code": "OK", "activity_id": activity_id, "name": activity_name,
             "group_flag": flag, "enabled": enabled}

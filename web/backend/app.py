@@ -37,6 +37,7 @@ import tencent_face
 from config import *
 
 from lib import grouping as lib_grouping
+from lib import onetoone as lib_onetoone
 from lib import (
     points,
     points_config,
@@ -67,6 +68,9 @@ GROUPING_JOB_TTL = 24 * 3600   # job 记录保留 24 小时
 # 是唯一不依赖 pid 的判活方式（审查必修 3）。
 GROUPING_JOB_MAX_RUNTIME = 30 * 60
 GROUPING_JOBS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_grouping_jobs.json")
+# 一对一执行 job 独立落盘：与分组 job 分开文件、分开幂等键（同活动同轮次 vs 同活动），
+# 但共用一把活动锁（lib.grouping.grouping_lock），两种任务在数据层天然互斥。
+ONETOONE_JOBS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_onetoone_jobs.json")
 
 
 def configure_grouping_lib(lock_dir):
@@ -83,6 +87,8 @@ def configure_grouping_lib(lock_dir):
             "male_per_group": F_ACTIVITY_MALE_PER_GROUP,
             "female_per_group": F_ACTIVITY_FEMALE_PER_GROUP,
             "group_flag": F_ACTIVITY_GROUP_FLAG,
+            "onetoone_flag": F_ACTIVITY_ONETOONE_FLAG,
+            "onetoone_status": F_ACTIVITY_ONETOONE_STATUS,
             "gs_activity_id": F_GS_ACTIVITY_ID,
             "gs_selector_oid": F_GS_SELECTOR_OID,
             "gs_selector_gender": F_GS_SELECTOR_GENDER,
@@ -105,6 +111,52 @@ def configure_grouping_lib(lock_dir):
 
 
 configure_grouping_lib(SHARED_DATA_DIR)
+
+
+def configure_onetoone_lib(lock_dir):
+    """把本进程用的表 ID / 栏位名注入 lib.onetoone（与 bot 端 configure_onetoone_lib 同构）。"""
+    lib_onetoone.configure(
+        onetoone_select_table=ONETOONE_SELECT_TABLE,
+        onetoone_result_table=ONETOONE_RESULT_TABLE,
+        activity_table_id=ACTIVITY_TABLE_ID,
+        signup_table_id=SIGNUP_TABLE_ID,
+        fields={
+            "activity_id": F_ACTIVITY_ID,
+            "activity_name": F_ACTIVITY_NAME,
+            "onetoone_status": F_ACTIVITY_ONETOONE_STATUS,
+            "onetoone_flag": F_ACTIVITY_ONETOONE_FLAG,
+            "group_flag": F_ACTIVITY_GROUP_FLAG,
+            "group_status": F_ACTIVITY_GROUP_STATUS,
+            "oto_activity_id": F_OTO_ACTIVITY_ID,
+            "oto_selector_oid": F_OTO_SELECTOR_OID,
+            "oto_selector_name": F_OTO_SELECTOR_NAME,
+            "oto_selector_gender": F_OTO_SELECTOR_GENDER,
+            "oto_choices": F_OTO_CHOICES,
+            "oto_rank": F_OTO_RANK,
+            "oto_user_oid": F_OTO_USER_OID,
+            "oto_user_name": F_OTO_USER_NAME,
+            "oto_user_gender": F_OTO_USER_GENDER,
+            "oto_target_oid": F_OTO_TARGET_OID,
+            "oto_target_name": F_OTO_TARGET_NAME,
+            "signup_activity_id": F_SIGNUP_ACTIVITY_ID,
+            "signup_openid": F_SIGNUP_OPENID,
+            "signup_nickname": F_SIGNUP_NICKNAME,
+            "signup_status": F_SIGNUP_STATUS,
+            "gender": F_GENDER,
+            "user_id": F_USER_ID,
+            "self_hobbies": F_SELF_HOBBIES,
+            "self_sports": F_SELF_SPORTS,
+            "self_traits": F_SELF_TRAITS,
+            "education": F_EDUCATION,
+            "mbti": F_MBTI,
+            "city": F_CITY,
+            "church": F_CHURCH,
+        },
+        lock_dir=lock_dir,
+    )
+
+
+configure_onetoone_lib(SHARED_DATA_DIR)
 
 # lib 业务函数的 client：复用 bitable 模块那一只（同一份 token/连接/限流令牌桶），不另起实例。
 _grouping_client = bitable._client
@@ -5878,9 +5930,51 @@ def _group_signup_rows(signups, activity_id):
     return rows
 
 
-def _read_grouping_jobs():
-    jobs = storage.load_json(GROUPING_JOBS_FILE, {})
+def _onetoone_selection_rows(selections, activity_id):
+    """该活动的（一对一）志愿记录。"""
+    return [r for r in selections
+            if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == activity_id]
+
+
+def _onetoone_result_rows(results, activity_id):
+    """该活动的一对一结果记录。"""
+    return [r for r in results
+            if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == activity_id]
+
+
+def _onetoone_submitted_oids(rows):
+    """非空「选择人open_id」去重列表（首次出现顺序；与分组端 /status 的去重口径一致）。"""
+    seen = set()
+    ordered = []
+    for r in rows:
+        oid = bitable.get_field_text(r.get("fields", {}), F_OTO_SELECTOR_OID)
+        if oid and oid not in seen:
+            seen.add(oid)
+            ordered.append(oid)
+    return ordered
+
+
+def _read_jobs(path):
+    jobs = storage.load_json(path, {})
     return jobs if isinstance(jobs, dict) else {}
+
+
+def _update_job(path, job_id, mutator):
+    def _mut(jobs):
+        job = jobs.get(job_id)
+        if not job:
+            return None
+        mutator(job)
+        return jobs
+    storage.update_json(path, {}, _mut)
+
+
+def _read_grouping_jobs():
+    return _read_jobs(GROUPING_JOBS_FILE)
+
+
+def _read_onetoone_jobs():
+    return _read_jobs(ONETOONE_JOBS_FILE)
 
 
 def _job_age_seconds(job, now):
@@ -5912,17 +6006,28 @@ def _job_is_active(job, now=None):
 
 
 def _update_grouping_job(job_id, mutator):
-    def _mut(jobs):
-        job = jobs.get(job_id)
-        if not job:
-            return None
-        mutator(job)
-        return jobs
-    storage.update_json(GROUPING_JOBS_FILE, {}, _mut)
+    _update_job(GROUPING_JOBS_FILE, job_id, mutator)
 
 
-def _create_grouping_job(job_id, activity_id, round_no, operator):
-    """原子创建 job；同 (活动, 轮次) 已有本进程 pending/running 的 job 时返回它的 job_id。
+def _update_onetoone_job(job_id, mutator):
+    _update_job(ONETOONE_JOBS_FILE, job_id, mutator)
+
+
+def _identity_match(job, identity):
+    """job 记录是否匹配冲突键（int 值容忍字符串写法，与旧 _create_grouping_job 同口径）。"""
+    for key, value in identity.items():
+        got = job.get(key)
+        if got == value:
+            continue
+        if isinstance(value, int) and _job_int(got, None) == value:
+            continue
+        return False
+    return True
+
+
+def _create_job(path, job_id, identity, operator):
+    """原子创建 job；同 identity（如 活动+轮次 / 仅活动）已有本进程 pending/running 的
+    job 时返回它的 job_id。
 
     检查与写入在同一次 update_json 里完成（进程内锁 + flock），并发提交不会各查各的
     都查空、再双双入列。job 记录顺手清理 24h 前的旧条目。
@@ -5939,24 +6044,34 @@ def _create_grouping_job(job_id, activity_id, round_no, operator):
             del jobs[jid]
         conflict_job = None
         for jid, job in jobs.items():
-            if (job.get("activity_id") == activity_id
-                    and _job_int(job.get("round")) == round_no
-                    and _job_is_active(job, now)):
+            if _identity_match(job, identity) and _job_is_active(job, now):
                 conflict_job = jid
                 break
         if conflict_job is None:
             jobs[job_id] = {
-                "activity_id": activity_id, "round": round_no, "operator": operator,
+                "operator": operator,
                 "state": "pending", "pid": os.getpid(), "progress": "已入列，等待执行",
                 "created_at": now, "started_at": None, "finished_at": None,
                 "result": None, "error": "",
+                **identity,
             }
         else:
             conflict.append(conflict_job)
         return jobs
 
-    storage.update_json(GROUPING_JOBS_FILE, {}, _mut)
+    storage.update_json(path, {}, _mut)
     return conflict[0] if conflict else None
+
+
+def _create_grouping_job(job_id, activity_id, round_no, operator):
+    """分组 job：冲突键 = (活动, 轮次)。"""
+    return _create_job(GROUPING_JOBS_FILE, job_id,
+                       {"activity_id": activity_id, "round": round_no}, operator)
+
+
+def _create_onetoone_job(job_id, activity_id, operator):
+    """一对一 job：冲突键 = 活动（一对一没有轮次概念，同活动串行即可）。"""
+    return _create_job(ONETOONE_JOBS_FILE, job_id, {"activity_id": activity_id}, operator)
 
 
 def _run_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack):
@@ -6008,6 +6123,63 @@ def _start_grouping_job(job_id, activity_id, round_no, activity_record, lock_sta
         args=(job_id, activity_id, round_no, activity_record, lock_stack)).start()
 
 
+def _run_onetoone_job(job_id, activity_id, activity_record):
+    """一对一 job 线程主体：执行 lib.onetoone.execute。
+
+    活动锁由 lib.execute 自己在 job 线程内获取/释放（带有上限的 flock 等待），
+    请求线程**不**抢锁：start_collection/execute 都自持锁，若请求线程先抢再让
+    job 线程进 lib 会撞上同一把不可重入的线程锁（同进程死锁）。
+    锁预算传 H5 的 5s：被别的任务占着时快速失败成 BUSY 结果，而不是让遮罩空等。
+    """
+    err = None
+    res = None
+    try:
+        _update_onetoone_job(job_id, lambda j: j.update(
+            state="running", started_at=int(time.time()),
+            progress="正在执行一对一匹配（读取志愿、构建资料、写入结果）…"))
+        res = lib_onetoone.execute(
+            activity_id, client=_grouping_client, activity=activity_record,
+            find_user_by_openid=_grouping_find_user_by_openid,
+            lock_timeout=GROUPING_API_LOCK_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 — job 边界必须兜住异常并落盘，不能无声死掉
+        err = e
+    if err is not None:
+        try:
+            _update_onetoone_job(job_id, lambda j: j.update(
+                state="failed", finished_at=int(time.time()), progress="", error=str(err)))
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning("一对一 job 失败状态落盘失败: %s", job_id, exc_info=True)
+        # 异常可能发生在状态写到一半的位置：失败也要刷快照，让管理台看到真实状态
+        refresh_snapshot_table_async("activities")
+        refresh_snapshot_table_async("onetoone_results")
+        return
+    try:
+        _update_onetoone_job(job_id, lambda j: j.update(
+            state="done", finished_at=int(time.time()), progress="", result=res))
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("一对一 job 完成状态落盘失败: %s", job_id, exc_info=True)
+    # 快照刷新在锁释放之后，避免刷新线程读到锁内的中间态
+    refresh_snapshot_table_async("activities")
+    refresh_snapshot_table_async("onetoone_results")
+
+
+def _start_onetoone_job(job_id, activity_id, activity_record):
+    threading.Thread(
+        target=_run_onetoone_job, name=f"onetoone-job-{job_id}", daemon=True,
+        args=(job_id, activity_id, activity_record)).start()
+
+
+def _active_job_for(activity_id):
+    """该活动当前是否有活跃 job（两种任务分开文件，都要查）。用于管理台做
+    「执行中不允许切模式」的判断；返回首个命中的 {kind, job_id, state}。"""
+    for kind, jobs in (("group", _read_grouping_jobs()),
+                       ("onetoone", _read_onetoone_jobs())):
+        for jid, job in jobs.items():
+            if job.get("activity_id") == activity_id and _job_is_active(job):
+                return {"kind": kind, "job_id": jid, "state": job.get("state")}
+    return None
+
+
 @app.route("/api/admin/group/activities", methods=["GET"])
 def admin_group_activities():
     """活动总览：管理台首页要的每个活动的分组进度。"""
@@ -6021,6 +6193,7 @@ def admin_group_activities():
     activities = _snap_fresh("activities")
     selections = _snap_fresh("group_selections")
     results = _snap_fresh("group_results")
+    oto_selections = _snap_fresh("onetoone_selections")
 
     # 总览需要按活动分别计数，这里一次遍历全表；去重口径（非空 open_id 去重）与
     # lib.summarize_selections 等价，是该口径在总览端的等价实现（逐活动调用会在
@@ -6032,6 +6205,14 @@ def admin_group_activities():
         oid = bitable.get_field_text(f, F_GS_SELECTOR_OID)
         if aid and oid:
             submitted.setdefault(aid, set()).add(oid)
+
+    oto_submitted = {}
+    for r in oto_selections:
+        f = r.get("fields", {})
+        aid = bitable.get_field_text(f, F_OTO_ACTIVITY_ID)
+        oid = bitable.get_field_text(f, F_OTO_SELECTOR_OID)
+        if aid and oid:
+            oto_submitted.setdefault(aid, set()).add(oid)
 
     items = []
     for a in activities:
@@ -6047,6 +6228,10 @@ def admin_group_activities():
         if keyword and keyword not in activity_id.casefold() and keyword not in name.casefold():
             continue
         rounds = _group_rounds(results, activity_id)
+        onetoone_status = (bitable.get_field_text(f, F_ACTIVITY_ONETOONE_STATUS)
+                           or lib_grouping.STATUS_NOT_STARTED)
+        onetoone_flag = bitable.get_field_text(f, F_ACTIVITY_ONETOONE_FLAG) or "否"
+        mode = lib_grouping.derive_mode(a)
         items.append({
             "record_id": a.get("record_id"),
             "activity_id": activity_id,
@@ -6054,6 +6239,11 @@ def admin_group_activities():
             "activity_status": bitable.get_field_text(f, F_ACTIVITY_STATUS),
             "group_status": group_status,
             "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG),
+            "onetoone_status": onetoone_status,
+            "onetoone_flag": onetoone_flag,
+            "onetoone_submitted_count": len(oto_submitted.get(activity_id, ())),
+            "mode": mode,
+            "conflict": mode == lib_grouping.MODE_CONFLICT,
             "males_per_group": int(bitable.get_field_number(f, F_ACTIVITY_MALE_PER_GROUP, 0)),
             "females_per_group": int(bitable.get_field_number(f, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
             # 报名数用 bot 每 30s 对账写入的「当前报名人数」，不在管理台逐活动数报名表
@@ -6095,6 +6285,20 @@ def admin_group_status():
         if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_oids)
 
     rounds = _group_rounds(_snap_fresh("group_results"), act_id)
+
+    # 一对一摘要（加法字段）：详情页模式卡与动态 tabs 据此渲染；计数口径与
+    # /api/admin/onetoone/status 一致（非空 open_id 去重）。
+    oto_rows = _onetoone_selection_rows(_snap_fresh("onetoone_selections"), act_id)
+    oto_submitted_oids = _onetoone_submitted_oids(oto_rows)
+    oto_submitted_set = set(oto_submitted_oids)
+    oto_unsubmitted_count = sum(
+        1 for s in signup_rows
+        if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in oto_submitted_set)
+    oto_results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id)
+    oto_matched = {oid for oid in
+                   (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID)
+                    for r in oto_results) if oid}
+    mode = lib_grouping.derive_mode(act)
     return jsonify({
         "activity_id": act_id,
         "name": bitable.get_field_text(f, F_ACTIVITY_NAME),
@@ -6110,6 +6314,16 @@ def admin_group_status():
         "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG) or "否",
         "rounds": rounds,
         "latest_round": rounds[-1] if rounds else None,
+        "onetoone_status": (bitable.get_field_text(f, F_ACTIVITY_ONETOONE_STATUS)
+                            or lib_grouping.STATUS_NOT_STARTED),
+        "onetoone_flag": bitable.get_field_text(f, F_ACTIVITY_ONETOONE_FLAG) or "否",
+        "onetoone_submitted_count": len(oto_submitted_oids),
+        "onetoone_unsubmitted_count": oto_unsubmitted_count,
+        "onetoone_result_count": len(oto_results),
+        "onetoone_matched_count": len(oto_matched),
+        "mode": mode,
+        "conflict": mode == lib_grouping.MODE_CONFLICT,
+        "active_job": _active_job_for(act_id),
     })
 
 
@@ -6254,6 +6468,10 @@ def admin_group_start():
         return jsonify({"error": "另一场分组正在执行中，请稍候",
                         "busy_activity_id": act_id}), 409
 
+    if res.get("code") == "EXCLUSIVE_MODE":
+        # 动作层互斥：对面一对一开着/没收尾 → 拒绝，不自动动对面模式
+        return jsonify({"error": "该活动的一对一模式仍在开启或未收尾，请先关闭一对一模式",
+                        "code": "EXCLUSIVE_MODE"}), 409
     if res.get("code") != "OK":
         # SEARCH_FAILED：lib 先写「收集中」再查历史结果，查失败时状态已开、结果未删。
         # 如实回错误并刷新状态快照，让管理员看到真实状态后重试；不吞成成功。
@@ -6442,6 +6660,462 @@ def admin_group_flag():
     lib_grouping.set_group_flag(act_id, enabled, client=_grouping_client, activity=act)
     refresh_snapshot_table_async("activities")
     return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
+
+
+# ========== 管理员一对一管理台 ==========
+# 与分组管理台同构：读端点全部 fresh=True 实时读飞书；写端点复用 lib.onetoone /
+# lib.grouping 的实现与跨进程活动锁（与 bot 进程互斥）；run 走独立 job 文件
+# （yixianqian_onetoone_jobs.json）+ 轮询。模式互斥的 L1 由 set_mode 的双栏位
+# 单笔 PUT 保证，L2 由 lib 的动作层 guard（EXCLUSIVE_MODE）保证。
+
+
+def _onetoone_or_404(activity_id):
+    """解析活动（fresh）并回 (act, act_id, None) 或 (None, None, (resp, code))。"""
+    act, act_id = snap_resolve_activity(activity_id, fresh=True)
+    if not act:
+        return None, None, (jsonify({"error": "活动不存在"}), 404)
+    return act, act_id, None
+
+
+@app.route("/api/admin/onetoone/status", methods=["GET"])
+def admin_onetoone_status():
+    """一对一状态：管理台详情页要的计数 + 模式派生值 + 活跃 job。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id)
+    if miss:
+        return miss
+    f = act.get("fields", {})
+
+    selections = _onetoone_selection_rows(_snap_fresh("onetoone_selections"), act_id)
+    submitted_oids = _onetoone_submitted_oids(selections)
+    submitted_set = set(submitted_oids)
+    signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+    unsubmitted_count = sum(
+        1 for s in signup_rows
+        if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_set)
+    results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id)
+    matched = {oid for oid in
+               (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) for r in results)
+               if oid}
+    mode = lib_grouping.derive_mode(act)
+    return jsonify({
+        "activity_id": act_id,
+        "name": bitable.get_field_text(f, F_ACTIVITY_NAME),
+        "onetoone_status": (bitable.get_field_text(f, F_ACTIVITY_ONETOONE_STATUS)
+                            or lib_grouping.STATUS_NOT_STARTED),
+        "onetoone_flag": bitable.get_field_text(f, F_ACTIVITY_ONETOONE_FLAG) or "否",
+        "group_status": (bitable.get_field_text(f, F_ACTIVITY_GROUP_STATUS)
+                         or lib_grouping.STATUS_NOT_STARTED),
+        "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG) or "否",
+        "signup_count": len(signup_rows),
+        "submitted_count": len(submitted_oids),
+        "unsubmitted_count": unsubmitted_count,
+        "result_count": len(results),
+        "matched_count": len(matched),
+        "mode": mode,
+        "conflict": mode == lib_grouping.MODE_CONFLICT,
+        "active_job": _active_job_for(act_id),
+    })
+
+
+@app.route("/api/admin/onetoone/unsubmitted", methods=["GET"])
+def admin_onetoone_unsubmitted():
+    """未提交一对一志愿名单：对应 bot「查看未提交一对一 A-0001」。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id)
+    if miss:
+        return miss
+    f = act.get("fields", {})
+
+    selection_rows = _onetoone_selection_rows(_snap_fresh("onetoone_selections"), act_id)
+    submitted = _onetoone_submitted_oids(selection_rows)
+    submitted_set = set(submitted)
+    signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+
+    def _user_fields(oid):
+        return (snap_find_user_by_openid(oid) or {}).get("fields", {})
+
+    nickname_by_oid = {}
+    items = []
+    for s in signup_rows:
+        sf = s.get("fields", {})
+        oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+        nickname_by_oid[oid] = bitable.get_field_text(sf, F_SIGNUP_NICKNAME)
+        if oid in submitted_set:
+            continue
+        uf = _user_fields(oid)
+        items.append({
+            "open_id": oid,
+            "user_id": bitable.get_field_text(uf, F_USER_ID),
+            "gender": bitable.get_field_text(uf, F_GENDER),
+            "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
+        })
+
+    submitted_items = []
+    for oid in submitted:
+        uf = _user_fields(oid)
+        submitted_items.append({
+            "open_id": oid,
+            "user_id": bitable.get_field_text(uf, F_USER_ID),
+            "gender": bitable.get_field_text(uf, F_GENDER),
+            "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+        })
+    return jsonify({
+        "activity_id": act_id,
+        "name": bitable.get_field_text(f, F_ACTIVITY_NAME),
+        "total": len(items),
+        "unsubmitted": items,
+        "submitted": submitted_items,
+        "all_submitted": not items,
+    })
+
+
+@app.route("/api/admin/onetoone/result", methods=["GET"])
+def admin_onetoone_result():
+    """完整必聊结果（管理台结果 tab，按人折叠）。
+
+    结果表由 bot/本服务写入，判定与展示都必须实时读（fresh），不吃周期快照。
+    用户ID 从 users 快照补全（不逐人打飞书）；一人一行、按排名升序。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id)
+    if miss:
+        return miss
+
+    results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id)
+    uid_by_oid = {}
+    for u in _snap_live("users"):
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid and oid not in uid_by_oid:
+            uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+
+    people = {}
+    for r in results:
+        rf = r.get("fields", {})
+        user_oid = bitable.get_field_text(rf, F_OTO_USER_OID)
+        target_oid = bitable.get_field_text(rf, F_OTO_TARGET_OID)
+        if not user_oid:
+            continue
+        person = people.get(user_oid)
+        if person is None:
+            person = {
+                "open_id": user_oid,
+                "nickname": bitable.get_field_text(rf, F_OTO_USER_NAME),
+                "gender": bitable.get_field_text(rf, F_OTO_USER_GENDER),
+                "user_id": uid_by_oid.get(user_oid, ""),
+                "partners": [],
+            }
+            people[user_oid] = person
+        if target_oid:
+            person["partners"].append({
+                "open_id": target_oid,
+                "nickname": bitable.get_field_text(rf, F_OTO_TARGET_NAME),
+                "user_id": uid_by_oid.get(target_oid, ""),
+                "rank": int(bitable.get_field_number(rf, F_OTO_RANK, 0)),
+            })
+    for person in people.values():
+        person["partners"].sort(key=lambda x: x["rank"])
+    ordered = sorted(people.values(), key=lambda p: (p["user_id"] or "~", p["open_id"]))
+    return jsonify({
+        "activity_id": act_id,
+        "name": bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_NAME),
+        "onetoone_status": (bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
+                            or lib_grouping.STATUS_NOT_STARTED),
+        "result_count": len(results),
+        "matched_count": len(ordered),
+        "people": ordered,
+    })
+
+
+@app.route("/api/admin/onetoone/preview", methods=["POST"])
+def admin_onetoone_preview():
+    """执行影响面预览（红线：零写入）——lib.onetoone.preview 是与 execute 完全
+    独立的只读路径；前端「开始一对一」的确认层用 existing_results 显示将清除的笔数。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "onetoone_preview")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id.strip())
+    if miss:
+        return miss
+
+    res = lib_onetoone.preview(act_id, client=_grouping_client, activity=act,
+                               find_user_by_openid=_grouping_find_user_by_openid)
+    return jsonify(res)
+
+
+@app.route("/api/admin/onetoone/start", methods=["POST"])
+def admin_onetoone_start():
+    """开始一对一：开放收集 + 清空该活动全部历史结果（破坏性，前端确认层把关）。
+
+    lib.start_collection 自持活动锁（锁预算用 H5 的 5s：抢不到立刻 409，不占
+    gunicorn 线程池）；EXCLUSIVE_MODE = 分组模式还开着/没收尾 → 拒绝，不自动动分组。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(5, 60, "onetoone_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id.strip())
+    if miss:
+        return miss
+
+    res = lib_onetoone.start_collection(
+        act_id, client=_grouping_client, activity=act,
+        lock_timeout=GROUPING_API_LOCK_TIMEOUT)
+    res_code = res.get("code")
+    if res_code == "BUSY":
+        return jsonify({"error": "另一场分组/一对一正在执行中，请稍候",
+                        "busy_activity_id": act_id}), 409
+    if res_code == "EXCLUSIVE_MODE":
+        return jsonify({"error": "该活动的分组模式仍在开启或未收尾，请先把模式切换为一对一",
+                        "code": "EXCLUSIVE_MODE"}), 409
+    if res_code != "OK":
+        # 状态已写入/结果可能残留：如实回错误并刷新快照，让管理员看到真实状态后重试
+        refresh_snapshot_table_async("activities")
+        return jsonify({"error": "开始一对一失败，请稍后重试", "code": res_code}), 500
+
+    refresh_snapshot_table_async("activities")
+    refresh_snapshot_table_async("onetoone_results")
+    return jsonify({
+        "ok": True,
+        "activity_id": act_id,
+        "name": res["activity_name"],
+        "onetoone_status": "收集中",
+        "cleared_results": res["cleared_results"],
+    })
+
+
+@app.route("/api/admin/onetoone/run", methods=["POST"])
+def admin_onetoone_run():
+    """执行一对一：入列 job 后立即回 202 + job_id，前端轮询 /job（长耗时作业）。
+
+    与分组 run 的差别：活动锁由 job 线程里的 lib.execute 自持（lib 在锁内跑完整条
+    状态机：幂等检查→截止→读志愿→算法→写结果→已完成）。请求线程**不**抢锁——
+    start_collection/execute 都自持锁，请求线程先抢会让 job 线程撞上同一把不可重入
+    的进程内锁而死锁。排队层幂等（同活动已有活跃 job → 409 + 既有 job_id）仍由
+    本端点负责，双提交不会双双入列。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(5, 60, "onetoone_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id.strip())
+    if miss:
+        return miss
+
+    for jid, job in _read_onetoone_jobs().items():
+        if job.get("activity_id") == act_id and _job_is_active(job):
+            return jsonify({"ok": False, "error": "该活动的一对一任务已在执行中",
+                            "job_id": jid, "activity_id": act_id}), 409
+
+    job_id = _uuid.uuid4().hex[:12]
+    try:
+        existing = _create_onetoone_job(job_id, act_id, open_id)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("创建一对一 job 失败", exc_info=True)
+        return jsonify({"error": "创建任务失败，请重试"}), 500
+    if existing:
+        return jsonify({"ok": False, "error": "该活动的一对一任务已在执行中",
+                        "job_id": existing, "activity_id": act_id}), 409
+
+    try:
+        _start_onetoone_job(job_id, act_id, act)
+    except Exception:  # noqa: BLE001
+        _update_onetoone_job(job_id, lambda j: j.update(
+            state="failed", finished_at=int(time.time()), progress="", error="任务线程启动失败"))
+        logging.getLogger(__name__).warning("一对一 job 线程启动失败", exc_info=True)
+        return jsonify({"error": "任务启动失败，请重试"}), 500
+
+    return jsonify({"ok": True, "job_id": job_id, "activity_id": act_id,
+                    "state": "pending"}), 202
+
+
+@app.route("/api/admin/onetoone/job", methods=["GET"])
+def admin_onetoone_job():
+    """job 轮询：读本地一对一 job 文件，不打飞书。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    job_id = (request.args.get("job_id") or "").strip()
+    if not job_id:
+        return jsonify({"error": "缺少 job_id"}), 400
+
+    job = _read_onetoone_jobs().get(job_id)
+    if not job:
+        return jsonify({"error": "任务不存在"}), 404
+
+    state = job.get("state")
+    # H5 重启会带走 daemon thread 但留下 job 记录：pid 对不上或超过执行上限 →
+    # unknown，由前端出三分支指引（与分组 job 同一套判活）。
+    if state in ("pending", "running") and (
+            job.get("pid") != os.getpid() or _job_timed_out(job)):
+        state = "unknown"
+
+    return jsonify({
+        "job_id": job_id,
+        "activity_id": job.get("activity_id"),
+        "state": state,
+        "created_at": job.get("created_at"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "progress": job.get("progress", ""),
+        "result": job.get("result"),
+        "error": job.get("error", ""),
+    })
+
+
+@app.route("/api/admin/onetoone/flag", methods=["POST"])
+def admin_onetoone_flag():
+    """一对一功能开关：开启走 lib.set_mode（双栏位一 PUT：一对一=是 + 分组=否），
+    关闭只写自身=否（与 bot「开启一对一功能」同一套 lib 实现）。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "onetoone_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    enabled = data.get("enabled")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(enabled, bool):
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id.strip())
+    if miss:
+        return miss
+    af = act.get("fields", {})
+    name = bitable.get_field_text(af, F_ACTIVITY_NAME)
+    target = "是" if enabled else "否"
+    cur = bitable.get_field_text(af, F_ACTIVITY_ONETOONE_FLAG) or "否"
+    if cur == target:
+        # 幂等：已是目标值且（开启时）分组没开着 → 不重复写。开启时若分组也开着
+        # （历史脏数据）则继续走 set_mode，把「分组=否」合进同一笔纠正。
+        if not enabled or bitable.get_field_text(af, F_ACTIVITY_GROUP_FLAG) != "是":
+            return jsonify({"ok": True, "activity_id": act_id, "name": name,
+                            "onetoone_flag": target})
+
+    res = lib_onetoone.set_onetoone_flag(act_id, enabled, client=_grouping_client, activity=act)
+    if res.get("code") != "OK":
+        return jsonify({"error": "开关设置失败，请稍后重试", "code": res.get("code")}), 500
+    refresh_snapshot_table_async("activities")
+    return jsonify({"ok": True, "activity_id": act_id, "name": name,
+                    "onetoone_flag": res["onetoone_flag"]})
+
+
+@app.route("/api/admin/activity/mode", methods=["POST"])
+def admin_activity_mode():
+    """模式切换（互斥写入器）：一次 PUT 同时写「分组功能开启」「一对一功能开启」。
+
+    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若状态 ∈ {收集中, 已截止}，
+    或该活动有活跃 job → 409 拒绝并提示先收尾。切换本身只改入口 flag，不删任何数据。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "activity_mode")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    mode = data.get("mode")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if mode not in lib_grouping.MODES:
+        return jsonify({"error": "mode 必须是 group/onetoone/none"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id.strip())
+    if miss:
+        return miss
+    af = act.get("fields", {})
+    active = _active_job_for(act_id)
+    if active:
+        return jsonify({"error": "该活动有任务正在执行，请等它结束后再切换模式",
+                        "code": "MODE_SWITCH_BLOCKED", "active_job": active}), 409
+
+    closing = []
+    if (bitable.get_field_text(af, F_ACTIVITY_GROUP_FLAG) == "是"
+            and mode != lib_grouping.MODE_GROUP
+            and (bitable.get_field_text(af, F_ACTIVITY_GROUP_STATUS)
+                 in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED))):
+        closing.append("分组")
+    if (bitable.get_field_text(af, F_ACTIVITY_ONETOONE_FLAG) == "是"
+            and mode != lib_grouping.MODE_ONETOONE
+            and (bitable.get_field_text(af, F_ACTIVITY_ONETOONE_STATUS)
+                 in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED))):
+        closing.append("一对一")
+    if closing:
+        return jsonify({"error": "「%s」仍处于收集中/已截止，请先收尾再切换模式" % "、".join(closing),
+                        "code": "MODE_SWITCH_BLOCKED", "blocked_sides": closing}), 409
+
+    res = lib_grouping.set_mode(act_id, mode, client=_grouping_client, activity=act)
+    res_code = res.get("code")
+    if res_code == "WRITE_FAILED":
+        return jsonify({"error": "模式切换写入失败，请稍后重试", "code": res_code}), 500
+    if res_code != "OK":
+        return jsonify({"error": "模式切换失败，请稍后重试", "code": res_code}), 500
+
+    if res.get("changed"):
+        refresh_snapshot_table_async("activities")
+    return jsonify({
+        "ok": True,
+        "activity_id": act_id,
+        "name": res["name"],
+        "mode": res["mode"],
+        "group_flag": res["group_flag"],
+        "onetoone_flag": res["onetoone_flag"],
+        "changed": res["changed"],
+    })
 
 
 # ========== 一对一接口 ==========

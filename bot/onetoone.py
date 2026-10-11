@@ -41,6 +41,8 @@ def configure_onetoone_lib(lock_dir):
             "activity_name": FIELD_ACTIVITY_NAME,
             "onetoone_status": FIELD_ACT_ONETOONE_STATUS,
             "onetoone_flag": FIELD_ACT_ONETOONE_FLAG,
+            "group_flag": FIELD_ACT_GROUP_FLAG,
+            "group_status": FIELD_ACT_GROUP_STATUS,
             "oto_activity_id": FIELD_OTO_ACTIVITY_ID,
             "oto_selector_oid": FIELD_OTO_SELECTOR_OID,
             "oto_selector_name": FIELD_OTO_SELECTOR_NAME,
@@ -320,6 +322,11 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
 def _render_start_result(res):
     """把 start_collection 的结构化结果拼成给管理员看的中文。"""
     code = res["code"]
+    if code == "EXCLUSIVE_MODE":
+        # 动作层互斥（设计 §2.3）：对面分组开着或没收尾 → 让管理员先关对面。
+        return ("无法开始一对一：该活动的分组模式正在使用中。\n"
+                "为避免两边混着跑，请先在 H5「活动管理」把模式切换为「一对一」"
+                "（或等分组收尾）后再试。")
     if code == "OK":
         return (f"一对一志愿填写已开始：{res['activity_name']}\n"
                 f"已开放，未发送群发通知。\n"
@@ -357,6 +364,9 @@ def _render_execute_result(res, activity_id):
     的「刻意分歧」断言——其余等价性案例会直接红。
     """
     code = res["code"]
+    if code == "EXCLUSIVE_MODE":
+        return (f"无法执行一对一：活动「{res['activity_name']}」的分组模式已开启。\n"
+                f"请先在 H5「活动管理」把模式切换为「一对一」再执行。")
     if code == "ALREADY_DONE":
         return (f"活动「{res['activity_name']}」已生成过一对一结果，请勿重复执行。如需重新匹配，请先发送"
                 f"「开始一对一 {activity_id}」重新开放，再执行。")

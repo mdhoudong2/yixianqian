@@ -108,3 +108,44 @@ def test_profile_similarity_breaks_ties():
     }
     result = run_onetoone_matching(ps, {}, profiles, top_n=10)
     assert _ranked(result, "m0") == ["f0", "f1"]
+
+
+# ---------------------------------------------------------------- profile_of（C1 下沉进 lib）
+
+from lib import onetoone as lib_onetoone  # noqa: E402
+
+_PROFILE_FIELDS = {
+    "self_hobbies": "爱好", "self_sports": "运动", "self_traits": "性格",
+    "education": "学历", "mbti": "MBTI", "city": "城市", "church": "教堂",
+}
+
+
+def test_profile_of_reads_given_field_names():
+    fields = {
+        "爱好": ["看书", "跑步"], "运动": ["羽毛球"], "性格": ["外向"],
+        "学历": "本科", "MBTI": ["ENFP"], "城市": "厦门", "教堂": "某堂",
+    }
+    prof = lib_onetoone.profile_of(fields, field_names=_PROFILE_FIELDS)
+    assert prof["hobbies"] == frozenset({"看书", "跑步"})
+    assert prof["sports"] == frozenset({"羽毛球"})
+    assert prof["traits"] == frozenset({"外向"})
+    assert prof["education"] == "本科"
+    assert prof["mbti"] == frozenset({"ENFP"})
+    assert prof["city"] == "厦门"
+    assert prof["church"] == "某堂"
+
+
+def test_profile_of_missing_fields_are_empty():
+    prof = lib_onetoone.profile_of({}, field_names=_PROFILE_FIELDS)
+    assert prof["hobbies"] == frozenset()
+    assert prof["education"] == ""
+
+
+def test_bot_profile_of_uses_bot_constants():
+    """bot/auto_tasks._profile_of 委托 lib.onetoone.profile_of，栏位名取 bot 常量。"""
+    import auto_tasks as at
+
+    fields = {at.FIELD_SELF_HOBBIES: ["看书", "爬山"], at.FIELD_CITY: "厦门"}
+    prof = at._profile_of(fields)
+    assert prof["hobbies"] == frozenset({"看书", "爬山"})
+    assert prof["city"] == "厦门"

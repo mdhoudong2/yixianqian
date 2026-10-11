@@ -60,6 +60,7 @@ PRAISE_TABLE_ID = _cfg_get("PRAISE_TABLE_ID", getattr(_cfg, "PRAISE_TABLE_ID", "
 
 FIELD_NICKNAME = "昵称"
 FIELD_FEISHU_ID = "飞书用户ID"
+FIELD_USER_ID = "用户ID"
 # 电话字段（type=13），读出来是 [{"number": ...}]，要用 bitable.get_phone_value 取。
 # 麦穗的邀请关系按手机号认人，所以这个字段是邀请那条线的关键字段。
 FIELD_PHONE = "手机号"
@@ -278,12 +279,7 @@ WS_HEALTH_CHECK_TIMEOUT = 600      # 10分钟无任何事件则强制重连
 
 # 分组算法评分（优先级得分 / 红娘星级 / 权重）已随算法搬进 lib/grouping.py，
 # 两端共用同一份，不再在这里另存。
-# 一对一匹配（双向奔赴模型）：总分 = 我的优先级得分×0.5 + 对方的优先级得分×0.3 + 资料相似度×0.2。
-# 「未选择TA」给 30 分基础分（不反感但没主动选），让「选了但我没选」的人有机会进我的名单。
-WEIGHT_ONETOONE_MY_PRIORITY = 0.5
-WEIGHT_ONETOONE_THEIR_PRIORITY = 0.3
-WEIGHT_ONETOONE_MATCH = 0.2
-ONETOONE_UNSELECTED_SCORE = 30
+# 一对一匹配（双向奔赴模型）的权重也已随算法搬进 lib/onetoone.py，两端共用同一份。
 
 def is_admin(open_id):
     return open_id in ADMIN_OPEN_IDS

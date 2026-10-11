@@ -1,110 +1,97 @@
-"""活动一对一：双向奔赴 top-N 必聊名单匹配、选择卡片、指令处理。
+"""活动一对一（bot 侧）：**渲染层 + re-export**，业务逻辑在 lib/onetoone.py。
 
-与 grouping.py 同构，差异只在匹配算法：分组是「卫星滚动分组」（把人塞进小组），
-一对一则是「每人独立算一份最多 10 人的必聊名单」，按
-`0.5*我的优先级得分 + 0.3*对方的优先级得分 + 0.2*资料相似度` 排序取前 N（双向奔赴）。
-「未选择TA」给 30 分基础分，让「选了我但我没主动选」的人也有机会进名单。
+与 bot/grouping.py 同构：匹配算法、志愿读取/写入、执行状态机都搬进 lib.onetoone，
+这里只做两件事：把 lib 回传的结构化结果拼成给用户/管理员看的中文，以及保留旧入口
+（get_activity_signups / get_user_onetoone_selection / _build_profiles 等）的
+re-export，外部 seed 脚本与旧代码继续可用。
+
+回传的每一句中文字符串与迁移前逐字相同，并由 tests/test_onetoone_parity.py 对着
+tests/_golden_onetoone_impl.py（自 HEAD 冻结）逐案比对钉死——改文案必红灯。
 """
-import threading
-from concurrent.futures import ThreadPoolExecutor
-
 from clients import *
 from constants import *
-from grouping import get_activity_signups
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 
-from lib import recommend
-from lib.grouping import PRIORITY_SCORES
+from lib import onetoone as lib_onetoone
+from lib.onetoone import (  # noqa: F401 — re-export 兼容旧入口，勿删
+    ONETOONE_UNSELECTED_SCORE,
+    WEIGHT_ONETOONE_MATCH,
+    WEIGHT_ONETOONE_MY_PRIORITY,
+    WEIGHT_ONETOONE_THEIR_PRIORITY,
+    profile_of,
+    run_onetoone_matching,
+)
 
-# 一对一执行互斥锁：防止管理员并发两次「执行一对一」互相删除/覆盖结果
-_onetoone_lock = threading.Lock()
 
+def configure_onetoone_lib(lock_dir):
+    """把本进程用的表 ID / 栏位名注入 lib.onetoone。
 
-def run_onetoone_matching(participants, selections, profiles, top_n=10):
-    """双向奔赴 + 资料相似度：给每人算出 up to top_n 个异性必聊名单（各自独立生成）。
-
-    participants: [{"id": openid, "gender": "male"/"female"}, ...]
-    selections: {selector_oid: [{"id": target_oid, "priority": 1..7}, ...]}
-    profiles: {oid: 打分资料dict}（键与 lib.recommend.match_score 对齐，已 prepare_profile）
-    返回: {oid: [(target_oid, rank), ...]}，rank 从 1 开始。
-
-    总分 = 我的优先级得分 × WEIGHT_ONETOONE_MY_PRIORITY
-         + 对方的优先级得分 × WEIGHT_ONETOONE_THEIR_PRIORITY
-         + 资料相似度 × WEIGHT_ONETOONE_MATCH
-    「优先级得分」= PRIORITY_SCORES[志愿位次]；未选择则 ONETOONE_UNSELECTED_SCORE(30)。
-    「我的优先级得分」看我选没选 TA；「对方的优先级得分」看 TA 选没选我——所以
-    没被我主动选、但对我示好的人也有机会进名单（惊喜位）。
+    放在这里而不是 bot/yixianqian_bot_ws.py，是为了让「lib 需要哪些栏位」只有一处
+    定义——main() 和 tests/test_onetoone_parity.py 调的是同一个函数，两边不会各配
+    各的、各配错的。lock_dir 会一并转注入 lib.grouping（提交/开始收集的跨进程互斥
+    复用分组那批 yixianqian_grouping_<活动>.lock）。
     """
-    males = [p["id"] for p in participants if p.get("gender") == "male"]
-    females = [p["id"] for p in participants if p.get("gender") == "female"]
+    lib_onetoone.configure(
+        onetoone_select_table=ONETOONE_SELECT_TABLE,
+        onetoone_result_table=ONETOONE_RESULT_TABLE,
+        activity_table_id=ACTIVITY_TABLE_ID,
+        signup_table_id=SIGNUP_TABLE_ID,
+        fields={
+            "activity_id": FIELD_ACTIVITY_ID,
+            "activity_name": FIELD_ACTIVITY_NAME,
+            "onetoone_status": FIELD_ACT_ONETOONE_STATUS,
+            "onetoone_flag": FIELD_ACT_ONETOONE_FLAG,
+            "oto_activity_id": FIELD_OTO_ACTIVITY_ID,
+            "oto_selector_oid": FIELD_OTO_SELECTOR_OID,
+            "oto_selector_name": FIELD_OTO_SELECTOR_NAME,
+            "oto_selector_gender": FIELD_OTO_SELECTOR_GENDER,
+            "oto_choices": FIELD_OTO_CHOICES,
+            "oto_rank": FIELD_OTO_RANK,
+            "oto_user_oid": FIELD_OTO_USER_OID,
+            "oto_user_name": FIELD_OTO_USER_NAME,
+            "oto_user_gender": FIELD_OTO_USER_GENDER,
+            "oto_target_oid": FIELD_OTO_TARGET_OID,
+            "oto_target_name": FIELD_OTO_TARGET_NAME,
+            "signup_activity_id": FIELD_SIGNUP_ACTIVITY_ID,
+            "signup_openid": FIELD_SIGNUP_OPENID,
+            "signup_nickname": FIELD_SIGNUP_NICKNAME,
+            "signup_status": FIELD_SIGNUP_STATUS,
+            "gender": FIELD_GENDER,
+            "user_id": FIELD_USER_ID,
+            "self_hobbies": FIELD_SELF_HOBBIES,
+            "self_sports": FIELD_SELF_SPORTS,
+            "self_traits": FIELD_SELF_TRAITS,
+            "education": FIELD_EDUCATION,
+            "mbti": FIELD_MBTI,
+            "city": FIELD_CITY,
+            "church": FIELD_CHURCH,
+        },
+        lock_dir=lock_dir,
+    )
 
-    # 反向索引：target_oid -> {selector_oid: priority}，用来算「对方对我的优先级得分」。
-    chosen_by = {}
-    for sel_oid, choices in selections.items():
-        for c in choices:
-            chosen_by.setdefault(c["id"], {})[sel_oid] = c["priority"]
 
-    result = {}
-    for p in participants:
-        pid = p["id"]
-        g = p.get("gender")
-        if g == "male":
-            opp = females
-        elif g == "female":
-            opp = males
-        else:
-            # 性别缺失/未知：不进任何人的候选，也不给名单
-            result[pid] = []
-            continue
-        candidates = [q for q in opp if q != pid]
 
-        # 我选的人：target -> priority（同人多次填取最小优先级，即最高意愿）
-        my_choice = {}
-        for s in selections.get(pid, []):
-            if s["id"] not in my_choice or s["priority"] < my_choice[s["id"]]:
-                my_choice[s["id"]] = s["priority"]
 
-        prof_a = profiles.get(pid, {})
-        scored = []
-        for qid in candidates:
-            my_p = my_choice.get(qid)
-            my_score = PRIORITY_SCORES.get(my_p, ONETOONE_UNSELECTED_SCORE)
-            # 对方对我的优先级得分 = 「qid 有没有选我」→ chosen_by[target=pid][selector=qid]
-            their_p = chosen_by.get(pid, {}).get(qid)
-            their_score = PRIORITY_SCORES.get(their_p, ONETOONE_UNSELECTED_SCORE)
-            try:
-                match = recommend.match_score(prof_a, profiles.get(qid, {}))[0]
-            except Exception:
-                match = 0
-            total = (WEIGHT_ONETOONE_MY_PRIORITY * my_score
-                     + WEIGHT_ONETOONE_THEIR_PRIORITY * their_score
-                     + WEIGHT_ONETOONE_MATCH * match)
-            scored.append((total, qid))
+def get_activity_signups(activity_id):
+    """获取活动的已报名用户列表（旧入口，保留名字）。"""
+    return lib_onetoone.build_participants(
+        activity_id, client=bitable, find_user_by_openid=find_user_by_openid)
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        top = scored[:min(top_n, len(scored))]
-        result[pid] = [(qid, rank) for rank, (_, qid) in enumerate(top, 1)]
-    return result
+
 
 
 def get_user_onetoone_selection(activity_id, open_id):
-    """获取用户在某活动的一对一选择"""
-    records = search_records(ONETOONE_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
-            {"field_name": FIELD_OTO_SELECTOR_OID, "operator": "is", "value": [open_id]}
-        ]
-    })
-    if not records:
-        return None
-    fields = records[0].get("fields", {})
-    choices = []
-    for i, cf in enumerate(FIELD_OTO_CHOICES):
-        val = get_field_text(fields, cf)
-        if val:
-            choices.append(val)
-    return {"record_id": records[0]["record_id"], "choices": choices}
+    """获取用户在某活动的一对一选择（旧入口，保留名字）。"""
+    return lib_onetoone.fetch_selection(activity_id, open_id, client=bitable)
+
+
+
+
+def _build_profiles(open_ids):
+    """为每个 open_id 构建打分资料（旧入口，保留名字；seed 脚本在用）。"""
+    return lib_onetoone.build_profiles(open_ids, find_user_by_openid=find_user_by_openid)
+
+
 
 
 def _dup_nicknames(participants):
@@ -226,7 +213,7 @@ def handle_onetoone_command(sender_id):
 
     activity = collecting_activities[0]
     af = activity.get("fields", {})
-    activity_id = get_field_text(af, "活动ID")
+    activity_id = get_field_text(af, FIELD_ACTIVITY_ID)
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
 
     participants = get_activity_signups(activity_id)
@@ -273,8 +260,6 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     user_gender = get_field_text(uf, FIELD_GENDER)
 
     participants = get_activity_signups(activity_id)
-    opp_gender = "女性" if user_gender == "男性" else "男性"
-    valid_oids = {p["open_id"] for p in participants if p["gender"] == opp_gender}
 
     choices = []
     if form_value:
@@ -299,13 +284,13 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     elif "selections" in action_value:
         choices = action_value["selections"]
 
-    if len(choices) != 7:
+    res = lib_onetoone.validate_choices(choices, participants, user_gender)
+    if res["code"] == "COUNT":
         return {"toast": {"type": "error", "content": f"请选择7位（当前{len(choices)}位）"}}
-    if len(set(choices)) != 7:
+    if res["code"] == "DUPLICATE":
         return {"toast": {"type": "error", "content": "不能重复选择同一人"}}
-    for c in choices:
-        if c not in valid_oids:
-            return {"toast": {"type": "error", "content": "选择包含无效参与者"}}
+    if res["code"] == "INVALID_TARGET":
+        return {"toast": {"type": "error", "content": "选择包含无效参与者"}}
 
     fields = {
         FIELD_OTO_ACTIVITY_ID: activity_id,
@@ -316,16 +301,20 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     for i, cf in enumerate(FIELD_OTO_CHOICES):
         fields[cf] = choices[i]
 
-    existing = get_user_onetoone_selection(activity_id, operator_open_id)
-    if existing:
-        update_record(ONETOONE_SELECT_TABLE, existing["record_id"], fields)
-        msg = "选择已更新"
-    else:
-        create_record(ONETOONE_SELECT_TABLE, fields)
-        msg = "选择已提交"
+    save = lib_onetoone.save_selection(activity_id, operator_open_id, fields, client=bitable)
+    msg = "选择已更新" if save.get("updated") else "选择已提交"
 
     log(f"一对一选择: {user_nickname} 活动{activity_id} {msg}")
     return {"toast": {"type": "success", "content": msg}}
+
+
+def _render_start_result(res):
+    """把 start_collection 的结构化结果拼成给管理员看的中文。"""
+    if res["code"] == "OK":
+        return (f"一对一志愿填写已开始：{res['activity_name']}\n"
+                f"已开放，未发送群发通知。\n"
+                f"请让用户在 H5 页面自查并提交志愿（现场活动）。")
+    return f"一对一志愿填写开始失败（{res['code']}）"
 
 
 def handle_admin_start_onetoone(keyword):
@@ -337,25 +326,32 @@ def handle_admin_start_onetoone(keyword):
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
+    res = lib_onetoone.start_collection(activity_id, client=bitable, activity=activity)
+    return _render_start_result(res)
 
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "收集中"})
 
-    # 重新开放：清除该活动历史一对一结果，否则「执行一对一」的幂等保护会拦截重跑
-    old_results = search_records(ONETOONE_RESULT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-    if old_results:
-        batch_delete_records(ONETOONE_RESULT_TABLE, [r["record_id"] for r in old_results])
-        log(f"重新开放一对一，已清除 {len(old_results)} 条历史结果: {activity_name}")
+def _render_execute_result(res, activity_id):
+    """把 execute 的结构化结果拼成给管理员看的中文。
 
-    log(f"管理员开始一对一: {activity_name}")
-    return (f"一对一志愿填写已开始：{activity_name}\n"
-            f"已开放，未发送群发通知。\n"
-            f"请让用户在 H5 页面自查并提交志愿（现场活动）。")
+    文案归渲染层：lib 只给数据。改这里的字必须同步改 tests/_golden_onetoone_impl.py
+    之外的那份断言——等价性测试会直接红。
+    """
+    code = res["code"]
+    if code == "ALREADY_DONE":
+        return (f"活动「{res['activity_name']}」已生成过一对一结果，请勿重复执行。如需重新匹配，请先发送"
+                f"「开始一对一 {activity_id}」重新开放，再执行。")
+    if code == "NO_PARTICIPANTS":
+        return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
+    if code == "ALGORITHM_ERROR":
+        return f"一对一匹配出错：{res['error']}，状态已恢复为「收集中」"
+    if code == "PARTIAL_WRITE":
+        return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚，"
+                f"状态恢复为「收集中」，请稍后重试。")
+
+    # 走到这里就是 OK
+    return (f"🎉 活动「{res['activity_name']}」一对一匹配完成：\n"
+            f"参与 {res['participant_count']} 人，共生成 {res['total_pairs']} 条必聊关系。\n"
+            f"用户可自查 H5「我的一对一」查看名单。")
 
 
 def handle_admin_stop_onetoone(keyword):
@@ -368,120 +364,9 @@ def handle_admin_stop_onetoone(keyword):
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    with _onetoone_lock:
-        # 幂等保护：该活动已生成过结果则拒绝重跑
-        existing_results = search_records(ONETOONE_RESULT_TABLE, {
-            "conjunction": "and",
-            "conditions": [{"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-        })
-        if existing_results:
-            return (f"活动「{get_field_text(activity.get('fields', {}), FIELD_ACTIVITY_NAME)}」"
-                    f"已生成过一对一结果，请勿重复执行。如需重新匹配，请先发送"
-                    f"「开始一对一 {activity_id}」重新开放，再执行。")
-        return _do_onetoone(activity)
-
-
-def _build_profiles(open_ids):
-    """为每个 open_id 构建打分资料（键与 lib.recommend.match_score 对齐）。"""
-    from auto_tasks import _profile_of
-
-    def _fetch(oid):
-        recs = find_user_by_openid(oid)
-        if not recs:
-            return oid, {}
-        return oid, _profile_of(recs[0].get("fields", {}))
-
-    profiles = {}
-    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="onetoone-profile") as pool:
-        for oid, prof in pool.map(_fetch, open_ids):
-            profiles[oid] = prof
-    return profiles
-
-
-def _do_onetoone(activity):
-    """执行一对一匹配（调用方需已持有 _onetoone_lock）"""
-    af = activity.get("fields", {})
-    activity_id = get_field_text(af, FIELD_ACTIVITY_ID) or ""
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    record_id = activity.get("record_id")
-
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "已截止"})
-
-    selections_records = search_records(ONETOONE_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-
-    participants = []
-    seen_oids = set()
-    selections = {}
-    skipped = 0
-    for sr in selections_records:
-        sf = sr.get("fields", {})
-        oid = get_field_text(sf, FIELD_OTO_SELECTOR_OID)
-        gender = get_field_text(sf, FIELD_OTO_SELECTOR_GENDER)
-        if not oid or oid in seen_oids:
-            continue
-        if gender not in ("男性", "女性"):
-            skipped += 1
-            continue
-        seen_oids.add(oid)
-        participants.append({"id": oid, "gender": "male" if gender == "男性" else "female"})
-        choices = []
-        for i, cf in enumerate(FIELD_OTO_CHOICES):
-            val = get_field_text(sf, cf)
-            if val:
-                choices.append({"id": val, "priority": i + 1})
-        if choices:
-            selections[oid] = choices
-
-    if not participants:
-        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "收集中"})
-        return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
-
-    profiles = _build_profiles([p["id"] for p in participants])
-
-    try:
-        matches = run_onetoone_matching(participants, selections, profiles, top_n=10)
-    except Exception as e:
-        update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "收集中"})
-        return f"一对一匹配出错：{e}，状态已恢复为「收集中」"
-
-    # 报名信息：open_id -> 昵称
-    oid_to_nickname = {p["open_id"]: p["nickname"] for p in get_activity_signups(activity_id)}
-    result_records = []
-    for p in participants:
-        pid = p["id"]
-        for target_oid, rank in matches.get(pid, []):
-            result_records.append({
-                FIELD_OTO_ACTIVITY_ID: activity_id,
-                FIELD_OTO_RANK: rank,
-                FIELD_OTO_USER_OID: pid,
-                FIELD_OTO_USER_NAME: oid_to_nickname.get(pid, ""),
-                FIELD_OTO_USER_GENDER: "男性" if p["gender"] == "male" else "女性",
-                FIELD_OTO_TARGET_OID: target_oid,
-                FIELD_OTO_TARGET_NAME: oid_to_nickname.get(target_oid, ""),
-            })
-
-    if result_records:
-        created = batch_create_records(ONETOONE_RESULT_TABLE, result_records)
-        if created < len(result_records):
-            partial = search_records(ONETOONE_RESULT_TABLE, {
-                "conjunction": "and",
-                "conditions": [{"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-            })
-            if partial:
-                batch_delete_records(ONETOONE_RESULT_TABLE, [p["record_id"] for p in partial])
-            update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "收集中"})
-            return (f"一对一结果写入失败（成功 {created}/{len(result_records)} 条），已回滚，"
-                    f"状态恢复为「收集中」，请稍后重试。")
-
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_STATUS: "已完成"})
-    total_pairs = sum(len(v) for v in matches.values())
-    log(f"一对一匹配完成: {activity_name}, {len(participants)}人, {total_pairs}条必聊")
-    return (f"🎉 活动「{activity_name}」一对一匹配完成：\n"
-            f"参与 {len(participants)} 人，共生成 {total_pairs} 条必聊关系。\n"
-            f"用户可自查 H5「我的一对一」查看名单。")
+    res = lib_onetoone.execute(activity_id, client=bitable, activity=activity,
+                               find_user_by_openid=find_user_by_openid)
+    return _render_execute_result(res, activity_id)
 
 
 def handle_admin_onetoone_status(keyword):
@@ -494,20 +379,12 @@ def handle_admin_onetoone_status(keyword):
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    status = get_field_text(af, FIELD_ACT_ONETOONE_STATUS) or "未开始"
-
-    signups = get_activity_signups(activity_id)
-    selections = search_records(ONETOONE_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-
-    return (f"活动「{activity_name}」一对一状态：\n"
-            f"状态：{status}\n"
-            f"报名人数：{len(signups)}\n"
-            f"已提交选择：{len(selections)}人")
+    res = lib_onetoone.fetch_status(activity_id, client=bitable, activity=activity,
+                                    find_user_by_openid=find_user_by_openid)
+    return (f"活动「{res['name']}」一对一状态：\n"
+            f"状态：{res['status']}\n"
+            f"报名人数：{res['signup_count']}\n"
+            f"已提交选择：{res['submitted_count']}人")
 
 
 def handle_admin_unsubmitted_onetoone(keyword):
@@ -518,31 +395,12 @@ def handle_admin_unsubmitted_onetoone(keyword):
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
-    act_name = get_field_text(activity.get("fields", {}), FIELD_ACTIVITY_NAME)
 
-    signups = get_activity_signups(activity_id)
-    selections = search_records(ONETOONE_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]}]
-    })
-    submitted_oids = {
-        get_field_text(s.get("fields", {}), FIELD_OTO_SELECTOR_OID)
-        for s in selections if get_field_text(s.get("fields", {}), FIELD_OTO_SELECTOR_OID)
-    }
-
-    unsubmitted = []
-    for s in signups:
-        oid = s["open_id"]
-        if oid in submitted_oids:
-            continue
-        user_id = ""
-        for rec in find_user_by_openid(oid):
-            user_id = rec.get("fields", {}).get("用户ID", "") or ""
-        unsubmitted.append((oid, user_id, s["gender"], s["nickname"]))
-
-    if not unsubmitted:
-        return f"活动「{act_name}」所有报名者均已提交志愿。"
-    lines = [f"「{act_name}」未提交志愿（{len(unsubmitted)}人）："]
-    for _, user_id, gender, nick in unsubmitted:
-        lines.append(f"{user_id or '-'} · {gender or '-'} · {nick}")
+    res = lib_onetoone.fetch_unsubmitted(activity_id, client=bitable, activity=activity,
+                                         find_user_by_openid=find_user_by_openid)
+    if not res["unsubmitted"]:
+        return f"活动「{res['name']}」所有报名者均已提交志愿。"
+    lines = [f"「{res['name']}」未提交志愿（{res['total']}人）："]
+    for u in res["unsubmitted"]:
+        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u['nickname']}")
     return "\n".join(lines)

@@ -27,6 +27,7 @@ from store import (
     update_bindings,
 )
 
+from lib import onetoone as lib_onetoone
 from lib import points_config, points_invite, points_redeem, quota, recommend, storage
 
 # 搬移到村情六处独立表时需跳过的自动字段（创建人/自动编号/创建时间/修改时间，API 不可写入）
@@ -1737,15 +1738,19 @@ def auto_update_activity_signup_loop(interval=30):
 
 
 def _profile_of(fields):
-    """用户表一行 → 打分用的资料 dict（键与 lib.recommend.match_score 对齐）。"""
-    return recommend.prepare_profile({
-        "hobbies": get_multi_select_value(fields, FIELD_SELF_HOBBIES),
-        "sports": get_multi_select_value(fields, FIELD_SELF_SPORTS),
-        "traits": get_multi_select_value(fields, FIELD_SELF_TRAITS),
-        "education": get_field_text(fields, FIELD_EDUCATION),
-        "mbti": get_multi_select_value(fields, FIELD_MBTI),
-        "city": get_field_text(fields, FIELD_CITY),
-        "church": get_field_text(fields, FIELD_CHURCH),
+    """用户表一行 → 打分用的资料 dict（键与 lib.recommend.match_score 对齐）。
+
+    实作已搬进 lib/onetoone.profile_of（周推荐与一对一共用同一份）；栏位名显式传入，
+    因为周推荐任务不依赖 lib.onetoone.configure 是否已就绪。
+    """
+    return lib_onetoone.profile_of(fields, field_names={
+        "self_hobbies": FIELD_SELF_HOBBIES,
+        "self_sports": FIELD_SELF_SPORTS,
+        "self_traits": FIELD_SELF_TRAITS,
+        "education": FIELD_EDUCATION,
+        "mbti": FIELD_MBTI,
+        "city": FIELD_CITY,
+        "church": FIELD_CHURCH,
     })
 
 

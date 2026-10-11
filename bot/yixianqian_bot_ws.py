@@ -91,6 +91,7 @@ from grouping import (
     handle_group_submit,
 )
 from onetoone import (
+    configure_onetoone_lib,
     handle_admin_onetoone_status,
     handle_admin_start_onetoone,
     handle_admin_stop_onetoone,
@@ -687,6 +688,10 @@ def main():
     # 表 ID 与栏位名由 bot/grouping.py 一并注入（lib.grouping 不 import bot 的
     # constants，写错 base 时必须报错而不是静默写到别的表）。
     configure_grouping_lib(SHARED_DATA_DIR)
+
+    # 一对一表 ID / 栏位名注入 lib.onetoone；lock_dir 一并转注入 lib.grouping，
+    # 一对一提交/开始收集与分组共用同一批 yixianqian_grouping_<活动>.lock。
+    configure_onetoone_lib(SHARED_DATA_DIR)
 
     # 启动业务线程（只启动一次，长连接重连时不重复启动）
     start_worker_threads()

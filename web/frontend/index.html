@@ -1276,6 +1276,7 @@
             <div class="ga-row-sub" style="margin-top:8px;">如果一直没动静，重新载入看看最新状态</div>
             <van-button class="ga-empty-retry" size="small" plain type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
           </div>
+          <van-button v-if="gaShowNewRound" plain type="primary" color="#ff6b81" block style="margin-top:10px; min-height:44px;" @click="openStartPopup('new')">开启新一轮（第 {{ gaNextRound }} 轮）</van-button>
           <van-button v-if="gaDetail.group_status==='收集中'" plain type="primary" color="#ff6b81" block style="margin-top:10px; min-height:44px;" @click="openGroupRoster()">查看未填写名单</van-button>
         </div>
 
@@ -2517,7 +2518,7 @@
 <!-- ========== 分组管理台：开始填志愿设置层 ========== -->
 <van-popup v-model:show="gaStartShow" position="bottom" round :close-on-click-overlay="!gaStartBusy">
   <div class="ga-start-popup">
-    <div class="ga-start-head">开始填写志愿 <van-icon name="cross" color="#c8c9cc" @click="closeStartPopup()"></van-icon></div>
+    <div class="ga-start-head">{{ gaStartMode==='new' ? ('开启第 ' + gaNextRound + ' 轮志愿填写') : '开始填写志愿' }} <van-icon name="cross" color="#c8c9cc" @click="closeStartPopup()"></van-icon></div>
     <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
     <div class="ga-form-row">
       <div class="ga-form-label">每组男生数</div>
@@ -2532,13 +2533,28 @@
       <button class="ga-step-btn" :disabled="gaStartF>=20" @click="gaStartF = Math.min(20, gaStartF+1)">+</button>
     </div>
     <div class="ga-row-sub" style="margin-top:10px;" v-if="gaDetail">报名 {{ gaDetail.signup_count }} 人：{{ gaDetail.male_count }} 男 / {{ gaDetail.female_count }} 女；按此设置预计可分 {{ gaStartExpected }} 组</div>
-    <div class="ga-danger-zone" v-if="gaDetail && gaDetail.rounds.length"><div class="ga-danger-hint">⚠ 这会清空该活动已有的 {{ gaDetail.rounds.length }} 轮历史分组结果，且无法恢复。</div></div>
+    <div class="ga-danger-zone" v-if="gaStartMode!=='new' && gaDetail && gaDetail.rounds.length"><div class="ga-danger-hint">⚠ 这会清空该活动已有的 {{ gaDetail.rounds.length }} 轮历史分组结果，且无法恢复。</div></div>
+    <div v-if="gaStartMode==='new'" class="ga-tip ga-tip-ok" style="margin-top:10px;">✓ 保留现有 {{ gaNewRoundKeepRounds }} 轮分组结果，不会清空任何数据</div>
     <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaStartBusy" :disabled="gaStartBusy" @click="submitStartPreview()">下一步：确认影响</van-button>
   </div>
 </van-popup>
-<!-- 破坏性确认：自定义 van-dialog（三个动态数字塞不进 showConfirmDialog 的 message） -->
-<van-dialog v-model:show="gaConfirmShow" title="重新开放志愿填写" :show-confirm-button="false" :show-cancel-button="false" :close-on-click-overlay="false">
+<!-- 确认层：danger=重新开放（清历史，需输入活动编号）；new=开启新一轮（保留历史，直接确认） -->
+<van-dialog v-model:show="gaConfirmShow" :title="gaStartMode==='new' ? ('开启第 ' + gaNextRound + ' 轮志愿填写') : '重新开放志愿填写'" :show-confirm-button="false" :show-cancel-button="false" :close-on-click-overlay="false">
   <div class="ga-confirm-body">
+    <template v-if="gaStartMode==='new'">
+      <div class="ga-tip ga-tip-ok" style="margin-bottom:10px;">✓ 保留现有 {{ gaNewRoundKeepRounds }} 轮分组结果，不会删除任何数据</div>
+      <div class="ga-confirm-box">
+        <div class="ga-confirm-row"><span>保留历史</span><b>{{ gaNewRoundKeepRounds }} 轮 · {{ gaNewRoundKeepResults }} 条结果不变</b></div>
+        <div class="ga-confirm-row"><span>当前状态</span><b>{{ gaDetail ? gaDetail.group_status : '' }}</b></div>
+        <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaStartPreviewData ? gaStartPreviewData.participant_count : 0 }} 人（{{ gaStartPreviewData ? gaStartPreviewData.male_count : 0 }}男{{ gaStartPreviewData ? gaStartPreviewData.female_count : 0 }}女）</b></div>
+        <div class="ga-confirm-row"><span>开启后</span><b>状态回到「收集中」，可执行第 {{ gaNextRound }} 轮分组</b></div>
+      </div>
+      <div class="ga-actions">
+        <van-button plain @click="cancelGaConfirm()">取消</van-button>
+        <van-button color="#ff6b81" :disabled="gaStartBusy" :loading="gaStartBusy" @click="doStartGroup()">确认开启</van-button>
+      </div>
+    </template>
+    <template v-else>
     <div v-if="gaConfirmN>0" class="ga-danger-hint" style="font-size:13px;">⚠ 这会永久删除 {{ gaDetailId }} 的历史分组结果</div>
     <div v-else class="ga-row-sub">这个活动没有历史结果，将直接开放志愿填写。</div>
     <div class="ga-confirm-box">
@@ -2556,6 +2572,7 @@
       <van-button plain @click="cancelGaConfirm()">取消</van-button>
       <van-button :color="gaConfirmN>0 ? '#ee0a24' : '#ff6b81'" :disabled="!gaConfirmOk || gaStartBusy" :loading="gaStartBusy" @click="doStartGroup()">确认重新开放</van-button>
     </div>
+    </template>
   </div>
 </van-dialog>
 <!-- 执行中断（后端重启导致 job 失联）三分支指引 -->
@@ -6020,6 +6037,7 @@ createApp({
     const gaRosterLoading = ref(false), gaRosterError = ref(false), gaRosterShown = ref(30);
 
     const gaStartShow = ref(false), gaStartM = ref(3), gaStartF = ref(3), gaStartBusy = ref(false);
+    const gaStartMode = ref('danger');   // 'danger'=重新开放（清历史结果）；'new'=开启新一轮（保留历史结果）
     const gaStartPreviewData = ref(null);
     const gaConfirmShow = ref(false), gaConfirmInput = ref(''), gaConfirmN = ref(0);
 
@@ -6058,6 +6076,13 @@ createApp({
       const d = gaDetail.value;
       return !!d && d.rounds && d.rounds.length > 0 && ['未开始', '收集中', '已完成'].includes(d.group_status);
     });
+    // 开启新一轮（保留历史结果）：已分过组、想接着跑第 N+1 轮；已截止卡住后也可用。
+    // 与「重新开放」语义不同：那条清历史、供重跑既有轮次，两条都保留。
+    const gaShowNewRound = computed(() => {
+      const d = gaDetail.value;
+      return !!d && !!(d.rounds && d.rounds.length)
+        && (d.group_status === '已完成' || d.group_status === '已截止');
+    });
     const gaRosterSubmitted = computed(() => (gaDetail.value && gaDetail.value.submitted_count) || 0);
     const gaRosterFiltered = computed(() => {
       const q = gaRosterQuery.value.trim().toLowerCase();
@@ -6078,6 +6103,16 @@ createApp({
     });
     const gaConfirmOk = computed(() => gaConfirmN.value <= 0
       || String(gaConfirmInput.value || '').trim().toLowerCase() === String(gaDetailId.value || '').trim().toLowerCase());
+    // 开启新一轮的保留数量：优先用 preview 的加法字段，兜底用 /status 已有轮次
+    const gaNewRoundKeepRounds = computed(() => {
+      const pv = gaStartPreviewData.value;
+      if (pv && Array.isArray(pv.rounds_preserved)) return pv.rounds_preserved.length;
+      return (gaDetail.value && gaDetail.value.rounds) ? gaDetail.value.rounds.length : 0;
+    });
+    const gaNewRoundKeepResults = computed(() => {
+      const pv = gaStartPreviewData.value;
+      return (pv && typeof pv.results_preserved === 'number') ? pv.results_preserved : 0;
+    });
 
     function gaMsg(e, fallback) { return (e && e.message) ? e.message : fallback; }
     function gaAuthBack(e) {
@@ -6208,7 +6243,9 @@ createApp({
         userDetail.value = data;
       } catch(e) { vant.showToast(gaMsg(e, '资料没载出来，再试一次')); }
     }
-    function openStartPopup() {
+    function openStartPopup(mode) {
+      gaStartMode.value = (mode === 'new') ? 'new' : 'danger';
+      gaStartPreviewData.value = null;
       const d = gaDetail.value;
       gaStartM.value = (d && d.males_per_group > 0) ? d.males_per_group : 3;
       gaStartF.value = (d && d.females_per_group > 0) ? d.females_per_group : 3;
@@ -6222,9 +6259,10 @@ createApp({
       gaStartBusy.value = true;
       try {
         const data = await api('/api/admin/group/preview', { method: 'POST',
-          body: JSON.stringify({ activity_id: gaDetailId.value, round: (gaDetail.value && gaDetail.value.latest_round) || 1 }) });
+          body: JSON.stringify({ activity_id: gaDetailId.value, round: (gaStartMode.value === 'new' ? gaNextRound.value : ((gaDetail.value && gaDetail.value.latest_round) || 1)) }) });
         gaStartPreviewData.value = data;
-        gaConfirmN.value = data.historical_results_to_clear || 0; gaConfirmInput.value = '';
+        gaConfirmN.value = gaStartMode.value === 'new' ? 0 : (data.historical_results_to_clear || 0);
+        gaConfirmInput.value = '';
         gaConfirmShow.value = true;   // 设置层留在下面：取消就回到它（保留已填数字）
       } catch(e) { if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
       gaStartBusy.value = false;
@@ -6232,16 +6270,23 @@ createApp({
     function cancelGaConfirm() { gaConfirmShow.value = false; }
     async function doStartGroup() {
       if (!gaConfirmOk.value || gaStartBusy.value) return;
+      const isNewRound = gaStartMode.value === 'new';
       gaStartBusy.value = true;
       try {
         await api('/api/admin/group/start', { method: 'POST',
-          body: JSON.stringify({ activity_id: gaDetailId.value, males_per_group: gaStartM.value, females_per_group: gaStartF.value }) });
+          body: JSON.stringify({ activity_id: gaDetailId.value, males_per_group: gaStartM.value, females_per_group: gaStartF.value,
+            clear_results: !isNewRound }) });
         gaConfirmShow.value = false; gaStartShow.value = false;
         const pv = gaStartPreviewData.value || {};
         const exp = Math.min(Math.floor((pv.male_count || 0) / gaStartM.value), Math.floor((pv.female_count || 0) / gaStartF.value));
-        vant.showToast(exp > 0 ? ('已开放，' + exp + ' 组每组 ' + gaStartM.value + '男' + gaStartF.value + '女') : '已开放，等人再多一些就可以分组啦');
+        if (isNewRound) {
+          vant.showToast('已开启第 ' + gaNextRound.value + ' 轮志愿填写，历史结果已保留');
+        } else {
+          vant.showToast(exp > 0 ? ('已开放，' + exp + ' 组每组 ' + gaStartM.value + '男' + gaStartF.value + '女') : '已开放，等人再多一些就可以分组啦');
+        }
         gaRosterList.value = []; gaRosterTotal.value = 0;
-        gaDetailTab.value = 1;      // 按设计：开完志愿直接去看谁还没填
+        // 开完志愿直接看谁还没填；开启新一轮则停在进度页——历史还在，下一页就是「执行分组」
+        gaDetailTab.value = isNewRound ? 0 : 1;
         refreshGroupDetail();
       } catch(e) { if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没开放成功，再试一次')); }
       gaStartBusy.value = false;
@@ -6494,9 +6539,9 @@ createApp({
       openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,
       gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaFilteredList, gaStats, gaChipClass, gaRowSub, openGroupDetail,
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaFlag, gaFlagSaving, onGaFlagChange, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
-      gaShowStartMain, gaShowDanger, refreshGroupDetail,
+      gaShowStartMain, gaShowDanger, gaShowNewRound, refreshGroupDetail,
       gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
-      gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartPreviewData, gaStartExpected, openStartPopup, closeStartPopup, submitStartPreview,
+      gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartMode, gaStartPreviewData, gaStartExpected, gaNewRoundKeepRounds, gaNewRoundKeepResults, openStartPopup, closeStartPopup, submitStartPreview,
       gaConfirmShow, gaConfirmInput, gaConfirmN, gaConfirmOk, cancelGaConfirm, doStartGroup,
       gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, gaResultLoading, gaResultError, selectGaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
     };

@@ -247,6 +247,60 @@ def test_a4_start_refreshes_exactly_activities_and_group_results(api):
     assert _find_act(fake, ACT)["fields"]["每组男生数"] == 2
 
 
+def test_start_clear_results_false_keeps_history(api):
+    """开启新一轮：clear_results=false 时历史结果保留，状态照常回「收集中」。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(signups=signups, selections=selections,
+                       results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "1")])
+
+    r = api.post("/api/admin/group/start",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2,
+                  "clear_results": False})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True and body["cleared_results"] == 0
+    assert body["group_status"] == "收集中"
+    assert len(fake.tables[GROUP_RESULT_TABLE]) == 2, "历史结果必须原样保留"
+    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
+    assert sorted(api.refresh_calls) == ["activities", "group_results"]
+
+
+def test_start_clear_results_defaults_true_for_backward_compat(api):
+    """不传 clear_results 时行为与改动前完全相同（向后兼容，老调用不回归）。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(signups=signups, selections=selections,
+                       results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "1")])
+
+    r = api.post("/api/admin/group/start",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True and body["cleared_results"] == 2
+    assert fake.tables[GROUP_RESULT_TABLE] == []
+
+
+def test_start_clear_results_must_be_bool(api):
+    api.install()
+    r = api.post("/api/admin/group/start",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2,
+                  "clear_results": "false"})
+    assert r.status_code == 400
+
+
+def test_preview_round_new_fields_for_new_round(api):
+    """preview 加法字段：开启新一轮要能显示「保留 N 轮 / 共 X 条」。"""
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections,
+                results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "1"),
+                         _res("ou_m0", 2, "2")])
+
+    body = api.post("/api/admin/group/preview",
+                    {"activity_id": ACT, "round": 3}).get_json()
+    assert body["rounds_preserved"] == [1, 2]
+    assert body["results_preserved"] == 3
+    assert body["historical_results_to_clear"] == 3, "旧字段语义不变"
+
+
 # ---------------------------------------------------------------- A5 run → job
 
 def test_a5_run_returns_202_and_job_reaches_done(api):

@@ -724,6 +724,10 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
         "existing_round_results": len(this_round),
         "historical_results_to_clear": len(all_results),
         "historical_rounds_to_clear": existing_rounds,
+        # 加法字段：clear_results=False（开启新一轮）时保留的轮次与结果条数。
+        # 旧字段语义不动——它们始终回答「会删掉什么」，这两个回答「会留下什么」。
+        "rounds_preserved": existing_rounds,
+        "results_preserved": len(all_results),
         "can_execute": not blockers,
         "blockers": blockers,
     }
@@ -785,17 +789,24 @@ def fetch_result(activity_id, round_no, *, client, activity):
 # ---------------------------------------------------------------- 写接口
 
 def start_group(activity_id, males_per_group, females_per_group, *, client, activity,
-                treat_search_failure_as_empty=True):
-    """开放志愿收集 + 清空该活动全部轮次的历史分组结果。
+                treat_search_failure_as_empty=True, clear_results=True):
+    """开放志愿收集；默认同时清空该活动全部轮次的历史分组结果。
 
     `activity` 由调用端在锁外先解析好——H5 从快照拿 record_id，bot 直接用
     find_activity_by_id，两者都别把一次网络读压在锁里。
 
     **调用方必须已持有 grouping_lock(activity_id)。**
 
-    `treat_search_failure_as_empty`：飞书读失败时把「读不到」当成「没有历史
-    结果」（bot 的老行为），还是直接中止。读不到却照删/照跑，会把「查挂了」变成
-    「结果被清空」，所以宁可让调用端自己决定。
+    `clear_results`：
+    - True（默认，bot「开始填志愿」与 H5「重新开放填志愿」走这条）：开放收集
+      + 清空全部历史结果，供「重跑既有轮次」；`cleared_results` 是真实清除笔数。
+    - False（H5「开启新一轮」）：只写「分组状态=收集中」与每组人数，
+      group_result_table **不读也不删**（连 search 都不发，也不会有 SEARCH_FAILED），
+      历史轮次全部保留，`cleared_results` 恒为 0。算法是确定性的，直接重跑旧轮次
+      毫无意义——保留历史 + 重开收集才能跑出第 N+1 轮。
+
+    `treat_search_failure_as_empty`：清历史时读失败把「读不到」当成「没有历史
+    结果」（bot 的老行为），还是直接中止。只在 clear_results=True 时有意义。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -808,6 +819,16 @@ def start_group(activity_id, males_per_group, females_per_group, *, client, acti
         f["male_per_group"]: males_per_group,
         f["female_per_group"]: females_per_group,
     })
+
+    if not clear_results:
+        return {
+            "code": "OK",
+            "activity_id": activity_id,
+            "activity_name": activity_name,
+            "males_per_group": males_per_group,
+            "females_per_group": females_per_group,
+            "cleared_results": 0,
+        }
 
     # 重新开放志愿收集：清除该活动历史分组结果，否则「执行分组」的幂等保护会拦截重跑同一轮次
     old_results = client.search_records(_cfg["tables"]["group_result_table"], {

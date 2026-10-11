@@ -245,6 +245,70 @@ def test_start_group_writes_config_fields(configured):
     assert _activity(fake)["fields"]["分组状态"] == "收集中"
 
 
+def test_start_group_keeps_history_when_clear_results_false(configured):
+    """开启新一轮：只开放收集，历史结果一条不动，连结果表都不读。
+
+    算法是确定性的，直接重跑旧轮次没有意义——保留历史 + 重开收集才能跑出
+    第 N+1 轮。
+    """
+    results = [_res("ou_m1", 1, "1"), _res("ou_m2", 1, "1"),
+               _res("ou_f1", 2, "2"), _res("ou_f2", 2, "2")]
+    fake = FakeBitable(_tables(results=results))
+
+    res = lib_grouping.start_group(ACT, 3, 3, client=fake, activity=_activity(fake),
+                                   clear_results=False)
+
+    assert res["code"] == "OK"
+    assert res["cleared_results"] == 0
+    assert _activity(fake)["fields"]["分组状态"] == "收集中"
+    # 历史结果原样保留，且结果表零读零删
+    assert [r["record_id"] for r in fake.tables[GROUP_RESULT_TABLE]] == \
+        [r["record_id"] for r in results]
+    assert not any(c[0] == "batch_delete" for c in fake.calls)
+    assert not any(c == ("search", GROUP_RESULT_TABLE) for c in fake.calls), \
+        "保留模式不得读结果表（省一次全表读，也不进 SEARCH_FAILED）"
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1
+    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 3, "每组女生数": 3}
+
+
+def test_start_group_clear_results_true_matches_default(configured):
+    """显式 clear_results=True 与默认路径完全一致（bot 走的仍是默认值）。"""
+    results = [_res("ou_m1", 1, "1"), _res("ou_f1", 2, "2")]
+    fake_default = FakeBitable(_tables(results=results))
+    fake_explicit = FakeBitable(_tables(results=results))
+
+    res_default = lib_grouping.start_group(ACT, 3, 3, client=fake_default,
+                                           activity=_activity(fake_default))
+    res_explicit = lib_grouping.start_group(ACT, 3, 3, client=fake_explicit,
+                                            activity=_activity(fake_explicit),
+                                            clear_results=True)
+
+    assert res_default == res_explicit
+    assert res_explicit["cleared_results"] == 2
+    assert fake_default.writes() == fake_explicit.writes()
+    assert fake_default.tables == fake_explicit.tables
+
+
+def test_preview_round_reports_preserved_history(configured):
+    """开启新一轮的加法字段：preview 要能报出「保留 N 轮 / 共 X 条」。
+
+    旧字段 historical_results_to_clear 语义不动（它始终回答「会删多少」），
+    rounds_preserved / results_preserved 回答「会留下什么」。
+    """
+    signups, selections = _balanced(4, 4)
+    results = [_res("ou_m1", 1, "1"), _res("ou_m2", 1, "1"), _res("ou_f1", 2, "2")]
+    fake = FakeBitable(_tables(signups=signups, selections=selections, results=results))
+
+    res = lib_grouping.preview_round(ACT, 3, client=fake, activity=_activity(fake),
+                                     find_user_by_openid=_find_user)
+
+    assert res["historical_results_to_clear"] == 3
+    assert res["rounds_preserved"] == ["1", "2"]
+    assert res["results_preserved"] == 3
+    assert fake.writes() == []
+
+
 def test_round_out_of_range_is_blocked_by_preview(configured):
     """T11：「轮次」是单选栏位，飞书只配了 1-10。第 11 轮必须在执行前就被挡住，
     且挡住它的那次调用一个栏位都不能写。

@@ -6125,15 +6125,19 @@ def admin_group_preview():
     res["existing_rounds"] = sorted({_group_round(r) for r in res["existing_rounds"]} - {0})
     res["historical_rounds_to_clear"] = sorted(
         {_group_round(r) for r in res["historical_rounds_to_clear"]} - {0})
+    res["rounds_preserved"] = sorted(
+        {_group_round(r) for r in res["rounds_preserved"]} - {0})
     return jsonify(res)
 
 
 @app.route("/api/admin/group/start", methods=["POST"])
 def admin_group_start():
-    """开始填志愿（破坏性）：开放志愿收集 + 清空该活动全部历史分组结果。
+    """开始填志愿：开放志愿收集；clear_results=True（默认）时清空全部历史结果。
 
-    前端必须已走过 preview 展示真实笔数与勾选确认（DESIGN 5.3.3）；这里只保证
-    「写操作与预览一致地走 lib + 活动锁」。
+    `clear_results=False` 是「开启新一轮」——保留该活动全部历史轮次结果，只开放
+    收集，供已分过组的活动接着跑第 N+1 轮（算法确定性，重跑旧轮次无意义）。
+    前端必须已走过 preview 确认（DESIGN 5.3.3）；这里只保证「写操作与预览一致地
+    走 lib + 活动锁」。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -6146,11 +6150,14 @@ def admin_group_start():
     activity_id = data.get("activity_id")
     m_per = data.get("males_per_group")
     f_per = data.get("females_per_group")
+    clear_results = data.get("clear_results", True)
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
     if (not isinstance(m_per, int) or isinstance(m_per, bool) or m_per < 1
             or not isinstance(f_per, int) or isinstance(f_per, bool) or f_per < 1):
         return jsonify({"error": "每组人数必须是大于0的整数"}), 400
+    if not isinstance(clear_results, bool):
+        return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
     if not act:
@@ -6160,7 +6167,7 @@ def admin_group_start():
         with lib_grouping.grouping_lock(act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
             res = lib_grouping.start_group(
                 act_id, m_per, f_per, client=_grouping_client, activity=act,
-                treat_search_failure_as_empty=False)
+                treat_search_failure_as_empty=False, clear_results=clear_results)
     except lib_grouping.GroupingBusy:
         return jsonify({"error": "另一场分组正在执行中，请稍候",
                         "busy_activity_id": act_id}), 409

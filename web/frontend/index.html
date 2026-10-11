@@ -2035,7 +2035,7 @@
       <van-loading size="24px">加载中...</van-loading>
     </div>
     <div v-else-if="!onetooneCandidates.length" style="text-align:center; padding:40px 20px;">
-      <van-empty :description="onetooneCandidatesError || '暂无可选人员'" />
+      <van-empty :description="onetooneCandidatesError || '暂无可选人员'"></van-empty>
       <van-button v-if="onetooneCandidatesError" type="primary" color="#ff6b81" size="small" @click="goOnetooneSelect(currentActivityId)" style="margin-top:12px;">重试</van-button>
     </div>
     <div v-else>
@@ -3567,7 +3567,6 @@ createApp({
     // 一对一
     const myOnetooneList = ref([]);
     const loadingMyOnetoone = ref(false);
-    const myOnetooneLoaded = ref(false);
     const hasOnetooneEntry = ref(false); // 是否显示「我的一对一」入口（报名过且该活动开启一对一功能）
     const onetooneCandidates = ref([]);
     const onetooneSelectedChoices = ref([]);
@@ -5362,9 +5361,8 @@ createApp({
     // 一对一
     async function openMyOnetoone() {
       page.value = 'my_onetoone';
-      if (myOnetooneLoaded.value) return; // 已加载则直接展示缓存
       loadingMyOnetoone.value = true;
-      try { const data = await api('/api/activities/mine/onetoone'); myOnetooneList.value = data.activities; myOnetooneLoaded.value = true; }
+      try { const data = await api('/api/activities/mine/onetoone'); myOnetooneList.value = data.activities; }
       catch(e) { vant.showToast(e.message); }
       loadingMyOnetoone.value = false;
     }
@@ -5411,7 +5409,6 @@ createApp({
           method: 'POST', body: JSON.stringify({ choices: onetooneSelectedChoices.value.map(c => c.openid) })
         });
         vant.showToast('志愿提交成功');
-        myOnetooneLoaded.value = false;
         if (onetooneSelectFrom.value === 'activity_detail') await openActivity(activityId);
         else openMyOnetoone();
       } catch(e) { vant.showToast(e.message); }

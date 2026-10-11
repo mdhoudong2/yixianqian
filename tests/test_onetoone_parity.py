@@ -48,20 +48,35 @@ class FakeBitable:
     真实的 lib.bitable_client 不桩——它只做 HTTP，桩掉等于没测。
     """
 
-    def __init__(self, tables=None, fail_create_after=None, search_fails=None):
+    def __init__(self, tables=None, fail_create_after=None, search_fails=None,
+                 write_fails=None, search_fail_plan=None, delete_limit=None,
+                 write_fail_plan=None):
         # 必须连 fields 一起深拷贝：同一个 Case 会被建两次（旧路一次、新路一次），
         # 只拷外层 dict 的话两条路共用同一批 fields，第一条跑完就把第二条的起点改了。
         self.tables = {k: [{"record_id": r["record_id"], "fields": dict(r["fields"])}
                            for r in v] for k, v in (tables or {}).items()}
         self.fail_create_after = fail_create_after
         self.search_fails = search_fails or set()
+        # 细粒度注入（C2 审核修复的分歧案例用）：
+        #   write_fails：这些表的 update/create 一律返回 None（写失败）
+        #   write_fail_plan：{表: {第 N 次 update 失败（1 起）}}
+        #   search_fail_plan：{表: {第 N 次 search 失败（1 起）}}
+        #   delete_limit：批量删除最多删几条（模拟删除数不足）
+        self.write_fails = write_fails or set()
+        self.write_fail_plan = write_fail_plan or {}
+        self.search_fail_plan = search_fail_plan or {}
+        self.delete_limit = delete_limit
         self.calls = []
         self._seq = 0
+        self._search_counts = {}
+        self._update_counts = {}
 
     # -- 读 --
     def search_records(self, table_id, filter_conditions=None, *a, **k):
         self.calls.append(("search", table_id))
-        if table_id in self.search_fails:
+        count = self._search_counts.get(table_id, 0) + 1
+        self._search_counts[table_id] = count
+        if table_id in self.search_fails or count in self.search_fail_plan.get(table_id, set()):
             return None          # 模拟飞书限流/网络抖动时 raw client 的返回
         conds = filter_conditions or {}
         if isinstance(conds, dict):
@@ -85,6 +100,10 @@ class FakeBitable:
     # -- 写 --
     def update_record(self, table_id, record_id, fields):
         self.calls.append(("update", table_id, record_id, dict(fields)))
+        count = self._update_counts.get(table_id, 0) + 1
+        self._update_counts[table_id] = count
+        if table_id in self.write_fails or count in self.write_fail_plan.get(table_id, set()):
+            return None
         for r in self.tables.get(table_id, []):
             if r["record_id"] == record_id:
                 r["fields"].update(fields)
@@ -92,10 +111,12 @@ class FakeBitable:
         return None
 
     def create_record(self, table_id, fields):
+        self.calls.append(("create", table_id, dict(fields)))
+        if table_id in self.write_fails:
+            return None
         self._seq += 1
         row = {"record_id": f"rec_new{self._seq}", "fields": dict(fields)}
         self.tables.setdefault(table_id, []).append(row)
-        self.calls.append(("create", table_id, dict(fields)))
         return row
 
     def batch_create_records(self, table_id, records_fields):
@@ -112,8 +133,11 @@ class FakeBitable:
 
     def batch_delete_records(self, table_id, record_ids):
         self.calls.append(("batch_delete", table_id, list(record_ids)))
+        ids = list(record_ids)
+        if self.delete_limit is not None:
+            ids = ids[:self.delete_limit]
         before = len(self.tables.get(table_id, []))
-        keep = [r for r in self.tables.get(table_id, []) if r["record_id"] not in record_ids]
+        keep = [r for r in self.tables.get(table_id, []) if r["record_id"] not in ids]
         self.tables[table_id] = keep
         return before - len(keep)
 
@@ -283,8 +307,6 @@ CASES = [
          form_value=_form("佳佳", *SEVEN[:6])),
     Case("sub/编号解析", "submit", tables=_rich_tables(),
          form_value=_form("U-0003", *SEVEN[1:])),
-    Case("sub/志愿不足", "submit", tables=_rich_tables(),
-         form_value=_form(*SEVEN[:6])),
     Case("sub/重复志愿", "submit", tables=_rich_tables(),
          form_value=_form(SEVEN[0], *SEVEN[:6])),
     Case("sub/无效参与者", "submit", tables=_rich_tables(),
@@ -321,8 +343,6 @@ CASES = [
                  ONETOONE_SELECT_TABLE: [_sel("ou_m1", "男性"), _sel("ou_m2", "男性")]}),
     Case("stop/写入不完整", "stop", ACT, fail_create_after=1),
     Case("stop/算法异常", "stop", ACT, algorithm=_raise(ValueError("炸了"))),
-    Case("stop/幂等查询失败", "stop", ACT, search_fails={ONETOONE_RESULT_TABLE}),
-    Case("stop/志愿查询失败", "stop", ACT, search_fails={ONETOONE_SELECT_TABLE}),
 
     # ---- 管理员状态（3）----
     Case("status/格式错误", "status", "   "),
@@ -471,3 +491,261 @@ def test_side_effects_are_identical(configured, case):
     assert new.writes() == old.writes(), (
         f"副作用漂移\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
     assert new.tables == old.tables
+
+
+# ================================================================
+# C2 审核修复：刻意分歧（旧路行为 ≠ 新路行为）
+# ----------------------------------------------------------------
+# 下列案例是审核确定的「必须变」的行为：读失败不再当空表、写失败不再报成功、
+# 志愿放宽为 1..7、提交走锁内查重等。它们不能回入上面的逐字比对，所以每条都
+# 同时钉旧行为与新行为——防止哪天有人把修复回退成「和旧路一致」还以为是保真。
+# ================================================================
+
+def _golden_run(configured, case, fake=None):
+    fake = fake if fake is not None else _build(case)
+    _patch_golden(configured, fake, case)
+    return fake, _run_golden(case)
+
+
+def _new_run(configured, case, fake=None):
+    fake = fake if fake is not None else _build(case)
+    _patch_new(configured, fake, case)
+    return fake, _run_new(case)
+
+
+def test_submit_allows_one_to_seven_choices_intentional_fix(configured):
+    """审核修复：小活动凑不满 7 人时 bot 也能提交（旧路只认恰好 7 个）。
+
+    COUNT 分支的文案随之改为「请选择1-7位（当前N位）」——1..7 全范围都要能过，
+    8 个仍然拦下（文案是新口径）。
+    """
+    case = Case("sub/单个志愿", "submit", tables=_rich_tables(),
+                form_value=_form("ou_f1"))
+
+    _, old = _golden_run(configured, case)
+    assert old == {"toast": {"type": "error", "content": "请选择7位（当前1位）"}}
+
+    fake, new = _new_run(configured, case)
+    assert new == {"toast": {"type": "success", "content": "选择已提交"}}
+    created = [c for c in fake.writes() if c[0] == "create"]
+    assert len(created) == 1
+
+    case8 = Case("sub/八个志愿", "submit", tables=_rich_tables(),
+                 action_value={"activity_id": ACT, "selections": SEVEN + ["ou_f1"]})
+    _, new8 = _new_run(configured, case8)
+    assert new8 == {"toast": {"type": "error", "content": "请选择1-7位（当前8位）"}}
+
+
+def test_submit_write_failure_is_not_reported_as_success(configured):
+    """审核修复 #4：写失败不得报成功（旧实现不检查 update/create 返回值）。"""
+    case = Case("sub/写失败", "submit", tables=_rich_tables(),
+                form_value=_form(*SEVEN))
+
+    _, old = _golden_run(configured, case,
+                         FakeBitable(case.tables, write_fails={ONETOONE_SELECT_TABLE}))
+    assert old == {"toast": {"type": "success", "content": "选择已提交"}}, "旧实现写失败仍报成功"
+
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, write_fails={ONETOONE_SELECT_TABLE}))
+    assert new == {"toast": {"type": "error", "content": "提交失败，请稍后再试"}}
+    writes = fake.writes()
+    assert len(writes) == 1 and writes[0][0] == "create", "只应有一次失败的 create 尝试"
+    assert fake.tables.get(ONETOONE_SELECT_TABLE, []) == [], "写失败不得留下记录"
+
+
+def test_submit_lookup_failure_aborts_instead_of_creating(configured):
+    """审核修复 #5：查重读失败不得当空表去 create（重复志愿行的源头）。"""
+    case = Case("sub/查重读失败", "submit", tables=_rich_tables(),
+                form_value=_form(*SEVEN))
+
+    _, old = _golden_run(configured, case,
+                         FakeBitable(case.tables, search_fails={ONETOONE_SELECT_TABLE}))
+    assert old == {"toast": {"type": "success", "content": "选择已提交"}}, "旧实现读失败当空表照样插行"
+
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, search_fails={ONETOONE_SELECT_TABLE}))
+    assert new == {"toast": {"type": "error", "content": "提交失败，请稍后再试"}}
+    assert fake.writes() == [], "读失败必须零写入"
+
+
+def test_admin_stop_idempotency_read_failure_aborts_zero_writes(configured):
+    """审核修复 #5①：幂等查历史结果读失败 → 中止（零写入），不得重跑覆盖。"""
+    case = Case("stop/幂等读失败", "stop", ACT)
+    fake = FakeBitable(case.tables, search_fails={ONETOONE_RESULT_TABLE})
+
+    # 旧路：读失败当空表 → 继续跑并写结果
+    fake_g = FakeBitable(case.tables, search_fails={ONETOONE_RESULT_TABLE})
+    _patch_golden(configured, fake_g, case)
+    old = _run_golden(case)
+    assert "一对一匹配完成" in old
+    assert [c for c in fake_g.writes() if c[0] == "batch_create"], "旧路读失败仍重跑"
+
+    _patch_new(configured, fake, case)
+    new = _run_new(case)
+    assert new == "查询历史结果失败，无法确认是否已执行过，已中止（本次未写入任何数据），请稍后重试。"
+    assert fake.writes() == [], "读失败必须零写入"
+
+
+def test_admin_stop_selections_read_failure_restores_and_reports(configured):
+    """审核修复 #5③：志愿读失败 → 恢复「收集中」+ 明说失败（旧路伪装「没有参与者」）。"""
+    case = Case("stop/志愿读失败", "stop", ACT)
+
+    _, old = _golden_run(configured, case,
+                         FakeBitable(case.tables, search_fails={ONETOONE_SELECT_TABLE}))
+    assert old == "没有已提交志愿的参与者，状态已恢复为「收集中」。", \
+        "旧路把读失败伪装成「没有参与者」"
+
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, search_fails={ONETOONE_SELECT_TABLE}))
+    assert new == "读取一对一志愿失败，已中止匹配，状态已恢复为「收集中」，请稍后重试。"
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
+    assert not [c for c in fake.writes() if c[0] == "batch_create"]
+
+
+def test_partial_write_rollback_verify_failure_never_claims_rollback(configured):
+    """审核修复 #5⑥：部分写入 + 回查失败 → 不得宣称已回滚，明说可能残留。"""
+    case = Case("stop/回滚校验失败", "stop", ACT)
+
+    # 旧路：回查失败当空表 → 不删残留，却回「已回滚」
+    fake_g = FakeBitable(case.tables, fail_create_after=1,
+                         search_fail_plan={ONETOONE_RESULT_TABLE: {2}})
+    _patch_golden(configured, fake_g, case)
+    old = _run_golden(case)
+    assert "已回滚" in old
+    assert len(fake_g.tables[ONETOONE_RESULT_TABLE]) == 1, "旧路实际残留 1 条却谎称已回滚"
+
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, fail_create_after=1,
+                                     search_fail_plan={ONETOONE_RESULT_TABLE: {2}}))
+    assert new == ("结果写入不完整（成功 1/8）且回滚校验失败，可能残留结果；"
+                   "状态已恢复收集中，请先『开始一对一』清理残留后再执行")
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 1, "无法确认回滚时如实保留残留"
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
+
+
+def test_partial_write_delete_incomplete_reports_residual(configured):
+    """审核修复 #5⑥：回查成功但删除数不足 → 明报残留条数，不得说「已回滚」。"""
+    case = Case("stop/删除不完整", "stop", ACT)
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, fail_create_after=3, delete_limit=1))
+    assert new == ("一对一结果写入失败（成功 3/8 条），回滚不完整（残留 2 条结果），"
+                   "状态已恢复为「收集中」，请先发送「开始一对一」清理残留后再执行。")
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 2
+
+
+def test_partial_write_clean_rollback_keeps_original_message(configured):
+    """回滚干净时保留原文案（与旧路逐字相同），只有回滚异常才换措辞。"""
+    case = Case("stop/写入不完整", "stop", ACT)
+    fake, new = _new_run(configured, case, FakeBitable(case.tables, fail_create_after=1))
+    assert new == ("一对一结果写入失败（成功 1/8 条），已回滚，"
+                   "状态恢复为「收集中」，请稍后重试。")
+    assert fake.tables[ONETOONE_RESULT_TABLE] == []
+
+
+def test_admin_stop_close_status_write_failure_aborts(configured):
+    """审核修复 #4②：状态切「已截止」写失败 → 中止（旧路忽略返回值继续写结果）。"""
+    case = Case("stop/截止写失败", "stop", ACT)
+
+    _, old = _golden_run(configured, case,
+                         FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {1}}))
+    assert "一对一匹配完成" in old, "旧路状态写失败也一样报成功"
+
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {1}}))
+    assert new == "活动状态写入失败（无法切换为「已截止」），已中止匹配，请稍后重试。"
+    writes = fake.writes()
+    assert len(writes) == 1 and writes[0][0] == "update", "截止失败后不得再有任何写入"
+    assert not [c for c in writes if c[0] == "batch_create"]
+
+
+def test_admin_stop_done_status_write_failure_reports_explicit_error(configured):
+    """审核修复 #4⑦：结果已生成但「已完成」写失败 → 明确错误（不说成功）。"""
+    case = Case("stop/完成写失败", "stop", ACT)
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {2}}))
+    assert new == "结果已生成，但状态写入失败（当前状态：已截止），请稍后重试或让管理员检查"
+    assert fake.tables[ONETOONE_RESULT_TABLE], "结果确实已写入"
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "已截止"
+
+
+def test_admin_start_status_write_failure_reports_error(configured):
+    """审核修复 #4/#8：开始一对一状态写失败 → 明确错误（旧路照样回「已开始」）。"""
+    case = Case("start/状态写失败", "start", ACT)
+
+    _, old = _golden_run(configured, case,
+                         FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {1}}))
+    assert "一对一志愿填写已开始" in old
+
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {1}}))
+    assert new == "一对一志愿填写开始失败：活动「关系自洽」状态写入失败，请稍后重试。"
+    writes = fake.writes()
+    assert len(writes) == 1 and writes[0][0] == "update"
+
+
+def test_admin_start_results_search_failure_reports_residual_risk(configured):
+    """审核修复 #8：清历史结果读失败 → 明说可能残留（不得报「已开始」）。"""
+    case = Case("start/清历史读失败", "start", ACT)
+    fake, new = _new_run(configured, case,
+                         FakeBitable(case.tables, search_fails={ONETOONE_RESULT_TABLE}))
+    assert new == ("一对一志愿填写开始失败：活动「关系自洽」状态已写入「收集中」，"
+                   "但读取历史结果失败，历史结果可能残留；请稍后重试「开始一对一」清理后再执行。")
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
+
+
+def test_admin_start_delete_incomplete_reports_failure(configured):
+    """审核修复 #8：删除数不足 → 明报失败（旧路忽略删除返回值照样报成功）。"""
+    tables = {**_default_tables(),
+              ONETOONE_RESULT_TABLE: [_res("ou_m1", "ou_f1"),
+                                      _res("ou_m2", "ou_f2"),
+                                      _res("ou_f1", "ou_m1")]}
+    case = Case("start/删除不完整", "start", ACT, tables=tables)
+
+    _, old = _golden_run(configured, case, FakeBitable(tables, delete_limit=2))
+    assert "一对一志愿填写已开始" in old
+
+    fake, new = _new_run(configured, case, FakeBitable(tables, delete_limit=2))
+    assert new == ("一对一志愿填写开始失败：活动「关系自洽」历史结果清理不完整"
+                   "（成功删除 2/3 条），请稍后重试「开始一对一」清理残留。")
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 1
+
+
+def test_admin_start_busy_lock_reports_busy(configured, monkeypatch):
+    """审核修复 #8：整体持跨进程活动锁；锁被占时明确回执，绝不无限等待。"""
+    case = Case("start/忙", "start", ACT)
+    fake = _build(case)
+    _patch_new(configured, fake, case)
+    monkeypatch.setattr(lib_onetoone, "START_LOCK_TIMEOUT", 0.1)
+    with lib_grouping.grouping_lock(ACT, timeout=1):
+        text = bot_onetoone.handle_admin_start_onetoone(ACT)
+    assert text == "当前已有一对一任务在执行中，请稍候再试。"
+    assert fake.writes() == []
+
+
+def test_submit_busy_lock_reports_busy(configured, monkeypatch):
+    """审核修复 #3：提交也走同一把活动锁；锁被占时错误提示（旧路无锁直接写）。"""
+    case = Case("sub/忙", "submit", tables=_rich_tables(), form_value=_form(*SEVEN))
+    fake = _build(case)
+    _patch_new(configured, fake, case)
+    monkeypatch.setattr(lib_onetoone, "SUBMIT_LOCK_TIMEOUT", 0.1)
+    with lib_grouping.grouping_lock(ACT, timeout=1):
+        result = bot_onetoone.handle_onetoone_submit("ou_m1", case.action_value, case.form_value)
+    assert result == {"toast": {"type": "error", "content": "当前已有一对一操作正在进行，请稍后重试。"}}
+    assert fake.writes() == []
+
+
+def test_status_submitted_count_uses_dedupe_intentional_fix(configured):
+    """审核修复 #14：状态指令「已提交选择」按非空 open_id 去重（旧路按行数）。"""
+    tables = {**_default_tables(),
+              ONETOONE_SELECT_TABLE: [
+                  _sel("ou_m1", "男性", ("ou_f1",)),
+                  _sel("ou_m1", "男性", ("ou_f2",)),   # 同一人的重复行（脏数据）
+                  _sel("ou_f1", "女性", ("ou_m1",)),
+              ]}
+    case = Case("status/重复行", "status", ACT, tables=tables)
+
+    _, old = _golden_run(configured, case)
+    assert "已提交选择：3人" in old, "旧口径按记录行数"
+
+    _, new = _new_run(configured, case)
+    assert "已提交选择：2人" in new, "去重口径只算 2 人（与分组端统一）"

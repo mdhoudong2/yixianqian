@@ -491,9 +491,12 @@ def refresh_snapshot():
         refresh_snapshot_table(key)
 
 def _group_collecting():
-    """是否有活动正在「收集中」分组志愿（分组表仅在此时高频刷新）"""
+    """是否有活动正在「收集中」分组或一对一志愿（对应表仅在此时高频刷新）"""
     for a in _snapshot.get("activities", []):
-        if bitable.get_select_value(a.get("fields", {}), F_ACTIVITY_GROUP_STATUS) == "收集中":
+        fields = a.get("fields", {})
+        if bitable.get_select_value(fields, F_ACTIVITY_GROUP_STATUS) == "收集中":
+            return True
+        if bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_STATUS) == "收集中":
             return True
     return False
 
@@ -506,8 +509,8 @@ def _snapshot_loop():
             now = time.time()
             for key in _SNAPSHOT_FETCHERS:
                 interval = _SNAPSHOT_INTERVALS.get(key, 60)
-                # 分组表仅在收集中才高频；否则低频
-                if key.startswith("group_") and not _group_collecting():
+                # 分组/一对一表仅在任一模式「收集中」才高频；否则低频
+                if key.startswith(("group_", "onetoone_")) and not _group_collecting():
                     interval = 600
                 if now >= _next_due.get(key, 0):
                     refresh_snapshot_table(key)
@@ -1066,6 +1069,27 @@ def snap_signups_by_openid(open_id):
     signups = _snap_live("signups")
     return [s for s in signups
             if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) == open_id]
+
+
+def snap_active_signups_by_openid(open_id):
+    """我的有效报名记录：过滤「已取消」+ 按活动去重（同一活动多笔保留最后一条）。
+
+    去向「我的分组 / 我的一对一」入口的活动列表：不过滤已取消会显示已取消的报名，
+    不去重会给出多张同活动卡片（admin 的 A-0011 出现过 4 条已取消记录 → 4 张重复卡）。
+    记录顺序即快照/飞书返回顺序，同一活动重复报名时后一条（较新）覆盖前一条。
+    """
+    signups = _snap_live("signups")
+    picked = {}
+    for s in signups:
+        f = s.get("fields", {})
+        if bitable.get_field_text(f, F_SIGNUP_OPENID) != open_id:
+            continue
+        if bitable.get_select_value(f, F_SIGNUP_STATUS) == "已取消":
+            continue
+        act_id = bitable.get_field_text(f, F_SIGNUP_ACTIVITY_ID)
+        if act_id:
+            picked[act_id] = s
+    return list(picked.values())
 
 def snap_signups_by_activity(act_id):
     signups = _snap_live("signups")
@@ -6432,7 +6456,8 @@ def onetoone_candidates(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 一对一状态由 bot 进程写入，判定依赖它 → 实时读
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
     onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
@@ -6477,9 +6502,23 @@ def onetoone_candidates(activity_id):
                 })
     return jsonify({"candidates": candidates})
 
+def _onetoone_candidate_oids(act_id, open_id, my_gender):
+    """本活动「异性＋已报名」候选 open_id 集合（与 candidates 端点同口径）。"""
+    target_gender = "女性" if my_gender == "男性" else "男性"
+    candidates = set()
+    for s in bitable.get_signups(act_id):
+        s_openid = bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID)
+        if not s_openid or s_openid == open_id:
+            continue
+        u = snap_find_user_by_openid(s_openid)
+        if u and bitable.get_select_value(u.get("fields", {}), F_GENDER) == target_gender:
+            candidates.add(s_openid)
+    return candidates
+
+
 @app.route("/api/activities/<activity_id>/onetoone/select", methods=["POST"])
 def onetoone_select(activity_id):
-    """提交一对一志愿选择（秒提交版：查活动/报名/本人全走快照，同步仅 1 次写入）"""
+    """提交一对一志愿选择（锁内查重 + 状态复核；写前校验 1-7 志愿与候选集）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -6494,8 +6533,11 @@ def onetoone_select(activity_id):
         return jsonify({"error": "请至少选择一个志愿"}), 400
     if len(choices) > 7:
         return jsonify({"error": "最多选择7个志愿"}), 400
+    if not all(isinstance(c, str) and c for c in choices):
+        return jsonify({"error": "志愿格式不合法"}), 400
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 活动状态由 bot 进程写入，判定依赖它 → 实时读
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
     onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
@@ -6507,11 +6549,19 @@ def onetoone_select(activity_id):
         return jsonify({"error": "你未报名此活动"}), 403
 
     me = snap_self_user()
+    if not me:
+        return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
     me_fields = me.get("fields", {})
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
 
-    existing = snap_onetoone_selection(text_act_id, open_id)
+    # 与 bot 统一为 1..7：无重复 + 每个志愿都必须是本活动已报名的异性（错误具体到第N个）
+    if len(set(choices)) != len(choices):
+        return jsonify({"error": "不能重复选择同一人"}), 400
+    candidates = _onetoone_candidate_oids(text_act_id, open_id, my_gender)
+    for i, c in enumerate(choices):
+        if c not in candidates:
+            return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400
 
     fields = {
         F_OTO_ACTIVITY_ID: text_act_id,
@@ -6525,11 +6575,25 @@ def onetoone_select(activity_id):
         if i < len(F_OTO_CHOICES):
             fields[F_OTO_CHOICES[i]] = choice_oid
 
-    with file_lock:
-        if existing:
-            ok = bitable.update_record(ONETOONE_SELECT_TABLE, existing["record_id"], fields)
-        else:
-            ok = bitable.create_record(ONETOONE_SELECT_TABLE, fields)
+    # 跨进程活动锁（与 bot/分组共用同一批 flock）：提交互斥 + 锁内查重，
+    # 防双击/双端并发各插一行；锁外查空的双击修复与分组端「审查必修 7」同款。
+    try:
+        with lib_grouping.grouping_lock(text_act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
+            # 拿到锁后重查状态：防「检查后、执行前」被管理员截止的窗口
+            act_now, _ = snap_resolve_activity(activity_id, fresh=True)
+            status_now = bitable.get_select_value(
+                act_now.get("fields", {}) if act_now else {}, F_ACTIVITY_ONETOONE_STATUS)
+            if status_now != "收集中":
+                return jsonify({"error": f"一对一状态为「{status_now}」，无法选择"}), 400
+            # 快照优先、未命中回退实时（live）——与旧实现同一读取路径，只换了执行时机
+            existing = (snap_onetoone_selection(text_act_id, open_id)
+                        or bitable.get_user_onetoone_selection(text_act_id, open_id))
+            if existing:
+                ok = bitable.update_record(ONETOONE_SELECT_TABLE, existing["record_id"], fields)
+            else:
+                ok = bitable.create_record(ONETOONE_SELECT_TABLE, fields)
+    except lib_grouping.GroupingBusy:
+        return jsonify({"error": "当前有其他一对一操作正在进行，请稍后重试"}), 409
     if not ok:
         return jsonify({"error": "提交失败，请稍后重试"}), 500
 
@@ -6546,7 +6610,8 @@ def onetoone_status(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 一对一状态由 bot 进程写入，判定依赖它 → 实时读
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -6567,6 +6632,26 @@ def onetoone_status(activity_id):
         "my_choices": my_choices
     })
 
+def _chatted_targets(msgs, open_id):
+    """「已聊」推导：[open_id 本人发出的、状态≠已删除的留言] 的目标 open_id 集合。
+
+    必须按作者过滤：旧实现不查作者，只要有人给同一 target 留过言就标记已聊——
+    A-0011 实测 7/16 人受假阳性影响（14 条假阳性命中）。状态口径与
+    /api/messages/mine 一致：只排除「已删除」。
+    """
+    chatted = set()
+    for m in msgs:
+        f = m.get("fields", {})
+        if bitable.get_select_value(f, F_MSG_STATUS) == "已删除":
+            continue
+        if bitable.get_field_text(f, F_MSG_AUTHOR_OID) != open_id:
+            continue
+        t = bitable.get_field_text(f, F_MSG_TARGET_OID)
+        if t:
+            chatted.add(t)
+    return chatted
+
+
 @app.route("/api/activities/<activity_id>/onetoone/result", methods=["GET"])
 def onetoone_result(activity_id):
     """查询我的必聊名单（chatted 由留言推导：我给 TA 留过言即已聊）"""
@@ -6577,7 +6662,8 @@ def onetoone_result(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 一对一状态由 bot 进程写入，判定依赖它 → 实时读
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -6603,16 +6689,9 @@ def onetoone_result(activity_id):
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
             photo_by_oid[oid] = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
 
-    # 已聊 = 我给 TA 留过言（状态≠已删除）
+    # 已聊 = 我给 TA 留过言（状态≠已删除，且必须是我本人发出的留言）
     msgs = _snap_live("messages")
-    chatted = set()
-    for m in msgs:
-        f = m.get("fields", {})
-        if bitable.get_select_value(f, F_MSG_STATUS) == "已删除":
-            continue
-        t = bitable.get_field_text(f, F_MSG_TARGET_OID)
-        if t:
-            chatted.add(t)
+    chatted = _chatted_targets(msgs, open_id)
 
     partners = []
     for r in mine:
@@ -7150,7 +7229,8 @@ def my_groups():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    signups = snap_signups_by_openid(open_id)
+    # 过滤已取消 + 按活动去重：已取消的报名不该再出「我的分组」卡片
+    signups = snap_active_signups_by_openid(open_id)
 
     # 一次性查所有「我的分组志愿」，避免每个活动各查一次（N+1 慢查询）
     my_selections = snap_group_selections_by_selector(open_id)
@@ -7196,7 +7276,7 @@ def my_groups_flag():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    signups = snap_signups_by_openid(open_id)
+    signups = snap_active_signups_by_openid(open_id)
     for s in signups:
         act_id = bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID)
         act = snap_find_activity(act_id)
@@ -7216,7 +7296,8 @@ def my_onetoone():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    signups = snap_signups_by_openid(open_id)
+    # 过滤已取消 + 按活动去重（否则 A-0011 那 4 条已取消记录会出 4 张重复卡片）
+    signups = snap_active_signups_by_openid(open_id)
 
     my_selections = snap_onetoone_selections_by_selector(open_id)
     selection_by_act = {}
@@ -7226,11 +7307,15 @@ def my_onetoone():
         if aid:
             selection_by_act[aid] = s_fields
 
+    # 每个活动的一对一状态由 bot 进程写入，本列表按它过滤 → 一次性实时读全表，
+    # 再逐个匹配（与 my_groups 同构，消 N+1 并对齐决定性读取口径）
+    acts_fresh = _snap_fresh("activities")
+
     result = []
     for s in signups:
         fields = s.get("fields", {})
         act_id = bitable.get_field_text(fields, F_SIGNUP_ACTIVITY_ID)
-        act = snap_find_activity(act_id)
+        act = _match_activity(acts_fresh, act_id)
         if not act:
             continue
         onetoone_status = bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
@@ -7255,7 +7340,7 @@ def my_onetoone_flag():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    signups = snap_signups_by_openid(open_id)
+    signups = snap_active_signups_by_openid(open_id)
     for s in signups:
         act_id = bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID)
         act = snap_find_activity(act_id)

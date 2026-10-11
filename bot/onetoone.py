@@ -286,7 +286,7 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
 
     res = lib_onetoone.validate_choices(choices, participants, user_gender)
     if res["code"] == "COUNT":
-        return {"toast": {"type": "error", "content": f"请选择7位（当前{len(choices)}位）"}}
+        return {"toast": {"type": "error", "content": f"请选择1-7位（当前{len(choices)}位）"}}
     if res["code"] == "DUPLICATE":
         return {"toast": {"type": "error", "content": "不能重复选择同一人"}}
     if res["code"] == "INVALID_TARGET":
@@ -298,11 +298,20 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
         FIELD_OTO_SELECTOR_NAME: user_nickname,
         FIELD_OTO_SELECTOR_GENDER: user_gender,
     }
+    # 志愿位先全清空，再按顺序填（1..7 位都可提交，空位写空串）
+    for cf in FIELD_OTO_CHOICES:
+        fields[cf] = ""
     for i, cf in enumerate(FIELD_OTO_CHOICES):
-        fields[cf] = choices[i]
+        if i < len(choices):
+            fields[cf] = choices[i]
 
     save = lib_onetoone.save_selection(activity_id, operator_open_id, fields, client=bitable)
-    msg = "选择已更新" if save.get("updated") else "选择已提交"
+    if save["code"] == "BUSY":
+        return {"toast": {"type": "error", "content": "当前已有一对一操作正在进行，请稍后重试。"}}
+    if save["code"] != "OK":
+        # 查重读失败或写失败都不得报成功（旧实现不检查返回值，写失败也发「已提交」）
+        return {"toast": {"type": "error", "content": "提交失败，请稍后再试"}}
+    msg = "选择已更新" if save["updated"] else "选择已提交"
 
     log(f"一对一选择: {user_nickname} 活动{activity_id} {msg}")
     return {"toast": {"type": "success", "content": msg}}
@@ -310,11 +319,22 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
 
 def _render_start_result(res):
     """把 start_collection 的结构化结果拼成给管理员看的中文。"""
-    if res["code"] == "OK":
+    code = res["code"]
+    if code == "OK":
         return (f"一对一志愿填写已开始：{res['activity_name']}\n"
                 f"已开放，未发送群发通知。\n"
                 f"请让用户在 H5 页面自查并提交志愿（现场活动）。")
-    return f"一对一志愿填写开始失败（{res['code']}）"
+    if code == "BUSY":
+        return "当前已有一对一任务在执行中，请稍候再试。"
+    if code == "STATUS_FAILED":
+        return f"一对一志愿填写开始失败：活动「{res['activity_name']}」状态写入失败，请稍后重试。"
+    if code == "RESULTS_SEARCH_FAILED":
+        return (f"一对一志愿填写开始失败：活动「{res['activity_name']}」状态已写入「收集中」，"
+                f"但读取历史结果失败，历史结果可能残留；请稍后重试「开始一对一」清理后再执行。")
+    if code == "DELETE_INCOMPLETE":
+        return (f"一对一志愿填写开始失败：活动「{res['activity_name']}」历史结果清理不完整"
+                f"（成功删除 {res['deleted']}/{res['total']} 条），请稍后重试「开始一对一」清理残留。")
+    return f"一对一志愿填写开始失败（{code}）"
 
 
 def handle_admin_start_onetoone(keyword):
@@ -333,20 +353,56 @@ def handle_admin_start_onetoone(keyword):
 def _render_execute_result(res, activity_id):
     """把 execute 的结构化结果拼成给管理员看的中文。
 
-    文案归渲染层：lib 只给数据。改这里的字必须同步改 tests/_golden_onetoone_impl.py
-    之外的那份断言——等价性测试会直接红。
+    文案归渲染层：lib 只给数据。改这里的字必须同步更新 tests/test_onetoone_parity.py
+    的「刻意分歧」断言——其余等价性案例会直接红。
     """
     code = res["code"]
     if code == "ALREADY_DONE":
         return (f"活动「{res['activity_name']}」已生成过一对一结果，请勿重复执行。如需重新匹配，请先发送"
                 f"「开始一对一 {activity_id}」重新开放，再执行。")
+    if code == "BUSY":
+        return "当前已有一对一任务在执行中，请稍候再试。"
+    if code == "SEARCH_FAILED":
+        return "查询历史结果失败，无法确认是否已执行过，已中止（本次未写入任何数据），请稍后重试。"
+    if code == "CLOSE_FAILED":
+        return "活动状态写入失败（无法切换为「已截止」），已中止匹配，请稍后重试。"
+    if code == "SELECTIONS_SEARCH_FAILED":
+        if res.get("restored"):
+            return "读取一对一志愿失败，已中止匹配，状态已恢复为「收集中」，请稍后重试。"
+        return ("读取一对一志愿失败，已中止匹配；且状态恢复为「收集中」失败"
+                "（当前可能仍为「已截止」），请让管理员检查。")
     if code == "NO_PARTICIPANTS":
-        return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
+        if res.get("restored", True):
+            return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
+        return ("没有已提交志愿的参与者；且状态恢复为「收集中」失败"
+                "（当前可能仍为「已截止」），请让管理员检查。")
     if code == "ALGORITHM_ERROR":
-        return f"一对一匹配出错：{res['error']}，状态已恢复为「收集中」"
+        if res.get("restored", True):
+            return f"一对一匹配出错：{res['error']}，状态已恢复为「收集中」"
+        return (f"一对一匹配出错：{res['error']}；且状态恢复为「收集中」失败"
+                f"（当前可能仍为「已截止」），请让管理员检查。")
     if code == "PARTIAL_WRITE":
-        return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚，"
-                f"状态恢复为「收集中」，请稍后重试。")
+        if res.get("restored", True):
+            return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚，"
+                    f"状态恢复为「收集中」，请稍后重试。")
+        return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚；"
+                f"但状态恢复为「收集中」失败（当前可能仍为「已截止」），请让管理员检查。")
+    if code == "PARTIAL_WRITE_VERIFY_FAILED":
+        if res.get("restored", True):
+            return (f"结果写入不完整（成功 {res['created']}/{res['total']}）且回滚校验失败，"
+                    f"可能残留结果；状态已恢复收集中，请先『开始一对一』清理残留后再执行")
+        return (f"结果写入不完整（成功 {res['created']}/{res['total']}）且回滚校验失败，"
+                f"可能残留结果；状态恢复「收集中」失败（当前可能仍为「已截止」），请让管理员检查。")
+    if code == "PARTIAL_WRITE_INCOMPLETE":
+        if res.get("restored", True):
+            return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），回滚不完整"
+                    f"（残留 {res['residual']} 条结果），状态已恢复为「收集中」，"
+                    f"请先发送「开始一对一」清理残留后再执行。")
+        return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），回滚不完整"
+                f"（残留 {res['residual']} 条结果）；且状态恢复为「收集中」失败"
+                f"（当前可能仍为「已截止」），请让管理员检查。")
+    if code == "DONE_STATUS_FAILED":
+        return "结果已生成，但状态写入失败（当前状态：已截止），请稍后重试或让管理员检查"
 
     # 走到这里就是 OK
     return (f"🎉 活动「{res['activity_name']}」一对一匹配完成：\n"

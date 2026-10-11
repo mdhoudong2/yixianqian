@@ -13,12 +13,11 @@
 `run_onetoone_matching` 的权重常量已随算法从 bot/constants.py 搬进本模块：
 两端永远相同，不是环境配置。
 """
-import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from lib import recommend
 from lib.bitable_client import get_field_text, get_multi_select_value
-from lib.grouping import PRIORITY_SCORES
+from lib.grouping import PRIORITY_SCORES, GroupingBusy, grouping_lock
 from lib.util import log
 
 # ---------------------------------------------------------------- 运行配置
@@ -91,8 +90,11 @@ WEIGHT_ONETOONE_THEIR_PRIORITY = 0.3
 WEIGHT_ONETOONE_MATCH = 0.2
 ONETOONE_UNSELECTED_SCORE = 30
 
-# 一对一执行互斥：进程内锁（与迁移前 bot 的 _onetoone_lock 同语义）。
-_onetoone_lock = threading.Lock()
+# 一对一执行互斥已改走 lib.grouping.grouping_lock（跨进程 flock，bot 与 H5 共用
+# 同一批 yixianqian_grouping_<活动>.lock）。等待预算：执行/开始收集是分钟级作业，
+# 与分组同口径；用户提交要快速失败，不占线程池。
+START_LOCK_TIMEOUT = 180
+SUBMIT_LOCK_TIMEOUT = 5
 
 
 # ---------------------------------------------------------------- 匹配算法
@@ -319,14 +321,18 @@ def fetch_status(activity_id, *, client, activity, find_user_by_openid):
         "conjunction": "and",
         "conditions": [{"field_name": f["oto_activity_id"], "operator": "is", "value": [activity_id]}],
     }) or []
+    # 去重口径与分组端统一：非空 open_id 去重（同一人重复行只算一次）
+    submitted_oids = {
+        get_field_text(s.get("fields", {}), f["oto_selector_oid"]) for s in selections
+        if get_field_text(s.get("fields", {}), f["oto_selector_oid"])
+    }
     return {
         "code": "OK",
         "activity_id": activity_id,
         "name": name,
         "status": status,
         "signup_count": len(signups),
-        # 迁移前口径 = 记录行数（与分组端统一的「非空 open_id 去重」不同，属审核修复项）
-        "submitted_count": len(selections),
+        "submitted_count": len(submitted_oids),
     }
 
 
@@ -415,78 +421,141 @@ def preview(activity_id, *, client, activity, find_user_by_openid):
 def validate_choices(choices, participants, user_gender):
     """校验一对一志愿列表（纯函数）。
 
-    与迁移前 bot 相同：恰好 7 个、无重复、每个目标都∈「异性＋本活动已报名」候选集。
+    统一为 **1..7**（与 H5 端点同一口径；小活动凑不满 7 人时也能提交），并校验
+    无重复、每个目标都∈「异性＋本活动已报名」候选集。
     返回 {"code": "OK"} 或 {"code": "COUNT"/"DUPLICATE"/"INVALID_TARGET", ...}。
     """
+    if not isinstance(choices, list) or not all(isinstance(c, str) and c for c in choices):
+        return {"code": "COUNT"}
+    if not 1 <= len(choices) <= 7:
+        return {"code": "COUNT"}
+    if len(set(choices)) != len(choices):
+        return {"code": "DUPLICATE"}
     opp_gender = "女性" if user_gender == "男性" else "男性"
     valid_oids = {p["open_id"] for p in participants if p["gender"] == opp_gender}
-    if len(choices) != 7:
-        return {"code": "COUNT"}
-    if len(set(choices)) != 7:
-        return {"code": "DUPLICATE"}
     for i, c in enumerate(choices):
         if c not in valid_oids:
             return {"code": "INVALID_TARGET", "index": i}
     return {"code": "OK"}
 
 
-def save_selection(activity_id, open_id, fields, *, client):
-    """写入/更新某人的一对一志愿（查重后 create 或 update）。
+def save_selection(activity_id, open_id, fields, *, client, lock_timeout=None):
+    """写入/更新某人的一对一志愿（**锁内**查重后 create 或 update）。
 
-    返回 {"code": "OK", "updated": bool}；updated=True 表示走的是 update 分支。
+    调用方不需要持锁；本函数内部持 lib.grouping.grouping_lock(activity_id)。
+    三点刻意语义：
+    - 查重必须与写入同处锁内：锁外双查双空的双击请求会各插一行（与分组端
+      「审查必修 7」同一修法）；
+    - 用 raw client：读失败（None）直接中止，绝不当空表去 create——那是重复志愿
+      行的源头；快照/实时两条读取路径由调用端负责（bot 只有实时一条）；
+    - 写失败如实返回，调用方不得报成功。
+    返回 {"code": "OK", "updated": bool}；BUSY / SEARCH_FAILED / WRITE_FAILED。
     """
+    if lock_timeout is None:
+        lock_timeout = SUBMIT_LOCK_TIMEOUT
     _require_configured()
     f = _cfg["fields"]
     t = _cfg["tables"]
-    existing = client.search_records(t["onetoone_select_table"], {
-        "conjunction": "and",
-        "conditions": [
-            {"field_name": f["oto_activity_id"], "operator": "is", "value": [activity_id]},
-            {"field_name": f["oto_selector_oid"], "operator": "is", "value": [open_id]},
-        ]}) or []
-    if existing:
-        client.update_record(t["onetoone_select_table"], existing[0]["record_id"], fields)
-        return {"code": "OK", "updated": True}
-    client.create_record(t["onetoone_select_table"], fields)
-    return {"code": "OK", "updated": False}
+    try:
+        with grouping_lock(activity_id, timeout=lock_timeout):
+            existing = client.search_records(t["onetoone_select_table"], {
+                "conjunction": "and",
+                "conditions": [
+                    {"field_name": f["oto_activity_id"], "operator": "is", "value": [activity_id]},
+                    {"field_name": f["oto_selector_oid"], "operator": "is", "value": [open_id]},
+                ]})
+            if existing is None:
+                return {"code": "SEARCH_FAILED"}
+            if existing:
+                if not client.update_record(t["onetoone_select_table"],
+                                            existing[0]["record_id"], fields):
+                    return {"code": "WRITE_FAILED"}
+                return {"code": "OK", "updated": True}
+            if not client.create_record(t["onetoone_select_table"], fields):
+                return {"code": "WRITE_FAILED"}
+            return {"code": "OK", "updated": False}
+    except GroupingBusy:
+        return {"code": "BUSY"}
 
 
-def start_collection(activity_id, *, client, activity):
-    """开放一对一志愿收集；同时清空该活动全部历史结果（否则幂等保护会拦截重跑）。
+def start_collection(activity_id, *, client, activity, lock_timeout=None):
+    """开放一对一志愿收集；**整体持锁**切状态 + 清空该活动全部历史结果。
 
-    `activity` 由调用端先解析好，不把一次网络读压在临界区里。
+    锁内做「状态→收集中 + 清历史结果」：不持锁时，并发的「开始一对一」与
+    「执行一对一」会互相删除/覆盖结果。删除数不足必须明报失败——报成功会让
+    管理员以为可以重跑，实际被残留结果卡住。
+
+    返回 code：OK / BUSY / STATUS_FAILED / RESULTS_SEARCH_FAILED / DELETE_INCOMPLETE。
     """
+    if lock_timeout is None:
+        lock_timeout = START_LOCK_TIMEOUT
     _require_configured()
     f = _cfg["fields"]
     t = _cfg["tables"]
     af = activity.get("fields", {})
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
+    base = {"activity_id": activity_id, "activity_name": activity_name}
+    try:
+        with grouping_lock(activity_id, timeout=lock_timeout):
+            if not client.update_record(t["activity_table_id"], record_id,
+                                        {f["onetoone_status"]: "收集中"}):
+                return dict(base, code="STATUS_FAILED")
 
-    client.update_record(t["activity_table_id"], record_id, {f["onetoone_status"]: "收集中"})
+            old_results = client.search_records(t["onetoone_result_table"], {
+                "conjunction": "and",
+                "conditions": [{"field_name": f["oto_activity_id"], "operator": "is",
+                                "value": [activity_id]}],
+            })
+            if old_results is None:
+                return dict(base, code="RESULTS_SEARCH_FAILED")
+            deleted = 0
+            if old_results:
+                deleted = client.batch_delete_records(
+                    t["onetoone_result_table"], [r["record_id"] for r in old_results])
+                if deleted < len(old_results):
+                    return dict(base, code="DELETE_INCOMPLETE",
+                                deleted=deleted, total=len(old_results))
+                log(f"重新开放一对一，已清除 {deleted} 条历史结果: {activity_name}")
 
-    old_results = client.search_records(t["onetoone_result_table"], {
-        "conjunction": "and",
-        "conditions": [{"field_name": f["oto_activity_id"], "operator": "is", "value": [activity_id]}],
-    }) or []
-    if old_results:
-        client.batch_delete_records(t["onetoone_result_table"],
-                                    [r["record_id"] for r in old_results])
-        log(f"重新开放一对一，已清除 {len(old_results)} 条历史结果: {activity_name}")
-
-    log(f"管理员开始一对一: {activity_name}")
-    return {"code": "OK", "activity_id": activity_id, "activity_name": activity_name}
+            log(f"管理员开始一对一: {activity_name}")
+            return dict(base, code="OK", cleared_results=deleted)
+    except GroupingBusy:
+        return dict(base, code="BUSY")
 
 
-def execute(activity_id, *, client, activity, find_user_by_openid):
-    """执行一对一匹配（幂等检查 + 状态流转 + 写结果）。
+def execute(activity_id, *, client, activity, find_user_by_openid, lock_timeout=None):
+    """执行一对一匹配（幂等检查 + 状态机 + 写结果）。
 
-    与原 bot 的 handle_admin_stop_onetoone + _do_onetoone 行为一致：进程内锁互斥，
-    该活动已生成过结果则拒绝重跑；调用方不需要持锁。
+    **调用方不需要持锁**：本函数整体持 lib.grouping.grouping_lock（跨进程 flock，
+    与 H5/分组共用同一批活动锁）。状态机每一步的读失败（raw client 返回 None）
+    都在写入之前中止，绝不当空表继续：
+
+    ① 幂等查历史结果，None → 中止（零写入）；
+    ② 写「已截止」，失败 → 中止；
+    ③ 读志愿，None → 恢复「收集中」（并检查恢复结果）＋明说失败；
+    ④ 空 → 维持原「没有参与者」文案；⑤ 算法异常 → 恢复状态；
+    ⑥ 写结果，`created < total` → 回查：None → 不得宣称已回滚；回查成功 → 删除
+       并检查删除数；
+    ⑦ 成功 → 状态「已完成」（检查返回值）。
+
+    返回 code：OK / BUSY / SEARCH_FAILED / ALREADY_DONE / CLOSE_FAILED /
+    SELECTIONS_SEARCH_FAILED / NO_PARTICIPANTS / ALGORITHM_ERROR /
+    PARTIAL_WRITE / PARTIAL_WRITE_VERIFY_FAILED / PARTIAL_WRITE_INCOMPLETE /
+    DONE_STATUS_FAILED。
     """
-    with _onetoone_lock:
-        return _execute_locked(activity_id, client=client, activity=activity,
-                               find_user_by_openid=find_user_by_openid)
+    if lock_timeout is None:
+        lock_timeout = START_LOCK_TIMEOUT
+    _require_configured()
+    f = _cfg["fields"]
+    activity_name = get_field_text(activity.get("fields", {}), f["activity_name"])
+    base = {"activity_id": activity_id, "activity_name": activity_name}
+    try:
+        with grouping_lock(activity_id, timeout=lock_timeout):
+            return _execute_locked(activity_id, client=client, activity=activity,
+                                   find_user_by_openid=find_user_by_openid)
+    except GroupingBusy:
+        return dict(base, code="BUSY")
 
 
 def _execute_locked(activity_id, *, client, activity, find_user_by_openid):
@@ -498,37 +567,53 @@ def _execute_locked(activity_id, *, client, activity, find_user_by_openid):
     record_id = activity.get("record_id")
     base = {"activity_id": activity_id, "activity_name": activity_name}
 
-    # 幂等保护：该活动已生成过结果则拒绝重跑
+    # ① 幂等保护：该活动已生成过结果则拒绝重跑。读失败（None）中止、零写入——
+    # 把「读不到」当「没跑过」去重跑，等于用一次限流换掉一份既有结果。
     existing_results = client.search_records(t["onetoone_result_table"], {
         "conjunction": "and",
         "conditions": [{"field_name": f["oto_activity_id"], "operator": "is", "value": [activity_id]}],
-    }) or []
+    })
+    if existing_results is None:
+        return dict(base, code="SEARCH_FAILED")
     if existing_results:
         return dict(base, code="ALREADY_DONE")
 
     # 后续所有读写都用活动记录自己的 ID，不退回入参：入参可能是用户随手敲的别名
     rec_activity_id = get_field_text(af, f["activity_id"]) or ""
 
-    client.update_record(t["activity_table_id"], record_id, {f["onetoone_status"]: "已截止"})
+    # ② 状态切「已截止」：写失败就中止，不能带着「收集中」继续写结果
+    if not client.update_record(t["activity_table_id"], record_id,
+                                {f["onetoone_status"]: "已截止"}):
+        return dict(base, code="CLOSE_FAILED")
 
+    # ③ 读志愿记录：读失败恢复「收集中」并如实报告
     selections_records = client.search_records(t["onetoone_select_table"], {
         "conjunction": "and",
-        "conditions": [{"field_name": f["oto_activity_id"], "operator": "is", "value": [rec_activity_id]}],
-    }) or []
+        "conditions": [{"field_name": f["oto_activity_id"], "operator": "is",
+                        "value": [rec_activity_id]}],
+    })
+    if selections_records is None:
+        restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                             {f["onetoone_status"]: "收集中"}))
+        return dict(base, code="SELECTIONS_SEARCH_FAILED", restored=restored)
     participants, selections, skipped = _scan_selections(selections_records)
 
+    # ④ 没有参与者：恢复状态，维持原文案
     if not participants:
-        client.update_record(t["activity_table_id"], record_id, {f["onetoone_status"]: "收集中"})
-        return dict(base, code="NO_PARTICIPANTS", skipped=skipped)
+        restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                             {f["onetoone_status"]: "收集中"}))
+        return dict(base, code="NO_PARTICIPANTS", skipped=skipped, restored=restored)
 
     profiles = build_profiles([p["id"] for p in participants],
                               find_user_by_openid=find_user_by_openid)
 
+    # ⑤ 算法异常：恢复状态
     try:
         matches = run_onetoone_matching(participants, selections, profiles, top_n=10)
     except Exception as e:
-        client.update_record(t["activity_table_id"], record_id, {f["onetoone_status"]: "收集中"})
-        return dict(base, code="ALGORITHM_ERROR", error=str(e))
+        restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                             {f["onetoone_status"]: "收集中"}))
+        return dict(base, code="ALGORITHM_ERROR", error=str(e), restored=restored)
 
     # 报名信息：open_id -> 昵称
     oid_to_nickname = {p["open_id"]: p["nickname"] for p in build_participants(
@@ -550,21 +635,40 @@ def _execute_locked(activity_id, *, client, activity, find_user_by_openid):
     if result_records:
         created = client.batch_create_records(t["onetoone_result_table"], result_records)
         if created < len(result_records):
-            # 写入不完整：回滚已写入的部分结果 + 恢复状态，允许重试
+            # ⑥ 写入不完整：回查已写入的部分结果并回滚。
+            # 回查失败（None）时**不得宣称已回滚**——可能残留在表里，谎报成功
+            # 会把管理员的后续重试引向「结果重复」或「被幂等卡死」。
             partial = client.search_records(t["onetoone_result_table"], {
                 "conjunction": "and",
                 "conditions": [{"field_name": f["oto_activity_id"], "operator": "is",
                                 "value": [rec_activity_id]}],
-            }) or []
+            })
+            if partial is None:
+                restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                                     {f["onetoone_status"]: "收集中"}))
+                return dict(base, code="PARTIAL_WRITE_VERIFY_FAILED", created=created,
+                            total=len(result_records), restored=restored)
+            deleted = 0
             if partial:
-                client.batch_delete_records(t["onetoone_result_table"],
-                                            [p["record_id"] for p in partial])
-            client.update_record(t["activity_table_id"], record_id,
-                                 {f["onetoone_status"]: "收集中"})
+                deleted = client.batch_delete_records(
+                    t["onetoone_result_table"], [p["record_id"] for p in partial])
+            if deleted < len(partial):
+                restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                                     {f["onetoone_status"]: "收集中"}))
+                return dict(base, code="PARTIAL_WRITE_INCOMPLETE", created=created,
+                            total=len(result_records), deleted=deleted,
+                            residual=len(partial) - deleted, restored=restored)
+            restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                                 {f["onetoone_status"]: "收集中"}))
             return dict(base, code="PARTIAL_WRITE", created=created,
-                        total=len(result_records))
+                        total=len(result_records), restored=restored)
 
-    client.update_record(t["activity_table_id"], record_id, {f["onetoone_status"]: "已完成"})
+    # ⑦ 成功 → 状态「已完成」（检查返回值：结果已写但状态写失败必须明说）
     total_pairs = sum(len(v) for v in matches.values())
+    if not client.update_record(t["activity_table_id"], record_id,
+                                {f["onetoone_status"]: "已完成"}):
+        return dict(base, code="DONE_STATUS_FAILED", participant_count=len(participants),
+                    total_pairs=total_pairs)
+
     log(f"一对一匹配完成: {activity_name}, {len(participants)}人, {total_pairs}条必聊")
     return dict(base, code="OK", participant_count=len(participants), total_pairs=total_pairs)

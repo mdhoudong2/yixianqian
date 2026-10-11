@@ -15,11 +15,14 @@ H5 6 个路由 + 留言→已聊推导：
 - POST /api/messages → 再次读 result 验证对方变「已聊」
 
 状态编排直接改活动表「一对一状态」字段（收集中→已完成），不清结果表（结果由 seed 造好）。
+**收尾自清理**（审核修复）：本脚本创建的测试留言逐条删掉；活动「一对一状态」改回原值。
+否则残留的 `E2E一对一已聊测试…` 留言会污染 chatted 推导、残留状态会改变验收现场。
 断言全部数据无关（不硬编码人数），只验证路由语义：候选=全量异性且不含自己、志愿回读一致、
 结果排名 1..N 连续、留言后目标必聊对象变「已聊」。
 """
 import os
 import sys
+import time
 
 _D = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(os.path.dirname(_D))
@@ -92,6 +95,7 @@ def main():
         _fail(f"活动表中找不到 {ACT}")
         return
     act_record_id = act_record["record_id"]
+    orig_status = _t(act_record.get("fields", {}), CFG.F_ACTIVITY_ONETOONE_STATUS)
 
     male_oid, male_uid, male_nick = _find_participant("男性")
     female_oid, female_uid, female_nick = _find_participant("女性")
@@ -102,6 +106,7 @@ def main():
           f"女 {female_uid} {female_nick} ({female_oid[:10]}…)")
 
     client = flask_app.test_client()
+    created_messages = []  # [(record_id, author_oid)]：收尾逐条删除，防污染 chatted 推导
 
     def set_session(oid):
         client.set_cookie("yxq_session", h5_mod.create_session(oid, "user"))
@@ -117,100 +122,117 @@ def main():
                               {CFG.F_ACTIVITY_ONETOONE_STATUS: status})
         h5_mod.refresh_snapshot_table("activities")
 
-    h5_mod.refresh_snapshot()
+    try:
+        h5_mod.refresh_snapshot()
 
-    # ---------- Phase 1: 收集中（candidates / select / status） ----------
-    print("\n[1] 收集中：candidates / select / status")
-    set_status("收集中")
+        # ---------- Phase 1: 收集中（candidates / select / status） ----------
+        print("\n[1] 收集中：candidates / select / status")
+        set_status("收集中")
 
-    set_session(male_oid)
-    r = get(f"/api/activities/{ACT}/onetoone/candidates")
-    if r.status_code != 200:
-        _fail(f"candidates HTTP {r.status_code}: {r.get_json()}")
-    else:
-        cand = r.get_json().get("candidates", [])
-        expected = _count_opposite_signups(male_oid, "女性")
-        if any(c["openid"] == male_oid for c in cand):
-            _fail("candidates 含自己")
-        if len(cand) != expected:
-            _fail(f"candidates 数量 {len(cand)} 与异性报名 {expected} 不符")
-        if len(cand) < 7:
-            _fail(f"candidates 不足 7 位，无法提交志愿：{len(cand)}")
-        print(f"  candidates: {len(cand)} 位异性、排除自己（异性报名 {expected}）")
-
-        choices = [c["openid"] for c in cand[:7]]
-        r2 = post(f"/api/activities/{ACT}/onetoone/select", {"choices": choices})
-        if r2.status_code != 200:
-            _fail(f"select HTTP {r2.status_code}: {r2.get_json()}")
+        set_session(male_oid)
+        r = get(f"/api/activities/{ACT}/onetoone/candidates")
+        if r.status_code != 200:
+            _fail(f"candidates HTTP {r.status_code}: {r.get_json()}")
         else:
-            h5_mod.refresh_snapshot_table("onetoone_selections")
-            r3 = get(f"/api/activities/{ACT}/onetoone/status")
-            st = r3.get_json()
-            if not st.get("my_selected"):
-                _fail("status.my_selected 应为 true")
-            if st.get("my_choices") != choices:
-                _fail(f"status.my_choices 与提交不一致：{st.get('my_choices')} vs {choices}")
-            print(f"  select 7 志愿 + status 复核通过（my_choices={len(st.get('my_choices', []))}）")
+            cand = r.get_json().get("candidates", [])
+            expected = _count_opposite_signups(male_oid, "女性")
+            if any(c["openid"] == male_oid for c in cand):
+                _fail("candidates 含自己")
+            if len(cand) != expected:
+                _fail(f"candidates 数量 {len(cand)} 与异性报名 {expected} 不符")
+            if not cand:
+                _fail("candidates 为空，无法提交志愿")
+            print(f"  candidates: {len(cand)} 位异性、排除自己（异性报名 {expected}）")
 
-    # ---------- Phase 2: 已完成（result / mine / flag） ----------
-    print("\n[2] 已完成：result / mine/onetoone / flag")
-    set_status("已完成")
-
-    r = get(f"/api/activities/{ACT}/onetoone/result")
-    partners = []
-    if r.status_code != 200:
-        _fail(f"result HTTP {r.status_code}: {r.get_json()}")
-    else:
-        partners = r.get_json().get("partners", [])
-        if not partners:
-            _fail("result partners 为空")
-        ranks = [p.get("rank") for p in partners]
-        if ranks != list(range(1, len(partners) + 1)):
-            _fail(f"result rank 非 1..N：{ranks}")
-        if any(not p.get("openid") for p in partners):
-            _fail("result 存在空 openid")
-        n_chatted = sum(1 for p in partners if p.get("chatted"))
-        print(f"  result: {len(partners)} 位必聊、rank 1..{len(partners)}、初始已聊 {n_chatted} 位")
-
-    r = get("/api/activities/mine/onetoone")
-    if r.status_code != 200:
-        _fail(f"mine/onetoone HTTP {r.status_code}: {r.get_json()}")
-    else:
-        acts = r.get_json().get("activities", [])
-        if not any(a.get("my_choice_count") == 7 for a in acts):
-            _fail(f"mine/onetoone 应含 my_choice_count=7 的活动：{acts}")
-        print(f"  mine/onetoone: {len(acts)} 个活动，含本次 7 志愿")
-
-    r = get("/api/activities/mine/onetoone/flag")
-    if r.status_code != 200:
-        _fail(f"mine/onetoone/flag HTTP {r.status_code}: {r.get_json()}")
-    elif r.get_json().get("has_onetoone_activity") is not True:
-        _fail(f"mine/onetoone/flag 应为 true：{r.get_json()}")
-    else:
-        print("  mine/onetoone/flag: has_onetoone_activity=true")
-
-    # ---------- Phase 3: 留言 → 已聊 ----------
-    print("\n[3] 留言 → 已聊")
-    if not partners:
-        _fail("无 partners，跳过留言验证")
-    else:
-        target = next((p["openid"] for p in partners if not p.get("chatted")), None)
-        if not target:
-            print("  所有 partner 均已聊（历史留言残留），跳过留言→已聊验证")
-        else:
-            import time as _time
-            r = post("/api/messages", {"target_openid": target,
-                                       "content": f"E2E一对一已聊测试 {int(_time.time())}"})
-            if r.status_code != 200:
-                _fail(f"POST /api/messages HTTP {r.status_code}: {r.get_json()}")
+            choices = [c["openid"] for c in cand[:7]]
+            r2 = post(f"/api/activities/{ACT}/onetoone/select", {"choices": choices})
+            if r2.status_code != 200:
+                _fail(f"select HTTP {r2.status_code}: {r2.get_json()}")
             else:
-                h5_mod.refresh_snapshot_table("messages")
-                r = get(f"/api/activities/{ACT}/onetoone/result")
-                by_oid = {p["openid"]: p for p in r.get_json().get("partners", [])}
-                if by_oid.get(target, {}).get("chatted") is not True:
-                    _fail(f"留言后 {target[:10]}… 应为已聊")
+                h5_mod.refresh_snapshot_table("onetoone_selections")
+                r3 = get(f"/api/activities/{ACT}/onetoone/status")
+                st = r3.get_json()
+                if not st.get("my_selected"):
+                    _fail("status.my_selected 应为 true")
+                if st.get("my_choices") != choices:
+                    _fail(f"status.my_choices 与提交不一致：{st.get('my_choices')} vs {choices}")
+                print(f"  select {len(choices)} 志愿 + status 复核通过（my_choices={len(st.get('my_choices', []))}）")
+
+        # ---------- Phase 2: 已完成（result / mine / flag） ----------
+        print("\n[2] 已完成：result / mine/onetoone / flag")
+        set_status("已完成")
+
+        r = get(f"/api/activities/{ACT}/onetoone/result")
+        partners = []
+        if r.status_code != 200:
+            _fail(f"result HTTP {r.status_code}: {r.get_json()}")
+        else:
+            partners = r.get_json().get("partners", [])
+            if not partners:
+                _fail("result partners 为空")
+            ranks = [p.get("rank") for p in partners]
+            if ranks != list(range(1, len(partners) + 1)):
+                _fail(f"result rank 非 1..N：{ranks}")
+            if any(not p.get("openid") for p in partners):
+                _fail("result 存在空 openid")
+            n_chatted = sum(1 for p in partners if p.get("chatted"))
+            print(f"  result: {len(partners)} 位必聊、rank 1..{len(partners)}、初始已聊 {n_chatted} 位")
+
+        r = get("/api/activities/mine/onetoone")
+        if r.status_code != 200:
+            _fail(f"mine/onetoone HTTP {r.status_code}: {r.get_json()}")
+        else:
+            acts = r.get_json().get("activities", [])
+            if not any(a.get("activity_id") == ACT for a in acts):
+                _fail(f"mine/onetoone 应含活动 {ACT}：{acts}")
+            print(f"  mine/onetoone: {len(acts)} 个活动，含本次活动 {ACT}")
+
+        r = get("/api/activities/mine/onetoone/flag")
+        if r.status_code != 200:
+            _fail(f"mine/onetoone/flag HTTP {r.status_code}: {r.get_json()}")
+        elif r.get_json().get("has_onetoone_activity") is not True:
+            _fail(f"mine/onetoone/flag 应为 true：{r.get_json()}")
+        else:
+            print("  mine/onetoone/flag: has_onetoone_activity=true")
+
+        # ---------- Phase 3: 留言 → 已聊 ----------
+        print("\n[3] 留言 → 已聊")
+        if not partners:
+            _fail("无 partners，跳过留言验证")
+        else:
+            target = next((p["openid"] for p in partners if not p.get("chatted")), None)
+            if not target:
+                print("  所有 partner 均已聊（历史留言残留），跳过留言→已聊验证")
+            else:
+                r = post("/api/messages", {"target_openid": target,
+                                           "content": f"E2E一对一已聊测试 {int(time.time())}"})
+                if r.status_code != 200:
+                    _fail(f"POST /api/messages HTTP {r.status_code}: {r.get_json()}")
                 else:
-                    print(f"  留言后 {target[:10]}… 已变「已聊」")
+                    # 追踪本轮创建的留言，收尾删除（防「内容前缀」留言污染后续 chatted 推导）
+                    mid = (r.get_json() or {}).get("id")
+                    if mid:
+                        created_messages.append((mid, male_oid))
+                    h5_mod.refresh_snapshot_table("messages")
+                    r = get(f"/api/activities/{ACT}/onetoone/result")
+                    by_oid = {p["openid"]: p for p in r.get_json().get("partners", [])}
+                    if by_oid.get(target, {}).get("chatted") is not True:
+                        _fail(f"留言后 {target[:10]}… 应为已聊")
+                    else:
+                        print(f"  留言后 {target[:10]}… 已变「已聊」")
+    finally:
+        # 收尾自清理：删掉本脚本创建的测试留言 + 活动状态改回原值
+        for mid, author in created_messages:
+            set_session(author)
+            try:
+                client.delete(f"/api/messages/{mid}")
+            except Exception as e:
+                _fail(f"清理测试留言失败 {mid}: {e}")
+        if created_messages:
+            h5_mod.refresh_snapshot_table("messages")
+        set_status(orig_status)
+        print(f"[清理] 测试留言已删除 {len(created_messages)} 条；"
+              f"活动状态还原为「{orig_status}」")
 
     print("\n" + ("✅ H5 API 端到端全部通过" if not _issues else "⛔ 存在失败项"))
     if _issues:

@@ -149,3 +149,35 @@ def test_bot_profile_of_uses_bot_constants():
     prof = at._profile_of(fields)
     assert prof["hobbies"] == frozenset({"看书", "爬山"})
     assert prof["city"] == "厦门"
+
+
+# ---------------------------------------------------------------- validate_choices（C2 统一 1..7）
+
+_PARTICIPANTS = [
+    {"open_id": "ou_m1", "gender": "男性"},
+    {"open_id": "ou_f1", "gender": "女性"},
+    {"open_id": "ou_f2", "gender": "女性"},
+]
+
+
+def test_validate_choices_accepts_one_to_seven():
+    assert lib_onetoone.validate_choices(["ou_f1"], _PARTICIPANTS, "男性")["code"] == "OK"
+    assert lib_onetoone.validate_choices(["ou_f1", "ou_f2"], _PARTICIPANTS, "男性")["code"] == "OK"
+
+
+def test_validate_choices_rejects_count_out_of_range():
+    assert lib_onetoone.validate_choices([], _PARTICIPANTS, "男性")["code"] == "COUNT"
+    assert lib_onetoone.validate_choices(["ou_f1"] * 8, _PARTICIPANTS, "男性")["code"] == "COUNT"
+    assert lib_onetoone.validate_choices([123], _PARTICIPANTS, "男性")["code"] == "COUNT"
+
+
+def test_validate_choices_rejects_duplicates():
+    res = lib_onetoone.validate_choices(["ou_f1", "ou_f1"], _PARTICIPANTS, "男性")
+    assert res["code"] == "DUPLICATE"
+
+
+def test_validate_choices_rejects_non_candidates():
+    # 含自己 / 含同性 / 含未报名者：都必须是 INVALID_TARGET 且带第 N 个志愿下标
+    for bad in (["ou_m1"], ["ou_x"]):
+        res = lib_onetoone.validate_choices(bad, _PARTICIPANTS, "男性")
+        assert res["code"] == "INVALID_TARGET" and res["index"] == 0

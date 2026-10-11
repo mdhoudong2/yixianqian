@@ -645,7 +645,10 @@ def handle_admin_toggle_onetoone_flag(keyword):
     af = activity.get("fields", {})
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
     record_id = activity.get("record_id")
-    update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_FLAG: flag})
+    rec = update_record(ACTIVITY_TABLE_ID, record_id, {FIELD_ACT_ONETOONE_FLAG: flag})
+    if not rec:
+        # 写失败不得报成功：否则管理员以为开了入口，H5 却看不到
+        return f"一对一功能开关设置失败：活动「{activity_name}」状态写入失败，请稍后重试。"
     log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> {flag}")
     return (f"已{'开启' if flag == '是' else '关闭'}活动「{activity_name}」的一对一功能。\n"
             f"开启后，报名该活动的用户可在 H5「我的」页看到「我的一对一」入口。"

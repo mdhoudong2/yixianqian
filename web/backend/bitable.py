@@ -223,6 +223,15 @@ def get_user_group_selection(activity_id, open_id):
     return items[0] if items else None
 
 
+def get_user_onetoone_selection(activity_id, open_id):
+    """获取用户的一对一选择（live 直查；供提交锁内查重的实时兜底）"""
+    items = search_records(ONETOONE_SELECT_TABLE, [
+        {"field_name": F_OTO_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+        {"field_name": F_OTO_SELECTOR_OID, "operator": "is", "value": [open_id]}
+    ])
+    return items[0] if items else None
+
+
 def get_group_results(activity_id):
     """获取活动分组结果"""
     return search_records(GROUP_RESULT_TABLE, [

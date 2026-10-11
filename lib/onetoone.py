@@ -731,9 +731,11 @@ def set_onetoone_flag(activity_id, enabled, *, client, activity=None):
     lib.grouping.FLAG_LOCK_TIMEOUT 与 docs/读取一致性.md）。抢不到锁（执行作业
     分钟级持锁）快速失败回 BUSY。
 
-    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里；
-    真实 base 的「活动ID」是自动编号，按字符串过滤查不到，必须传记录）；缺省时在
-    锁内查一次。写失败如实回 WRITE_FAILED（检查 update_record 返回值，不报成功）。
+    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
+    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
+    必回 0 行。`activity=None` 时在锁内查一次——该路径仅供桩表/测试使用、真表
+    不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
     返回 {"code", "activity_id", "name", "onetoone_flag", "enabled"}。
     """
     _require_configured()

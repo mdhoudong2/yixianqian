@@ -325,10 +325,11 @@ def set_mode(activity_id, mode, *, client, activity=None):
     `yixianqian_grouping_<活动>.lock`，两进程的 flag 写入互斥、不存在栏位级交错。
     抢锁撞上执行作业（分钟级持锁）快速失败回 BUSY，不长时间等待。
 
-    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里；
-    两端正常路径都传——真实 base 的「活动ID」是自动编号，按字符串过滤查不到，必须
-    传记录）；缺省时在锁内按 activity_id 查一次（桩表/测试路径）。写失败如实回
-    WRITE_FAILED（检查 update_record 返回值，不报成功）。
+    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
+    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
+    必回 0 行。`activity=None` 时在锁内按 activity_id 查一次——该路径仅供桩表/测试
+    使用、真表不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -1196,10 +1197,11 @@ def set_group_flag(activity_id, enabled, *, client, activity=None):
     「可用」处理 → 合写：迁移后的真表上合写永远安全，宁可多写一个明确值，也不在
     探测抖动时漏合写。
 
-    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里；
-    两端正常路径都传——真实 base 的「活动ID」是自动编号，按字符串过滤查不到，必须
-    传记录）；缺省时在锁内按 activity_id 查一次（桩表/测试路径）。写失败如实回
-    WRITE_FAILED（检查 update_record 返回值，不报成功）。
+    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
+    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
+    必回 0 行。`activity=None` 时在锁内按 activity_id 查一次——该路径仅供桩表/测试
+    使用、真表不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
     """
     _require_configured()
     f = _cfg["fields"]

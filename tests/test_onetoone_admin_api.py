@@ -12,6 +12,7 @@
 monkeypatch 快照；假表复用 tests/test_onetoone_parity.py 的 FakeBitable——
 桩「存取」，幂等/回滚/算法/锁全跑 lib 真实现。
 """
+import contextlib
 import os
 import sys
 import threading
@@ -244,7 +245,7 @@ def test_non_admin_is_403(api, method, path, payload):
 # ---------------------------------------------------------------- 互斥写入器
 
 def test_set_mode_writes_both_flags_in_one_put(api):
-    """L1 不变量：一次 PUT 同时写两个栏位（飞书单条 update 是整笔事务）。"""
+    """L1 不变量：一次 PUT 同时写两个栏位（同一笔 update payload；飞书单条 update 本身不是整笔事务，互斥由活动锁串行化保证）。"""
     fake = api.install(activity=_oto_act(oto_status="未开始", oto_flag="否"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "onetoone"})
     assert r.status_code == 200
@@ -360,6 +361,67 @@ def test_onetoone_flag_corrects_dirty_both_on(api):
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
     assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是"}
+
+
+@contextlib.contextmanager
+def _busy_lock(activity_id, timeout):
+    raise lib_grouping.GroupingBusy(activity_id)
+    yield  # pragma: no cover
+
+
+@pytest.mark.parametrize("enabled,lock_module", [
+    (True, lib_grouping),
+    (False, lib_onetoone),
+], ids=["enable_via_set_mode", "disable_own_lock"])
+def test_onetoone_flag_busy_returns_409(api, monkeypatch, enabled, lock_module):
+    """开启（走 set_mode）与关闭（自持锁）两条路抢锁失败都回 409：无 ok、零写入。
+
+    关闭路的锁符号绑定在 lib.onetoone 命名空间，与 set_mode 用的不是同一个——两条路
+    各自 mock；将来任一条路漏了锁，对应用例都会变红。
+    """
+    fake = api.install(activity=_oto_act(oto_status="已完成",
+                                         oto_flag="否" if enabled else "是",
+                                         group_flag="否"))
+    monkeypatch.setattr(lock_module, "grouping_lock", _busy_lock)
+    r = api.post("/api/admin/onetoone/flag", {"activity_id": ACT, "enabled": enabled})
+    assert r.status_code == 409
+    body = r.get_json()
+    assert "ok" not in body and body["busy_activity_id"] == ACT
+    assert fake.writes() == [], "抢锁失败不得写任何东西"
+
+
+def test_activity_mode_busy_returns_409(api, monkeypatch):
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="否"))
+    monkeypatch.setattr(lib_grouping, "grouping_lock", _busy_lock)
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
+    assert r.status_code == 409
+    body = r.get_json()
+    assert "ok" not in body and body["busy_activity_id"] == ACT
+    assert fake.writes() == [], "抢锁失败不得写任何东西"
+
+
+@pytest.mark.parametrize("enabled", [True, False], ids=["enable", "disable"])
+def test_onetoone_flag_write_failed_returns_500(api, enabled):
+    """update_record 返回假 → 500 WRITE_FAILED；开启/关闭两条路都绝不回 ok:true。"""
+    fake = api.install(activity=_oto_act(oto_status="已完成",
+                                         oto_flag="否" if enabled else "是",
+                                         group_flag="否"))
+    fake.update_record = lambda *a, **k: None
+    r = api.post("/api/admin/onetoone/flag", {"activity_id": ACT, "enabled": enabled})
+    assert r.status_code == 500
+    body = r.get_json()
+    assert body["code"] == "WRITE_FAILED" and "ok" not in body
+    assert api.refresh_calls == [], "写失败不刷新快照"
+
+
+def test_activity_mode_write_failed_returns_500(api):
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="否"))
+    fake.update_record = lambda *a, **k: None
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
+    assert r.status_code == 500
+    body = r.get_json()
+    assert body["code"] == "WRITE_FAILED" and "ok" not in body
+    assert api.refresh_calls == [], "写失败不刷新快照"
 
 
 # ---------------------------------------------------------------- 动作层 guard

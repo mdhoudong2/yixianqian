@@ -503,6 +503,35 @@ def test_a10_flag_is_idempotent(api):
     assert len([c for c in fake.writes() if c[0] == "update"]) == 1, "幂等：不重复写"
 
 
+def test_group_flag_busy_returns_409_with_busy_activity(api, monkeypatch):
+    """flag 写入与执行作业共用活动锁：撞锁快速失败回 409，零写入、无 ok 字段。"""
+    fake = api.install()
+
+    @contextlib.contextmanager
+    def busy_lock(activity_id, timeout):
+        raise lib_grouping.GroupingBusy(activity_id)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(lib_grouping, "grouping_lock", busy_lock)
+    r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 409
+    body = r.get_json()
+    assert "ok" not in body and body["busy_activity_id"] == ACT
+    assert fake.writes() == [], "抢锁失败不得写任何东西"
+
+
+def test_group_flag_write_failed_returns_500(api):
+    """update_record 返回假 → 500 WRITE_FAILED，绝不回 ok:true（静默写失败防护）。"""
+    fake = api.install()
+    fake.update_record = lambda *a, **k: None
+
+    r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 500
+    body = r.get_json()
+    assert body["code"] == "WRITE_FAILED" and "ok" not in body
+    assert api.refresh_calls == [], "写失败不刷新快照"
+
+
 # ---------------------------------------------------------------- 迁移红线 / 附加
 
 def test_configure_injection_matches_bot(monkeypatch, tmp_path):
@@ -939,7 +968,7 @@ def test_set_group_flag_merges_counterpart_when_field_exists(api):
         r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
         assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
         updates = [c for c in fake.writes() if c[0] == "update"]
-        assert len(updates) == 1, f"value={value!r} 必须恰一笔 update（单笔事务）"
+        assert len(updates) == 1, f"value={value!r} 必须恰一笔 update（同一笔 payload 合写两栏）"
         assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}, \
             f"value={value!r} 也必须合写"
 

@@ -1163,10 +1163,20 @@ def set_group_flag(activity_id, enabled, *, client, activity):
     不加分组锁：只写与分组执行不相干的栏位，且都是「设定成明确值」的盲写，
     后写者胜，不存在读-改-写丢更新。与 commands.py 里既有的开关联动同一口径。
 
-    **条件合并**（设计 §2.3 第 2 行）：enabled=True 且活动现值「一对一功能开启」
-    为「是」时，把「一对一功能开启=否」合进**同一笔** update——飞书单条记录
-    update 是整笔事务，不会出现「双是」。条件刻意不做成无条件双写：parity 桩表
-    没有一对一栏位（读到空串）→ 不触发 → 写入序列与迁移前逐字相同。
+    **开启时合写对侧=否**（设计 §2.3 第 2 行）：enabled=True 且活动表**schema 里
+    有一对一栏位**时，把「一对一功能开启=否」合进**同一笔** update——飞书单条记录
+    update 是整笔事务，不会出现「双是」。
+
+    判别刻意用 schema 级的 field_exists，而不是活动记录里读到的现值：与 set_mode
+    的整笔双写并发时，现值判别读到的是**写入前**的快照，读到「否/空」就不合写，
+    而读取与写入之间对方可能已切到「是」——留下双是；且 search_records 对空值
+    栏位会**省略 key**（最危险的空值活动恰好漏判）。schema 级判别与现值、快照
+    新鲜度都无关。
+
+    桩表/未迁移环境（client 无 field_exists）→ 探测取不到 → 不合写，写入序列与
+    迁移前逐字相同（parity 保护面）。探测失败（field_type 返回 -1「不确定」）按
+    「可用」处理 → 合写：迁移后的真表上合写永远安全，宁可多写一个明确值，也不在
+    探测抖动时漏合写。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -1174,7 +1184,10 @@ def set_group_flag(activity_id, enabled, *, client, activity):
     af = activity.get("fields", {})
     activity_name = get_field_text(af, f["activity_name"])
     payload = {f["group_flag"]: flag}
-    if enabled and get_field_text(af, f["onetoone_flag"]) == "是":
+    probe = getattr(client, "field_exists", None)
+    has_counterpart = bool(probe and probe(_cfg["tables"]["activity_table_id"],
+                                           f["onetoone_flag"]))
+    if enabled and f.get("onetoone_flag") and has_counterpart:
         payload[f["onetoone_flag"]] = "否"
     client.update_record(_cfg["tables"]["activity_table_id"], activity.get("record_id"), payload)
     log(f"管理员设置分组功能开关: {activity_name}({activity_id}) -> {flag}")

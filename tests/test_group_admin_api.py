@@ -45,11 +45,15 @@ ADMIN = "ou_test_admin"
 ME = "ou_me"
 ACT = "A-0002"
 
+# 未迁移表的形态：基类 FakeBitable（无 field_exists）即精确模拟。fixture 会把模块
+# 全局的 FakeBitable 换成 _BatchFake，这里先留好原类的别名供「无栏位」用例使用。
+_UnmigratedFake = FakeBitable
+
 
 # ---------------------------------------------------------------- 桩数据
 
 class _BatchFake(FakeBitable):
-    """FakeBitable + batch_update_records（红线文件不动，测试局部补 client 能力）。"""
+    """FakeBitable + batch_update_records + schema 级 field_exists（模拟已迁移表）。"""
 
     def batch_update_records(self, table_id, records, batch_size=500):
         updated = 0
@@ -57,6 +61,10 @@ class _BatchFake(FakeBitable):
             if self.update_record(table_id, r["record_id"], r["fields"]):
                 updated += 1
         return updated
+
+    def field_exists(self, table_id, field_name):
+        # 迁移后的活动表含一对一栏位（schema 级，与记录里有没有值无关）
+        return table_id == ACTIVITY_TABLE_ID and field_name == "一对一功能开启"
 
 
 def _user(oid, uid, gender, nickname):
@@ -483,7 +491,9 @@ def test_a10_flag_is_idempotent(api):
     r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
     assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是"}
+    # 迁移后的表含一对一栏位 → 开启时无条件合写对侧=否（schema 判别，见上方用例）
+    assert len(updates) == 1 \
+        and updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
     assert api.refresh_calls == ["activities"]
 
     # 真实环境 fresh=True 会从飞书读到刚写入的「是」；同步桩快照模拟这次实时读
@@ -916,20 +926,30 @@ def test_group_guard_noop_without_onetoone_fields(api):
     assert not [c for c in fake.writes() if c[0] == "batch_delete"]
 
 
-def test_set_group_flag_merges_onetoone_off_conditionally(api):
-    """条件合并：开启分组且一对一现值=是 → 同一笔 update 里带上「一对一=否」。"""
+def test_set_group_flag_merges_counterpart_when_field_exists(api):
+    """schema 判别：表里有一对一栏位 → 开启分组时**无条件**合写「一对一=否」（同一笔）。
+
+    修复语义：不再看快照里的现值（并发窗口里读到的必是旧值；空值场景
+    search_records 还会省略 key）。逐一覆盖 一对一=是 / =否 / 空（key 缺失）。"""
+    for value in ("是", "否", None):
+        fields = {"分组功能开启": "否"}
+        if value is not None:
+            fields["一对一功能开启"] = value
+        fake = api.install(activity=_act(**fields))
+        r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+        assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
+        updates = [c for c in fake.writes() if c[0] == "update"]
+        assert len(updates) == 1, f"value={value!r} 必须恰一笔 update（单笔事务）"
+        assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}, \
+            f"value={value!r} 也必须合写"
+
+
+def test_set_group_flag_no_merge_without_field_exists(api, monkeypatch):
+    """表里没有该栏位（未迁移形态/parity 桩表）→ 只写自身，写序列逐字不变。"""
+    monkeypatch.setattr(sys.modules[__name__], "FakeBitable", _UnmigratedFake)
     fake = api.install(activity=_act(分组功能开启="否", 一对一功能开启="是"))
     r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
-    assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
-    updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1, "必须是同一笔 update（单笔事务）"
-    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
-
-
-def test_set_group_flag_no_merge_when_onetoone_off(api):
-    """条件不成立（一对一=否 或栏位缺失）→ 写序列与旧行为逐字相同（parity 保护面）。"""
-    fake = api.install(activity=_act(分组功能开启="否", 一对一功能开启="否"))
-    api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 200
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是"}
 

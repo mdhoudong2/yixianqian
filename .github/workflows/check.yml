@@ -17,6 +17,9 @@ jobs:
       - name: 语法检查（py_compile，不依赖第三方库）
         run: python -m compileall -q bot web scripts lib
 
+      - name: 内联模板检查（自闭合非 void 标签吞兄弟节点，零依赖）
+        run: python3 scripts/dev/check_inline_template.py
+
   lint:
     runs-on: ubuntu-latest
     steps:

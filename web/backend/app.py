@@ -3499,7 +3499,9 @@ def activity_detail(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 活动由 bot 进程写入（状态也由 bot 改）：新建的活动不能等 ≤300s 快照刷新，
+    # 否则管理员刚发链接、最先点的人看到「活动不存在」（审计 G5）→ 实时读。
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -3535,7 +3537,8 @@ def signup(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 同详情：新建活动立刻可报名，不赌快照刷新窗口（审计 G5）
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -3587,7 +3590,8 @@ def cancel_signup(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 与报名同一口径：新活动/刚改状态后取消报名也要立刻可见（审计 G5 同类）
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
     existing = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)

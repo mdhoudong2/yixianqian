@@ -266,15 +266,42 @@ def test_set_mode_writes_both_flags_in_one_put(api):
 @pytest.mark.parametrize("mode,expect", [
     ("group", {"分组功能开启": "是", "一对一功能开启": "否"}),
     ("onetoone", {"分组功能开启": "否", "一对一功能开启": "是"}),
-    ("none", {"分组功能开启": "否", "一对一功能开启": "否"}),
-], ids=["group", "onetoone", "none"])
+], ids=["group", "onetoone"])
 def test_set_mode_dual_write_all_modes(api, mode, expect):
-    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是",
-                                         group_status="已完成", group_flag="是"))
+    # 两种状态都已收尾（flag=否、已完成）：切换允许，且恒为一笔双栏位 PUT
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="否",
+                                         group_status="已完成", group_flag="否"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": mode})
     assert r.status_code == 200
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1 and updates[0][3] == expect
+
+
+def test_set_mode_none_corrects_conflict_and_writes_both_off(api):
+    """冲突态纠偏：双开脏数据下切 none 一笔把两个 flag 都关掉（一键纠偏的另一分支）。"""
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是",
+                                         group_status="已完成", group_flag="是"))
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "none"})
+    assert r.status_code == 200
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "否"}
+
+
+def test_set_mode_none_idempotent_when_nothing_open(api):
+    fake = api.install(activity=_oto_act(oto_status="未开始", oto_flag="否", group_flag="否"))
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "none"})
+    assert r.status_code == 200 and r.get_json()["changed"] is False
+    assert [c for c in fake.writes() if c[0] == "update"] == []
+
+
+def test_mode_conflict_correction_blocked_when_closing_side_collecting(api):
+    """冲突纠偏的例外仅限「已收尾」侧：正在收集中/已截止的一侧仍必须拦。"""
+    fake = api.install(activity=_oto_act(oto_status="收集中", oto_flag="是",
+                                         group_status="已完成", group_flag="是"))
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
+    assert r.status_code == 409
+    assert "一对一" in r.get_json()["blocked_sides"]
+    assert fake.writes() == []
 
 
 def test_set_mode_conflict_correction_single_put(api):
@@ -309,6 +336,33 @@ def test_activity_mode_blocked_when_closing_side_collecting(api):
     assert r.status_code == 409
     assert r.get_json()["code"] == "MODE_SWITCH_BLOCKED"
     assert fake.writes() == [], "拒绝切换必须零写入"
+
+
+def test_activity_mode_blocked_when_flag_off_but_collecting(api):
+    """审计必修 1（漏洞复现）：flag=否 + 分组状态=收集中 时切模式必须 409。
+
+    用户端 select 只看状态不看 flag，此时分组通道实际还开着；旧实现（AND 判定）
+    放行切换 → 两条通道并存、互斥不变量被绕过。
+    """
+    fake = api.install(activity=_oto_act(oto_flag="否", group_flag="否", group_status="收集中"))
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "onetoone"})
+    assert r.status_code == 409
+    assert r.get_json()["code"] == "MODE_SWITCH_BLOCKED"
+    assert "分组" in r.get_json()["blocked_sides"]
+    assert fake.writes() == [], "拒绝切换必须零写入"
+
+
+def test_activity_mode_blocked_when_closing_flag_on_even_if_done(api):
+    """OR 对齐 lib.counterpart_start_active：关闭侧 flag=是（即使状态已完成）也要拦。
+
+    否则切过去后对面 start 会被 lib 的 EXCLUSIVE_MODE 拦下，得先手动关 flag，
+    不如在切换这一步就明确提示。
+    """
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="否"))
+    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
+    assert r.status_code == 409
+    assert r.get_json()["code"] == "MODE_SWITCH_BLOCKED"
+    assert fake.writes() == []
 
 
 def test_activity_mode_blocked_when_active_job(api):
@@ -391,7 +445,8 @@ def test_onetoone_flag_busy_returns_409(api, monkeypatch, enabled, lock_module):
 
 
 def test_activity_mode_busy_returns_409(api, monkeypatch):
-    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="否"))
+    # flag=否（两种状态都没开着）：过 closing 检查后才会走到抢锁，这样测的是锁路径
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="否", group_flag="否"))
     monkeypatch.setattr(lib_grouping, "grouping_lock", _busy_lock)
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
     assert r.status_code == 409
@@ -415,7 +470,7 @@ def test_onetoone_flag_write_failed_returns_500(api, enabled):
 
 
 def test_activity_mode_write_failed_returns_500(api):
-    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="否"))
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="否", group_flag="否"))
     fake.update_record = lambda *a, **k: None
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
     assert r.status_code == 500

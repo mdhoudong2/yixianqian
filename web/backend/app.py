@@ -6760,7 +6760,14 @@ def admin_group_flag():
         # 写失败/查询失败如实回错误，绝不回 {"ok": true}（静默写失败已修）
         return jsonify({"error": "分组开关写入失败，请稍后重试", "code": res_code}), 500
     refresh_snapshot_table_async("activities")
-    return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
+    resp = {"ok": True, "activity_id": act_id, "name": name, "group_flag": target}
+    if not enabled:
+        # 关 flag 只是关「我的分组」入口，不改状态：分组仍在收集中时用户照常能提交志愿，
+        # 提醒管理员别把它当停用（加法字段，不改变行为）。
+        gs = bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
+        if gs in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
+            resp["warning"] = f"分组状态仍为「{gs}」，用户仍可提交志愿；关闭的只是入口"
+    return jsonify(resp)
 
 
 # ========== 管理员一对一管理台 ==========
@@ -7165,16 +7172,24 @@ def admin_onetoone_flag():
     if res_code != "OK":
         return jsonify({"error": "开关设置失败，请稍后重试", "code": res_code}), 500
     refresh_snapshot_table_async("activities")
-    return jsonify({"ok": True, "activity_id": act_id, "name": name,
-                    "onetoone_flag": res["onetoone_flag"]})
+    resp = {"ok": True, "activity_id": act_id, "name": name,
+            "onetoone_flag": res["onetoone_flag"]}
+    if not enabled:
+        # 同分组开关：关入口不等于停用，状态仍收集中时用户照常能提交志愿。
+        os_ = bitable.get_field_text(af, F_ACTIVITY_ONETOONE_STATUS)
+        if os_ in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
+            resp["warning"] = f"一对一状态仍为「{os_}」，用户仍可提交志愿；关闭的只是入口"
+    return jsonify(resp)
 
 
 @app.route("/api/admin/activity/mode", methods=["POST"])
 def admin_activity_mode():
     """模式切换（互斥写入器）：一次 PUT 同时写「分组功能开启」「一对一功能开启」。
 
-    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若状态 ∈ {收集中, 已截止}，
-    或该活动有活跃 job → 409 拒绝并提示先收尾。切换本身只改入口 flag，不删任何数据。
+    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若 flag=「是」或状态 ∈
+    {收集中, 已截止}，或该活动有活跃 job → 409 拒绝并提示先收尾。例外：冲突态
+    （双 flag=是）纠偏时，只按被关闭侧的状态拦（正在跑的一侧不能被关掉）。
+    切换本身只改入口 flag，不删任何数据。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7200,19 +7215,29 @@ def admin_activity_mode():
         return jsonify({"error": "该活动有任务正在执行，请等它结束后再切换模式",
                         "code": "MODE_SWITCH_BLOCKED", "active_job": active}), 409
 
+    # 关闭侧「仍活跃」判定：状态∈{收集中,已截止} 必拦——用户端 select 只认状态不看
+    # flag，通道其实还开着，放行切换等于绕过互斥（2026-10-12 审计必修 1）；flag=是
+    # 也拦（与 lib.counterpart_start_active 对齐，常态下要求先收尾再切）。
+    # 例外：冲突态（双 flag=是 的历史脏数据）且被关闭侧状态已收尾时放行——控制台
+    # 「一键纠偏」就靠这条路径；正在收集/已截止的一侧仍按状态拦截，纠偏只能保留
+    # 真正在跑的模式（误伤纠偏等于删功能，见 index.html 冲突卡）。
+    conflict = lib_grouping.derive_mode(act) == lib_grouping.MODE_CONFLICT
+
+    def _closing_blocked(flag_field, status_field):
+        if bitable.get_field_text(af, status_field) in (
+                lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
+            return True
+        return not conflict and bitable.get_field_text(af, flag_field) == "是"
+
     closing = []
-    if (bitable.get_field_text(af, F_ACTIVITY_GROUP_FLAG) == "是"
-            and mode != lib_grouping.MODE_GROUP
-            and (bitable.get_field_text(af, F_ACTIVITY_GROUP_STATUS)
-                 in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED))):
+    if mode != lib_grouping.MODE_GROUP and _closing_blocked(
+            F_ACTIVITY_GROUP_FLAG, F_ACTIVITY_GROUP_STATUS):
         closing.append("分组")
-    if (bitable.get_field_text(af, F_ACTIVITY_ONETOONE_FLAG) == "是"
-            and mode != lib_grouping.MODE_ONETOONE
-            and (bitable.get_field_text(af, F_ACTIVITY_ONETOONE_STATUS)
-                 in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED))):
+    if mode != lib_grouping.MODE_ONETOONE and _closing_blocked(
+            F_ACTIVITY_ONETOONE_FLAG, F_ACTIVITY_ONETOONE_STATUS):
         closing.append("一对一")
     if closing:
-        return jsonify({"error": "「%s」仍处于收集中/已截止，请先收尾再切换模式" % "、".join(closing),
+        return jsonify({"error": "「%s」入口仍开启或仍处于收集中/已截止，请先收尾再切换模式" % "、".join(closing),
                         "code": "MODE_SWITCH_BLOCKED", "blocked_sides": closing}), 409
 
     res = lib_grouping.set_mode(act_id, mode, client=_grouping_client, activity=act)

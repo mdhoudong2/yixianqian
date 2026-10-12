@@ -6638,11 +6638,20 @@ createApp({
       const closing = [];
       if (d.group_flag === '是' && mode !== 'group') closing.push('分组');
       if (d.onetoone_flag === '是' && mode !== 'onetoone') closing.push('一对一');
-      if (closing.indexOf('分组') >= 0 && (d.group_status === '收集中' || d.group_status === '已截止')) {
-        vant.showToast('分组还在「' + d.group_status + '」，请先收尾再切换'); return;
+      // 与后端同口径：状态∈{收集中,已截止} 必拦（用户端 select 只认状态，通道还开着）；
+      // flag=是 也拦（先收尾再切），除非是冲突态纠偏——双开时一键纠偏要把其中一侧关掉。
+      const conflictMode = d.conflict === true;
+      const gBlock = mode !== 'group'
+        && ((d.group_status === '收集中' || d.group_status === '已截止')
+            || (!conflictMode && d.group_flag === '是'));
+      const oBlock = mode !== 'onetoone'
+        && ((d.onetoone_status === '收集中' || d.onetoone_status === '已截止')
+            || (!conflictMode && d.onetoone_flag === '是'));
+      if (gBlock) {
+        vant.showToast('分组入口未关或仍在「' + d.group_status + '」，请先收尾再切换'); return;
       }
-      if (closing.indexOf('一对一') >= 0 && (d.onetoone_status === '收集中' || d.onetoone_status === '已截止')) {
-        vant.showToast('一对一还在「' + d.onetoone_status + '」，请先收尾再切换'); return;
+      if (oBlock) {
+        vant.showToast('一对一入口未关或仍在「' + d.onetoone_status + '」，请先收尾再切换'); return;
       }
       const msg = closing.length
         ? ('将关闭「' + closing.join('」「') + '」入口；不会删除任何资料，既有结果仍保留。')

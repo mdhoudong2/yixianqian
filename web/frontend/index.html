@@ -913,7 +913,8 @@
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
-    <van-empty v-if="!likesData.mutual.length" description="还没有相互喜欢的人" image-size="60"></van-empty>
+    <div v-if="loadingLikes" style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+    <van-empty v-else-if="!likesData.mutual.length" description="还没有相互喜欢的人" image-size="60"></van-empty>
     <div v-else v-for="m in likesData.mutual" :key="m.initiator_openid" class="msg-card">
       <div class="msg-avatar">💕</div>
       <div class="msg-body">
@@ -930,7 +931,8 @@
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
-    <van-empty v-if="!likesData.liked_me.length" description="还没有人喜欢你" image-size="60"></van-empty>
+    <div v-if="loadingLikes" style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+    <van-empty v-else-if="!likesData.liked_me.length" description="还没有人喜欢你" image-size="60"></van-empty>
     <template v-else>
       <div v-for="(l, i) in likesData.liked_me" :key="i" class="msg-card">
         <div class="msg-avatar">{{ l.real ? '💌' : '👤' }}</div>
@@ -1089,14 +1091,17 @@
       </van-tab>
       <van-tab title="流水">
         <div v-if="paLedgerFilter" class="pa-filter-chip" @click="clearPaFilter">只看：{{ paLedgerFilterNick }} ✕</div>
-        <div v-for="e in paLedger" :key="e.id" class="pa-row">
-          <div class="pa-row-main">
-            <div class="pa-row-name">{{ e.nickname }} <span v-if="e.user_id" class="pa-row-id">{{ e.user_id }}</span></div>
-            <div class="pa-row-sub">{{ e.kind_label }} · {{ e.reason || '—' }} · {{ e.created_at }}</div>
+        <div v-if="paLedgerLoading" style="text-align:center; padding:24px;"><van-loading size="24px">加载中...</van-loading></div>
+        <template v-else>
+          <div v-for="e in paLedger" :key="e.id" class="pa-row">
+            <div class="pa-row-main">
+              <div class="pa-row-name">{{ e.nickname }} <span v-if="e.user_id" class="pa-row-id">{{ e.user_id }}</span></div>
+              <div class="pa-row-sub">{{ e.kind_label }} · {{ e.reason || '—' }} · {{ e.created_at }}</div>
+            </div>
+            <div class="pa-delta" :class="e.delta > 0 ? 'pos' : 'neg'">{{ e.delta > 0 ? '+' : '' }}{{ e.delta }}</div>
           </div>
-          <div class="pa-delta" :class="e.delta > 0 ? 'pos' : 'neg'">{{ e.delta > 0 ? '+' : '' }}{{ e.delta }}</div>
-        </div>
-        <van-empty v-if="!paLedger.length" description="暂无流水" />
+          <van-empty v-if="!paLedger.length" description="暂无流水" />
+        </template>
       </van-tab>
       <van-tab title="兑换">
         <div v-for="o in paRedemptions" :key="o.id" class="pa-row">
@@ -2426,6 +2431,10 @@
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
+    <div v-if="onetooneResultLoading" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <template v-else>
     <div class="round-tabs" v-if="onetooneResult.rounds && onetooneResult.rounds.length > 1">
       <span v-for="r in onetooneResult.rounds" :key="r" class="round-tab" :class="{active: r === onetooneResult.round}" @click="switchOnetooneRound(r)">第{{r}}轮</span>
     </div>
@@ -2449,6 +2458,7 @@
         <van-tag v-else type="success">已聊</van-tag>
       </div>
     </div>
+    </template>
   </div>
 </div>
 <!-- ========== 他人资料页 ========== -->
@@ -3491,6 +3501,7 @@ createApp({
 
     // ===== 管理员·麦穗总览 =====
     const paLoading = ref(false);
+    const paLedgerLoading = ref(false);
     const paStats = ref({ user_count: 0, entry_count: 0, earned: 0, spent: 0, outstanding: 0, redemption_count: 0, invite_count: 0 });
     const paConfig = ref([]);
     const paUsers = ref([]);
@@ -3522,8 +3533,11 @@ createApp({
     }
     async function loadPaLedger() {
       const q = paLedgerFilter.value ? ('?user_oid=' + encodeURIComponent(paLedgerFilter.value)) : '';
-      const data = await api('/api/admin/points/ledger' + q);
-      paLedger.value = data.rows || [];
+      paLedgerLoading.value = true;
+      try {
+        const data = await api('/api/admin/points/ledger' + q);
+        paLedger.value = data.rows || [];
+      } finally { paLedgerLoading.value = false; }
     }
     async function loadPaRedemptions() {
       const data = await api('/api/admin/points/redemptions');
@@ -3978,6 +3992,7 @@ createApp({
     const onetooneLoadingCandidates = ref(false);
     const onetooneCandidatesError = ref('');
     const onetooneResult = ref({});
+    const onetooneResultLoading = ref(false);
     const onetooneSelectFrom = ref('my_onetoone');   // 进入一对一选择前的页面，用于返回
     const onetooneResultFrom = ref('my_onetoone');   // 进入一对一结果前的页面，用于返回
     const onetooneMsgTarget = ref(null);
@@ -5814,8 +5829,10 @@ createApp({
     async function loadOnetooneResult(activityId, round) {
       let url = '/api/activities/' + activityId + '/onetoone/result';
       if (round) url += '?round=' + encodeURIComponent(round);
+      onetooneResultLoading.value = true;
       try { const data = await api(url); onetooneResult.value = data; }
       catch(e) { vant.showToast(e.message); }
+      finally { onetooneResultLoading.value = false; }
     }
     function switchOnetooneRound(round) {
       loadOnetooneResult(currentActivityId.value, round);
@@ -7309,7 +7326,7 @@ createApp({
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
       myOnetooneList, loadingMyOnetoone, openMyOnetoone, hasOnetooneEntry,
-      onetooneCandidates, onetooneSelectedChoices, onetooneCandidateQuery, visibleOnetooneCandidates, onetooneLoadingCandidates, onetooneCandidatesError, onetooneResult,
+      onetooneCandidates, onetooneSelectedChoices, onetooneCandidateQuery, visibleOnetooneCandidates, onetooneLoadingCandidates, onetooneCandidatesError, onetooneResult, onetooneResultLoading,
       onetooneSelectFrom, onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
       goOnetooneSelect, isOnetooneSelected, toggleOnetooneChoice, removeOnetooneChoice, submitOnetooneChoices, goOnetooneResult, switchOnetooneRound,
       openOnetooneMsg, onOnetooneMsgBeforeClose,
@@ -7343,7 +7360,7 @@ createApp({
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet, showSignupInfo,
       userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
-      paLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
+      paLoading, paLedgerLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
       paUserDetail, paUserDetailShow, paUserDetailLoading, paUserDetailOid,
       openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,

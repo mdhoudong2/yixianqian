@@ -129,3 +129,35 @@ def test_report_rate_limited_per_user(api):
              for _ in range(6)]
     assert codes[:5] == [200] * 5, codes
     assert codes[5] == 429, "第 6 次必须被限流（5 次/分钟/用户）"
+
+
+# ---------------------------------------------------------------- G3-b 举报限流按用户分桶
+
+def test_report_rate_limit_counts_across_different_messages(api):
+    """同一用户对不同留言的举报共享额度（5 次/分钟/用户）。
+
+    旧实现限流 key 含 request.path（内含 record_id）→ 每则留言各一个桶，
+    对 6 则不同留言各报一次会全部通过；本用例即防该绕过回归。
+    """
+    c, fake = api
+    for i in range(6):
+        fake.records[f"rec_msg{i}"] = _message_record(f"rec_msg{i}")
+    codes = [_post(c, f"/api/messages/rec_msg{i}/report", {"reason": "广告"}).status_code
+             for i in range(6)]
+    assert codes[:5] == [200] * 5, codes
+    assert codes[5] == 429, "换一则留言继续举报不得绕过限流（限流按用户分桶）"
+
+
+def test_report_rate_limit_isolated_between_users(api):
+    """A 用满额度不影响 B 的第一次举报。"""
+    c, fake = api
+    for i in range(6):
+        fake.records[f"rec_msg{i}"] = _message_record(f"rec_msg{i}")
+    assert [_post(c, f"/api/messages/rec_msg{i}/report", {"reason": "广告"}).status_code
+            for i in range(5)] == [200] * 5
+    assert _post(c, "/api/messages/rec_msg5/report", {"reason": "广告"}).status_code == 429
+
+    c2 = app.app.test_client()
+    c2.set_cookie("yxq_session", app.create_session(TARGET))
+    r = _post(c2, "/api/messages/rec_msg5/report", {"reason": "广告"})
+    assert r.status_code == 200, ("B 用户不应受 A 用户额度影响", r.get_json())

@@ -1129,7 +1129,7 @@ def snap_signups_by_openid(open_id):
 def snap_active_signups_by_openid(open_id):
     """我的有效报名记录：过滤「已取消」+ 按活动去重（同一活动多笔保留最后一条）。
 
-    去向「我的分组 / 我的一对一」入口的活动列表：不过滤已取消会显示已取消的报名，
+    去向「我的活动 / 我的分组 / 我的一对一」入口的活动列表：不过滤已取消会显示已取消的报名，
     不去重会给出多张同活动卡片（admin 的 A-0011 出现过 4 条已取消记录 → 4 张重复卡）。
     记录顺序即快照/飞书返回顺序，同一活动重复报名时后一条（较新）覆盖前一条。
     """
@@ -1282,9 +1282,11 @@ def _check_rate(key, limit=5, window=60):
         _rate_store[key] = lst
         return True
 
-def _rate_limit(limit=5, window=60, key_prefix="rl"):
+def _rate_limit(limit=5, window=60, key_prefix="rl", include_path=True):
     open_id = g.get("yxq_open_id") or request.remote_addr or "anon"
-    k = f"{key_prefix}:{open_id}:{request.path}"
+    k = f"{key_prefix}:{open_id}"
+    if include_path:
+        k = f"{k}:{request.path}"
     if not _check_rate(k, limit, window):
         return jsonify({"error": "操作过于频繁，请稍后再试"}), 429
     return None
@@ -5253,7 +5255,8 @@ def report_message(record_id):
     不按用户存），无法限定只有浏览者能举报；按审计口径放宽为「登录用户可报」，
     用限流挡住刷爆管理端待办（5 次/分钟/用户）。
     """
-    _rl = _rate_limit(limit=5, window=60, key_prefix="msg_report")
+    # 限流键不含路径：路径含 record_id，按路径分桶=每则留言一个额度，可换留言绕过
+    _rl = _rate_limit(limit=5, window=60, key_prefix="msg_report", include_path=False)
     if _rl:
         return _rl
     open_id = require_login()
@@ -8362,7 +8365,7 @@ def my_liked_list():
 
 @app.route("/api/activities/mine", methods=["GET"])
 def my_activities():
-    """我报名的活动列表"""
+    """我报名的活动列表（过滤已取消 + 按活动去重，与 my_groups / my_onetoone 同口径）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -8370,7 +8373,7 @@ def my_activities():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    signups = snap_signups_by_openid(open_id)
+    signups = snap_active_signups_by_openid(open_id)
 
     result = []
     for s in signups:

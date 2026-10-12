@@ -146,6 +146,13 @@ def _guard_and_import():
     from lib.bitable_client import get_select_value as _gsv
     get_field_text, get_select_value, get_field_number = _gft, _gsv, _gfn
 
+    # handler 用 grouping_lock 与业务入口的 _require_configured 闸门：必须在使用前
+    # 注入表 ID/栏位名与锁目录（口径同 bot/yixianqian_bot_ws.py 的 main()）。
+    # 不注入时 plan 正常、run 必炸——Phase 1 引入锁后本脚本一直如此。
+    from constants import SHARED_DATA_DIR
+    from grouping import configure_grouping_lib
+    configure_grouping_lib(SHARED_DATA_DIR)
+
 
 _guard_and_import()
 

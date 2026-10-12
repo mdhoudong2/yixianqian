@@ -130,6 +130,15 @@ def _guard_and_import():
     from lib.bitable_client import get_select_value as _gsv
     get_field_text, get_select_value, get_field_number = _gft, _gsv, _gfn
 
+    # handler 内部走 grouping_lock 与业务入口的 _require_configured 闸门：必须在使用前
+    # 注入（口径同 bot/yixianqian_bot_ws.py 的 main()）。本脚本的执行链只用 lib.onetoone
+    # 自己的配置 + 锁，但注入分组一项与 main() 对齐，避免日后接线到 lib.grouping 业务函数时复发。
+    from constants import SHARED_DATA_DIR
+    from grouping import configure_grouping_lib
+    configure_grouping_lib(SHARED_DATA_DIR)
+    from onetoone import configure_onetoone_lib
+    configure_onetoone_lib(SHARED_DATA_DIR)
+
 
 _guard_and_import()
 

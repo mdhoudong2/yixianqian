@@ -643,6 +643,9 @@ def test_run_search_failure_aborts_without_writes(api):
     assert job["result"]["code"] == "SEARCH_FAILED"
     assert fake.writes() == [], "读不到既有结果就不能动任何字段"
     assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
+    # job 线程先落终态、后刷快照：等刷新调用补齐，避免漏到下一个用例的
+    # mock 列表里（全量跑时偶发：test_start_search_failure 的 == ["activities"] 被串台）。
+    _wait_refresh_calls(api, {"activities", "group_results"})
 
 
 def test_start_search_failure_returns_500_without_deleting(api):

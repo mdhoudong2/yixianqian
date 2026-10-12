@@ -4516,7 +4516,8 @@ def like_user():
     message = data.get("message", "")
     like_type = data.get("like_type", LIKE_TYPE_ANON)
     if like_type not in (LIKE_TYPE_ANON, LIKE_TYPE_REAL):
-        like_type = LIKE_TYPE_ANON
+        # 未知值静默转匿名会让调用端以为按实名记了（审计 L3）：直接 400 不消耗额度
+        return jsonify({"error": "like_type 不合法"}), 400
 
     if not target_openid:
         return jsonify({"error": "缺少目标用户"}), 400
@@ -4536,6 +4537,11 @@ def like_user():
         return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
     if my_gender == target_gender:
         return jsonify({"error": "仅限异性之间喜欢"}), 400
+
+    # 目标必须是卡片池同口径的「在册单身」：给已脱单/已退出/待审核用户点喜欢
+    # 只会消耗额度、留下对方永远看不到的悬挂记录（审计 G4：对已脱单用户仍 200）。
+    if bitable.get_select_value(target_fields, F_ACCOUNT_STATUS) != "单身":
+        return jsonify({"error": "对方当前不在牵线名单中"}), 400
 
     # 重复检查：只挡「还有效」的喜欢。用正向白名单 is_like_active，不要写成
     # != "被驳回" 这种否定式——以后再加状态（比如到期作废）时否定式会静默放行，
@@ -5129,7 +5135,9 @@ def create_message():
     content = (data.get("content") or "").strip()
     parent_id = (data.get("parent_id") or "").strip()
     reply_to_id = (data.get("reply_to_id") or "").strip()
-    if not target or not content:
+    if not target:
+        return jsonify({"error": "缺少目标用户"}), 400
+    if not content:
         return jsonify({"error": "内容不能为空"}), 400
     if len(content) > 500:
         return jsonify({"error": "留言最多500字"}), 400
@@ -5137,6 +5145,9 @@ def create_message():
     if not author:
         app.logger.error(f"留言拒绝: snap_self_user返回None role={g.yxq_role} open_id={open_id[:20]}")
         return jsonify({"error": "用户不存在"}), 404
+    if not snap_find_user_by_openid(target):
+        # 目标必须是真实账号（用户表/观察员表），否则留言挂在“幽灵卡片”上没人能看到
+        return jsonify({"error": "目标用户不存在"}), 400
     now_ms = int(time.time() * 1000)
     # 解析被回复人（权威来源：通过 reply_to_id 反查原留言作者），同时兼容 parent_id 自动推导
     reply_to_oid = ""
@@ -5232,7 +5243,15 @@ def delete_message(record_id):
 
 @app.route("/api/messages/<record_id>/report", methods=["POST"])
 def report_message(record_id):
-    """举报留言（置为已举报，待管理员处理，飞书通知管理员）"""
+    """举报留言（置为已举报，待管理员处理，飞书通知管理员）。
+
+    「卡片浏览者」在现行设计里没有可判定的浏览记录（/api/track 只统计引流页、
+    不按用户存），无法限定只有浏览者能举报；按审计口径放宽为「登录用户可报」，
+    用限流挡住刷爆管理端待办（5 次/分钟/用户）。
+    """
+    _rl = _rate_limit(limit=5, window=60, key_prefix="msg_report")
+    if _rl:
+        return _rl
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401

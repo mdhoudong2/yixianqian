@@ -6243,8 +6243,11 @@ def admin_group_activities():
 
     # 按活动集合的实际模式/状态做「联集」判断，只 fresh 读列表行真正会显示的子表。
     # 行渲染（index.html gaRowSub）：一对一(非未开始)行显示 onetoone_submitted_count；
-    # 其余行按分组状态——未开始不用计数、已完成用轮次、收集中/已截止用 submitted_count；
+    # 其余行按分组状态——未开始不用计数、已完成用轮次、收集中/已截止用 submitted_count。
+    # 轮次（has_results/latest_round/available_rounds）对收集中的活动也要正确
+    # （A-0011 收集中却有历史轮次，审计必修 2）→ 非「未开始」一律读结果表。
     # 冲突行只有纠偏提示，但冲突属罕见历史态，按任务口径保守读两模式全表。
+    # 一对一结果表不读：列表行不渲染一对一轮次（详情端点才给），读了纯是白付延迟。
     # 未被任何行用到的表不读，回应字段仍在，值走空集合（schema 不变）。
     need_selections = need_rounds = need_oto_selections = False
     for a in activities:
@@ -6263,9 +6266,8 @@ def admin_group_activities():
                or lib_grouping.STATUS_NOT_STARTED)
         if gst == lib_grouping.STATUS_NOT_STARTED:
             continue
-        if gst == lib_grouping.STATUS_DONE:
-            need_rounds = True
-        else:
+        need_rounds = True                      # 已完成/收集中/已截止都可能已有历史轮次
+        if gst != lib_grouping.STATUS_DONE:
             need_selections = True
 
     selections = _snap_fresh("group_selections") if need_selections else []
@@ -6601,7 +6603,9 @@ def admin_group_run():
     round_no = data.get("round")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
+        # 轮次上限 10 与一对一 run 对齐（bot 端保持原行为，Phase 1 parity 网钉死）
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)

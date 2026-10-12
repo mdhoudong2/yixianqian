@@ -525,6 +525,35 @@ def test_a9_read_endpoints_use_fresh_snapshots(api):
     assert un["unsubmitted"][0]["user_id"] == "U-0009"
 
 
+def test_activities_list_reads_rounds_for_collecting_activity(api):
+    """审计必修 2（A-0011 实测）：收集中但已有历史轮次 → 列表必须读结果表。
+
+    旧实现只对「已完成」设 need_rounds，整场活动集合里没有已完成活动时
+    group_results 根本不读，收集中活动的 has_results/latest_round/
+    available_rounds 全是空，卡片看起来「没有结果」。
+    """
+    signups, selections = _balanced(2, 2)
+    results = [_res("ou_m0", 1, "1"), _res("ou_m0", 1, "2"), _res("ou_f0", 1, "2")]
+    api.install(activity=_act(), signups=signups, selections=selections, results=results)
+    api.fresh_calls.clear()
+    r = api.get("/api/admin/group/activities")
+    assert r.status_code == 200
+    assert "group_results" in api.fresh_calls, "收集中也要读结果表"
+    item = r.get_json()["activities"][0]
+    assert item["group_status"] == "收集中"
+    assert item["has_results"] is True
+    assert item["latest_round"] == 2
+    assert item["available_rounds"] == [1, 2]
+
+
+def test_group_run_rejects_round_above_max(api):
+    """审计发现 2：group/run 轮次超上限回 400（对齐一对一；bot 端不动）。"""
+    fake = api.install()
+    assert api.post("/api/admin/group/run", {"activity_id": ACT, "round": 11}).status_code == 400
+    assert api.post("/api/admin/group/run", {"activity_id": ACT, "round": 999}).status_code == 400
+    assert fake.writes() == [], "拒绝的轮次不得产生任何写入"
+
+
 # ---------------------------------------------------------------- A10 flag 幂等
 
 def test_a10_flag_is_idempotent(api):
@@ -614,6 +643,9 @@ def test_run_search_failure_aborts_without_writes(api):
     assert job["result"]["code"] == "SEARCH_FAILED"
     assert fake.writes() == [], "读不到既有结果就不能动任何字段"
     assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
+    # job 线程先落终态、后刷快照：等刷新调用补齐，避免漏到下一个用例的
+    # mock 列表里（全量跑时偶发：test_start_search_failure 的 == ["activities"] 被串台）。
+    _wait_refresh_calls(api, {"activities", "group_results"})
 
 
 def test_start_search_failure_returns_500_without_deleting(api):
@@ -941,6 +973,10 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
                         lambda: {"record_id": "rec_u",
                                  "fields": {"昵称": "小北", "性别": "男性"}})
     monkeypatch.setattr(app, "snap_group_selection", lambda aid, oid: None)
+    # 新增的候选集校验要读实表报名（与 onetoone/select 同口径）：桩一行有效候选，
+    # ou_f0 在 _find_user 里是女性
+    monkeypatch.setattr(app.bitable, "get_signups",
+                        lambda aid: [_signup("ou_f0", "阿南")])
 
     def _lookup(aid, oid):
         events.append("lookup")

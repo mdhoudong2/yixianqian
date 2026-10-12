@@ -7894,6 +7894,7 @@ def _normalize_editable_update(data, fields=None):
     """将前端提交的值按类型归一化为飞书写入格式；非法项静默忽略。
 
     身份证仅当原记录 id_valid==False 时放行，且强验格式与生日一致。
+    数值/长文/多选带合理上限（审计 L2：身高 99999、昵称 300 字曾可直接写入）。
     """
     by_name = {fname: ftype for fname, _lbl, ftype, _opts in EDITABLE_FIELDS}
     # 临时放行身份证（缺/错时）
@@ -7952,19 +7953,32 @@ def _normalize_editable_update(data, fields=None):
             val = str(v).strip() if v is not None else ""
             if k == F_NICKNAME and not val:
                 continue  # 昵称不可清空：bot 按昵称查找/展示，清空会导致功能失效
+            limit = 2000 if k in LONG_TEXT_FIELDS else 200
+            if k == F_NICKNAME:
+                limit = 30
+            if len(val) > limit:
+                raise ValueError(f"「{k}」最多{limit}字")
             update_fields[k] = val
         elif ftype == "select":
-            update_fields[k] = str(v).strip() if v is not None else ""
+            val = str(v).strip() if v is not None else ""
+            if len(val) > 50:
+                raise ValueError(f"「{k}」内容过长")
+            update_fields[k] = val
         elif ftype == "number":
             if v in ("", None):
                 continue  # 身高留空则不更新
             try:
-                update_fields[k] = int(float(str(v)))
+                num = int(float(str(v)))
             except (ValueError, TypeError):
                 continue
+            if k == F_HEIGHT and not 100 <= num <= 250:
+                raise ValueError("身高需在 100-250cm 之间")
+            update_fields[k] = num
         elif ftype == "multi":
             vals = v if isinstance(v, list) else []
             vals = [str(x).strip() for x in vals if str(x).strip()]
+            if len(vals) > 30 or any(len(x) > 50 for x in vals):
+                raise ValueError(f"「{k}」选项过多或单项过长")
             update_fields[k] = vals
     return update_fields
 
@@ -8004,7 +8018,9 @@ def update_profile():
     _st, _ = _account_status(open_id)
     if _st in GATE_MESSAGES:
         return jsonify(GATE_MESSAGES[_st]), 403
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体不合法"}), 400
     user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
@@ -8070,6 +8086,10 @@ def update_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    # 账号门禁与 PUT /api/profile 同口径：待审核/审核不通过/已退出 不能上传照片（审计 L1）
+    _st, _ = _account_status(open_id)
+    if _st in GATE_MESSAGES:
+        return jsonify(GATE_MESSAGES[_st]), 403
     # 快速校验（不加锁）
     user = snap_self_user()
     if not user:

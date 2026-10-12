@@ -7230,20 +7230,23 @@ def _signin_signup_records(act_id, open_id=None):
 
 
 def _signin_roster_item(rec):
-    """报名记录 → 名册条目（头像 emoji 由前端按 gender 渲染）。"""
+    """报名记录 → 名册条目（头像 emoji 由前端按 gender 渲染；仅管理员端点使用）。"""
     sf = rec.get("fields", {})
     oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
     nick = bitable.get_field_text(sf, F_SIGNUP_NICKNAME)
     state = bitable.get_field_text(sf, F_SIGNUP_ATTENDANCE)
-    uid = gender = ""
+    uid = gender = real_name = ""
     u = snap_find_user_by_openid(oid) if oid else None
     if u:
         uf = u.get("fields", {})
         uid = bitable.get_field_text(uf, F_USER_ID)
         gender = bitable.get_select_value(uf, F_GENDER)
+        # 现场签到要核对身份：姓名从已在手的用户档案上取（零额外查询）
+        real_name = bitable.get_field_text(uf, F_REAL_NAME)
         if not nick:
             nick = bitable.get_field_text(uf, F_NICKNAME)
     return {"open_id": oid, "nickname": nick, "user_id": uid, "gender": gender,
+            "real_name": real_name,
             "state": state, "checked_in": lib_grouping.is_checked_in(state)}
 
 

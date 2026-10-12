@@ -506,6 +506,23 @@ def test_admin_signin_roster_fresh_and_counts(api):
     assert body2["stats"]["checked_in"] == 3
 
 
+def test_admin_signin_roster_includes_real_name(api, monkeypatch):
+    """名册带真实姓名：现场核对身份用；取自已有用户档案（零额外查询），无档案回空串。
+
+    前端搜索有 real_name 匹配分支（无自动化测试），这里锁定后端字段契约。
+    """
+    monkeypatch.setitem(USER_DIR["ou_m0"]["fields"], "姓名", "陈小北")
+    api.install(activity=_act_group(),
+                signups=[_signup_att("ou_m0", None, "小北"),
+                         _signup_att("ou_f0", "按时", "阿南")])
+    body = api.get(_admin_signin_url()).get_json()
+    by_oid = {x["open_id"]: x for x in body["roster"]}
+    assert by_oid["ou_m0"]["real_name"] == "陈小北"
+    assert by_oid["ou_m0"]["user_id"] == "U-0001"      # 既有字段不受影响
+    assert by_oid["ou_m0"]["nickname"] == "小北"
+    assert by_oid["ou_f0"]["real_name"] == ""          # 档案无姓名 → 空串（不报错）
+
+
 def test_admin_signin_roster_search_failure_500(api):
     api.install(activity=_act_group(), signups=[_signup_att("ou_m0", "按时")])
     api.fake.search_fails = {SIGNUP_TABLE_ID}

@@ -1572,7 +1572,7 @@
               <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
             </div>
             <div v-if="gaSigninList.length" class="candidate-search-box">
-              <input v-model="gaSigninQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              <input v-model="gaSigninQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
             </div>
             <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
             <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
@@ -1581,7 +1581,7 @@
                 <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                 <div class="ga-row-main">
                   <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                  <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
+                  <div class="ga-row-sub">{{ r.real_name || '-' }} · {{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
                 </div>
                 <div class="ga-signin-actions">
                   <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
@@ -7103,6 +7103,7 @@ createApp({
         if (f === 'out' && r.state !== '未到') return false;
         if (!q) return true;
         return String(r.nickname || '').toLowerCase().includes(q)
+          || String(r.real_name || '').toLowerCase().includes(q)
           || String(r.user_id || '').toLowerCase().includes(q);
       });
     });

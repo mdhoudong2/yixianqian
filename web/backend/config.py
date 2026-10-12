@@ -316,6 +316,7 @@ F_OTO_USER_NAME = "用户昵称"
 F_OTO_USER_GENDER = "用户性别"
 F_OTO_TARGET_OID = "必聊对象open_id"
 F_OTO_TARGET_NAME = "必聊对象昵称"
+F_OTO_ROUND = "轮次"
 
 # 举报表字段
 F_REPORT_REPORTER = "举报人昵称"

@@ -496,6 +496,7 @@
   .ga-step-line { position: absolute; top: 11px; left: 50%; width: 100%; height: 2px; background: #ebedf0; }
   .ga-step.done .ga-step-line { background: var(--yxq-st-done-bg); }
   .ga-empty { text-align: center; padding: 40px 20px; } .ga-empty-retry { margin-top: 12px; }
+  .ga-signin-row { gap: 8px; } .ga-signin-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
   .ga-form-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f2f3f5; } .ga-form-row .van-switch::after { content: ''; position: absolute; inset: -10px; }
   .ga-form-label { flex: 1; min-width: 0; font-size: 14px; color: #646566; }
   .ga-num { width: 64px; text-align: center; font-size: 16px; font-weight: 600; padding: 8px 0; border: 1px solid #ebedf0; border-radius: 8px; background: #f7f8fa; color: #323233; }
@@ -1045,11 +1046,12 @@
       <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
       <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
       <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
+      <van-cell v-if="hasOnetooneEntry && !isObserver" title="我的一对一" is-link @click="openMyOnetoone"></van-cell>
       <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="🌾 麦穗管理" is-link @click="openPointsAdmin"></van-cell>
       <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
       <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
-      <van-cell v-if="user.is_admin" title="👥 活动分组管理" :value="gaAdminBadge" is-link @click="openGroupAdmin"></van-cell>
+      <van-cell v-if="user.is_admin" title="👥 活动管理" :value="gaAdminBadge" is-link @click="openGroupAdmin"></van-cell>
     </van-cell-group>
   </div>
   <div style="padding:12px 12px 24px;">
@@ -1185,10 +1187,10 @@
     </div>
   </van-popup>
 </div>
-<!-- ========== 管理员·活动分组管理（总览） ========== -->
+<!-- ========== 管理员·活动管理（总览） ========== -->
 <div v-else-if="page==='group_admin'" key="group_admin" class="page ga-page">
   <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
-  <div class="ga-title">👥 活动分组管理</div>
+  <div class="ga-title">👥 活动管理</div>
 
   <div v-if="gaLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
   <template v-else>
@@ -1205,6 +1207,9 @@
       <div class="ga-filters">
         <span v-for="f in gaFilters" :key="f" class="ga-chip ga-filter-chip" :class="{active: gaStatusFilter===f}" @click="gaStatusFilter = (gaStatusFilter===f ? '' : f)">{{ f }}</span>
       </div>
+      <div class="ga-filters">
+        <span v-for="f in gaModeFilters" :key="f[0]" class="ga-chip ga-filter-chip" :class="{active: gaModeFilter===f[0]}" @click="gaModeFilter = (gaModeFilter===f[0] ? '' : f[0])">模式：{{ f[1] }}</span>
+      </div>
     </div>
 
     <div v-if="gaError" class="ga-empty">
@@ -1215,21 +1220,24 @@
     <van-empty v-else-if="!gaFilteredList.length" :description="gaQ ? ('没有符合「'+gaQ+'」的活动') : '没有符合筛选的活动'"></van-empty>
     <div v-else>
       <div v-for="a in gaFilteredList" :key="a.record_id" class="ga-card ga-act-row" @click="openGroupDetail(a)">
-        <div :class="'ga-chip ' + gaChipClass(a.group_status)"><span class="ga-chip-dot"></span>{{ a.group_status }}</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:5px;">
+          <div :class="'ga-chip ' + gaModeChipClass(a)"><span class="ga-chip-dot"></span>{{ gaModeChip(a) }}</div>
+          <div :class="'ga-chip ' + gaStatusChipClass(a)"><span class="ga-chip-dot"></span>{{ gaStatusChipText(a) }}</div>
+        </div>
         <div class="ga-row-name">{{ a.name || '(未命名活动)' }}<span class="ga-row-id">{{ a.activity_id }}</span></div>
         <div class="ga-row-sub">{{ gaRowSub(a) }}</div>
       </div>
     </div>
   </template>
 </div>
-<!-- ========== 管理员·活动分组控制台 ========== -->
+<!-- ========== 管理员·活动控制台（模式卡 + 动态 tabs） ========== -->
 <div v-else-if="page==='group_detail'" key="group_detail" class="page ga-page">
   <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
   <div class="ga-title" style="display:flex; align-items:center; gap:8px;">
     <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ gaDetail ? (gaDetail.name || '未命名活动') : '活动' }}</span>
-    <span v-if="gaDetail" class="ga-chip" :class="gaChipClass(gaDetail.group_status)"><span class="ga-chip-dot"></span>{{ gaDetail.group_status }}</span>
+    <span v-if="gaDetail" class="ga-chip" :class="gaModeChipClass(gaDetail)"><span class="ga-chip-dot"></span>{{ gaModeChip(gaDetail) }}</span>
   </div>
-  <div style="padding:2px 16px 0; font-size:12px; color:#646566;">{{ gaDetailId }} · {{ gaFlag==='是' ? '已开启分组功能' : '分组功能未开启' }}</div>
+  <div style="padding:2px 16px 0; font-size:12px; color:#646566;">{{ gaDetailId }} · {{ gaModeText }}</div>
 
   <div v-if="gaDetailLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
   <div v-else-if="gaDetailError" class="ga-empty">
@@ -1237,7 +1245,93 @@
     <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
   </div>
   <template v-else-if="gaDetail">
-    <van-tabs v-model:active="gaDetailTab" class="ga-detail-tabs">
+    <div class="ga-card">
+      <div class="ga-card-title">模式 <span :class="'ga-chip ' + gaModeChipClass(gaDetail)" style="margin-left:6px;"><span class="ga-chip-dot"></span>{{ gaModeChip(gaDetail) }}</span></div>
+      <div class="ga-row-sub">分组：{{ gaDetail.group_status }} · 入口{{ gaDetail.group_flag==='是' ? '已开' : '未开' }}<br>一对一：{{ gaDetail.onetoone_status }} · 入口{{ gaDetail.onetoone_flag==='是' ? '已开' : '未开' }}</div>
+      <div v-if="gaDetail.conflict" class="ga-tip" style="margin-top:8px;">⚠ 两个模式都开着（历史数据）。选择一个要保留的模式即可一键纠偏；不会删除任何数据。</div>
+      <div v-else-if="gaDetail.active_job" class="ga-tip" style="margin-top:8px;">⏳ 有{{ gaDetail.active_job.kind==='onetoone' ? '一对一' : '分组' }}任务正在执行，请等它结束后再切换模式。</div>
+      <div class="ga-actions" style="margin-top:10px; flex-wrap:wrap;">
+        <van-button v-if="gaDetail.mode!=='group'" size="small" plain type="primary" color="#ff6b81" :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('group')">切到分组</van-button>
+        <van-button v-if="gaDetail.mode!=='onetoone'" size="small" plain type="primary" color="#ff6b81" :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('onetoone')">切到一对一</van-button>
+        <van-button v-if="gaDetail.mode!=='none'" size="small" plain :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('none')">关闭全部</van-button>
+      </div>
+    </div>
+
+    <template v-if="gaDetailMode==='none'">
+      <div class="ga-card" style="text-align:center;">
+        <div class="ga-card-title" style="justify-content:center;">还没有选择模式</div>
+        <div class="ga-row-sub" style="margin-bottom:12px;">先决定这场活动用哪种模式，再开始收集。两种模式互斥，切换不会删除任何数据。</div>
+        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('group')">👥 启用分组</van-button>
+        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('onetoone')">💞 启用一对一</van-button>
+      </div>
+    </template>
+    <template v-else-if="gaDetailMode==='conflict'">
+      <div class="ga-card" style="text-align:center;">
+        <div class="ga-card-title" style="justify-content:center;">⚠ 两个模式都开着</div>
+        <div class="ga-row-sub" style="margin-bottom:12px;">这是历史数据。选择要保留的模式，另一个入口会被关掉；数据全部保留。</div>
+        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('group')">只保留分组</van-button>
+        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('onetoone')">只保留一对一</van-button>
+        <van-button plain block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('none')">两个入口都关闭</van-button>
+      </div>
+      <van-tabs v-model:active="gaDetailTab" class="ga-detail-tabs">
+        <van-tab title="签到">
+        <div class="ga-card" style="margin-top:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div class="ga-card-title" style="margin:0;">现场签到</div>
+            <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
+          </div>
+          <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
+          <div class="ga-stats" style="margin-top:10px;">
+            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
+            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
+          </div>
+        </div>
+        <div class="ga-card">
+          <div v-if="gaSigninLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="gaSigninError" class="ga-empty">
+            <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
+          </div>
+          <template v-else>
+            <div class="ga-roster-tabs">
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
+            </div>
+            <div v-if="gaSigninList.length" class="candidate-search-box">
+              <input v-model="gaSigninQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+            </div>
+            <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
+            <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
+            <div v-else>
+              <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
+                <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                <div class="ga-row-main">
+                  <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                  <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
+                </div>
+                <div class="ga-signin-actions">
+                  <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
+                  <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
+                </div>
+              </div>
+              <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
+                <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="ga-card">
+          <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
+          <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
+        </div>
+        </van-tab>
+      </van-tabs>
+    </template>
+    <van-tabs v-else v-model:active="gaDetailTab" class="ga-detail-tabs">
+      <template v-if="gaDetailMode==='group'">
       <van-tab title="进度">
         <div class="ga-card" style="margin-top:12px;">
           <div class="ga-steps">
@@ -1287,10 +1381,7 @@
         </div>
 
         <div class="ga-card">
-          <div class="ga-form-row" style="border-bottom:none;">
-            <div class="ga-form-label">我的分组入口<br><span style="font-size:11px; color:#969799;">开启后，报名者能看到自己的分组</span></div>
-            <van-switch :model-value="gaFlag==='是'" @update:model-value="onGaFlagChange" :loading="gaFlagSaving" size="24px" active-color="#ff6b81"></van-switch>
-          </div>
+          <div class="ga-row-sub">入口开关已并入上方「模式卡」：切到「分组」模式即开启「我的分组」入口。</div>
         </div>
       </van-tab>
 
@@ -1373,6 +1464,249 @@
           </template>
         </div>
       </van-tab>
+
+      <van-tab title="签到">
+        <div class="ga-card" style="margin-top:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div class="ga-card-title" style="margin:0;">现场签到</div>
+            <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
+          </div>
+          <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
+          <div class="ga-stats" style="margin-top:10px;">
+            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
+            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
+          </div>
+        </div>
+        <div class="ga-card">
+          <div v-if="gaSigninLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="gaSigninError" class="ga-empty">
+            <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
+          </div>
+          <template v-else>
+            <div class="ga-roster-tabs">
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
+            </div>
+            <div v-if="gaSigninList.length" class="candidate-search-box">
+              <input v-model="gaSigninQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+            </div>
+            <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
+            <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
+            <div v-else>
+              <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
+                <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                <div class="ga-row-main">
+                  <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                  <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
+                </div>
+                <div class="ga-signin-actions">
+                  <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
+                  <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
+                </div>
+              </div>
+              <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
+                <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="ga-card">
+          <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
+          <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
+        </div>
+      </van-tab>
+      </template>
+
+      <template v-else>
+      <van-tab title="进度">
+        <div class="ga-card" style="margin-top:12px;">
+          <div class="ga-stats" style="margin-top:0;">
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaDetail.signup_count }}</div><div class="ga-stat-label">报名</div></div>
+            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaDetail.onetoone_submitted_count }}</div><div class="ga-stat-label">已填</div></div>
+            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaDetail.onetoone_unsubmitted_count>0}">{{ gaDetail.onetoone_unsubmitted_count }}</div><div class="ga-stat-label">未填</div></div>
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaDetail.onetoone_result_count }}</div><div class="ga-stat-label">必聊条数</div></div>
+          </div>
+          <div class="ga-row-sub" style="margin-top:4px;">状态：{{ gaDetail.onetoone_status }} · 已匹配 {{ gaDetail.onetoone_matched_count }} 人 · {{ gaOtoRounds.length }} 轮结果 · 每人最多 10 位必聊</div>
+          <div v-if="gaDetail.onetoone_status==='收集中' && gaDetail.onetoone_unsubmitted_count>0" class="ga-tip" @click="openGroupRoster()">⚠ 还有 {{ gaDetail.onetoone_unsubmitted_count }} 人没填志愿，点这里看名单</div>
+          <div v-else-if="gaDetail.onetoone_status==='收集中' && gaDetail.onetoone_submitted_count>0" class="ga-tip ga-tip-ok">大家都填好啦，可以执行匹配了 🎉</div>
+          <div v-if="gaRunTip" class="ga-tip">⏳ {{ gaRunTip }} <span class="ga-link" @click="resumeGaPolling()">继续查看</span></div>
+        </div>
+
+        <div class="ga-card">
+          <van-button v-if="gaDetail.onetoone_status==='未开始' && !gaOtoRounds.length" type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaOtoStartBusy" @click="openOtoStart()">开始一对一</van-button>
+          <van-button v-else-if="gaDetail.onetoone_status==='收集中'" type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaOtoRunBusy" @click="startOtoRunFlow()">执行一对一（第 {{ gaOtoNextRound }} 轮）</van-button>
+          <van-button v-else-if="gaDetail.onetoone_status==='已完成'" plain type="primary" color="#ff6b81" block class="ga-main-btn" @click="gaDetailTab=2">查看必聊名单</van-button>
+          <div v-else-if="gaDetail.onetoone_status==='已截止'" style="text-align:center; padding:12px 0;">
+            <van-loading size="20px">匹配执行中…</van-loading>
+            <div class="ga-row-sub" style="margin-top:8px;">如果一直没动静，重新载入看看最新状态</div>
+            <van-button class="ga-empty-retry" size="small" plain type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
+          </div>
+          <van-button v-if="gaOtoShowNewRound" plain type="primary" color="#ff6b81" block style="margin-top:10px; min-height:44px;" @click="openOtoStart('new')">开启新一轮（第 {{ gaOtoNextRound }} 轮）</van-button>
+          <van-button v-if="gaDetail.onetoone_status==='收集中'" plain type="primary" color="#ff6b81" block style="margin-top:10px; min-height:44px;" @click="openGroupRoster()">查看未提交名单</van-button>
+        </div>
+
+        <div v-if="gaOtoShowDanger" class="ga-card">
+          <div class="ga-danger-zone">
+            <div class="ga-danger-hint">⚠ 重新开始会清空历史一对一结果。该活动已有 {{ gaOtoRounds.length }} 轮必聊结果，将被永久删除，无法恢复。</div>
+            <van-button type="danger" color="#ee0a24" block size="small" style="margin-top:10px; min-height:44px;" :loading="gaOtoStartBusy" @click="openOtoStart()">重新开始一对一</van-button>
+          </div>
+        </div>
+
+        <div class="ga-card">
+          <div class="ga-row-sub">入口开关已并入上方「模式卡」：切到「一对一」模式即开启「我的一对一」入口。</div>
+        </div>
+      </van-tab>
+
+      <van-tab title="名单">
+        <div class="ga-card" style="margin-top:12px;">
+          <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="gaRosterError" class="ga-empty">
+            <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
+          </div>
+          <template v-else>
+            <div class="ga-roster-tabs">
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+            </div>
+            <template v-if="gaRosterTab===0">
+              <div v-if="gaRosterList.length" class="candidate-search-box">
+                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              </div>
+              <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
+              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
+              <div v-else>
+                <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                  </div>
+                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
+                </div>
+                <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
+                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
+                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              </div>
+              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
+              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
+              <div v-else>
+                <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                  </div>
+                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
+                </div>
+                <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
+                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+      </van-tab>
+
+      <van-tab title="结果">
+        <div class="ga-card" style="margin-top:12px;">
+          <van-empty v-if="!gaOtoRounds.length" description="还没有一对一结果"></van-empty>
+          <template v-else>
+            <div class="round-tabs" style="padding-top:0;">
+              <span v-for="r in gaOtoRounds" :key="r" class="round-tab" :class="{active: gaOtoResultRound===r}" @click="selectGaOtoResultRound(r)">第{{ r }}轮</span>
+            </div>
+            <div v-if="gaOtoResultLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+            <div v-else-if="gaOtoResultError" class="ga-empty">
+              <van-empty image="error" description="结果没载出来，检查一下网络"></van-empty>
+              <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGaOtoResult(gaOtoResultRound)">重新载入</van-button>
+            </div>
+            <template v-else-if="gaOtoLoadedRound===gaOtoResultRound && gaOtoPeople.length">
+              <div class="ga-row-sub" style="text-align:center; margin:4px 0 10px;">已匹配 {{ gaOtoPeople.length }} 人 · 共 {{ gaOtoResultCount }} 条必聊</div>
+              <div v-for="p in gaOtoPeople" :key="p.open_id" class="ga-group-card">
+                <div class="ga-row" style="padding:2px 0; border-bottom:none; cursor:pointer;" @click="gaOtoToggle(p.open_id)">
+                  <div class="ga-avatar">{{ p.gender==='男性' ? '👨' : (p.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ p.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ p.user_id || '-' }} · {{ (p.partners||[]).length }} 位必聊</div>
+                  </div>
+                  <van-icon :name="gaOtoOpen[p.open_id] ? 'arrow-up' : 'arrow-down'" color="#c8c9cc"></van-icon>
+                </div>
+                <div v-if="gaOtoOpen[p.open_id]" class="ga-group-members" style="padding-top:6px;">
+                  <span v-for="t in p.partners" :key="t.open_id" class="ga-member-chip">{{ t.rank }}. {{ t.nickname || t.open_id }}{{ t.user_id ? ('（' + t.user_id + '）') : '' }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-else class="ga-tip" style="margin-top:4px;">
+              {{ gaOtoResultError ? '这一轮的结果没载出来，检查一下网络后再点一次轮次。' : ('第' + gaOtoResultRound + '轮没有可展示的必聊结果。') }}
+            </div>
+          </template>
+        </div>
+      </van-tab>
+
+      <van-tab title="签到">
+        <div class="ga-card" style="margin-top:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div class="ga-card-title" style="margin:0;">现场签到</div>
+            <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
+          </div>
+          <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
+          <div class="ga-stats" style="margin-top:10px;">
+            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
+            <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
+            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
+          </div>
+        </div>
+        <div class="ga-card">
+          <div v-if="gaSigninLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="gaSigninError" class="ga-empty">
+            <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
+          </div>
+          <template v-else>
+            <div class="ga-roster-tabs">
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
+              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
+            </div>
+            <div v-if="gaSigninList.length" class="candidate-search-box">
+              <input v-model="gaSigninQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+            </div>
+            <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
+            <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
+            <div v-else>
+              <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
+                <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                <div class="ga-row-main">
+                  <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                  <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
+                </div>
+                <div class="ga-signin-actions">
+                  <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
+                  <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
+                </div>
+              </div>
+              <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
+                <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="ga-card">
+          <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
+          <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
+        </div>
+      </van-tab>
+      </template>
     </van-tabs>
   </template>
 </div>
@@ -1720,12 +2054,16 @@
           <div class="activity-meta">
             <van-tag type="primary" color="#ff6b81">{{ act.status }}</van-tag>
             <van-tag v-if="act.group_status" plain type="primary">{{ act.group_status }}</van-tag>
+            <van-tag v-if="act.onetoone_status" plain type="primary">{{ act.onetoone_status }}</van-tag>
           </div>
           <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
         </div>
         <div class="activity-body" style="padding-top:0;">
           <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goGroupResult(act.record_id)">
             🎉 查看分组结果
+          </van-button>
+          <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
+            💬 查看我的必聊
           </van-button>
           <van-button v-if="act.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openActivity(act.record_id)" style="margin-top:8px;">
             查看活动详情
@@ -1752,13 +2090,15 @@
           <div class="activity-meta">
             <van-tag type="primary" color="#ff6b81">{{ act.group_status }}</van-tag>
             <van-tag v-if="act.male_per_group" plain type="primary">每组 {{ act.male_per_group }}男{{ act.female_per_group }}女</van-tag>
+            <van-tag v-if="act.signin_enabled" :type="isAttendancePresent(act.my_attendance) ? 'success' : 'warning'" plain>{{ isAttendancePresent(act.my_attendance) ? '已到' : (act.my_attendance==='未到' ? '未到' : '未签到') }}</van-tag>
           </div>
           <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
         </div>
         <div class="activity-body" style="padding-top:0;">
-          <van-button v-if="act.group_status==='收集中'" type="primary" color="#ff6b81" size="small" block @click="goGroupSelect(act.record_id)">
+          <van-button v-if="act.group_status==='收集中'" type="primary" color="#ff6b81" size="small" block :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goGroupSelect(act.record_id)">
             {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '🎯 提交志愿' }}
           </van-button>
+          <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance) && act.group_status==='收集中'" style="font-size:13px; color:#ee0a24; text-align:center; padding:6px 0;">本活动需现场签到后才能填志愿，请联系管理员</div>
           <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goGroupResult(act.record_id)">
             🎉 查看我的分组
           </van-button>
@@ -1849,9 +2189,14 @@
           <van-tag v-else type="warning">{{ currentActivity.status }}</van-tag>
         </div>
         <van-button v-if="showSignupInfo" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+        <div v-if="currentActivity.my_signup && currentActivity.signin_enabled" style="margin-top:10px; padding:8px 10px; border-radius:8px; background:#fff7f0; font-size:13px;">
+          <span v-if="isDetailCheckedIn">✅ 已签到</span>
+          <span v-else-if="currentActivity.my_attendance==='未到'" style="color:#ee0a24;">⚠️ 未到：本活动需现场签到，请联系管理员</span>
+          <span v-else>⏳ 已报名 · 待现场签到</span>
+        </div>
       </div>
     </div>
-    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中'" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中' && !detailSigninBlocked" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
       <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
         <div>
           <div style="font-size:16px; font-weight:500;">🎯 分组志愿选择</div>
@@ -1860,11 +2205,47 @@
         <van-icon name="arrow" color="#ff6b81"></van-icon>
       </div>
     </div>
+    <div v-else-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中' && detailSigninBlocked" class="activity-card" style="opacity:.65;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">🎯 分组志愿选择</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">本活动需现场签到后才能填志愿，请联系管理员</div>
+        </div>
+        <van-icon name="lock" color="#c8c9cc"></van-icon>
+      </div>
+    </div>
     <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='已完成'" class="activity-card" @click="goGroupResult(currentActivity.record_id)" style="cursor:pointer;">
       <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
         <div>
           <div style="font-size:16px; font-weight:500;">🎉 查看分组结果</div>
           <div style="font-size:13px; color:#969799; margin-top:4px;">看看你和谁一组</div>
+        </div>
+        <van-icon name="arrow" color="#ff6b81"></van-icon>
+      </div>
+    </div>
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='收集中' && !detailSigninBlocked" class="activity-card" @click="goOnetooneSelect(currentActivity.record_id)" style="cursor:pointer;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">💞 一对一志愿选择</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">选择你心仪的TA，最多7个志愿</div>
+        </div>
+        <van-icon name="arrow" color="#ff6b81"></van-icon>
+      </div>
+    </div>
+    <div v-else-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='收集中' && detailSigninBlocked" class="activity-card" style="opacity:.65;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">💞 一对一志愿选择</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">本活动需现场签到后才能填志愿，请联系管理员</div>
+        </div>
+        <van-icon name="lock" color="#c8c9cc"></van-icon>
+      </div>
+    </div>
+    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='已完成'" class="activity-card" @click="goOnetooneResult(currentActivity.record_id)" style="cursor:pointer;">
+      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <div style="font-size:16px; font-weight:500;">💬 查看我的必聊</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">看看你的必聊对象，点「留言」即标记已聊</div>
         </div>
         <van-icon name="arrow" color="#ff6b81"></van-icon>
       </div>
@@ -1952,6 +2333,122 @@
         </div>
       </div>
     </template>
+  </div>
+</div>
+<!-- ========== 我的一对一 ========== -->
+<div v-else-if="page==='my_onetoone'" key="my_onetoone">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div v-if="loadingMyOnetoone" style="text-align:center; padding:40px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <van-empty v-else-if="!myOnetooneList.length" description="你报名的活动还没有开启一对一"></van-empty>
+    <div v-else>
+      <div v-for="act in myOnetooneList" :key="act.record_id" class="activity-card">
+        <div class="activity-body">
+          <h3>{{ act.name }}</h3>
+          <div class="activity-meta">
+            <van-tag type="primary" color="#ff6b81">{{ act.onetoone_status }}</van-tag>
+            <van-tag v-if="act.signin_enabled" :type="isAttendancePresent(act.my_attendance) ? 'success' : 'warning'" plain>{{ isAttendancePresent(act.my_attendance) ? '已到' : (act.my_attendance==='未到' ? '未到' : '未签到') }}</van-tag>
+          </div>
+          <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
+        </div>
+        <div class="activity-body" style="padding-top:0;">
+          <van-button v-if="act.onetoone_status==='收集中'" type="primary" color="#ff6b81" size="small" block :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goOnetooneSelect(act.record_id)">
+            {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '🎯 提交志愿' }}
+          </van-button>
+          <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance) && act.onetoone_status==='收集中'" style="font-size:13px; color:#ee0a24; text-align:center; padding:6px 0;">本活动需现场签到后才能填志愿，请联系管理员</div>
+          <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
+            💬 查看我的必聊
+          </van-button>
+          <div v-if="act.onetoone_status==='已截止'" style="font-size:13px; color:#969799; text-align:center; padding:6px 0;">已截止，正在匹配…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 一对一选择 ========== -->
+<div v-else-if="page==='onetoone_select'" key="onetoone_select">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="selected-list" v-if="onetooneSelectedChoices.length">
+      <h4>已选志愿（点击 ✕ 移除）</h4>
+      <div>
+        <div v-for="(c, i) in onetooneSelectedChoices" :key="c.openid" class="choice-item">
+          <span class="choice-rank">第{{i+1}}志愿</span>
+          <span class="choice-name">{{ c.nickname }}</span>
+          <van-icon name="cross" color="#c8c9cc" size="18" @click="removeOnetooneChoice(i)" />
+        </div>
+      </div>
+    </div>
+    <div class="section-title">可选{{ myGender==='男性' ? '女生' : '男生' }}（点击添加到志愿）</div>
+    <div style="padding: 16px 0 8px;">
+      <van-button type="primary" color="#ff6b81" block :disabled="!onetooneSelectedChoices.length" :loading="actionLoading" @click="submitOnetooneChoices">
+        提交志愿（{{onetooneSelectedChoices.length}}个）
+      </van-button>
+    </div>
+    <div v-if="onetooneLoadingCandidates" style="text-align:center; padding:30px;">
+      <van-loading size="24px">加载中...</van-loading>
+    </div>
+    <div v-else-if="!onetooneCandidates.length" style="text-align:center; padding:40px 20px;">
+      <van-empty :description="onetooneCandidatesError || '暂无可选人员'"></van-empty>
+      <van-button v-if="onetooneCandidatesError" type="primary" color="#ff6b81" size="small" @click="goOnetooneSelect(currentActivityId)" style="margin-top:12px;">重试</van-button>
+    </div>
+    <div v-else>
+      <div class="candidate-search-box">
+        <input v-model="onetooneCandidateQuery" placeholder="搜索 昵称/用户ID/圣名" class="candidate-search-input" />
+      </div>
+      <div v-for="c in visibleOnetooneCandidates" :key="c.openid"
+        class="group-candidate"
+        :class="{selected: isOnetooneSelected(c.openid)}"
+        @click="toggleOnetooneChoice(c)">
+        <div class="signup-sheet-avatar" style="margin-right:12px;">
+          <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
+          <template v-else>{{ c.user_id || '👤' }}</template>
+        </div>
+        <div class="group-candidate-info">
+          <div class="group-candidate-name">{{ c.nickname }}</div>
+          <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
+        </div>
+        <div v-if="isOnetooneSelected(c.openid)" class="choice-badge">{{onetooneSelectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
+        <van-icon v-else name="plus" color="#dcdee0" size="22"></van-icon>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ========== 一对一结果 ========== -->
+<div v-else-if="page==='onetoone_result'" key="onetoone_result">
+  <div class="back-nav" @click="handleBack">
+    <van-icon name="arrow-left"></van-icon> 返回
+  </div>
+  <div class="page">
+    <div class="round-tabs" v-if="onetooneResult.rounds && onetooneResult.rounds.length > 1">
+      <span v-for="r in onetooneResult.rounds" :key="r" class="round-tab" :class="{active: r === onetooneResult.round}" @click="switchOnetooneRound(r)">第{{r}}轮</span>
+    </div>
+    <div class="group-result-header" v-if="onetooneResult.count">
+      <div style="color:#969799; font-size:14px;">你的必聊名单<template v-if="onetooneResult.round"> · 第{{onetooneResult.round}}轮</template></div>
+      <div class="group-number">{{ onetooneResult.count }} 人</div>
+    </div>
+    <van-empty v-else description="未找到你的必聊名单"></van-empty>
+    <div v-if="onetooneResult.partners && onetooneResult.partners.length">
+      <div class="section-title" style="text-align:center;">必聊对象（点「留言」写下评价即标记已聊）</div>
+      <div v-for="p in onetooneResult.partners" :key="p.openid" class="group-candidate">
+        <div class="signup-sheet-avatar" style="margin-right:12px;">
+          <img v-if="p.photo" :src="p.photo" alt="" @error="retryImg($event, 2, ()=>{p.photo=''})" loading="lazy" decoding="async">
+          <template v-else>{{ p.user_id || '👤' }}</template>
+        </div>
+        <div class="group-candidate-info">
+          <div class="group-candidate-name">{{ p.nickname }}</div>
+          <div class="group-candidate-meta">{{ p.user_id || '' }} · 第{{ p.rank }}位</div>
+        </div>
+        <van-button v-if="!p.chatted" type="primary" color="#ff6b81" size="mini" @click="openOnetooneMsg(p)">留言</van-button>
+        <van-tag v-else type="success">已聊</van-tag>
+      </div>
+    </div>
   </div>
 </div>
 <!-- ========== 他人资料页 ========== -->
@@ -2128,6 +2625,18 @@
     </van-radio-group>
     <van-field v-model="feedbackText" type="textarea" rows="2" autosize
       placeholder="补充说明（选填）" class="like-textarea"></van-field>
+  </div>
+</van-dialog>
+<!-- 一对一留言快捷弹窗 -->
+<van-dialog v-model:show="showOnetooneMsg" :title="onetooneMsgTarget ? '留言给 ' + onetooneMsgTarget.nickname : '留言'" show-cancel-button
+  confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :before-close="onOnetooneMsgBeforeClose">
+  <div class="like-dialog-body">
+    <div class="like-notes">
+      写下对TA的评价，发送后对方可见，该人即标记为「已聊」。
+    </div>
+    <van-field v-model="onetooneMsgText" type="textarea" rows="3" autosize
+      placeholder="写下你的评价…" class="like-textarea"></van-field>
   </div>
 </van-dialog>
 <!-- 举报留言弹窗 -->
@@ -2429,26 +2938,53 @@
     </template>
   </div>
 </van-dialog>
+<!-- ========== 一对一管理台：开始一对一确认层（danger=破坏性清历史；new=开启新一轮保留历史） ========== -->
+<van-popup v-model:show="gaOtoStartShow" position="bottom" round :close-on-click-overlay="!gaOtoStartBusy">
+  <div class="ga-start-popup">
+    <div class="ga-start-head">{{ gaOtoStartMode==='new' ? ('开启第 ' + gaOtoNextRound + ' 轮志愿填写') : '开始一对一' }} <van-icon name="cross" color="#c8c9cc" @click="closeOtoStart()"></van-icon></div>
+    <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
+    <div class="ga-confirm-box">
+      <template v-if="gaOtoStartMode==='new'">
+        <div class="ga-confirm-row"><span>保留历史</span><b>{{ gaOtoStartPreview ? ((gaOtoStartPreview.rounds_preserved||[]).length) : 0 }} 轮 · {{ gaOtoStartPreview ? gaOtoStartPreview.results_preserved : 0 }} 条结果不变</b></div>
+        <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaOtoStartPreview ? gaOtoStartPreview.participant_count : 0 }} 人</b></div>
+        <div class="ga-confirm-row"><span>开启后</span><b>状态回到「收集中」，可执行第 {{ gaOtoNextRound }} 轮匹配</b></div>
+      </template>
+      <template v-else>
+        <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaOtoStartPreview ? gaOtoStartPreview.participant_count : 0 }} 人</b></div>
+        <div class="ga-confirm-row"><span>将被清除</span><b :class="{danger: gaOtoStartPreview && gaOtoStartPreview.existing_results>0}">{{ gaOtoStartPreview ? gaOtoStartPreview.existing_results : 0 }} 条历史结果</b></div>
+        <div class="ga-confirm-row"><span>开启后</span><b>状态回到「收集中」，可重新填写一对一志愿</b></div>
+      </template>
+    </div>
+    <div v-if="gaOtoStartMode==='new' && gaOtoStartPreview && gaOtoStartPreview.rounds_preserved && gaOtoStartPreview.rounds_preserved.length" class="ga-tip ga-tip-ok" style="margin-top:10px;">✓ 保留现有 {{ gaOtoStartPreview.rounds_preserved.length }} 轮必聊结果，不会清空任何数据</div>
+    <div v-if="gaOtoStartMode!=='new' && gaOtoStartPreview && gaOtoStartPreview.existing_results>0" style="margin-top:10px;">
+      <div class="ga-row-sub" style="margin-bottom:6px;">这项操作无法撤销。请输入活动编号 {{ gaDetailId }} 以确认：</div>
+      <input v-model="gaOtoConfirmInput" class="ga-confirm-input" :placeholder="gaDetailId" />
+    </div>
+    <van-button :type="gaOtoStartMode==='new' ? 'primary' : 'danger'" :color="gaOtoStartMode==='new' ? '#ff6b81' : '#ee0a24'" block class="ga-main-btn" :disabled="!gaOtoConfirmOk || gaOtoStartBusy" :loading="gaOtoStartBusy" @click="doOtoStart()">
+      {{ gaOtoStartMode==='new' ? '确认开启' : (gaOtoStartPreview && gaOtoStartPreview.existing_results>0 ? '确认开始（将清除历史结果）' : '确认开始') }}
+    </van-button>
+  </div>
+</van-popup>
 <!-- 执行中断（后端重启导致 job 失联）三分支指引 -->
 <van-dialog v-model:show="gaUnknownShow" title="执行中断（后端重启）" :show-confirm-button="false" :show-cancel-button="false" close-on-click-overlay>
   <div class="ga-confirm-body">
     <div class="ga-row-sub" style="line-height:1.8;">
-      分组状态可能已经写了一半。请切到「进度」确认当前状态：<br>
+      任务状态可能已经写了一半。请切到「进度」确认当前状态：<br>
       · 显示「已完成」→ 结果已生成，直接看结果<br>
-      · 显示「收集中」→ 没分完，可以安全重试<br>
+      · 显示「收集中」→ 没跑完，可以安全重试<br>
       · 显示「已截止」→ 卡在中途，需要人工检查
     </div>
     <div class="ga-actions">
       <van-button size="small" plain type="primary" color="#ff6b81" @click="gaUnknownReload()">重新载入</van-button>
-      <van-button size="small" type="primary" color="#ff6b81" @click="gaUnknownRetry()">我要重跑本轮</van-button>
+      <van-button size="small" type="primary" color="#ff6b81" @click="gaUnknownRetry()">我要重跑</van-button>
     </div>
   </div>
 </van-dialog>
 <!-- 执行中遮罩：不可关闭、点击无反应、返回手势被忽略（popstate 里吞掉） -->
 <div v-if="gaRunShow" class="ga-run-mask" @click.stop>
   <div class="ga-run-mask-icon">⏳</div>
-  <div class="ga-run-mask-title">正在执行分组…</div>
-  <div class="ga-run-mask-sub">{{ gaJobActivityName }} 第{{ gaJobRound }}轮</div>
+  <div class="ga-run-mask-title">{{ gaMaskTitle }}</div>
+  <div class="ga-run-mask-sub">{{ gaJobActivityName }}{{ gaJobRound ? (' 第' + gaJobRound + '轮') : '' }}</div>
   <div class="ga-run-mask-progress">{{ gaJobProgress || '正在准备…' }}</div>
   <div class="ga-run-mask-secs">已运行 {{ gaMaskSecs }} 秒</div>
   <div class="ga-run-mask-tip">请不要离开这个页面</div>
@@ -2656,7 +3192,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster'];
+    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -2666,6 +3202,13 @@ createApp({
     const activitiesLoaded = ref(false);
     const currentActivity = ref(null);
     const currentActivityId = ref('');
+    // 现场签到三态（用户侧，R3 设计 §3.6）：已到 = 按时/迟到；未到/未签到 = 停用填志愿入口
+    function isAttendancePresent(state) { return state === '按时' || state === '迟到'; }
+    const isDetailCheckedIn = computed(() => isAttendancePresent(currentActivity.value && currentActivity.value.my_attendance));
+    const detailSigninBlocked = computed(() => {
+      const a = currentActivity.value;
+      return !!(a && a.signin_enabled && a.my_signup && !isAttendancePresent(a.my_attendance));
+    });
     const actionLoading = ref(false);
     const activityDetailFrom = ref('home'); // 进入活动详情前的页面，用于返回
 
@@ -2824,6 +3367,14 @@ createApp({
         "【执行分组 活动ID 轮次】执行分组算法",
         "【分组状态 活动ID】查看分组进度",
         "【分组帮助】分组指令说明",
+      ]},
+      { title: "一对一", items: [
+        "【开始一对一 活动ID】开始填志愿（每人7个）",
+        "【开启一对一功能 活动ID 开/关】控制「我的一对一」入口",
+        "【查看未提交一对一 活动ID】查看未提交志愿的报名者",
+        "【执行一对一 活动ID】执行匹配（每人最多10位必聊）",
+        "【一对一状态 活动ID】查看一对一进度",
+        "【一对一帮助】一对一指令说明",
       ]},
       { title: "系统", items: [
         "【重连】手动重连机器人",
@@ -3410,6 +3961,29 @@ createApp({
     const groupSelectFrom = ref('my_groups');   // 进入分组选择前的页面，用于返回
     const groupResultFrom = ref('my_groups');   // 进入分组结果前的页面，用于返回
 
+    // 一对一
+    const myOnetooneList = ref([]);
+    const loadingMyOnetoone = ref(false);
+    const hasOnetooneEntry = ref(false); // 是否显示「我的一对一」入口（报名过且该活动开启一对一功能）
+    const onetooneCandidates = ref([]);
+    const onetooneSelectedChoices = ref([]);
+    const onetooneCandidateQuery = ref('');
+    const visibleOnetooneCandidates = computed(() => {
+      const q = (onetooneCandidateQuery.value||'').trim().toLowerCase();
+      if (!q) return onetooneCandidates.value;
+      return onetooneCandidates.value.filter(c => (c.nickname||'').toLowerCase().includes(q)
+        || (c.user_id||'').toLowerCase().includes(q)
+        || (c.baptismal_name||'').toLowerCase().includes(q));
+    });
+    const onetooneLoadingCandidates = ref(false);
+    const onetooneCandidatesError = ref('');
+    const onetooneResult = ref({});
+    const onetooneSelectFrom = ref('my_onetoone');   // 进入一对一选择前的页面，用于返回
+    const onetooneResultFrom = ref('my_onetoone');   // 进入一对一结果前的页面，用于返回
+    const onetooneMsgTarget = ref(null);
+    const onetooneMsgText = ref('');
+    const showOnetooneMsg = ref(false);
+
     // 全屏图片
     const showPhotoViewer = ref(false);
 
@@ -3675,7 +4249,6 @@ createApp({
         loggingIn.value = false; loginError.value = false; loginErrorMessage.value = ''; showClaim.value = true;
         return;
       }
-
 
       // 1. 已有会话（cookie 有效则直接进）
       try {
@@ -5182,6 +5755,107 @@ createApp({
     function switchGroupRound(round) {
       loadGroupResult(currentActivityId.value, round);
     }
+    // 一对一
+    async function openMyOnetoone() {
+      page.value = 'my_onetoone';
+      loadingMyOnetoone.value = true;
+      try { const data = await api('/api/activities/mine/onetoone'); myOnetooneList.value = data.activities; }
+      catch(e) { vant.showToast(e.message); }
+      loadingMyOnetoone.value = false;
+    }
+    async function checkOnetooneEntry() {
+      try { const data = await api('/api/activities/mine/onetoone/flag'); hasOnetooneEntry.value = !!data.has_onetoone_activity; }
+      catch(e) { hasOnetooneEntry.value = false; }
+    }
+    async function goOnetooneSelect(activityId) {
+      onetooneSelectFrom.value = page.value; // 记录来路，用于返回
+      currentActivityId.value = activityId;
+      page.value = 'onetoone_select'; onetooneLoadingCandidates.value = true; onetooneSelectedChoices.value = []; onetooneCandidatesError.value = '';
+      try {
+        const candData = await api('/api/activities/' + activityId + '/onetoone/candidates');
+        onetooneCandidates.value = candData.candidates || [];
+        try {
+          const statusData = await api('/api/activities/' + activityId + '/onetoone/status');
+          const myChoices = statusData.my_choices || [];
+          const byOid = {};
+          onetooneCandidates.value.forEach(c => { byOid[c.openid] = c; });
+          onetooneSelectedChoices.value = myChoices.map(oid => byOid[oid]).filter(Boolean);
+        } catch(e) {}
+      } catch(e) {
+        onetooneCandidatesError.value = '加载失败：' + e.message + '，点击重试';
+        vant.showToast(e.message);
+      }
+      onetooneLoadingCandidates.value = false;
+    }
+    function isOnetooneSelected(oid) { return onetooneSelectedChoices.value.some(c => c.openid === oid); }
+    function toggleOnetooneChoice(c) {
+      const idx = onetooneSelectedChoices.value.findIndex(x => x.openid === c.openid);
+      if (idx >= 0) { onetooneSelectedChoices.value.splice(idx, 1); }
+      else {
+        if (onetooneSelectedChoices.value.length >= 7) { vant.showToast('最多选择7个志愿'); return; }
+        onetooneSelectedChoices.value.push(c);
+      }
+    }
+    function removeOnetooneChoice(i) { onetooneSelectedChoices.value.splice(i, 1); }
+    async function submitOnetooneChoices() {
+      const activityId = currentActivityId.value;
+      if (!activityId) { vant.showToast('活动信息丢失'); return; }
+      actionLoading.value = true;
+      try {
+        await api('/api/activities/' + activityId + '/onetoone/select', {
+          method: 'POST', body: JSON.stringify({ choices: onetooneSelectedChoices.value.map(c => c.openid) })
+        });
+        vant.showToast('志愿提交成功');
+        if (onetooneSelectFrom.value === 'activity_detail') await openActivity(activityId);
+        else openMyOnetoone();
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
+    async function loadOnetooneResult(activityId, round) {
+      let url = '/api/activities/' + activityId + '/onetoone/result';
+      if (round) url += '?round=' + encodeURIComponent(round);
+      try { const data = await api(url); onetooneResult.value = data; }
+      catch(e) { vant.showToast(e.message); }
+    }
+    function switchOnetooneRound(round) {
+      loadOnetooneResult(currentActivityId.value, round);
+    }
+    async function goOnetooneResult(activityId) {
+      onetooneResultFrom.value = page.value; // 记录来路，用于返回
+      currentActivityId.value = activityId;
+      page.value = 'onetoone_result';
+      onetooneResult.value = {};
+      await loadOnetooneResult(activityId);
+    }
+    function openOnetooneMsg(p) {
+      onetooneMsgTarget.value = p;
+      onetooneMsgText.value = '';
+      showOnetooneMsg.value = true;
+    }
+    async function onOnetooneMsgBeforeClose(action) {
+      if (action === 'confirm') {
+        if (!onetooneMsgText.value.trim()) { vant.showToast('请先输入留言内容'); return false; }
+        await doOnetooneMsg();
+      }
+      return true;
+    }
+    async function doOnetooneMsg() {
+      const t = onetooneMsgTarget.value;
+      if (!t || !t.openid) return;
+      actionLoading.value = true;
+      try {
+        await api('/api/messages', {
+          method: 'POST',
+          body: JSON.stringify({ target_openid: t.openid, content: onetooneMsgText.value.trim() })
+        });
+        vant.showToast('留言成功');
+        showOnetooneMsg.value = false;
+        const arr = onetooneResult.value.partners || [];
+        const idx = arr.findIndex(x => x.openid === t.openid);
+        if (idx >= 0) arr[idx].chatted = true;
+      } catch(e) { vant.showToast(e.message); }
+      actionLoading.value = false;
+    }
 
     // 页面切换加载数据
     // 拦截 popstate：按 浮层 > 子页 优先级关闭
@@ -5192,6 +5866,7 @@ createApp({
       if(gaRunShow.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(gaConfirmShow.value){ gaConfirmShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(gaStartShow.value){ gaStartShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaOtoStartShow.value){ gaOtoStartShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(gaUnknownShow.value){ gaUnknownShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(showPhotoViewer.value){
         const p = viewerLightbox && viewerLightbox.pswp;
@@ -5204,6 +5879,7 @@ createApp({
       if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
       if(showReportDialog.value){ showReportDialog.value=false; isHandlingPopState=false; return; }
       if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
+      if(showOnetooneMsg.value){ showOnetooneMsg.value=false; isHandlingPopState=false; return; }
       if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
       if(showPointsRules.value){ showPointsRules.value=false; isHandlingPopState=false; return; }
@@ -5240,12 +5916,14 @@ createApp({
       }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile', 'points': 'profile', 'points_admin': 'profile',
+        'my_activities': 'profile', 'my_groups': 'profile', 'my_onetoone': 'profile', 'points': 'profile', 'points_admin': 'profile',
         'group_admin': 'profile', 'group_detail': 'group_admin', 'group_roster': 'group_detail',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
         'group_result': groupResultFrom.value || 'my_groups',
+        'onetoone_select': onetooneSelectFrom.value || 'my_onetoone',
+        'onetoone_result': onetooneResultFrom.value || 'my_onetoone',
         'user_detail': userDetailFrom.value || 'home',
         'likes': 'cards', 'home': 'cards', 'profile': 'cards'
       };
@@ -5254,9 +5932,10 @@ createApp({
     }
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）
-      // 分组管理台：离开详情页时清弹层与定时器（不取消后端 job）
+      // 活动管理台：离开详情页时清弹层与定时器（不取消后端 job）
       if (p !== 'group_detail') {
         gaStartShow.value = false; gaConfirmShow.value = false; gaUnknownShow.value = false;
+        gaOtoStartShow.value = false;
         stopGaPolling(false);
       }
       if (p === 'group_admin') loadGroupAdminList();
@@ -5265,7 +5944,7 @@ createApp({
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); maybeShowUpdateNotes(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
-      if (p === 'profile') { checkGroupEntry(); loadPraiseState(); if (user.value && user.value.is_admin) { refreshReportedCount(); refreshAdminBadge(); } }
+      if (p === 'profile') { checkGroupEntry(); checkOnetooneEntry(); loadPraiseState(); if (user.value && user.value.is_admin) { refreshReportedCount(); refreshAdminBadge(); } }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
@@ -5630,7 +6309,6 @@ createApp({
       const entryHash = window.location.hash;
       // 在下方 replaceState 清掉 query 前，捕获引导预览参数（仅测试环境）
       try { claimEntryFlag = new URLSearchParams(location.search).get('claim') === '1'; } catch(e) { claimEntryFlag = false; }
-
       try{ history.replaceState({page: page.value}, '', location.pathname); }catch(e){}
       window.addEventListener('popstate', handlePopState);
       doLogin().then(() => {
@@ -5734,17 +6412,18 @@ createApp({
     }
     window.addEventListener('keydown', onKeydown);
 
-    // ==================== 管理员·活动分组管理台（ga-） ====================
+    // ==================== 管理员·活动管理台（ga-） ====================
     // 三个页面：group_admin 总览 / group_detail 控制台 / group_roster 名单。
-    // 破坏性的是「开始填志愿」（会清空该活动全部历史结果），不是「执行分组」（有幂等保护）。见 DESIGN.md §2。
+    // 模式（分组/一对一）由「模式卡」切换；破坏性的是「开始填志愿」与「开始一对一」
+    // （都会清空该活动对应模式的历史结果），执行动作有幂等保护与互斥 guard。见设计 §2。
     const gaLoading = ref(false), gaError = ref(false), gaList = ref([]);
     const gaQ = ref(''), gaStatusFilter = ref(''), gaFilters = ['收集中', '已截止', '已完成', '未开始'];
+    const gaModeFilter = ref(''), gaModeFilters = [['group', '分组'], ['onetoone', '一对一'], ['none', '未设定'], ['conflict', '⚠冲突']];
     const gaAdminBadge = ref(''); let gaBadgeAt = 0;
 
     const gaDetailId = ref(''), gaDetail = ref(null);
     const gaDetailLoading = ref(false), gaDetailError = ref(false), gaDetailTab = ref(0);
-    const gaFlag = ref(null);         // '是'/'否'：以 /status 回传为准，进入时先用列表项占位
-    const gaFlagSaving = ref(false);
+    const gaModeSwitching = ref(false);
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
@@ -5756,16 +6435,71 @@ createApp({
     const gaStartPreviewData = ref(null);
     const gaConfirmShow = ref(false), gaConfirmInput = ref(''), gaConfirmN = ref(0);
 
+    // 一对一：开始（danger=破坏性清历史结果；new=开启新一轮保留历史）与执行（job）
+    const gaOtoStartShow = ref(false), gaOtoStartBusy = ref(false), gaOtoStartPreview = ref(null);
+    const gaOtoStartMode = ref('danger');
+    const gaOtoConfirmInput = ref('');
+    const gaOtoRunBusy = ref(false);
+
     const gaRunShow = ref(false), gaRunBusy = ref(false);
     const gaJobId = ref(''), gaJobRound = ref(1), gaJobActivityName = ref(''), gaJobProgress = ref('');
+    const gaJobKind = ref('group');   // 'group' | 'onetoone'：轮询端点、遮罩文案、localStorage key 后缀
     const gaMaskSecs = ref(0), gaRunTip = ref(''), gaUnknownShow = ref(false);
     const gaGroups = ref([]), gaGroupsRound = ref(0), gaResultRound = ref(0);
     const gaResultLoading = ref(false), gaResultError = ref(false);
+    const gaOtoPeople = ref([]), gaOtoOpen = ref({});
+    const gaOtoResultLoading = ref(false), gaOtoResultError = ref(false);
+    const gaOtoResultRound = ref(0), gaOtoLoadedRound = ref(0), gaOtoResultCount = ref(0);
     let gaPollTimer = null, gaPollCount = 0, gaPollFails = 0, gaMaskTimer = null, gaJobStartedAt = 0;
     const GA_POLL_MS = 2000, GA_POLL_MAX = 120, GA_JOB_KEY = 'yxq_ga_job_';  // 2s 一次、最多 4 分钟：超时只提示，不报错
 
     const gaStepDefs = ['未开始', '填志愿', '执行分组', '完成'];
     function gaChipClass(s) { return ({ '收集中': 'collecting', '已截止': 'running', '已完成': 'done' })[s] || ''; }
+    // 模式 chip（列表/详情共用）：mode 是后端从两个 flag 派生的值
+    const GA_MODE_LABEL = { group: '分组', onetoone: '一对一', none: '未设定', conflict: '⚠ 冲突' };
+    const GA_MODE_CLASS = { group: 'collecting', onetoone: 'running', none: '', conflict: 'danger' };
+    function gaModeChip(a) { return GA_MODE_LABEL[a && a.mode] || '未设定'; }
+    function gaModeChipClass(a) { return GA_MODE_CLASS[a && a.mode] || ''; }
+    function gaStatusChipText(a) {
+      if (a.mode === 'conflict') return '两模式冲突';
+      if (a.mode === 'onetoone') return a.onetoone_status || '未开始';
+      return a.group_status || '未开始';
+    }
+    function gaStatusChipClass(a) {
+      if (a.mode === 'conflict') return 'danger';
+      return gaChipClass(a.mode === 'onetoone' ? (a.onetoone_status || '未开始') : a.group_status);
+    }
+    const gaDetailMode = computed(() => (gaDetail.value && gaDetail.value.mode) || 'none');
+    const gaModeText = computed(() => {
+      const d = gaDetail.value;
+      if (!d) return '';
+      if (d.mode === 'conflict') return '⚠ 两个模式都开着，请纠偏';
+      if (d.mode === 'onetoone') return '一对一模式 · ' + ((d.onetoone_rounds || []).length) + ' 轮结果 · 已匹配 ' + d.onetoone_matched_count + ' 人';
+      if (d.mode === 'group') return '分组模式 · ' + (d.rounds || []).length + ' 轮结果';
+      return '未设定模式';
+    });
+    const gaOtoRounds = computed(() => (gaDetail.value && gaDetail.value.onetoone_rounds) || []);
+    const gaOtoLatestRound = computed(() => (gaDetail.value && gaDetail.value.onetoone_latest_round) || 0);
+    const gaOtoNextRound = computed(() => gaOtoLatestRound.value ? gaOtoLatestRound.value + 1 : 1);
+    const gaOtoShowDanger = computed(() => {
+      const d = gaDetail.value;
+      return !!d && gaOtoRounds.value.length > 0
+        && ['未开始', '收集中', '已完成'].includes(d.onetoone_status);
+    });
+    // 开启新一轮（保留历史结果）：已匹配过、想接着跑第 N+1 轮；已截止卡住后也可用。
+    const gaOtoShowNewRound = computed(() => {
+      const d = gaDetail.value;
+      return !!d && gaOtoRounds.value.length > 0
+        && (d.onetoone_status === '已完成' || d.onetoone_status === '已截止');
+    });
+    const gaOtoConfirmOk = computed(() => {
+      if (gaOtoStartMode.value === 'new') return true;
+      const pv = gaOtoStartPreview.value;
+      if (!pv || !(pv.existing_results > 0)) return true;
+      return String(gaOtoConfirmInput.value || '').trim().toLowerCase()
+        === String(gaDetailId.value || '').trim().toLowerCase();
+    });
+    const gaMaskTitle = computed(() => (gaJobKind.value === 'onetoone' ? '正在执行一对一匹配…' : '正在执行分组…'));
     const gaStepIndex = computed(() => {
       const s = gaDetail.value && gaDetail.value.group_status;
       return s === '收集中' ? 1 : (s === '已截止' ? 2 : (s === '已完成' ? 3 : 0));
@@ -5773,11 +6507,20 @@ createApp({
     const gaFilteredList = computed(() => {
       const q = gaQ.value.trim().toLowerCase();
       return gaList.value.filter(a => (!gaStatusFilter.value || a.group_status === gaStatusFilter.value)
+        && (!gaModeFilter.value || a.mode === gaModeFilter.value)
         && (!q || String(a.name || '').toLowerCase().includes(q) || String(a.activity_id || '').toLowerCase().includes(q)));
     });
+    function gaIsCollecting(a) {
+      return a.group_status === '收集中' || a.onetoone_status === '收集中';
+    }
     const gaStats = computed(() => {
       const c = { '收集中': 0, '已截止': 0, '已完成': 0 };
-      gaList.value.forEach(a => { if (c[a.group_status] !== undefined) c[a.group_status] += 1; });
+      gaList.value.forEach(a => {
+        if (c[a.group_status] !== undefined) c[a.group_status] += 1;
+        if (a.onetoone_status === '收集中') c['收集中'] += 1;
+        if (a.onetoone_status === '已截止') c['已截止'] += 1;
+        if (a.onetoone_status === '已完成') c['已完成'] += 1;
+      });
       return { progress: c['收集中'], closed: c['已截止'], done: c['已完成'] };
     });
     const gaExpectedGroups = computed(() => {
@@ -5798,7 +6541,12 @@ createApp({
       return !!d && !!(d.rounds && d.rounds.length)
         && (d.group_status === '已完成' || d.group_status === '已截止');
     });
-    const gaRosterSubmitted = computed(() => (gaDetail.value && gaDetail.value.submitted_count) || 0);
+    const gaRosterSubmitted = computed(() => {
+      const d = gaDetail.value;
+      if (!d) return 0;
+      return gaDetailMode.value === 'onetoone'
+        ? (d.onetoone_submitted_count || 0) : (d.submitted_count || 0);
+    });
     const gaRosterFiltered = computed(() => {
       const q = gaRosterQuery.value.trim().toLowerCase();
       if (!q) return gaRosterList.value;
@@ -5861,6 +6609,14 @@ createApp({
     function gaRowSub(a) {
       const per = (a.males_per_group > 0 && a.females_per_group > 0)
         ? ('每组' + a.males_per_group + '男' + a.females_per_group + '女') : '还没设置每组人数';
+      if (a.mode === 'conflict') return '⚠ 分组与一对一都开着，进详情纠偏';
+      if (a.mode === 'onetoone') {
+        const st = a.onetoone_status || '未开始';
+        if (st === '未开始') return '报名 ' + a.signup_count + ' 人 · 尚未开放一对一';
+        if (st === '已截止') return '已填 ' + a.onetoone_submitted_count + '/' + a.signup_count + ' · 匹配执行中…';
+        if (st === '已完成') return '一对一已匹配 · 已填 ' + a.onetoone_submitted_count + '/' + a.signup_count;
+        return '已填 ' + a.onetoone_submitted_count + '/' + a.signup_count + ' 人 · 一对一收集中';
+      }
       if (a.group_status === '未开始') return '报名 ' + a.signup_count + ' 人 · 尚未开放填志愿';
       if (a.group_status === '已截止') return '已填 ' + a.submitted_count + '/' + a.signup_count + ' · 分组执行中…';
       if (a.group_status === '已完成') return '已分 ' + ((a.available_rounds || []).length || 1) + ' 轮 · ' + per + ' · 第' + a.latest_round + '轮';
@@ -5871,18 +6627,18 @@ createApp({
       if (Date.now() - gaBadgeAt < 30000) return;   // 30 秒缓存，避免每次切页都打实时接口
       try {
         const data = await gaGet('/api/admin/group/activities');
-        const n = (data.activities || []).filter(a => a.group_status === '收集中').length;
+        const n = (data.activities || []).filter(gaIsCollecting).length;
         gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
       } catch(e) { /* 入口徽标静默失败，不打扰 */ }
     }
-    function openGroupAdmin() { gaQ.value = ''; gaStatusFilter.value = ''; gaError.value = false; page.value = 'group_admin'; }
+    function openGroupAdmin() { gaQ.value = ''; gaStatusFilter.value = ''; gaModeFilter.value = ''; gaError.value = false; page.value = 'group_admin'; }
     async function loadGroupAdminList() {
       if (gaLoading.value) return;
       gaLoading.value = true; gaError.value = false;
       try {
         const data = await gaGet('/api/admin/group/activities');
         gaList.value = data.activities || [];
-        const n = gaList.value.filter(a => a.group_status === '收集中').length;
+        const n = gaList.value.filter(gaIsCollecting).length;
         gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
       } catch(e) {
         if (!gaAuthBack(e)) { gaError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
@@ -5891,10 +6647,12 @@ createApp({
     }
     function openGroupDetail(a) {
       gaDetailId.value = a.activity_id; gaDetail.value = null; gaDetailError.value = false; gaDetailTab.value = 0;
-      gaFlag.value = a.group_flag || '否';   // 首屏占位；/status 回来后会以其为准
       gaGroups.value = []; gaGroupsRound.value = 0; gaResultRound.value = 0; gaRunTip.value = '';
       gaResultLoading.value = false; gaResultError.value = false;
+      gaOtoPeople.value = []; gaOtoOpen.value = {}; gaOtoResultLoading.value = false; gaOtoResultError.value = false;
+      gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
       gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false;
+      gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false; gaSigninQuery.value = ''; gaSigninFilter.value = 'all'; gaSigninFlagOn.value = false;
       page.value = 'group_detail';
     }
     async function refreshGroupDetail() {
@@ -5902,48 +6660,72 @@ createApp({
       gaDetailLoading.value = true; gaDetailError.value = false;
       try {
         const d = await gaGet('/api/admin/group/status?activity_id=' + encodeURIComponent(gaDetailId.value));
+        const prevMode = gaDetail.value && gaDetail.value.mode;
         gaDetail.value = d;
-        // group_flag 以 /status 为第一来源（列表项可能过期）；/status 缺该字段时才补拉列表
-        if (d.group_flag) gaFlag.value = d.group_flag;
-        else if (gaFlag.value === null) gaFlagFromList();
+        if (d.mode !== prevMode) {
+          // 模式变了（本端切换/另一端改）：tab 内容整块换掉，缓存不能跨模式复用
+          gaDetailTab.value = 0;
+          gaGroups.value = []; gaGroupsRound.value = 0;
+          gaOtoPeople.value = []; gaOtoOpen.value = {};
+          gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
+          gaRosterList.value = []; gaRosterSubmittedList.value = []; gaRosterTotal.value = 0;
+          gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false; gaSigninFlagOn.value = false;
+        }
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
-        if (gaDetailTab.value === 2 && gaResultRound.value && gaGroupsRound.value !== gaResultRound.value) {
+        if (gaDetailTab.value === 2 && gaDetailMode.value === 'group'
+            && gaResultRound.value && gaGroupsRound.value !== gaResultRound.value) {
           loadGroupResult(gaResultRound.value);   // 状态比结果 tab 先到：补拉当前轮次
+        }
+        gaOtoResultRound.value = gaOtoLoadedRound.value || d.onetoone_latest_round || 0;
+        if (gaDetailTab.value === 2 && gaDetailMode.value === 'onetoone'
+            && gaOtoResultRound.value && gaOtoLoadedRound.value !== gaOtoResultRound.value) {
+          loadGaOtoResult(gaOtoResultRound.value);   // 一对一结果同样按轮次补拉
         }
         restoreGaJob();
       } catch(e) { if (!gaAuthBack(e)) { gaDetailError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
       gaDetailLoading.value = false;
     }
-    async function gaFlagFromList() {
-      // fallback：/status 未回 group_flag（旧后端）时从列表补拉
-      try {
-        const data = await gaGet('/api/admin/group/activities');
-        const it = (data.activities || []).find(x => x.activity_id === gaDetailId.value);
-        gaFlag.value = it ? (it.group_flag || '否') : '否';
-      } catch(e) { gaFlag.value = '否'; }
-    }
-    async function onGaFlagChange(v) {
-      if (gaFlagSaving.value) return;
-      const old = gaFlag.value;
-      gaFlag.value = v ? '是' : '否'; gaFlagSaving.value = true;
-      try {
-        const data = await api('/api/admin/group/flag', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, enabled: !!v }) });
-        gaFlag.value = data.group_flag || gaFlag.value;
-        const it = gaList.value.find(x => x.activity_id === gaDetailId.value);
-        if (it) it.group_flag = gaFlag.value;
-        vant.showToast(v ? '已开启，报名者能看到「我的分组」入口' : '已关闭，报名者看不到「我的分组」入口');
-      } catch(e) {
-        gaFlag.value = old;
-        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '开关没设上，再试一次'));
+    async function switchMode(mode) {
+      const d = gaDetail.value;
+      if (!d || gaModeSwitching.value || !gaDetailId.value) return;
+      if (d.active_job) { vant.showToast('有任务正在执行，等它结束后再切换'); return; }
+      const label = { group: '分组', onetoone: '一对一', none: '未设定' }[mode] || mode;
+      const closing = [];
+      if (d.group_flag === '是' && mode !== 'group') closing.push('分组');
+      if (d.onetoone_flag === '是' && mode !== 'onetoone') closing.push('一对一');
+      if (closing.indexOf('分组') >= 0 && (d.group_status === '收集中' || d.group_status === '已截止')) {
+        vant.showToast('分组还在「' + d.group_status + '」，请先收尾再切换'); return;
       }
-      gaFlagSaving.value = false;
+      if (closing.indexOf('一对一') >= 0 && (d.onetoone_status === '收集中' || d.onetoone_status === '已截止')) {
+        vant.showToast('一对一还在「' + d.onetoone_status + '」，请先收尾再切换'); return;
+      }
+      const msg = closing.length
+        ? ('将关闭「' + closing.join('」「') + '」入口；不会删除任何资料，既有结果仍保留。')
+        : ('将开启「' + label + '」入口；不会删除任何资料，既有结果仍保留。');
+      try {
+        await vant.showConfirmDialog({ title: '切换为「' + label + '」模式', message: msg,
+          confirmButtonText: '确认切换', confirmButtonColor: '#ff6b81' });
+      } catch(e) { return; }   // 取消
+      gaModeSwitching.value = true;
+      try {
+        const data = await api('/api/admin/activity/mode', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, mode: mode }) });
+        vant.showToast(mode === 'none' ? '已关闭全部模式入口' : ('已切换为「' + label + '」模式'));
+        const it = gaList.value.find(x => x.activity_id === gaDetailId.value);
+        if (it && data) { it.mode = data.mode; it.group_flag = data.group_flag; it.onetoone_flag = data.onetoone_flag; it.conflict = false; }
+        refreshGroupDetail();
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '切换失败，再试一次'));
+      }
+      gaModeSwitching.value = false;
     }
     async function loadGroupRoster(force) {
       if (gaRosterLoading.value) return;
       if (!force && gaRosterList.value.length) return;
       gaRosterLoading.value = true; gaRosterError.value = false;
       try {
-        const data = await gaGet('/api/admin/group/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
+        const ep = gaDetailMode.value === 'onetoone' ? 'onetoone' : 'group';
+        const data = await gaGet('/api/admin/' + ep + '/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
         gaRosterList.value = data.unsubmitted || []; gaRosterTotal.value = data.total || 0; gaRosterShown.value = 30;
         gaRosterSubmittedList.value = data.submitted || [];
         if (gaRosterTab.value === 0 && !gaRosterList.value.length && gaRosterSubmitted.value > 0) gaRosterTab.value = 1;
@@ -6075,6 +6857,7 @@ createApp({
     }
     async function doGaRun(rd) {
       const name = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
+      gaJobKind.value = 'group';
       try {
         const r = await gaApi('/api/admin/group/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
         if ((r.status === 202 || r.status === 200) && r.data && r.data.job_id) {
@@ -6090,12 +6873,129 @@ createApp({
       }
       gaRunBusy.value = false;
     }
+    // ---- 一对一：开始（danger=破坏性清历史结果；new=开启新一轮保留历史）----
+    async function openOtoStart(mode) {
+      if (gaOtoStartBusy.value || !gaDetailId.value) return;
+      gaOtoStartMode.value = (mode === 'new') ? 'new' : 'danger';
+      gaOtoStartBusy.value = true;
+      try {
+        const previewRound = gaOtoStartMode.value === 'new'
+          ? gaOtoNextRound.value : (gaOtoLatestRound.value || 1);
+        const pv = await api('/api/admin/onetoone/preview', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, round: previewRound }) });
+        gaOtoStartPreview.value = pv;
+        gaOtoConfirmInput.value = '';
+        gaOtoStartShow.value = true;
+      } catch(e) { if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
+      gaOtoStartBusy.value = false;
+    }
+    function closeOtoStart() { if (!gaOtoStartBusy.value) gaOtoStartShow.value = false; }
+    async function doOtoStart() {
+      if (gaOtoStartBusy.value || !gaOtoConfirmOk.value) return;
+      const isNewRound = gaOtoStartMode.value === 'new';
+      gaOtoStartBusy.value = true;
+      try {
+        const data = await api('/api/admin/onetoone/start', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, clear_results: !isNewRound }) });
+        gaOtoStartShow.value = false;
+        const cleared = (data && data.cleared_results) || 0;
+        if (isNewRound) {
+          vant.showToast('已开启第 ' + gaOtoNextRound.value + ' 轮志愿填写，历史结果已保留');
+        } else {
+          vant.showToast('一对一志愿填写已开始' + (cleared > 0 ? ('，已清除 ' + cleared + ' 条历史结果') : ''));
+        }
+        gaDetailTab.value = 0;
+        refreshGroupDetail();
+      } catch(e) { if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没开始成功，再试一次')); }
+      gaOtoStartBusy.value = false;
+    }
+    // ---- 一对一：执行（job + 轮询）----
+    async function startOtoRunFlow() {
+      if (gaOtoRunBusy.value || !gaDetailId.value) return;
+      gaOtoRunBusy.value = true;
+      const rd = gaOtoNextRound.value;
+      try {
+        const pv = await api('/api/admin/onetoone/preview', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
+        if (!pv.can_execute) {
+          gaOtoRunBusy.value = false;
+          const msg = (pv.blockers && pv.blockers.length) ? pv.blockers.join('\n') : '现在还跑不了，稍后再试';
+          vant.showConfirmDialog({ title: '还差一点', message: msg, showCancelButton: false, confirmButtonColor: '#ff6b81' }).catch(() => {});
+          return;
+        }
+        try {
+          await vant.showConfirmDialog({
+            title: '执行第 ' + rd + ' 轮一对一',
+            message: '将依 ' + pv.participant_count + ' 位参与者的志愿计算第 ' + rd + ' 轮必聊名单（每人最多 10 位）。\n执行后状态变为「已完成」，期间大家不能再改志愿。',
+            confirmButtonColor: '#ff6b81'
+          });
+        } catch(e) { gaOtoRunBusy.value = false; return; }  // 取消
+        await doOtoRun(rd);
+      } catch(e) {
+        gaOtoRunBusy.value = false;
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
+      }
+    }
+    async function doOtoRun(rd) {
+      const name = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
+      gaJobKind.value = 'onetoone';
+      try {
+        const r = await gaApi('/api/admin/onetoone/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
+        if ((r.status === 202 || r.status === 200) && r.data && r.data.job_id) {
+          attachGaJob(r.data.job_id, r.data.round || rd, name);
+        } else if (r.status === 409 && r.data && r.data.job_id) {
+          attachGaJob(r.data.job_id, r.data.round || rd, name);
+          vant.showToast('第 ' + (r.data.round || rd) + ' 轮一对一已经在跑了，帮你接上进度');
+        } else {
+          vant.showToast((r.data && r.data.error) || '没跑起来，再试一次');
+        }
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
+      }
+      gaOtoRunBusy.value = false;
+    }
+    async function loadGaOtoResult(round) {
+      // 管理台一对一结果（改名避开用户端同名函数：同名函数声明后者覆盖前者，
+      // 会把用户端「查看我的必聊」劫持到管理台端点）
+      // 不拦 loading：切轮次必须发新请求，过期响应按轮次丢弃（与 loadGroupResult 同款；
+      // 旧写法在加载中点另一个轮次会把新请求挡掉，旧响应又因轮次已变不清 loading → 死锁）
+      if (!gaDetailId.value) return;
+      const wanted = round || gaOtoResultRound.value || gaOtoLatestRound.value;
+      if (!wanted) return;
+      gaOtoResultLoading.value = true; gaOtoResultError.value = false;
+      try {
+        const data = await gaGet('/api/admin/onetoone/result?activity_id=' + encodeURIComponent(gaDetailId.value) + '&round=' + wanted);
+        if (gaOtoResultRound.value !== data.round) return;   // 已切到别的轮次：丢弃过期响应
+        gaOtoPeople.value = data.people || [];
+        gaOtoResultCount.value = data.result_count || 0;
+        gaOtoLoadedRound.value = data.round || 0;
+      } catch(e) {
+        if (!gaAuthBack(e)) gaOtoResultError.value = true;
+      } finally {
+        if (gaOtoResultRound.value === wanted) gaOtoResultLoading.value = false;
+      }
+    }
+    function selectGaOtoResultRound(r) {
+      if (gaOtoResultRound.value === r && gaOtoLoadedRound.value === r && !gaOtoResultError.value) return;
+      gaOtoResultRound.value = r;
+      loadGaOtoResult(r);
+    }
+    function gaOtoToggle(openid) {
+      gaOtoOpen.value = { ...gaOtoOpen.value, [openid]: !gaOtoOpen.value[openid] };
+    }
+    // ---- job 轮询（分组/一对一共用；kind 决定端点、文案、localStorage key 后缀）----
+    function gaJobKey(kind) { return GA_JOB_KEY + gaDetailId.value + '_' + kind; }
     function attachGaJob(jobId, rd, name) {
       gaJobId.value = jobId; gaJobRound.value = rd; gaJobActivityName.value = name; gaJobProgress.value = '';
-      try { localStorage.setItem(GA_JOB_KEY + gaDetailId.value, jobId); } catch(e) {}
+      try { localStorage.setItem(gaJobKey(gaJobKind.value), jobId); } catch(e) {}
       openGaMask(); startGaPolling();
     }
-    function clearGaJobRecord() { try { localStorage.removeItem(GA_JOB_KEY + gaDetailId.value); } catch(e) {} }
+    function clearGaJobRecord() {
+      try {
+        localStorage.removeItem(gaJobKey(gaJobKind.value));
+        localStorage.removeItem(GA_JOB_KEY + gaDetailId.value);   // 旧格式（无 kind 后缀）的键
+      } catch(e) {}
+    }
     function openGaMask() {
       gaRunShow.value = true; gaMaskSecs.value = 0; gaJobStartedAt = Date.now();
       clearInterval(gaMaskTimer);
@@ -6122,7 +7022,8 @@ createApp({
         return;
       }
       try {
-        const data = await gaGet('/api/admin/group/job?job_id=' + encodeURIComponent(gaJobId.value));
+        const ep = gaJobKind.value === 'onetoone' ? '/api/admin/onetoone/job' : '/api/admin/group/job';
+        const data = await gaGet(ep + '?job_id=' + encodeURIComponent(gaJobId.value));
         gaPollFails = 0; gaJobProgress.value = data.progress || '';
         const st = data.state;
         if (st === 'pending' || st === 'running') { gaPollTimer = setTimeout(pollGaJob, GA_POLL_MS); return; }
@@ -6130,7 +7031,7 @@ createApp({
         if (st === 'done') { handleGaJobDone(data); return; }
         if (st === 'unknown') { gaUnknownShow.value = true; return; }
         refreshGroupDetail();
-        vant.showToast(data.error || '这次没分成功，状态已经恢复成收集中，稍后再试一次就好');
+        vant.showToast(data.error || '这次没跑成功，状态已经恢复，稍后再试一次就好');
       } catch(e) {
         gaPollFails += 1;
         if (gaPollFails >= 10) {  // 连续 10 次失败才放弃（可能只是短暂断网）
@@ -6142,6 +7043,7 @@ createApp({
       }
     }
     function handleGaJobDone(data) {
+      if (gaJobKind.value === 'onetoone') { handleOtoJobDone(data); return; }
       const res = data.result || {};
       refreshGroupDetail();
       if (res.code === 'OK') {
@@ -6157,6 +7059,7 @@ createApp({
           .then(() => { openStartPopup(); }).catch(() => {});
         return;
       }
+      if (res.code === 'EXCLUSIVE_MODE') { vant.showToast('一对一模式还开着，先切到分组模式再执行'); return; }
       if (res.code === 'NOT_ENOUGH_PEOPLE') {
         vant.showToast('人还不够：' + res.males + ' 男 ' + res.females + ' 女，每组要 ' + res.males_per_group + ' 男 ' + res.females_per_group + ' 女。再等等人吧');
         return;
@@ -6167,40 +7070,208 @@ createApp({
       if (res.code === 'PARTIAL_WRITE') { vant.showToast('结果只写了一半，已经回滚，状态恢复。稍后再试'); return; }
       vant.showToast('这次没分成功，状态已经恢复成收集中，稍后再试一次就好');
     }
+    function handleOtoJobDone(data) {
+      const res = data.result || {};
+      refreshGroupDetail();
+      if (res.code === 'OK') {
+        const rd = res.round || gaJobRound.value;
+        gaOtoPeople.value = []; gaOtoOpen.value = {};
+        gaOtoResultRound.value = rd;
+        gaOtoLoadedRound.value = 0;
+        gaDetailTab.value = 2;
+        loadGaOtoResult(rd);
+        vant.showToast('第 ' + rd + ' 轮匹配完成，共 ' + (res.total_pairs || 0) + ' 条必聊 🎉');
+        return;
+      }
+      if (res.code === 'EXCLUSIVE_MODE') { vant.showToast('分组模式还开着，先切到一对一模式再执行'); return; }
+      if (res.code === 'ALREADY_DONE') {
+        const rd = res.round || 1;
+        vant.showConfirmDialog({ title: '第 ' + rd + ' 轮已经匹配过啦', message: '要重跑的话，得先「重新开始一对一」清空历史结果（或「开启新一轮」跑下一轮）。', confirmButtonText: '重新开始', cancelButtonText: '先不用', confirmButtonColor: '#ff6b81' })
+          .then(() => { openOtoStart(); }).catch(() => {});
+        return;
+      }
+      if (res.code === 'BUSY') { vant.showToast('另一场任务正在执行，稍后再试'); return; }
+      if (res.code === 'SEARCH_FAILED') { vant.showToast('读取历史结果时网络打了个喷嚏，已中止（未写任何数据），稍后再试'); return; }
+      if (res.code === 'CLOSE_FAILED') { vant.showToast('状态写入失败，已中止匹配，稍后再试'); return; }
+      if (res.code === 'SELECTIONS_SEARCH_FAILED') { vant.showToast('读取志愿失败，已中止匹配，状态已恢复，稍后再试'); return; }
+      if (res.code === 'NO_PARTICIPANTS') { vant.showToast('没有已提交志愿的参与者，状态已恢复'); return; }
+      if (res.code === 'ALGORITHM_ERROR') { vant.showToast('匹配没成功：' + (res.error || '再试一次看看')); return; }
+      if (res.code === 'PARTIAL_WRITE' || res.code === 'PARTIAL_WRITE_INCOMPLETE' || res.code === 'PARTIAL_WRITE_VERIFY_FAILED') {
+        vant.showToast('结果只写了一半，可能已回滚/可能有残留，稍后再试'); return;
+      }
+      if (res.code === 'DONE_STATUS_FAILED') { vant.showToast('结果已生成，但状态写入失败，请重新载入检查'); return; }
+      vant.showToast('这次没匹配成功，稍后再试一次就好');
+    }
     async function restoreGaJob() {
       if (gaPollTimer || gaRunShow.value) return;
-      let jobId = '';
-      try { jobId = localStorage.getItem(GA_JOB_KEY + gaDetailId.value) || ''; } catch(e) {}
-      if (!jobId) return;
-      try {
-        const data = await gaGet('/api/admin/group/job?job_id=' + encodeURIComponent(jobId));
-        const st = data.state;
-        if (st === 'pending' || st === 'running') {
-          gaJobId.value = jobId; gaJobRound.value = data.round || gaNextRound.value;
-          gaJobActivityName.value = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
-          gaJobProgress.value = data.progress || '';
-          gaJobStartedAt = (data.started_at || data.created_at || Math.floor(Date.now() / 1000)) * 1000;
-          gaMaskSecs.value = Math.max(0, Math.floor((Date.now() - gaJobStartedAt) / 1000));
-          openGaMask(); startGaPolling();
-        } else if (st === 'done') {
-          clearGaJobRecord();
-          const res = data.result || {};
-          if (res.code === 'OK') {
-            gaGroups.value = res.groups || []; gaGroupsRound.value = res.round || 0;
-            gaResultRound.value = gaGroupsRound.value || gaResultRound.value;
-          }
-        } else { clearGaJobRecord(); }
-      } catch(e) { clearGaJobRecord(); }
+      // 两种 kind 的 key 都看一眼（同一活动同时只会有一个任务在跑，共用活动锁）；
+      // 「旧格式无 kind 后缀」的键只属于分组 job，兜底读一次。
+      const kinds = ['group', 'onetoone'];
+      for (let i = 0; i < kinds.length; i++) {
+        const kind = kinds[i];
+        let jobId = '';
+        try {
+          jobId = localStorage.getItem(gaJobKey(kind)) || '';
+          if (!jobId && kind === 'group') jobId = localStorage.getItem(GA_JOB_KEY + gaDetailId.value) || '';
+        } catch(e) {}
+        if (!jobId) continue;
+        gaJobKind.value = kind;
+        try {
+          const ep = kind === 'onetoone' ? '/api/admin/onetoone/job' : '/api/admin/group/job';
+          const data = await gaGet(ep + '?job_id=' + encodeURIComponent(jobId));
+          const st = data.state;
+          if (st === 'pending' || st === 'running') {
+            gaJobId.value = jobId;
+            gaJobRound.value = data.round || (kind === 'onetoone' ? gaOtoNextRound.value : gaNextRound.value);
+            gaJobActivityName.value = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
+            gaJobProgress.value = data.progress || '';
+            gaJobStartedAt = (data.started_at || data.created_at || Math.floor(Date.now() / 1000)) * 1000;
+            gaMaskSecs.value = Math.max(0, Math.floor((Date.now() - gaJobStartedAt) / 1000));
+            openGaMask(); startGaPolling();
+            return;
+          } else if (st === 'done') {
+            clearGaJobRecord();
+            const res = data.result || {};
+            if (kind === 'group' && res.code === 'OK') {
+              gaGroups.value = res.groups || []; gaGroupsRound.value = res.round || 0;
+              gaResultRound.value = gaGroupsRound.value || gaResultRound.value;
+            } else if (kind === 'onetoone' && res.code === 'OK') {
+              gaOtoResultRound.value = res.round || gaOtoResultRound.value;
+              gaOtoLoadedRound.value = 0;
+            }
+          } else { clearGaJobRecord(); }
+        } catch(e) { clearGaJobRecord(); }
+      }
     }
     function gaUnknownReload() { gaUnknownShow.value = false; gaDetailTab.value = 0; refreshGroupDetail(); }
-    function gaUnknownRetry() { gaUnknownShow.value = false; startRunFlow(); }
+    function gaUnknownRetry() {
+      gaUnknownShow.value = false;
+      if (gaJobKind.value === 'onetoone') startOtoRunFlow();
+      else startRunFlow();
+    }
 
     watch(gaDetailTab, (v) => {
       if (v === 1 && !gaRosterList.value.length && !gaRosterLoading.value && gaDetailId.value) loadGroupRoster();
-      // 结果 tab：手上没有当前轮的数据才补拉（job 完成的轮次已有 canonical 结果）
-      if (v === 2 && gaGroupsRound.value !== gaResultRound.value && !gaResultLoading.value) loadGroupResult(gaResultRound.value);
+      if (v !== 2) return;
+      // 结果 tab：分组/一对一都按当前轮次补拉
+      if (gaDetailMode.value === 'onetoone') {
+        if (!gaOtoResultRound.value) gaOtoResultRound.value = gaOtoLatestRound.value;
+        if (gaOtoResultRound.value && gaOtoLoadedRound.value !== gaOtoResultRound.value
+            && !gaOtoResultLoading.value) loadGaOtoResult(gaOtoResultRound.value);
+      } else if (gaGroupsRound.value !== gaResultRound.value && !gaResultLoading.value) {
+        loadGroupResult(gaResultRound.value);
+      }
     });
     watch(gaRosterQuery, () => { gaRosterShown.value = 30; });
+
+    // ---- 现场签到（R3）：开关 + 名册 + 乐观标记（两态：已到→按时 / 未到→未到，D13）----
+    const gaSigninFlagOn = ref(false), gaSigninFlagBusy = ref(false);
+    const gaSigninList = ref([]), gaSigninLoading = ref(false), gaSigninError = ref(false), gaSigninLoaded = ref(false);
+    const gaSigninQuery = ref(''), gaSigninFilter = ref('all'), gaSigninShown = ref(30);
+    const gaSigninBusy = ref({}), gaSigninBatchBusy = ref(false);
+    function gaSigninStateText(state) {
+      // 只显示两态（D13）：历史遗留的「迟到」按已到显示，不出现「迟到」字样
+      if (isAttendancePresent(state)) return '已到';
+      if (state === '未到') return '未到';
+      return '未签到';
+    }
+    const gaSigninStats = computed(() => {
+      const list = gaSigninList.value;
+      const checked = list.filter(r => r.checked_in).length;
+      return { checked_in: checked, signed_up: list.length, not_checked_in: list.length - checked };
+    });
+    const gaSigninPendingCount = computed(() => gaSigninList.value.filter(r => !r.state).length);
+    const gaSigninOutCount = computed(() => gaSigninList.value.filter(r => r.state === '未到').length);
+    const gaSigninFiltered = computed(() => {
+      const q = gaSigninQuery.value.trim().toLowerCase();
+      const f = gaSigninFilter.value;
+      return gaSigninList.value.filter(r => {
+        if (f === 'pending' && r.state) return false;
+        if (f === 'in' && !r.checked_in) return false;
+        if (f === 'out' && r.state !== '未到') return false;
+        if (!q) return true;
+        return String(r.nickname || '').toLowerCase().includes(q)
+          || String(r.user_id || '').toLowerCase().includes(q);
+      });
+    });
+    const gaSigninVisible = computed(() => gaSigninFiltered.value.slice(0, gaSigninShown.value));
+    // 签到 tab 索引：分组/一对一在末尾（3）；冲突模式只有签到一个 tab（0）
+    const gaOnSigninTab = computed(() => {
+      const d = gaDetailMode.value;
+      if (d === 'conflict') return gaDetailTab.value === 0;
+      if (d === 'none') return false;
+      return gaDetailTab.value === 3;
+    });
+    watch(gaOnSigninTab, (v) => { if (v) loadSigninRoster(true); });
+
+    async function loadSigninRoster(force) {
+      if (gaSigninLoading.value || !gaDetailId.value) return;
+      if (!force && gaSigninLoaded.value) return;
+      gaSigninLoading.value = true; gaSigninError.value = false;
+      try {
+        const data = await gaGet('/api/admin/activity/signin?activity_id=' + encodeURIComponent(gaDetailId.value));
+        gaSigninFlagOn.value = !!data.signin_enabled;
+        gaSigninList.value = (data.roster || []).map(r => ({ ...r }));
+        gaSigninLoaded.value = true; gaSigninShown.value = 30;
+      } catch(e) {
+        if (!gaAuthBack(e)) { gaSigninError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
+      }
+      gaSigninLoading.value = false;
+    }
+    async function markSignin(r, state) {
+      if (gaSigninBusy.value[r.open_id]) return;
+      const prevState = r.state, prevChecked = r.checked_in;
+      gaSigninBusy.value = { ...gaSigninBusy.value, [r.open_id]: true };
+      r.state = state; r.checked_in = isAttendancePresent(state);   // 乐观更新
+      try {
+        await api('/api/admin/activity/signin', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, open_id: r.open_id, state: state }) });
+      } catch(e) {
+        r.state = prevState; r.checked_in = prevChecked;   // 失败回滚
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '标记失败，再试一次'));
+      }
+      const busy = { ...gaSigninBusy.value };
+      delete busy[r.open_id];
+      gaSigninBusy.value = busy;
+    }
+    async function onToggleSigninFlag(val) {
+      if (gaSigninFlagBusy.value || !gaDetailId.value) return;
+      gaSigninFlagBusy.value = true;
+      try {
+        await api('/api/admin/activity/signin/flag', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, enabled: !!val }) });
+        gaSigninFlagOn.value = !!val;
+        vant.showToast(val ? '已开启现场签到' : '已关闭现场签到');
+        const it = gaList.value.find(x => x.activity_id === gaDetailId.value);
+        if (it) it.signin_flag = val ? '是' : '否';
+        if (gaDetail.value) gaDetail.value.signin_flag = val ? '是' : '否';
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '开关失败，再试一次'));
+      }
+      gaSigninFlagBusy.value = false;
+    }
+    async function confirmMarkAllPending() {
+      if (gaSigninBatchBusy.value) return;
+      const pending = gaSigninPendingCount.value;
+      if (!pending) { vant.showToast('没有未签到的人'); return; }
+      try {
+        await vant.showConfirmDialog({ title: '全部标记已到',
+          message: '将把 ' + pending + ' 位「未签到」者标记为「已到」；已标记的「已到 / 未到」不会被覆盖。',
+          confirmButtonText: '确认标记', confirmButtonColor: '#ff6b81' });
+      } catch(e) { return; }
+      gaSigninBatchBusy.value = true;
+      try {
+        const data = await api('/api/admin/activity/signin', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, all_pending: true }) });
+        gaSigninList.value.forEach(r => { if (!r.state) { r.state = '按时'; r.checked_in = true; } });
+        const failed = data.failed || 0;
+        if (failed) { gaSigninLoaded.value = false; loadSigninRoster(true); }
+        vant.showToast(failed ? ('已标记 ' + (data.updated || 0) + ' 人，' + failed + ' 人失败') : ('已标记 ' + (data.updated || 0) + ' 人已到'));
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '批量标记失败，再试一次'));
+      }
+      gaSigninBatchBusy.value = false;
+    }
 
     return {
       page, pageTransition, user, loggingIn, loginError, showPersonalGuide, loginTip,
@@ -6210,6 +7281,7 @@ createApp({
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
+      isAttendancePresent, isDetailCheckedIn, detailSigninBlocked,
       openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
@@ -6236,6 +7308,11 @@ createApp({
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe,
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
+      myOnetooneList, loadingMyOnetoone, openMyOnetoone, hasOnetooneEntry,
+      onetooneCandidates, onetooneSelectedChoices, onetooneCandidateQuery, visibleOnetooneCandidates, onetooneLoadingCandidates, onetooneCandidatesError, onetooneResult,
+      onetooneSelectFrom, onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
+      goOnetooneSelect, isOnetooneSelected, toggleOnetooneChoice, removeOnetooneChoice, submitOnetooneChoices, goOnetooneResult, switchOnetooneRound,
+      openOnetooneMsg, onOnetooneMsgBeforeClose,
       profileData, openProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
@@ -6270,13 +7347,20 @@ createApp({
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
       paUserDetail, paUserDetailShow, paUserDetailLoading, paUserDetailOid,
       openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,
-      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaFilteredList, gaStats, gaChipClass, gaRowSub, openGroupDetail,
-      gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaFlag, gaFlagSaving, onGaFlagChange, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
+      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaModeFilter, gaModeFilters, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail,
+      gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaDetailMode, gaModeText, gaModeSwitching, switchMode, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
+      gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninStats, gaSigninLoading, gaSigninError, gaSigninLoaded,
+      gaSigninQuery, gaSigninFilter, gaSigninShown, gaSigninBusy, gaSigninBatchBusy, gaSigninFiltered, gaSigninVisible,
+      gaSigninPendingCount, gaSigninOutCount, gaSigninStateText, loadSigninRoster, markSignin, onToggleSigninFlag,
+      confirmMarkAllPending, gaOnSigninTab,
       gaShowStartMain, gaShowDanger, gaShowNewRound, refreshGroupDetail,
       gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
       gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartMode, gaStartPreviewData, gaStartExpected, gaNewRoundKeepRounds, gaNewRoundKeepResults, openStartPopup, closeStartPopup, submitStartPreview,
       gaConfirmShow, gaConfirmInput, gaConfirmN, gaConfirmOk, cancelGaConfirm, doStartGroup,
-      gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, gaResultLoading, gaResultError, selectGaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
+      gaOtoShowDanger, gaOtoStartShow, gaOtoStartBusy, gaOtoStartPreview, gaOtoStartMode, gaOtoConfirmInput, gaOtoConfirmOk, openOtoStart, closeOtoStart, doOtoStart,
+      gaOtoRunBusy, startOtoRunFlow, gaOtoPeople, gaOtoOpen, gaOtoResultLoading, gaOtoResultError, loadGaOtoResult, selectGaOtoResultRound, gaOtoToggle,
+      gaOtoRounds, gaOtoLatestRound, gaOtoNextRound, gaOtoShowNewRound, gaOtoResultRound, gaOtoLoadedRound, gaOtoResultCount,
+      gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaJobKind, gaMaskTitle, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, gaResultLoading, gaResultError, selectGaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
     };
   }
 }).use(vant).mount('#app');

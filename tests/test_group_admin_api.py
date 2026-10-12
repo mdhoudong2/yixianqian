@@ -45,8 +45,27 @@ ADMIN = "ou_test_admin"
 ME = "ou_me"
 ACT = "A-0002"
 
+# 未迁移表的形态：基类 FakeBitable（无 field_exists）即精确模拟。fixture 会把模块
+# 全局的 FakeBitable 换成 _BatchFake，这里先留好原类的别名供「无栏位」用例使用。
+_UnmigratedFake = FakeBitable
+
 
 # ---------------------------------------------------------------- 桩数据
+
+class _BatchFake(FakeBitable):
+    """FakeBitable + batch_update_records + schema 级 field_exists（模拟已迁移表）。"""
+
+    def batch_update_records(self, table_id, records, batch_size=500):
+        updated = 0
+        for r in records or []:
+            if self.update_record(table_id, r["record_id"], r["fields"]):
+                updated += 1
+        return updated
+
+    def field_exists(self, table_id, field_name):
+        # 迁移后的活动表含一对一栏位（schema 级，与记录里有没有值无关）
+        return table_id == ACTIVITY_TABLE_ID and field_name == "一对一功能开启"
+
 
 def _user(oid, uid, gender, nickname):
     return {"record_id": f"rec_u_{oid}",
@@ -134,10 +153,14 @@ class Api:
 
 @pytest.fixture
 def api(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys.modules[__name__], "FakeBitable", _BatchFake)
     monkeypatch.setattr(lib_grouping, "log", lambda *a, **k: None)
     monkeypatch.setattr(app, "snap_find_user_by_openid", _find_user)
     monkeypatch.setattr(app.bitable, "search_records", lambda *a, **k: [])
     monkeypatch.setattr(app, "GROUPING_JOBS_FILE", str(tmp_path / "grouping_jobs.json"))
+    # 状态端点的活跃 job 探测会读两个 job 文件：一对一那个也要重定向到 tmp，
+    # 否则单测会去读真实数据目录（污染 + 非确定性）。
+    monkeypatch.setattr(app, "ONETOONE_JOBS_FILE", str(tmp_path / "onetoone_jobs.json"))
     lib_grouping.configure(lock_dir=str(tmp_path))
     app._rate_store.clear()
     return Api(monkeypatch, tmp_path)
@@ -183,6 +206,10 @@ ENDPOINTS = [
     ("GET", "/api/admin/group/job?job_id=x", None),
     ("GET", "/api/admin/group/result?activity_id=" + ACT, None),
     ("POST", "/api/admin/group/flag", {"activity_id": ACT, "enabled": True}),
+    # C4 现场签到三端点（同走 _require_admin + rate limit）
+    ("GET", "/api/admin/activity/signin?activity_id=" + ACT, None),
+    ("POST", "/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True}),
+    ("POST", "/api/admin/activity/signin/flag", {"activity_id": ACT, "enabled": True}),
 ]
 ENDPOINT_IDS = [p.split("?")[0].rsplit("/", 1)[-1] for m, p, _ in ENDPOINTS]
 
@@ -418,21 +445,28 @@ def test_a9_read_endpoints_use_fresh_snapshots(api):
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/activities")
     assert r.status_code == 200
-    assert set(api.fresh_calls) == {"activities", "group_selections", "group_results"}
+    assert set(api.fresh_calls) == {"activities", "group_selections", "group_results",
+                                    "onetoone_selections"}
     act = r.get_json()["activities"][0]
     assert act["activity_id"] == ACT and act["group_status"] == "收集中"
     assert act["available_rounds"] == [1, 2] and act["latest_round"] == 2
     assert act["submitted_count"] == 4 and act["has_results"] is True
+    # C3 加法字段：模式派生值（默认活动无一对一栏位 → none/否）
+    assert act["mode"] == "none" and act["conflict"] is False
+    assert act["onetoone_flag"] == "否" and act["onetoone_status"] == "未开始"
+    assert act["onetoone_submitted_count"] == 0
 
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/status?activity_id=" + ACT)
     assert r.status_code == 200
     assert set(api.fresh_calls) == {"activities", "group_selections", "signups",
-                                    "group_results"}
+                                    "group_results", "onetoone_selections",
+                                    "onetoone_results"}
     st = r.get_json()
     assert st["signup_count"] == 5 and st["submitted_count"] == 4
     assert st["unsubmitted_count"] == 1 and st["male_count"] == 2 and st["female_count"] == 2
     assert st["rounds"] == [1, 2] and st["latest_round"] == 2
+    assert st["mode"] == "none" and st["active_job"] is None
 
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/unsubmitted?activity_id=" + ACT)
@@ -457,7 +491,9 @@ def test_a10_flag_is_idempotent(api):
     r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
     assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是"}
+    # 迁移后的表含一对一栏位 → 开启时无条件合写对侧=否（schema 判别，见上方用例）
+    assert len(updates) == 1 \
+        and updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
     assert api.refresh_calls == ["activities"]
 
     # 真实环境 fresh=True 会从飞书读到刚写入的「是」；同步桩快照模拟这次实时读
@@ -465,6 +501,35 @@ def test_a10_flag_is_idempotent(api):
     r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
     assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
     assert len([c for c in fake.writes() if c[0] == "update"]) == 1, "幂等：不重复写"
+
+
+def test_group_flag_busy_returns_409_with_busy_activity(api, monkeypatch):
+    """flag 写入与执行作业共用活动锁：撞锁快速失败回 409，零写入、无 ok 字段。"""
+    fake = api.install()
+
+    @contextlib.contextmanager
+    def busy_lock(activity_id, timeout):
+        raise lib_grouping.GroupingBusy(activity_id)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(lib_grouping, "grouping_lock", busy_lock)
+    r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 409
+    body = r.get_json()
+    assert "ok" not in body and body["busy_activity_id"] == ACT
+    assert fake.writes() == [], "抢锁失败不得写任何东西"
+
+
+def test_group_flag_write_failed_returns_500(api):
+    """update_record 返回假 → 500 WRITE_FAILED，绝不回 ok:true（静默写失败防护）。"""
+    fake = api.install()
+    fake.update_record = lambda *a, **k: None
+
+    r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 500
+    body = r.get_json()
+    assert body["code"] == "WRITE_FAILED" and "ok" not in body
+    assert api.refresh_calls == [], "写失败不刷新快照"
 
 
 # ---------------------------------------------------------------- 迁移红线 / 附加
@@ -590,6 +655,49 @@ def test_payload_validation_and_missing_resources(api):
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
     assert api.post("/api/admin/group/run",
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
+
+
+# ---------------------------------------------------------------- C4：现场签到端点冒烟
+
+def test_signin_admin_roster_marks_and_flag(api):
+    """签到端点冒烟：fresh 名册 + 两态单笔 + 批次只补空 + flag 幂等。
+
+    完整契约（失败注入/多条报名/迟到拒绝等）在 tests/test_signin_gate.py。
+    """
+    act = _act(签到功能开启="是")
+    signups = [_signup("ou_m0", "小北"), _signup("ou_f0", "阿南")]
+    signups[0]["fields"]["签到状态"] = "迟到"   # 历史遗留值：也算已到（D13）
+    fake = api.install(activity=act, signups=signups)
+
+    body = api.get("/api/admin/activity/signin?activity_id=" + ACT).get_json()
+    assert body["signin_enabled"] is True
+    assert body["stats"] == {"checked_in": 1, "signed_up": 2, "not_checked_in": 1}
+    by_oid = {x["open_id"]: x for x in body["roster"]}
+    assert by_oid["ou_m0"]["checked_in"] is True
+    assert by_oid["ou_m0"]["user_id"] == "U-0001"
+
+    r = api.post("/api/admin/activity/signin",
+                 {"activity_id": ACT, "open_id": "ou_f0", "state": "未到"})
+    assert r.status_code == 200
+    row = [x for x in fake.tables[SIGNUP_TABLE_ID]
+           if x["fields"]["报名人open_id"] == "ou_f0"][0]
+    assert row["fields"]["签到状态"] == "未到"
+
+    # 批次只补空：m0 是「迟到」（非空，跳过）、f0 是「未到」（非空，跳过）
+    r2 = api.post("/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True})
+    assert r2.get_json() == {"ok": True, "activity_id": ACT, "updated": 0,
+                             "skipped": 2, "failed": 0}
+
+    # flag：已是「是」→ 幂等零写；关 → 写「否」
+    updates_before = [c for c in fake.writes() if c[0] == "update"]
+    assert api.post("/api/admin/activity/signin/flag",
+                    {"activity_id": ACT, "enabled": True}).get_json()["signin_flag"] == "是"
+    assert [c for c in fake.writes() if c[0] == "update"] == updates_before, "幂等：不重复写"
+    assert api.post("/api/admin/activity/signin/flag",
+                    {"activity_id": ACT, "enabled": False}).get_json()["signin_flag"] == "否"
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == len(updates_before) + 1
+    assert updates[-1][3] == {"签到功能开启": "否"}
 
 
 # ---------------------------------------------------------------- 审查必修 1/2/5：去重口径
@@ -800,3 +908,89 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
     assert r.status_code == 200
     assert events == ["lock_enter", "lookup", "create", "lock_exit"], \
         "查 existing 与 create/update 必须同处锁内，且查询在前"
+
+
+# ---------------------------------------------------------------- C3：互斥 guard 与条件合并
+
+def test_group_start_blocked_when_onetoone_active(api):
+    """「开始填志愿」：对面一对一 flag=是 或状态∈{收集中,已截止} → 409 零写入。"""
+    fake = api.install(activity=_act(一对一功能开启="是"))
+    r = api.post("/api/admin/group/start",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    assert r.status_code == 409
+    assert r.get_json()["code"] == "EXCLUSIVE_MODE"
+    assert fake.writes() == []
+
+    fake2 = api.install(activity=_act(一对一状态="收集中"))
+    r2 = api.post("/api/admin/group/start",
+                  {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    assert r2.status_code == 409
+    assert r2.get_json()["code"] == "EXCLUSIVE_MODE"
+    assert fake2.writes() == []
+
+
+def test_group_run_blocked_when_onetoone_flag_on(api):
+    """「执行分组」：对面一对一 flag=是 → job 结果 EXCLUSIVE_MODE、零写入。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(activity=_act(一对一功能开启="是"),
+                       signups=signups, selections=selections)
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done"
+    assert job["result"]["code"] == "EXCLUSIVE_MODE"
+    assert fake.writes() == []
+
+
+def test_group_guard_noop_without_onetoone_fields(api):
+    """no-op 对照：活动表没有一对一栏位时（既有生产/parity 桩表形态），
+    execute_round 照常跑到幂等分支——guard 没有改变旧行为。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(activity=_act(), signups=signups, selections=selections,
+                       results=[_res("ou_m0", 1, "1")])
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["result"]["code"] == "ALREADY_DONE", "无对侧栏位 → 不触发 guard"
+    assert not [c for c in fake.writes() if c[0] == "batch_delete"]
+
+
+def test_set_group_flag_merges_counterpart_when_field_exists(api):
+    """schema 判别：表里有一对一栏位 → 开启分组时**无条件**合写「一对一=否」（同一笔）。
+
+    修复语义：不再看快照里的现值（并发窗口里读到的必是旧值；空值场景
+    search_records 还会省略 key）。逐一覆盖 一对一=是 / =否 / 空（key 缺失）。"""
+    for value in ("是", "否", None):
+        fields = {"分组功能开启": "否"}
+        if value is not None:
+            fields["一对一功能开启"] = value
+        fake = api.install(activity=_act(**fields))
+        r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+        assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
+        updates = [c for c in fake.writes() if c[0] == "update"]
+        assert len(updates) == 1, f"value={value!r} 必须恰一笔 update（同一笔 payload 合写两栏）"
+        assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}, \
+            f"value={value!r} 也必须合写"
+
+
+def test_set_group_flag_no_merge_without_field_exists(api, monkeypatch):
+    """表里没有该栏位（未迁移形态/parity 桩表）→ 只写自身，写序列逐字不变。"""
+    monkeypatch.setattr(sys.modules[__name__], "FakeBitable", _UnmigratedFake)
+    fake = api.install(activity=_act(分组功能开启="否", 一对一功能开启="是"))
+    r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    assert r.status_code == 200
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是"}
+
+    fake2 = api.install(activity=_act(分组功能开启="否"))
+    api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
+    updates2 = [c for c in fake2.writes() if c[0] == "update"]
+    assert len(updates2) == 1 and updates2[0][3] == {"分组功能开启": "是"}
+
+
+def test_set_group_flag_disable_never_touches_onetoone(api):
+    """关闭分组只写自身=否；即使一对一=是（脏数据）也不合并不动它。"""
+    fake = api.install(activity=_act(分组功能开启="是", 一对一功能开启="是"))
+    api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": False})
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "否"}

@@ -1,0 +1,183 @@
+"""run_onetoone_matching 双向奔赴 + 资料相似度 top-N 必聊名单单测（不联网）。
+
+覆盖：我的志愿按优先级排序（无人反向选我时）、未选择但选了我的人「惊喜位」升位、
+0 志愿纯按对方意愿、异性不足按实际人数、性别缺失跳过、各自独立、资料相似度区分同分对象。
+
+profile 相似度项：多数用例传空 profiles（{} → 每对 match_score 都是同一个中性分，
+不改变排序），只在「资料相似度区分同分对象」用例里构造真实资料。
+"""
+import sys
+
+sys.path.insert(0, "bot")
+
+from onetoone import run_onetoone_matching  # noqa: E402
+
+
+def _ids(n, prefix, gender):
+    return [{"id": f"{prefix}{i}", "gender": gender} for i in range(n)]
+
+
+def _sel(selector, targets_priorities):
+    """targets_priorities: [(target_id, priority), ...]"""
+    return {selector: [{"id": t, "priority": p} for t, p in targets_priorities]}
+
+
+def _ranked(result, oid):
+    return [target for target, _ in result[oid]]
+
+
+def test_my_choices_ranked_by_priority_when_no_mutual():
+    # 1 男 + 10 女，男选前 7 个志愿；无人反向选他 → 严格按我的优先级排序
+    ps = [{"id": "m0", "gender": "male"}] + _ids(10, "f", "female")
+    sel = _sel("m0", [(f"f{i}", i + 1) for i in range(7)])
+    result = run_onetoone_matching(ps, sel, {}, top_n=10)
+
+    assert len(result["m0"]) == 10
+    # 前 7 = 志愿 f0..f6 按优先级；后 3 = f7/f8/f9（未选择，同分，稳定序）
+    assert _ranked(result, "m0") == [f"f{i}" for i in range(10)]
+
+
+def test_unselected_who_chose_me_gets_surprise_slot():
+    # 男选 f0..f6；f7（男没选）反向第 1 志愿选男 → f7 升到第 4 名（45 分 > f3 的 44 分）
+    ps = [{"id": "m0", "gender": "male"}] + _ids(10, "f", "female")
+    sel = _sel("m0", [(f"f{i}", i + 1) for i in range(7)])
+    sel["f7"] = [{"id": "m0", "priority": 1}]
+    result = run_onetoone_matching(ps, sel, {}, top_n=10)
+
+    got = _ranked(result, "m0")
+    assert got[:3] == ["f0", "f1", "f2"]       # 我的前 3 志愿恒在最前
+    assert got[3] == "f7"                       # 惊喜位：没选但选了我（第1志愿）
+    assert got[4:] == ["f3", "f4", "f5", "f6", "f8", "f9"]
+
+
+def test_zero_choices_ranked_by_their_will():
+    # 0 志愿：纯按「谁选我、把我排第几」排序
+    ps = [{"id": "m0", "gender": "male"},
+          {"id": "f0", "gender": "female"},
+          {"id": "f1", "gender": "female"},
+          {"id": "f2", "gender": "female"}]
+    sel = {"f0": [{"id": "m0", "priority": 1}],
+           "f1": [{"id": "m0", "priority": 3}]}
+    result = run_onetoone_matching(ps, sel, {}, top_n=10)
+    assert _ranked(result, "m0") == ["f0", "f1", "f2"]
+
+
+def test_insufficient_returns_actual_count():
+    ps = [{"id": "m0", "gender": "male"}] + _ids(3, "f", "female")
+    sel = _sel("m0", [("f0", 1), ("f1", 2), ("f2", 3)])
+    assert len(run_onetoone_matching(ps, sel, {}, top_n=10)["m0"]) == 3
+
+    solo = run_onetoone_matching([{"id": "m0", "gender": "male"}], {}, {}, top_n=10)
+    assert solo["m0"] == []
+
+
+def test_gender_missing_skipped():
+    ps = [{"id": "m0", "gender": "male"},
+          {"id": "f0", "gender": "female"},
+          {"id": "x0", "gender": ""}]
+    result = run_onetoone_matching(ps, {}, {}, top_n=10)
+    assert result["x0"] == []
+    assert _ranked(result, "m0") == ["f0"]
+    assert _ranked(result, "f0") == ["m0"]
+
+
+def test_each_person_independent():
+    # 各自独立：A 选 B、B 选 C，互不影响各自名单
+    ps = [{"id": "m0", "gender": "male"},
+          {"id": "m1", "gender": "male"},
+          {"id": "f0", "gender": "female"},
+          {"id": "f1", "gender": "female"}]
+    sel = {"m0": [{"id": "f0", "priority": 1}],
+           "f0": [{"id": "m1", "priority": 1}]}
+    result = run_onetoone_matching(ps, sel, {}, top_n=10)
+    assert _ranked(result, "m0")[0] == "f0"   # 我的第一志愿
+    assert _ranked(result, "f0")[0] == "m1"   # 她的第一志愿
+    # m1 无志愿，但 f0 选了 m1 → m1 名单里 f0 因「对方意愿」排最前
+    assert _ranked(result, "m1")[0] == "f0"
+
+
+def test_profile_similarity_breaks_ties():
+    # 都不互选：my=their=30 同分，纯靠资料相似度区分——爱好重合度高的排前。
+    ps = [{"id": "m0", "gender": "male"},
+          {"id": "f0", "gender": "female"},
+          {"id": "f1", "gender": "female"}]
+    profiles = {
+        "m0": {"hobbies": "看书"},
+        "f0": {"hobbies": "看书,跑步"},   # 与 m0 有一个共同爱好（Jaccard 1/2）
+        "f1": {"hobbies": "游泳"},         # 与 m0 零重合
+    }
+    result = run_onetoone_matching(ps, {}, profiles, top_n=10)
+    assert _ranked(result, "m0") == ["f0", "f1"]
+
+
+# ---------------------------------------------------------------- profile_of（C1 下沉进 lib）
+
+from lib import onetoone as lib_onetoone  # noqa: E402
+
+_PROFILE_FIELDS = {
+    "self_hobbies": "爱好", "self_sports": "运动", "self_traits": "性格",
+    "education": "学历", "mbti": "MBTI", "city": "城市", "church": "教堂",
+}
+
+
+def test_profile_of_reads_given_field_names():
+    fields = {
+        "爱好": ["看书", "跑步"], "运动": ["羽毛球"], "性格": ["外向"],
+        "学历": "本科", "MBTI": ["ENFP"], "城市": "厦门", "教堂": "某堂",
+    }
+    prof = lib_onetoone.profile_of(fields, field_names=_PROFILE_FIELDS)
+    assert prof["hobbies"] == frozenset({"看书", "跑步"})
+    assert prof["sports"] == frozenset({"羽毛球"})
+    assert prof["traits"] == frozenset({"外向"})
+    assert prof["education"] == "本科"
+    assert prof["mbti"] == frozenset({"ENFP"})
+    assert prof["city"] == "厦门"
+    assert prof["church"] == "某堂"
+
+
+def test_profile_of_missing_fields_are_empty():
+    prof = lib_onetoone.profile_of({}, field_names=_PROFILE_FIELDS)
+    assert prof["hobbies"] == frozenset()
+    assert prof["education"] == ""
+
+
+def test_bot_profile_of_uses_bot_constants():
+    """bot/auto_tasks._profile_of 委托 lib.onetoone.profile_of，栏位名取 bot 常量。"""
+    import auto_tasks as at
+
+    fields = {at.FIELD_SELF_HOBBIES: ["看书", "爬山"], at.FIELD_CITY: "厦门"}
+    prof = at._profile_of(fields)
+    assert prof["hobbies"] == frozenset({"看书", "爬山"})
+    assert prof["city"] == "厦门"
+
+
+# ---------------------------------------------------------------- validate_choices（C2 统一 1..7）
+
+_PARTICIPANTS = [
+    {"open_id": "ou_m1", "gender": "男性"},
+    {"open_id": "ou_f1", "gender": "女性"},
+    {"open_id": "ou_f2", "gender": "女性"},
+]
+
+
+def test_validate_choices_accepts_one_to_seven():
+    assert lib_onetoone.validate_choices(["ou_f1"], _PARTICIPANTS, "男性")["code"] == "OK"
+    assert lib_onetoone.validate_choices(["ou_f1", "ou_f2"], _PARTICIPANTS, "男性")["code"] == "OK"
+
+
+def test_validate_choices_rejects_count_out_of_range():
+    assert lib_onetoone.validate_choices([], _PARTICIPANTS, "男性")["code"] == "COUNT"
+    assert lib_onetoone.validate_choices(["ou_f1"] * 8, _PARTICIPANTS, "男性")["code"] == "COUNT"
+    assert lib_onetoone.validate_choices([123], _PARTICIPANTS, "男性")["code"] == "COUNT"
+
+
+def test_validate_choices_rejects_duplicates():
+    res = lib_onetoone.validate_choices(["ou_f1", "ou_f1"], _PARTICIPANTS, "男性")
+    assert res["code"] == "DUPLICATE"
+
+
+def test_validate_choices_rejects_non_candidates():
+    # 含自己 / 含同性 / 含未报名者：都必须是 INVALID_TARGET 且带第 N 个志愿下标
+    for bad in (["ou_m1"], ["ou_x"]):
+        res = lib_onetoone.validate_choices(bad, _PARTICIPANTS, "男性")
+        assert res["code"] == "INVALID_TARGET" and res["index"] == 0

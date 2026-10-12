@@ -1,0 +1,481 @@
+"""一对一 H5 API 契约（不联网，桩表驱动；Flask test client + cookie session）。
+
+覆盖四张防回归网（审核修复）：
+1. chatted 作者过滤：纯函数单测 + /result 端点（别人的留言不得标「已聊」）；
+2. select 校验：0/8/重复/含自己/含同性/未报名者 → 400 且零写入；合法 1/7 个 → 写 1 行；
+3. 锁内查重：并发双击 create 恰 1 次、表内 1 行；快照无记录、live 有 → update 不 create；
+4. 决定性读取 fresh：快照 activities=未开始、live=收集中/已完成 → 各端点以 live 为准。
+
+另覆盖 my_onetoone / my_groups 过滤已取消 + 按活动去重、me=None 不 500。
+
+桩法比照 tests/test_group_admin_api.py：只桩「存取」，差集/去重/锁/刷新调用全跑真实现。
+"""
+import os
+import sys
+import threading
+import time
+
+import pytest
+
+_WEB_BACKEND = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web", "backend")
+if _WEB_BACKEND not in sys.path:
+    sys.path.insert(0, _WEB_BACKEND)
+
+import app  # noqa: E402
+
+from lib import grouping as lib_grouping  # noqa: E402
+
+# 一对一那两张表在 CI 无 local_config 时默认值为空——统一换成测试表 ID，
+# app 与 bitable 两个模块的全局都要换（端点与 bitable.get_user_onetoone_selection 各用各的）。
+SELECT_TBL = "tbl_test_oto_select"
+RESULT_TBL = "tbl_test_oto_result"
+ACT = "A-0002"
+ME = "ou_me"
+
+
+# ---------------------------------------------------------------- 假表
+
+class FakeBitable:
+    """够用的内存假表：`operator: is` / `isNot`，可注入搜索失败与读延迟。"""
+
+    def __init__(self, tables=None, search_fails=None, search_sleep=None):
+        self.tables = {k: [{"record_id": r["record_id"], "fields": dict(r["fields"])}
+                           for r in v] for k, v in (tables or {}).items()}
+        self.search_fails = search_fails or set()
+        self.search_sleep = search_sleep or {}
+        self.calls = []
+        self._seq = 0
+
+    def search_records(self, table_id, filter_conditions=None, *a, **k):
+        self.calls.append(("search", table_id))
+        if table_id in self.search_fails:
+            return None
+        conds = filter_conditions or {}
+        if isinstance(conds, dict):
+            conds = conds.get("conditions", [])
+        rows = [r for r in self.tables.get(table_id, []) if self._match(r, conds)]
+        # 先取快照再延迟返回：模拟「读在途」窗口。锁外查重的双击会各自拿到
+        # 同一份空快照后各插一行；锁内查重时后到者醒来看到的是前者已写入的行。
+        if table_id in self.search_sleep:
+            time.sleep(self.search_sleep[table_id])
+        return rows
+
+    @staticmethod
+    def _match(row, conds):
+        for c in conds:
+            want = (c.get("value") or [""])[0]
+            got = row["fields"].get(c.get("field_name"), "")
+            if isinstance(got, list):
+                got = "".join(x.get("text", "") for x in got)
+            if c.get("operator") == "isNot":
+                if got == want:
+                    return False
+            elif got != want:
+                return False
+        return True
+
+    def update_record(self, table_id, record_id, fields):
+        self.calls.append(("update", table_id, record_id, dict(fields)))
+        for r in self.tables.get(table_id, []):
+            if r["record_id"] == record_id:
+                r["fields"].update(fields)
+                return r
+        return None
+
+    def create_record(self, table_id, fields):
+        self._seq += 1
+        row = {"record_id": f"rec_new{self._seq}", "fields": dict(fields)}
+        self.tables.setdefault(table_id, []).append(row)
+        self.calls.append(("create", table_id, dict(fields)))
+        return row
+
+    def writes(self):
+        return [c for c in self.calls if c[0] != "search"]
+
+
+# ---------------------------------------------------------------- 桩数据
+
+def _user_fields(oid, uid, gender, nick, status="单身"):
+    return {"飞书用户ID": oid, "用户ID": uid, "性别": gender, "昵称": nick, "账号状态": status}
+
+
+USERS = {
+    ME: _user_fields(ME, "U-0001", "男性", "小北"),
+    "ou_m2": _user_fields("ou_m2", "U-0002", "男性", "阿北"),
+    "ou_f1": _user_fields("ou_f1", "U-0003", "女性", "阿南"),
+    "ou_f2": _user_fields("ou_f2", "U-0004", "女性", "小西"),
+    "ou_f3": _user_fields("ou_f3", "U-0005", "女性", "小东"),
+    "ou_f4": _user_fields("ou_f4", "U-0006", "女性", "小南"),
+    "ou_f5": _user_fields("ou_f5", "U-0007", "女性", "小中"),
+    "ou_f6": _user_fields("ou_f6", "U-0008", "女性", "小六"),
+    "ou_f7": _user_fields("ou_f7", "U-0009", "女性", "小七"),
+    "ou_f9": _user_fields("ou_f9", "U-0011", "女性", "未报名"),
+}
+FEMME_SEVEN = ["ou_f1", "ou_f2", "ou_f3", "ou_f4", "ou_f5", "ou_f6", "ou_f7"]
+
+
+def _act(status="收集中", activity_id=ACT, group_status="未开始"):
+    return {"record_id": f"rec_act_{activity_id}",
+            "fields": {"活动ID": activity_id, "活动名称": "关系自洽",
+                       "一对一状态": status, "一对一功能开启": "是",
+                       "分组状态": group_status, "分组功能开启": "否"}}
+
+
+def _signup(oid, status="已报名", activity_id=ACT):
+    return {"record_id": f"rec_s_{activity_id}_{oid}",
+            "fields": {"活动ID": activity_id, "报名人open_id": oid,
+                       "报名人昵称": USERS.get(oid, {}).get("昵称", "某人"), "状态": status}}
+
+
+def _sel(oid, choices=("ou_f1",), activity_id=ACT):
+    fields = {"活动ID": activity_id, "选择人open_id": oid, "选择人性别": "男性"}
+    for i in range(7):
+        fields[f"第{i+1}志愿"] = choices[i] if i < len(choices) else ""
+    return {"record_id": f"rec_oto_{activity_id}_{oid}", "fields": fields}
+
+
+def _res(oid, target, rank=1, activity_id=ACT):
+    return {"record_id": f"rec_res_{activity_id}_{oid}_{target}",
+            "fields": {"活动ID": activity_id, "排名": rank, "用户open_id": oid,
+                       "必聊对象open_id": target, "必聊对象昵称": USERS.get(target, {}).get("昵称", "")}}
+
+
+def _msg(author, target, status="正常", content="历史留言"):
+    return {"record_id": f"rec_msg_{author}_{target}_{status}",
+            "fields": {"留言人open_id": author, "目标用户open_id": target,
+                       "状态": status, "内容": content}}
+
+
+def _signups_all():
+    return [_signup(o) for o in [ME, "ou_m2"] + FEMME_SEVEN]
+
+
+def _form(*vals):
+    return {f"choice_{i}": v for i, v in enumerate(vals)}
+
+
+# ---------------------------------------------------------------- 测试脚手架
+
+class Api:
+    """假表 + 快照桩（stale/live 分离）+ 会话就绪的 test client。"""
+
+    def __init__(self, monkeypatch, tmp_path):
+        self.monkeypatch = monkeypatch
+        monkeypatch.setattr(app, "ONETOONE_SELECT_TABLE", SELECT_TBL)
+        monkeypatch.setattr(app, "ONETOONE_RESULT_TABLE", RESULT_TBL)
+        monkeypatch.setattr(app.bitable, "ONETOONE_SELECT_TABLE", SELECT_TBL)
+        monkeypatch.setattr(app.bitable, "ONETOONE_RESULT_TABLE", RESULT_TBL)
+        monkeypatch.setattr(lib_grouping, "log", lambda *a, **k: None)
+        app.configure_grouping_lib(str(tmp_path))
+        app._rate_store.clear()
+
+        self.fresh_calls = []
+        self.refresh_calls = []
+        self.stale = {}
+        self.live_activities = None
+        self.users = dict(USERS)
+        self.me = {"record_id": "rec_u_me", "fields": dict(USERS[ME])}
+
+        monkeypatch.setattr(app, "_snap_live", self._snap_live)
+        monkeypatch.setattr(app, "_snap", self._snap_live)
+        monkeypatch.setattr(app, "_snap_fresh", self._fresh)
+        monkeypatch.setattr(app, "refresh_snapshot_table_async", self.refresh_calls.append)
+        monkeypatch.setattr(app, "snap_self_user", lambda: self.me)
+        monkeypatch.setattr(app, "snap_find_user_by_openid", self._find_user)
+
+        self.client = app.app.test_client()
+        self.client.set_cookie("yxq_session", app.create_session(ME))
+
+    # -- 快照桩 --
+    def _snap_live(self, key):
+        return list(self.stale.get(key, []))
+
+    def _fresh(self, key):
+        self.fresh_calls.append(key)
+        if key == "activities" and self.live_activities is not None:
+            return list(self.live_activities)
+        return list(self.stale.get(key, []))
+
+    def _find_user(self, oid):
+        fields = self.users.get(oid)
+        return {"record_id": f"rec_u_{oid}", "fields": dict(fields)} if fields else None
+
+    # -- 数据安装 --
+    def install(self, *, activities=None, stale_activities=None, live_activities=None,
+                signups=None, stale_signups=None, selections=(), stale_selections=None,
+                results=(), stale_results=None, messages=(), users=None, me=True,
+                search_sleep=None, search_fails=None):
+        if users is not None:
+            self.users = dict(users)
+        self.me = ({"record_id": "rec_u_me", "fields": dict(self.users[ME])} if me else None)
+
+        acts = [_act()] if activities is None else list(activities)
+        signups = _signups_all() if signups is None else list(signups)
+        self.fake = FakeBitable({
+            app.bitable.ACTIVITY_TABLE_ID: acts,
+            app.bitable.SIGNUP_TABLE_ID: signups,
+            SELECT_TBL: list(selections),
+            RESULT_TBL: list(results),
+        }, search_sleep=search_sleep, search_fails=search_fails)
+        self.monkeypatch.setattr(app.bitable, "search_records", self.fake.search_records)
+        self.monkeypatch.setattr(app.bitable, "create_record", self.fake.create_record)
+        self.monkeypatch.setattr(app.bitable, "update_record", self.fake.update_record)
+
+        self.stale = {
+            "activities": list(stale_activities if stale_activities is not None else acts),
+            "signups": list(stale_signups if stale_signups is not None else signups),
+            "onetoone_selections": list(stale_selections if stale_selections is not None
+                                        else selections),
+            "onetoone_results": list(stale_results if stale_results is not None else results),
+            "messages": list(messages),
+            "users": [{"record_id": f"rec_u_{o}", "fields": dict(f)}
+                      for o, f in self.users.items()],
+            "group_selections": [],
+            "group_results": [],
+            "observers": [],
+        }
+        self.live_activities = list(live_activities) if live_activities is not None else None
+        return self.fake
+
+    def get(self, path):
+        return self.client.get(path)
+
+    def post(self, path, payload):
+        return self.client.post(path, json=payload,
+                                headers={"X-Requested-With": "XMLHttpRequest"})
+
+
+@pytest.fixture
+def api(monkeypatch, tmp_path):
+    a = Api(monkeypatch, tmp_path)
+    a.install()
+    return a
+
+
+def _me_client():
+    c = app.app.test_client()
+    c.set_cookie("yxq_session", app.create_session(ME))
+    return c
+
+
+def _post_as(c, path, payload):
+    return c.post(path, json=payload, headers={"X-Requested-With": "XMLHttpRequest"})
+
+
+# ================================================================
+# 网 1：chatted 作者过滤
+# ================================================================
+
+def test_chatted_targets_pure_function():
+    """别人的留言、已删除的留言都不算「已聊」——只认我本人发出的。"""
+    msgs = [
+        _msg("ou_b", "ou_x"),
+        _msg(ME, "ou_x"),
+        _msg(ME, "ou_y", status="已删除"),
+        _msg("ou_c", "ou_z"),
+    ]
+    assert app._chatted_targets(msgs, ME) == {"ou_x"}
+
+
+def test_result_chatted_requires_author_endpoint(api):
+    """/result 端到端：对 X 有「别人→X、我→X」时，X 已聊；Y 只有我的已删除留言 → 未聊。"""
+    api.install(
+        activities=[_act("已完成")],
+        live_activities=[_act("已完成")],
+        results=[_res(ME, "ou_f1", 1), _res(ME, "ou_f2", 2), _res(ME, "ou_f3", 3)],
+        messages=[
+            _msg("ou_m2", "ou_f1"),               # 别人的留言
+            _msg(ME, "ou_f1"),                    # 我自己的留言
+            _msg(ME, "ou_f2", status="已删除"),   # 我的已删除留言
+            _msg("ou_m2", "ou_f3"),               # 别人给 Z 的留言
+        ],
+    )
+    r = api.get(f"/api/activities/{ACT}/onetoone/result")
+    assert r.status_code == 200
+    chatted = {p["openid"]: p["chatted"] for p in r.get_json()["partners"]}
+    assert chatted == {"ou_f1": True, "ou_f2": False, "ou_f3": False}
+
+
+# ================================================================
+# 网 2：select 校驗（400 且零写入）
+# ================================================================
+
+def _valid_choices(n):
+    return FEMME_SEVEN[:n]
+
+
+@pytest.mark.parametrize("choices,err", [
+    ([], "请至少选择一个志愿"),
+    (FEMME_SEVEN + ["ou_f1"], "最多选择7个志愿"),
+    (["ou_f1", "ou_f1"], "不能重复选择同一人"),
+    ([ME], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
+    (["ou_m2"], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
+    (["ou_f9"], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
+], ids=["0个", "8个", "重复", "含自己", "含同性", "含未报名者"])
+def test_select_invalid_is_400_with_zero_writes(api, choices, err):
+    fake = api.install()
+    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": choices})
+    assert r.status_code == 400
+    assert r.get_json()["error"] == err
+    assert fake.writes() == [], "非法志愿必须零写入"
+
+
+@pytest.mark.parametrize("n", [1, 7], ids=["1个", "7个"])
+def test_select_accepts_one_to_seven_and_writes_one_row(api, n):
+    fake = api.install()
+    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(n)})
+    assert r.status_code == 200
+    creates = [c for c in fake.writes() if c[0] == "create"]
+    assert len(creates) == 1
+    assert len(fake.tables[SELECT_TBL]) == 1
+
+
+def test_select_me_none_is_not_500(api):
+    api.install(me=False)
+    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(1)})
+    assert r.status_code == 404, "me=None 必须被门禁/防护拦住，不能 500"
+    assert r.get_json()["error"] == "用户不存在"
+
+
+# ================================================================
+# 网 3：鎖內查重
+# ================================================================
+
+def test_select_concurrent_double_click_creates_once(api):
+    """两个线程同时提交：查重与写入同处活动锁内 → create 恰 1 次、表内 1 行。
+
+    （把查重挪出锁外时，两次查空会各 create 一次，本用例出现 2 行即红。）
+    """
+    fake = api.install(search_sleep={SELECT_TBL: 0.3})
+    codes = []
+
+    def worker():
+        c = _me_client()
+        r = _post_as(c, f"/api/activities/{ACT}/onetoone/select",
+                     {"choices": _valid_choices(1)})
+        codes.append(r.status_code)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert codes == [200, 200]
+    creates = [c for c in fake.writes() if c[0] == "create"]
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(creates) == 1, "并发双击只应 create 一次"
+    assert len(updates) == 1, "后到的一次应命中已有记录走 update"
+    assert len(fake.tables[SELECT_TBL]) == 1, "表内只该有 1 行"
+
+
+def test_select_snapshot_miss_falls_back_to_live_update(api):
+    """快照无记录、live 有 → 走 update 而不是 create（实时兜底）。"""
+    existing = _sel(ME)
+    fake = api.install(selections=[existing], stale_selections=[])
+    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(2)})
+    assert r.status_code == 200
+    assert not [c for c in fake.writes() if c[0] == "create"]
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][2] == existing["record_id"]
+
+
+# ================================================================
+# 网 4：決定性讀取 fresh
+# ================================================================
+
+def _live_vs_stale(status_live, status_stale="未开始"):
+    return {"activities": [_act(status_live)],
+            "stale_activities": [_act(status_stale)],
+            "live_activities": [_act(status_live)],
+            "signups": _signups_all(),
+            "stale_signups": _signups_all()}
+
+
+def test_candidates_uses_live_status(api):
+    api.install(**_live_vs_stale("收集中"))
+    api.fresh_calls.clear()
+    r = api.get(f"/api/activities/{ACT}/onetoone/candidates")
+    assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
+    assert "activities" in api.fresh_calls
+
+
+def test_select_uses_live_status(api):
+    api.install(**_live_vs_stale("收集中"))
+    api.fresh_calls.clear()
+    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(1)})
+    assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
+    assert "activities" in api.fresh_calls
+
+
+def test_status_uses_live_status(api):
+    api.install(**_live_vs_stale("收集中"))
+    api.fresh_calls.clear()
+    r = api.get(f"/api/activities/{ACT}/onetoone/status")
+    assert r.status_code == 200
+    assert r.get_json()["onetoone_status"] == "收集中"
+    assert "activities" in api.fresh_calls
+
+
+def test_result_uses_live_status(api):
+    api.install(
+        activities=[_act("已完成")],
+        stale_activities=[_act("未开始")],
+        live_activities=[_act("已完成")],
+        results=[_res(ME, "ou_f1", 1)],
+    )
+    api.fresh_calls.clear()
+    r = api.get(f"/api/activities/{ACT}/onetoone/result")
+    assert r.status_code == 200, "快照「未开始」、live「已完成」时应以 live 为准"
+    assert r.get_json()["partners"][0]["openid"] == "ou_f1"
+    assert "activities" in api.fresh_calls
+
+
+# ================================================================
+# my_onetoone / my_groups：过滤已取消 + 按活动去重
+# ================================================================
+
+def _cancelled_and_active_signups():
+    rows = [_signup(ME, status="已取消") for _ in range(4)]
+    rows.append(_signup(ME))  # 唯一有效的一条（同活动）
+    return rows
+
+
+def test_my_onetoone_filters_cancelled_and_dedupes(api):
+    api.install(
+        activities=[_act("已完成")],
+        live_activities=[_act("已完成")],
+        signups=_cancelled_and_active_signups(),
+        stale_signups=_cancelled_and_active_signups(),
+    )
+    api.fresh_calls.clear()
+    r = api.get("/api/activities/mine/onetoone")
+    acts = r.get_json()["activities"]
+    assert len(acts) == 1, "4 条已取消 + 1 条有效同活动只该出 1 张卡"
+    assert acts[0]["activity_id"] == ACT
+    assert api.fresh_calls.count("activities") == 1, "活动列表一次性 fresh 读（消 N+1）"
+
+
+def test_my_onetoone_flag_ignores_cancelled(api):
+    api.install(
+        activities=[_act("已完成")],
+        live_activities=[_act("已完成")],
+        signups=[_signup(ME, status="已取消")],
+        stale_signups=[_signup(ME, status="已取消")],
+    )
+    r = api.get("/api/activities/mine/onetoone/flag")
+    assert r.get_json()["has_onetoone_activity"] is False
+
+
+def test_my_groups_filters_cancelled_and_dedupes(api):
+    api.install(
+        activities=[_act("已完成", group_status="收集中")],
+        live_activities=[_act("已完成", group_status="收集中")],
+        signups=_cancelled_and_active_signups(),
+        stale_signups=_cancelled_and_active_signups(),
+    )
+    r = api.get("/api/activities/mine/groups")
+    acts = r.get_json()["activities"]
+    assert len(acts) == 1
+    assert acts[0]["activity_id"] == ACT

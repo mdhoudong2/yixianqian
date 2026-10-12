@@ -54,6 +54,9 @@ def configure_grouping_lib(lock_dir):
             "male_per_group": FIELD_ACT_MALE_PER_GROUP,
             "female_per_group": FIELD_ACT_FEMALE_PER_GROUP,
             "group_flag": FIELD_ACT_GROUP_FLAG,
+            "onetoone_flag": FIELD_ACT_ONETOONE_FLAG,
+            "onetoone_status": FIELD_ACT_ONETOONE_STATUS,
+            "signin_flag": FIELD_ACT_SIGNIN_FLAG,
             "gs_activity_id": FIELD_GS_ACTIVITY_ID,
             "gs_selector_oid": FIELD_GS_SELECTOR_OID,
             "gs_selector_gender": FIELD_GS_SELECTOR_GENDER,
@@ -68,6 +71,7 @@ def configure_grouping_lib(lock_dir):
             "signup_status": FIELD_SIGNUP_STATUS,
             "signup_openid": FIELD_SIGNUP_OPENID,
             "signup_nickname": FIELD_SIGNUP_NICKNAME,
+            "signup_attendance": FIELD_SIGNUP_ATTENDANCE,
             "gender": FIELD_GENDER,
             "user_id": "用户ID",
         },
@@ -227,6 +231,13 @@ def handle_group_command(sender_id):
     activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
 
     participants = get_activity_signups(activity_id)
+    # 现场签到（条件开启）：候选展示池只留已到者；查不到名单时照常发卡（提交路径
+    # 会 fail-closed 拦住未到者）。桩表/未迁移环境无该栏位 → 不触发，行为不变。
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(activity_id, client=bitable)
+        if attendance is not None:
+            participants = [p for p in participants
+                            if lib_grouping.is_checked_in(attendance.get(p["open_id"]))]
     existing = get_user_group_selection(activity_id, sender_id)
 
     card = build_group_select_card(
@@ -266,6 +277,17 @@ def handle_group_submit(operator_open_id, action_value, form_value):
     if not signups:
         return {"toast": {"type": "error", "content": "你未报名此活动"}}
 
+    # 现场签到准入（条件开启）：本人须已到；查询失败 fail-closed（业务准入）。
+    # 活动表没有「签到功能开启」栏位（parity 桩表/未迁移环境）→ 不触发，行为不变。
+    attendance = None
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(activity_id, client=bitable)
+        if attendance is None:
+            return {"toast": {"type": "error", "content": "签到信息查询失败，请重试"}}
+        if not lib_grouping.is_checked_in(attendance.get(operator_open_id)):
+            return {"toast": {"type": "error",
+                              "content": "本活动需现场签到后才能填志愿，请联系管理员"}}
+
     # 获取用户信息
     user_recs = find_user_by_openid(operator_open_id)
     if not user_recs:
@@ -278,6 +300,10 @@ def handle_group_submit(operator_open_id, action_value, form_value):
     participants = get_activity_signups(activity_id)
     opp_gender = "女性" if user_gender == "男性" else "男性"
     valid_oids = {p["open_id"] for p in participants if p["gender"] == opp_gender}
+    if attendance is not None:
+        # 候选池同样只留已到异性（与 H5 candidates 同口径）
+        valid_oids = {oid for oid in valid_oids
+                      if lib_grouping.is_checked_in(attendance.get(oid))}
 
     # 收集选择
     choices = []
@@ -377,6 +403,12 @@ def handle_admin_start_group(keyword):
     # 仍收到「志愿填写已开始」。这里钉一道断言，让那种改动在这里立刻炸掉，
     # 而不是悄悄发一条与事实相反的回执。抛异常由 _admin_task_worker 统一兜成
     # 「任务处理失败：…」，不会把错误伪装成成功。
+    if res.get("code") == "EXCLUSIVE_MODE":
+        # 动作层互斥（设计 §2.3）：对面一对一开着或没收尾，明确让管理员先关对面。
+        # 新分支只在活动表有一对一栏位且命中时出现，parity 桩表不触发。
+        return ("无法开始填志愿：该活动的一对一模式正在使用中。\n"
+                "为避免两边混着跑，请先在 H5「活动管理」把模式切换为「分组」"
+                "（或等一对一收尾）后再试。")
     if res.get("code") != "OK":
         raise RuntimeError(
             f"start_group 未成功（code={res.get('code')}），不发送成功回执。"
@@ -399,6 +431,9 @@ def _render_grouping_result(res, round_no):
     之外的那份断言——等价性测试会直接红。
     """
     code = res["code"]
+    if code == "EXCLUSIVE_MODE":
+        return (f"无法执行分组：活动「{res['activity_name']}」的一对一模式已开启。\n"
+                f"请先在 H5「活动管理」把模式切换为「分组」再执行。")
     if code == "NOT_ENOUGH_PEOPLE":
         return (f"人数不足，无法分组：{res['males']}男{res['females']}女，"
                 f"每组需要{res['males_per_group']}男{res['females_per_group']}女。\n"

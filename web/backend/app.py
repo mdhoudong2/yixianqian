@@ -1196,8 +1196,10 @@ def snap_onetoone_selection(act_id, open_id):
             return r
     return None
 
-def snap_onetoone_results(act_id):
-    ores = _snap_live("onetoone_results")
+def snap_onetoone_results(act_id, fresh=False):
+    """一对一结果。fresh=True 强制实时读：结果由 bot 进程写入，匹配完成后必须
+    立刻可见（审计 G2：吃快照会白等最长 300s），与 snap_group_results 同口径。"""
+    ores = _snap_fresh("onetoone_results") if fresh else _snap_live("onetoone_results")
     return [r for r in ores
             if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == act_id]
 
@@ -7775,7 +7777,8 @@ def onetoone_result(activity_id):
     if onetoone_status != "已完成":
         return jsonify({"error": "一对一匹配尚未完成", "onetoone_status": onetoone_status}), 400
 
-    results = snap_onetoone_results(text_act_id)
+    # 一对一结果由 bot 进程写入，匹配完成/换轮必须立刻可见 → 实时读（与 group/result 同口径）
+    results = snap_onetoone_results(text_act_id, fresh=True)
     # 轮次（与分组用户端同构）：空轮次的迁移前遗留行 = 第 1 轮；round 省略取最新。
     # 不多轮过滤的话，多轮结果会在「我的必聊」里混在一起（同一对象重复出现）。
     available_rounds = _oto_rounds(results)

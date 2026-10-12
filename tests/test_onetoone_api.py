@@ -432,6 +432,23 @@ def test_result_uses_live_status(api):
     assert "activities" in api.fresh_calls
 
 
+def test_result_reads_fresh_results(api, monkeypatch):
+    """审计 G2：bot 刚写入/换轮的一对一结果必须立刻可见（fresh），不吃 300s 快照。
+
+    桩：活动 fresh 读=已完成、fresh 结果=1 条；fixture 的 stale 结果为空。
+    旧实现走 _snap_live → 空 → count=0（本用例红）。
+    """
+    live_act = _act("已完成")
+    live_res = [_res(ME, "ou_f1", 1)]
+    monkeypatch.setattr(app, "_snap_fresh", lambda key: {
+        "activities": [live_act],
+        "onetoone_results": live_res,
+    }.get(key, []))
+    r = api.get(f"/api/activities/{ACT}/onetoone/result")
+    assert r.status_code == 200
+    assert r.get_json()["count"] == 1, "必须读到 fresh 结果，不能吃陈旧快照"
+
+
 # ================================================================
 # my_onetoone / my_groups：过滤已取消 + 按活动去重
 # ================================================================

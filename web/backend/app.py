@@ -1129,7 +1129,7 @@ def snap_signups_by_openid(open_id):
 def snap_active_signups_by_openid(open_id):
     """我的有效报名记录：过滤「已取消」+ 按活动去重（同一活动多笔保留最后一条）。
 
-    去向「我的分组 / 我的一对一」入口的活动列表：不过滤已取消会显示已取消的报名，
+    去向「我的活动 / 我的分组 / 我的一对一」入口的活动列表：不过滤已取消会显示已取消的报名，
     不去重会给出多张同活动卡片（admin 的 A-0011 出现过 4 条已取消记录 → 4 张重复卡）。
     记录顺序即快照/飞书返回顺序，同一活动重复报名时后一条（较新）覆盖前一条。
     """
@@ -1196,8 +1196,10 @@ def snap_onetoone_selection(act_id, open_id):
             return r
     return None
 
-def snap_onetoone_results(act_id):
-    ores = _snap_live("onetoone_results")
+def snap_onetoone_results(act_id, fresh=False):
+    """一对一结果。fresh=True 强制实时读：结果由 bot 进程写入，匹配完成后必须
+    立刻可见（审计 G2：吃快照会白等最长 300s），与 snap_group_results 同口径。"""
+    ores = _snap_fresh("onetoone_results") if fresh else _snap_live("onetoone_results")
     return [r for r in ores
             if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == act_id]
 
@@ -1280,9 +1282,11 @@ def _check_rate(key, limit=5, window=60):
         _rate_store[key] = lst
         return True
 
-def _rate_limit(limit=5, window=60, key_prefix="rl"):
+def _rate_limit(limit=5, window=60, key_prefix="rl", include_path=True):
     open_id = g.get("yxq_open_id") or request.remote_addr or "anon"
-    k = f"{key_prefix}:{open_id}:{request.path}"
+    k = f"{key_prefix}:{open_id}"
+    if include_path:
+        k = f"{k}:{request.path}"
     if not _check_rate(k, limit, window):
         return jsonify({"error": "操作过于频繁，请稍后再试"}), 429
     return None
@@ -3497,7 +3501,9 @@ def activity_detail(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 活动由 bot 进程写入（状态也由 bot 改）：新建的活动不能等 ≤300s 快照刷新，
+    # 否则管理员刚发链接、最先点的人看到「活动不存在」（审计 G5）→ 实时读。
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -3533,7 +3539,8 @@ def signup(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 同详情：新建活动立刻可报名，不赌快照刷新窗口（审计 G5）
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
 
@@ -3585,7 +3592,8 @@ def cancel_signup(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    act_record, text_act_id = snap_resolve_activity(activity_id)
+    # 与报名同一口径：新活动/刚改状态后取消报名也要立刻可见（审计 G5 同类）
+    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
     existing = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
@@ -3824,18 +3832,31 @@ def _openid_directory():
 
 
 def _name_of(directory, oid):
+    """open_id → {nickname, user_id, account_status}。
+
+    **不要**把账号状态叫 `status`：调用端的行里已经有同名业务字段
+    （邀请/兑换记录的 `status`），update 进去会把业务状态覆盖成账号状态
+    （2026-10-12 管理台审计必修 3）。
+    """
     u = directory.get(oid) or {}
     return {
         "nickname": u.get("nickname") or oid,
         "user_id": u.get("user_id") or "",
-        "status": u.get("status") or "",
+        "account_status": u.get("status") or "",
     }
 
 
 def _admin_limit_offset():
-    limit = max(1, min(int(request.args.get("limit", 200)), 1000))
-    offset = max(0, int(request.args.get("offset", 0)))
-    return limit, offset
+    """解析 limit/offset；非整数回 (None, None, (resp, 400))，调用端原样 return。
+
+    裸 int() 会把 ?limit=abc / ?offset=abc 打成 500（管理台审计发现 4）。
+    """
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return None, None, (jsonify({"error": "limit/offset 必须是整数"}), 400)
+    return limit, offset, None
 
 
 @app.route("/api/admin/points/overview", methods=["GET"])
@@ -3913,7 +3934,9 @@ def admin_points_ledger():
     open_id, err, code = _require_admin()
     if err:
         return err, code
-    limit, offset = _admin_limit_offset()
+    limit, offset, bad = _admin_limit_offset()
+    if bad:
+        return bad
     user_oid = request.args.get("user_oid", "").strip()
 
     conn = points_db.connection()
@@ -3941,7 +3964,9 @@ def admin_points_redemptions():
     open_id, err, code = _require_admin()
     if err:
         return err, code
-    limit, offset = _admin_limit_offset()
+    limit, offset, bad = _admin_limit_offset()
+    if bad:
+        return bad
 
     conn = points_db.connection()
     total = conn.execute("SELECT COUNT(*) FROM redemptions").fetchone()[0]
@@ -3970,7 +3995,9 @@ def admin_points_invites():
     open_id, err, code = _require_admin()
     if err:
         return err, code
-    limit, offset = _admin_limit_offset()
+    limit, offset, bad = _admin_limit_offset()
+    if bad:
+        return bad
 
     conn = points_db.connection()
     total = conn.execute("SELECT COUNT(*) FROM invites").fetchone()[0]
@@ -3983,6 +4010,7 @@ def admin_points_invites():
     out = []
     for r in rows:
         d = dict(r)
+        d["status_label"] = points_invite.STATUS_LABELS.get(d["status"], d["status"])
         d.update(_name_of(directory, d["inviter_oid"]))
         if d.get("invitee_oid"):
             d["invitee"] = _name_of(directory, d["invitee_oid"])
@@ -4494,7 +4522,8 @@ def like_user():
     message = data.get("message", "")
     like_type = data.get("like_type", LIKE_TYPE_ANON)
     if like_type not in (LIKE_TYPE_ANON, LIKE_TYPE_REAL):
-        like_type = LIKE_TYPE_ANON
+        # 未知值静默转匿名会让调用端以为按实名记了（审计 L3）：直接 400 不消耗额度
+        return jsonify({"error": "like_type 不合法"}), 400
 
     if not target_openid:
         return jsonify({"error": "缺少目标用户"}), 400
@@ -4514,6 +4543,11 @@ def like_user():
         return jsonify({"error": "性别信息缺失，请先完善资料"}), 400
     if my_gender == target_gender:
         return jsonify({"error": "仅限异性之间喜欢"}), 400
+
+    # 目标必须是卡片池同口径的「在册单身」：给已脱单/已退出/待审核用户点喜欢
+    # 只会消耗额度、留下对方永远看不到的悬挂记录（审计 G4：对已脱单用户仍 200）。
+    if bitable.get_select_value(target_fields, F_ACCOUNT_STATUS) != "单身":
+        return jsonify({"error": "对方当前不在牵线名单中"}), 400
 
     # 重复检查：只挡「还有效」的喜欢。用正向白名单 is_like_active，不要写成
     # != "被驳回" 这种否定式——以后再加状态（比如到期作废）时否定式会静默放行，
@@ -5107,7 +5141,9 @@ def create_message():
     content = (data.get("content") or "").strip()
     parent_id = (data.get("parent_id") or "").strip()
     reply_to_id = (data.get("reply_to_id") or "").strip()
-    if not target or not content:
+    if not target:
+        return jsonify({"error": "缺少目标用户"}), 400
+    if not content:
         return jsonify({"error": "内容不能为空"}), 400
     if len(content) > 500:
         return jsonify({"error": "留言最多500字"}), 400
@@ -5115,6 +5151,9 @@ def create_message():
     if not author:
         app.logger.error(f"留言拒绝: snap_self_user返回None role={g.yxq_role} open_id={open_id[:20]}")
         return jsonify({"error": "用户不存在"}), 404
+    if not snap_find_user_by_openid(target):
+        # 目标必须是真实账号（用户表/观察员表），否则留言挂在“幽灵卡片”上没人能看到
+        return jsonify({"error": "目标用户不存在"}), 400
     now_ms = int(time.time() * 1000)
     # 解析被回复人（权威来源：通过 reply_to_id 反查原留言作者），同时兼容 parent_id 自动推导
     reply_to_oid = ""
@@ -5210,7 +5249,16 @@ def delete_message(record_id):
 
 @app.route("/api/messages/<record_id>/report", methods=["POST"])
 def report_message(record_id):
-    """举报留言（置为已举报，待管理员处理，飞书通知管理员）"""
+    """举报留言（置为已举报，待管理员处理，飞书通知管理员）。
+
+    「卡片浏览者」在现行设计里没有可判定的浏览记录（/api/track 只统计引流页、
+    不按用户存），无法限定只有浏览者能举报；按审计口径放宽为「登录用户可报」，
+    用限流挡住刷爆管理端待办（5 次/分钟/用户）。
+    """
+    # 限流键不含路径：路径含 record_id，按路径分桶=每则留言一个额度，可换留言绕过
+    _rl = _rate_limit(limit=5, window=60, key_prefix="msg_report", include_path=False)
+    if _rl:
+        return _rl
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -5723,13 +5771,17 @@ def group_select(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体不合法"}), 400
     choices = data.get("choices", [])  # [openid1, openid2, ...] 最多7个
 
     if not choices or not isinstance(choices, list):
         return jsonify({"error": "请至少选择一个志愿"}), 400
     if len(choices) > 7:
         return jsonify({"error": "最多选择7个志愿"}), 400
+    if not all(isinstance(c, str) and c for c in choices):
+        return jsonify({"error": "志愿格式不合法"}), 400
 
     # 检查活动状态（分组状态由 bot 进程写入，判定依赖它 → 实时读）
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
@@ -5746,6 +5798,7 @@ def group_select(activity_id):
 
     # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
     af = act_record.get("fields", {})
+    attendance = None
     if lib_grouping.signin_enabled(af):
         attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
         if attendance is None:
@@ -5757,9 +5810,21 @@ def group_select(activity_id):
 
     # 获取用户信息（快照）
     me = snap_self_user()
+    if not me:
+        return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
     me_fields = me.get("fields", {})
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
+
+    # 与一对一 select 同一份校验：1..7、无重复、每个志愿都必须∈本活动
+    # 「已报名 + 已到（签到开启时）+ 异性」候选集（审计 G1：旧实现全放行且零校验）。
+    if len(set(choices)) != len(choices):
+        return jsonify({"error": "不能重复选择同一人"}), 400
+    candidates = _activity_candidate_oids(text_act_id, open_id, my_gender,
+                                          attendance=attendance)
+    for i, c in enumerate(choices):
+        if c not in candidates:
+            return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400
 
     fields = {
         F_GS_ACTIVITY_ID: text_act_id,
@@ -6243,8 +6308,11 @@ def admin_group_activities():
 
     # 按活动集合的实际模式/状态做「联集」判断，只 fresh 读列表行真正会显示的子表。
     # 行渲染（index.html gaRowSub）：一对一(非未开始)行显示 onetoone_submitted_count；
-    # 其余行按分组状态——未开始不用计数、已完成用轮次、收集中/已截止用 submitted_count；
+    # 其余行按分组状态——未开始不用计数、已完成用轮次、收集中/已截止用 submitted_count。
+    # 轮次（has_results/latest_round/available_rounds）对收集中的活动也要正确
+    # （A-0011 收集中却有历史轮次，审计必修 2）→ 非「未开始」一律读结果表。
     # 冲突行只有纠偏提示，但冲突属罕见历史态，按任务口径保守读两模式全表。
+    # 一对一结果表不读：列表行不渲染一对一轮次（详情端点才给），读了纯是白付延迟。
     # 未被任何行用到的表不读，回应字段仍在，值走空集合（schema 不变）。
     need_selections = need_rounds = need_oto_selections = False
     for a in activities:
@@ -6263,9 +6331,8 @@ def admin_group_activities():
                or lib_grouping.STATUS_NOT_STARTED)
         if gst == lib_grouping.STATUS_NOT_STARTED:
             continue
-        if gst == lib_grouping.STATUS_DONE:
-            need_rounds = True
-        else:
+        need_rounds = True                      # 已完成/收集中/已截止都可能已有历史轮次
+        if gst != lib_grouping.STATUS_DONE:
             need_selections = True
 
     selections = _snap_fresh("group_selections") if need_selections else []
@@ -6601,7 +6668,9 @@ def admin_group_run():
     round_no = data.get("round")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
+        # 轮次上限 10 与一对一 run 对齐（bot 端保持原行为，Phase 1 parity 网钉死）
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
@@ -6760,7 +6829,14 @@ def admin_group_flag():
         # 写失败/查询失败如实回错误，绝不回 {"ok": true}（静默写失败已修）
         return jsonify({"error": "分组开关写入失败，请稍后重试", "code": res_code}), 500
     refresh_snapshot_table_async("activities")
-    return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
+    resp = {"ok": True, "activity_id": act_id, "name": name, "group_flag": target}
+    if not enabled:
+        # 关 flag 只是关「我的分组」入口，不改状态：分组仍在收集中时用户照常能提交志愿，
+        # 提醒管理员别把它当停用（加法字段，不改变行为）。
+        gs = bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
+        if gs in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
+            resp["warning"] = f"分组状态仍为「{gs}」，用户仍可提交志愿；关闭的只是入口"
+    return jsonify(resp)
 
 
 # ========== 管理员一对一管理台 ==========
@@ -7165,16 +7241,24 @@ def admin_onetoone_flag():
     if res_code != "OK":
         return jsonify({"error": "开关设置失败，请稍后重试", "code": res_code}), 500
     refresh_snapshot_table_async("activities")
-    return jsonify({"ok": True, "activity_id": act_id, "name": name,
-                    "onetoone_flag": res["onetoone_flag"]})
+    resp = {"ok": True, "activity_id": act_id, "name": name,
+            "onetoone_flag": res["onetoone_flag"]}
+    if not enabled:
+        # 同分组开关：关入口不等于停用，状态仍收集中时用户照常能提交志愿。
+        os_ = bitable.get_field_text(af, F_ACTIVITY_ONETOONE_STATUS)
+        if os_ in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
+            resp["warning"] = f"一对一状态仍为「{os_}」，用户仍可提交志愿；关闭的只是入口"
+    return jsonify(resp)
 
 
 @app.route("/api/admin/activity/mode", methods=["POST"])
 def admin_activity_mode():
     """模式切换（互斥写入器）：一次 PUT 同时写「分组功能开启」「一对一功能开启」。
 
-    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若状态 ∈ {收集中, 已截止}，
-    或该活动有活跃 job → 409 拒绝并提示先收尾。切换本身只改入口 flag，不删任何数据。
+    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若 flag=「是」或状态 ∈
+    {收集中, 已截止}，或该活动有活跃 job → 409 拒绝并提示先收尾。例外：冲突态
+    （双 flag=是）纠偏时，只按被关闭侧的状态拦（正在跑的一侧不能被关掉）。
+    切换本身只改入口 flag，不删任何数据。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7200,19 +7284,29 @@ def admin_activity_mode():
         return jsonify({"error": "该活动有任务正在执行，请等它结束后再切换模式",
                         "code": "MODE_SWITCH_BLOCKED", "active_job": active}), 409
 
+    # 关闭侧「仍活跃」判定：状态∈{收集中,已截止} 必拦——用户端 select 只认状态不看
+    # flag，通道其实还开着，放行切换等于绕过互斥（2026-10-12 审计必修 1）；flag=是
+    # 也拦（与 lib.counterpart_start_active 对齐，常态下要求先收尾再切）。
+    # 例外：冲突态（双 flag=是 的历史脏数据）且被关闭侧状态已收尾时放行——控制台
+    # 「一键纠偏」就靠这条路径；正在收集/已截止的一侧仍按状态拦截，纠偏只能保留
+    # 真正在跑的模式（误伤纠偏等于删功能，见 index.html 冲突卡）。
+    conflict = lib_grouping.derive_mode(act) == lib_grouping.MODE_CONFLICT
+
+    def _closing_blocked(flag_field, status_field):
+        if bitable.get_field_text(af, status_field) in (
+                lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
+            return True
+        return not conflict and bitable.get_field_text(af, flag_field) == "是"
+
     closing = []
-    if (bitable.get_field_text(af, F_ACTIVITY_GROUP_FLAG) == "是"
-            and mode != lib_grouping.MODE_GROUP
-            and (bitable.get_field_text(af, F_ACTIVITY_GROUP_STATUS)
-                 in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED))):
+    if mode != lib_grouping.MODE_GROUP and _closing_blocked(
+            F_ACTIVITY_GROUP_FLAG, F_ACTIVITY_GROUP_STATUS):
         closing.append("分组")
-    if (bitable.get_field_text(af, F_ACTIVITY_ONETOONE_FLAG) == "是"
-            and mode != lib_grouping.MODE_ONETOONE
-            and (bitable.get_field_text(af, F_ACTIVITY_ONETOONE_STATUS)
-                 in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED))):
+    if mode != lib_grouping.MODE_ONETOONE and _closing_blocked(
+            F_ACTIVITY_ONETOONE_FLAG, F_ACTIVITY_ONETOONE_STATUS):
         closing.append("一对一")
     if closing:
-        return jsonify({"error": "「%s」仍处于收集中/已截止，请先收尾再切换模式" % "、".join(closing),
+        return jsonify({"error": "「%s」入口仍开启或仍处于收集中/已截止，请先收尾再切换模式" % "、".join(closing),
                         "code": "MODE_SWITCH_BLOCKED", "blocked_sides": closing}), 409
 
     res = lib_grouping.set_mode(act_id, mode, client=_grouping_client, activity=act)
@@ -7522,11 +7616,11 @@ def onetoone_candidates(activity_id):
                 })
     return jsonify({"candidates": candidates})
 
-def _onetoone_candidate_oids(act_id, open_id, my_gender, attendance=None):
+def _activity_candidate_oids(act_id, open_id, my_gender, attendance=None):
     """本活动「异性＋已报名」候选 open_id 集合（与 candidates 端点同口径）。
 
     attendance 非 None（签到开启且查询成功）时只留已到者，与 candidates 的池过滤
-    和提交闸门同一口径。
+    和提交闸门同一口径。分组与一对一两个 select 共用这一份校验。
     """
     target_gender = "女性" if my_gender == "男性" else "男性"
     candidates = set()
@@ -7596,7 +7690,7 @@ def onetoone_select(activity_id):
     # 与 bot 统一为 1..7：无重复 + 每个志愿都必须是本活动已报名的异性（错误具体到第N个）
     if len(set(choices)) != len(choices):
         return jsonify({"error": "不能重复选择同一人"}), 400
-    candidates = _onetoone_candidate_oids(text_act_id, open_id, my_gender, attendance=attendance)
+    candidates = _activity_candidate_oids(text_act_id, open_id, my_gender, attendance=attendance)
     for i, c in enumerate(choices):
         if c not in candidates:
             return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400
@@ -7709,7 +7803,8 @@ def onetoone_result(activity_id):
     if onetoone_status != "已完成":
         return jsonify({"error": "一对一匹配尚未完成", "onetoone_status": onetoone_status}), 400
 
-    results = snap_onetoone_results(text_act_id)
+    # 一对一结果由 bot 进程写入，匹配完成/换轮必须立刻可见 → 实时读（与 group/result 同口径）
+    results = snap_onetoone_results(text_act_id, fresh=True)
     # 轮次（与分组用户端同构）：空轮次的迁移前遗留行 = 第 1 轮；round 省略取最新。
     # 不多轮过滤的话，多轮结果会在「我的必聊」里混在一起（同一对象重复出现）。
     available_rounds = _oto_rounds(results)
@@ -7802,6 +7897,7 @@ def _normalize_editable_update(data, fields=None):
     """将前端提交的值按类型归一化为飞书写入格式；非法项静默忽略。
 
     身份证仅当原记录 id_valid==False 时放行，且强验格式与生日一致。
+    数值/长文/多选带合理上限（审计 L2：身高 99999、昵称 300 字曾可直接写入）。
     """
     by_name = {fname: ftype for fname, _lbl, ftype, _opts in EDITABLE_FIELDS}
     # 临时放行身份证（缺/错时）
@@ -7860,19 +7956,32 @@ def _normalize_editable_update(data, fields=None):
             val = str(v).strip() if v is not None else ""
             if k == F_NICKNAME and not val:
                 continue  # 昵称不可清空：bot 按昵称查找/展示，清空会导致功能失效
+            limit = 2000 if k in LONG_TEXT_FIELDS else 200
+            if k == F_NICKNAME:
+                limit = 30
+            if len(val) > limit:
+                raise ValueError(f"「{k}」最多{limit}字")
             update_fields[k] = val
         elif ftype == "select":
-            update_fields[k] = str(v).strip() if v is not None else ""
+            val = str(v).strip() if v is not None else ""
+            if len(val) > 50:
+                raise ValueError(f"「{k}」内容过长")
+            update_fields[k] = val
         elif ftype == "number":
             if v in ("", None):
                 continue  # 身高留空则不更新
             try:
-                update_fields[k] = int(float(str(v)))
+                num = int(float(str(v)))
             except (ValueError, TypeError):
                 continue
+            if k == F_HEIGHT and not 100 <= num <= 250:
+                raise ValueError("身高需在 100-250cm 之间")
+            update_fields[k] = num
         elif ftype == "multi":
             vals = v if isinstance(v, list) else []
             vals = [str(x).strip() for x in vals if str(x).strip()]
+            if len(vals) > 30 or any(len(x) > 50 for x in vals):
+                raise ValueError(f"「{k}」选项过多或单项过长")
             update_fields[k] = vals
     return update_fields
 
@@ -7912,7 +8021,9 @@ def update_profile():
     _st, _ = _account_status(open_id)
     if _st in GATE_MESSAGES:
         return jsonify(GATE_MESSAGES[_st]), 403
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体不合法"}), 400
     user = snap_self_user()
     if not user:
         return jsonify({"error": "用户不存在"}), 404
@@ -7978,6 +8089,10 @@ def update_profile_photo():
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
+    # 账号门禁与 PUT /api/profile 同口径：待审核/审核不通过/已退出 不能上传照片（审计 L1）
+    _st, _ = _account_status(open_id)
+    if _st in GATE_MESSAGES:
+        return jsonify(GATE_MESSAGES[_st]), 403
     # 快速校验（不加锁）
     user = snap_self_user()
     if not user:
@@ -8250,7 +8365,7 @@ def my_liked_list():
 
 @app.route("/api/activities/mine", methods=["GET"])
 def my_activities():
-    """我报名的活动列表"""
+    """我报名的活动列表（过滤已取消 + 按活动去重，与 my_groups / my_onetoone 同口径）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -8258,7 +8373,7 @@ def my_activities():
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    signups = snap_signups_by_openid(open_id)
+    signups = snap_active_signups_by_openid(open_id)
 
     result = []
     for s in signups:

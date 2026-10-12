@@ -235,7 +235,7 @@ def _activity(monkeypatch, *, fee=100, quota=10, status="报名中", name="周�
     rec = {"record_id": "rec_act", "fields": {
         "活动名称": name, "报名人数上限": quota, "费用": fee, "活动状态": status,
         "开始时间": start_ts}}
-    monkeypatch.setattr(app, "snap_resolve_activity", lambda aid: (rec, "ACT-1"))
+    monkeypatch.setattr(app, "snap_resolve_activity", lambda aid, fresh=False: (rec, "ACT-1"))
     return rec
 
 
@@ -282,7 +282,7 @@ def test_priority_redeem_is_refused_when_the_activity_is_full(client, points_db,
 
 
 def test_redeeming_for_a_missing_activity_is_404(client, points_db, monkeypatch):
-    monkeypatch.setattr(app, "snap_resolve_activity", lambda aid: (None, None))
+    monkeypatch.setattr(app, "snap_resolve_activity", lambda aid, fresh=False: (None, None))
     _fund(100)
     r = _post(client, "/api/points/redeem",
               {"item": "wish", "activity_record_id": "nope", "target_open_id": OTHER})

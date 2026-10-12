@@ -248,6 +248,36 @@ class BitableClient:
                 self.log(f"批量删除记录异常(table={table_id},批{i // batch_size + 1}): {e}")
         return deleted
 
+    def batch_update_records(self, table_id, records, batch_size=500):
+        """批量更新记录。records: [{"record_id": ..., "fields": {...}}, ...]。
+
+        现场签到「未签到者全部标记已到」用它：逐条 update 在几十人规模就会超过
+        浏览器 15s fetch 预算（飞书每笔一个往返，E2E 实测 15 人 >15s）；batch_update
+        一批一个请求。返回更新成功的记录数；某批失败如实少算（调用方不得报成功）。
+        """
+        updates = [r for r in (records or [])
+                   if r and r.get("record_id") and r.get("fields")]
+        if not updates:
+            return 0
+        url = (f"{API_BASE}/bitable/v1/apps/{self.base_token}/tables/{table_id}"
+               f"/records/batch_update")
+        updated = 0
+        for i in range(0, len(updates), batch_size):
+            chunk = updates[i:i + batch_size]
+            _throttle()
+            try:
+                resp = _http.post(url, headers=self._headers(), json={"records": chunk},
+                                  timeout=30)
+                result = resp.json()
+                if result.get("code") == 0:
+                    updated += len(result.get("data", {}).get("records", []) or chunk)
+                else:
+                    self.log(f"批量更新记录失败(table={table_id},批{i // batch_size + 1}): "
+                             f"code={result.get('code')} msg={result.get('msg')}")
+            except Exception as e:
+                self.log(f"批量更新记录异常(table={table_id},批{i // batch_size + 1}): {e}")
+        return updated
+
     def field_type(self, table_id, field_name):
         """字段类型码（带缓存）；字段不存在返回 None；探测失败返回 -1（不确定）。
 

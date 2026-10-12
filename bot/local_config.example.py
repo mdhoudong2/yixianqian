@@ -19,6 +19,10 @@ SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（
 # MATCH_TABLE_ID = "tbl8eu9Y85tQZCu7"
 # GROUP_SELECT_TABLE = "tblYo86Vd7dmzRQJ"
 # GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
+# 一对一选择表 / 结果表（Phase 2）：先在多维表格建表，再把表 ID 填到这里；
+# 留空＝一对一功能不可用（constants.py 缺省为空，不补默认值）。
+# ONETOONE_SELECT_TABLE = "tblxxxx"
+# ONETOONE_RESULT_TABLE = "tblxxxx"
 
 # H5 前端入口（测试服覆盖为测试域名，卡片/通知链接据此生成）
 # H5_BASE_URL = "https://testapp.nantou.love"

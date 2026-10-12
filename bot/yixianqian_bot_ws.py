@@ -68,12 +68,14 @@ from commands import (
     handle_admin_reject,
     handle_admin_stats,
     handle_admin_toggle_group_flag,
+    handle_admin_toggle_onetoone_flag,
     handle_claim_command,
     handle_group_help,
     handle_h5_command,
     handle_help_command,
     handle_invite_command,
     handle_observer_command,
+    handle_onetoone_help,
     handle_register_command,
     handle_status_command,
     handle_welcome,
@@ -87,6 +89,15 @@ from grouping import (
     handle_admin_unsubmitted,
     handle_group_command,
     handle_group_submit,
+)
+from onetoone import (
+    configure_onetoone_lib,
+    handle_admin_onetoone_status,
+    handle_admin_start_onetoone,
+    handle_admin_stop_onetoone,
+    handle_admin_unsubmitted_onetoone,
+    handle_onetoone_command,
+    handle_onetoone_submit,
 )
 from points_admin import (
     handle_admin_attendance,
@@ -332,6 +343,20 @@ def do_p2_card_action_trigger(data: P2CardActionTrigger) -> P2CardActionTriggerR
             result = handle_group_submit(operator_open_id, action_value, form_value)
             return P2CardActionTriggerResponse(result)
 
+        elif action == "submit_onetoone":
+            # 表单容器提交
+            form_value = {}
+            try:
+                if hasattr(event.action, 'form_value') and event.action.form_value:
+                    form_value = event.action.form_value
+                elif isinstance(event.action, dict):
+                    form_value = event.action.get('form_value', {})
+            except:
+                form_value = {}
+
+            result = handle_onetoone_submit(operator_open_id, action_value, form_value)
+            return P2CardActionTriggerResponse(result)
+
         return P2CardActionTriggerResponse({
             "toast": {"type": "error", "content": "未知操作"}
         })
@@ -482,6 +507,25 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         elif text.startswith("开启分组功能"):
             keyword = text[len("开启分组功能"):].strip()
             reply = handle_admin_toggle_group_flag(keyword)
+        elif text.startswith("开始一对一"):
+            keyword = text[len("开始一对一"):].strip()
+            reply = "收到，正在后台开启一对一志愿填写，请稍候..."
+            _run_admin_task_async(sender_id, "开始一对一", handle_admin_start_onetoone, keyword)
+        elif text.startswith("查看未提交一对一"):
+            keyword = text[len("查看未提交一对一"):].strip()
+            reply = "收到，正在后台查询未提交人员，请稍候..."
+            _run_admin_task_async(sender_id, "查看未提交一对一", handle_admin_unsubmitted_onetoone, keyword)
+        elif text.startswith("执行一对一"):
+            keyword = text[len("执行一对一"):].strip()
+            reply = "收到，正在后台执行一对一匹配并保存结果，请稍候..."
+            _run_admin_task_async(sender_id, "执行一对一", handle_admin_stop_onetoone, keyword)
+        elif text.startswith("一对一状态"):
+            keyword = text[len("一对一状态"):].strip()
+            reply = "收到，正在后台查询一对一状态，请稍候..."
+            _run_admin_task_async(sender_id, "一对一状态", handle_admin_onetoone_status, keyword)
+        elif text.startswith("开启一对一功能"):
+            keyword = text[len("开启一对一功能"):].strip()
+            reply = handle_admin_toggle_onetoone_flag(keyword)
         elif text.startswith("生成村情六处邀请码") or text.startswith("生成吃瓜群众邀请码"):
             prefix = "生成村情六处邀请码" if text.startswith("生成村情六处邀请码") else "生成吃瓜群众邀请码"
             keyword = text[len(prefix):].strip()
@@ -490,6 +534,8 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_admin_list_observer_codes()
         elif text_lower in ["分组帮助", "group help"]:
             reply = handle_group_help()
+        elif text_lower in ["一对一帮助"]:
+            reply = handle_onetoone_help()
         # ========== 麦穗 ==========
         # 放在「分组帮助」之后、普通用户指令之前：这些前缀（加穗/查穗/配置…）
         # 与上面的指令都不撞，但必须在普通用户那一段之前判，否则管理员发
@@ -535,6 +581,8 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_status_command(sender_id)
         elif text_lower in ["分组", "分组选择", "选组", "group"]:
             reply = handle_group_command(sender_id)
+        elif text_lower in ["一对一", "必聊", "onetoone"]:
+            reply = handle_onetoone_command(sender_id)
         else:
             bindings = load_bindings()
             is_first_time = sender_id not in bindings
@@ -640,6 +688,10 @@ def main():
     # 表 ID 与栏位名由 bot/grouping.py 一并注入（lib.grouping 不 import bot 的
     # constants，写错 base 时必须报错而不是静默写到别的表）。
     configure_grouping_lib(SHARED_DATA_DIR)
+
+    # 一对一表 ID / 栏位名注入 lib.onetoone；lock_dir 一并转注入 lib.grouping，
+    # 一对一提交/开始收集与分组共用同一批 yixianqian_grouping_<活动>.lock。
+    configure_onetoone_lib(SHARED_DATA_DIR)
 
     # 启动业务线程（只启动一次，长连接重连时不重复启动）
     start_worker_threads()

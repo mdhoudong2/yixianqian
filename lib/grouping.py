@@ -195,10 +195,12 @@ def grouping_lock(activity_id, timeout):
 _REQUIRED_FIELDS = (
     "activity_id", "activity_name",
     "group_status", "male_per_group", "female_per_group", "group_flag",
+    "onetoone_flag", "onetoone_status", "signin_flag",
     "gs_activity_id", "gs_selector_oid", "gs_selector_gender", "gs_choices",
     "gr_activity_id", "gr_group_no", "gr_user_oid", "gr_user_name",
     "gr_user_gender", "gr_round",
     "signup_activity_id", "signup_status", "signup_openid", "signup_nickname",
+    "signup_attendance",
     "gender", "user_id",
 )
 _cfg = {"tables": {}, "fields": {}}
@@ -239,6 +241,189 @@ SIGNUP_STATUS_SIGNED = "已报名"
 # 「轮次」是单选栏位，飞书侧只配了 1-10。写入更大的值会整批失败并触发回滚，
 # 所以只在 preview 里事前挡住；执行路径刻意不拦——bot 端拦了就改了既有行为。
 MAX_ROUND = 10
+
+# ---------------------------------------------------------------- 分组/一对一互斥
+
+# 「动作层」互斥的错误码：对面模式开着（或还没收尾）时，本模式的
+# 开始/执行动作拒绝执行。文案归渲染层，lib 只回结构化结果。
+EXCLUSIVE_MODE = "EXCLUSIVE_MODE"
+
+# 模式派生值与 set_mode 的合法取值。模式是「两个 flag」的派生值，不落新栏位。
+MODE_GROUP = "group"
+MODE_ONETOONE = "onetoone"
+MODE_NONE = "none"
+MODE_CONFLICT = "conflict"
+MODES = (MODE_GROUP, MODE_ONETOONE, MODE_NONE)
+
+# set_mode(mode) → (分组功能开启, 一对一功能开启)。
+# 双栏位单笔 PUT 只是「一次切换写成一个 payload」，**不是事务边界**：飞书同一记录
+# 并发两笔 PUT 会按栏位级交错落地、持久留下「双是」（2026-10-12 决定性实验 28/30，
+# 详见 docs/读取一致性.md「模式 flag 互斥」节）。互斥不变量由 set_mode /
+# set_group_flag / set_onetoone_flag 统一纳入 grouping_lock 串行化保证，
+# 不是靠单条 update 的原子性。
+_MODE_FLAGS = {
+    MODE_GROUP: ("是", "否"),
+    MODE_ONETOONE: ("否", "是"),
+    MODE_NONE: ("否", "否"),
+}
+
+# 模式 flag 写入的抢锁预算（秒）：分组/一对一执行作业会分钟级持锁，flag 切换撞上时
+# 快速失败（lib 回 BUSY → H5 409 / bot 明示文案），不把调用方线程池压在等锁上。
+# 取 5 与 H5 提交志愿等既有用法同口径（web GROUPING_API_LOCK_TIMEOUT = 5）。
+FLAG_LOCK_TIMEOUT = 5
+
+
+def derive_mode(activity):
+    """两个 flag 的派生模式：group / onetoone / none / conflict。
+
+    conflict 是历史脏数据（两个都「是」）——控制台显示警告让管理员一键纠偏，
+    不做自动修正：静默关掉某一边会违背「切换不删/不动数据」的承诺。
+    """
+    f = _cfg["fields"]
+    af = (activity or {}).get("fields", {})
+    g = get_field_text(af, f["group_flag"]) == "是"
+    o = get_field_text(af, f["onetoone_flag"]) == "是"
+    if g and o:
+        return MODE_CONFLICT
+    if g:
+        return MODE_GROUP
+    if o:
+        return MODE_ONETOONE
+    return MODE_NONE
+
+
+def counterpart_start_active(activity, *, flag_field, status_field):
+    """「开始」动作的对面模式检查：对面 flag=「是」或状态 ∈ {收集中, 已截止}。
+
+    栏位名由调用方注入（lib.onetoone 用自己的 configure 里那份）：假表/旧表缺该
+    栏位时 get_field_text 读到空串 → 不触发，保证 parity 桩表的行为逐字不变。
+    """
+    af = (activity or {}).get("fields", {})
+    if get_field_text(af, flag_field) == "是":
+        return True
+    return get_field_text(af, status_field) in (STATUS_COLLECTING, STATUS_CLOSED)
+
+
+def counterpart_execute_active(activity, *, flag_field):
+    """「执行」动作的对面模式检查：对面 flag=「是」才拦。
+
+    执行不拦「收集中」状态：开始方没开 flag 时，执行方（如历史遗留流程）应当被
+    动作层放行，不然 flag 层不管的路径会被状态层意外锁死。
+    """
+    af = (activity or {}).get("fields", {})
+    return get_field_text(af, flag_field) == "是"
+
+
+def set_mode(activity_id, mode, *, client, activity=None):
+    """模式互斥写入器：一次 PUT 同时写「分组功能开启」「一对一功能开启」两个栏位。
+
+    mode="group" → (是, 否)；"onetoone" → (否, 是)；"none" → (否, 否)。
+
+    整段（幂等判断 + 写）持 grouping_lock(activity_id)：飞书单条记录 update
+    **不是**整笔事务（并发双栏位 PUT 会栏位级交错，实验见 docs/读取一致性.md），
+    flag 互斥不变量只能靠写侧串行化——bot 与 H5 共用同一批
+    `yixianqian_grouping_<活动>.lock`，两进程的 flag 写入互斥、不存在栏位级交错。
+    抢锁撞上执行作业（分钟级持锁）快速失败回 BUSY，不长时间等待。
+
+    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
+    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
+    必回 0 行。`activity=None` 时在锁内按 activity_id 查一次——该路径仅供桩表/测试
+    使用、真表不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
+    """
+    _require_configured()
+    f = _cfg["fields"]
+    if mode not in _MODE_FLAGS:
+        return {"code": "INVALID_MODE", "activity_id": activity_id, "mode": mode}
+    try:
+        with grouping_lock(activity_id, timeout=FLAG_LOCK_TIMEOUT):
+            if activity is None:
+                records = client.search_records(_cfg["tables"]["activity_table_id"], {
+                    "conjunction": "and",
+                    "conditions": [{"field_name": f["activity_id"], "operator": "is",
+                                    "value": [activity_id]}]})
+                if records is None:
+                    return {"code": "SEARCH_FAILED", "activity_id": activity_id, "mode": mode}
+                if not records:
+                    return {"code": "NOT_FOUND", "activity_id": activity_id, "mode": mode}
+                activity = records[0]
+
+            target_group, target_onetoone = _MODE_FLAGS[mode]
+            af = activity.get("fields", {})
+            activity_name = get_field_text(af, f["activity_name"])
+            base = {"activity_id": activity_id, "name": activity_name, "mode": mode,
+                    "group_flag": target_group, "onetoone_flag": target_onetoone}
+            if (get_field_text(af, f["group_flag"]) == target_group
+                    and get_field_text(af, f["onetoone_flag"]) == target_onetoone):
+                return dict(base, code="OK", changed=False)
+
+            payload = {f["group_flag"]: target_group, f["onetoone_flag"]: target_onetoone}
+            if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                        activity.get("record_id"), payload):
+                return dict(base, code="WRITE_FAILED", changed=False)
+            log(f"管理员设置活动模式: {activity_name}({activity_id}) -> {mode}")
+            return dict(base, code="OK", changed=True)
+    except GroupingBusy:
+        return {"code": "BUSY", "activity_id": activity_id, "mode": mode}
+
+
+# ---------------------------------------------------------------- 现场签到（R3）
+
+# 签到状态取值（复用报名表既有单选：按时/迟到/未到；空=未签到）。
+ATTENDANCE_ON_TIME = "按时"
+ATTENDANCE_LATE = "迟到"
+ATTENDANCE_ABSENT = "未到"
+# 「已到」判定 = {按时, 迟到}：迟到是历史遗留值，「来了就是来了」（产品决策 D13）。
+ATTENDANCE_PRESENT = (ATTENDANCE_ON_TIME, ATTENDANCE_LATE)
+
+
+def signin_enabled(activity_fields):
+    """活动「签到功能开启」==「是」？未注入该栏位时不启用（旧进程/桩表语义）。
+
+    签到准入只在活动明确开启时生效；关闭或栏位缺失时一切行为保持现状——这是
+    parity 桩表与未迁移环境「行为逐字不变」的开关。
+    """
+    f = _cfg["fields"]
+    if "signin_flag" not in f:
+        return False
+    return get_field_text(activity_fields or {}, f["signin_flag"]) == "是"
+
+
+def attendance_map(activity_id, *, client):
+    """该活动「已报名」记录的 {open_id: 签到状态}；raw client 读失败回 None。
+
+    只收「状态=已报名」的行：取消报名的人不拿准入（「报名」口径 = 已报名记录）。
+    状态原样回传（按时/迟到/未到/空串），是否已到由 is_checked_in 判定；查询失败
+    回 None 而不是空表——调用端必须能区分「读不到」与「没人签到」。
+    """
+    f = _cfg["fields"]
+    t = _cfg["tables"]
+    if not t.get("signup_table_id"):
+        return None
+    if any(k not in f for k in ("signup_activity_id", "signup_openid",
+                                "signup_status", "signup_attendance")):
+        return None
+    records = client.search_records(t["signup_table_id"], {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": f["signup_activity_id"], "operator": "is", "value": [activity_id]},
+            {"field_name": f["signup_status"], "operator": "is", "value": [SIGNUP_STATUS_SIGNED]},
+        ]})
+    if records is None:
+        return None
+    out = {}
+    for r in records:
+        sf = r.get("fields", {})
+        oid = get_field_text(sf, f["signup_openid"])
+        if oid:
+            out[oid] = get_field_text(sf, f["signup_attendance"])
+    return out
+
+
+def is_checked_in(state):
+    """已到 = 值 ∈ {按时, 迟到}；未到 / 空 / None = 否。"""
+    return state in ATTENDANCE_PRESENT
+
 
 # 分组算法评分（与 JS 版一致）。这是算法的一部分而不是环境配置，两端永远相同，
 # 所以住在 lib 里，bot/constants.py 不再另存一份。
@@ -814,6 +999,13 @@ def start_group(activity_id, males_per_group, females_per_group, *, client, acti
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
 
+    # 动作层互斥（设计 §2.3）：对面一对一开着或没收尾时拒绝开始，不自动动对面数据。
+    # 假表缺一对一栏位 → 读到空串 → 不触发（parity 写序列逐字不变）。
+    if counterpart_start_active(activity, flag_field=f["onetoone_flag"],
+                                status_field=f["onetoone_status"]):
+        return {"code": EXCLUSIVE_MODE, "blocked_by": MODE_ONETOONE,
+                "activity_id": activity_id, "activity_name": activity_name}
+
     client.update_record(_cfg["tables"]["activity_table_id"], record_id, {
         f["group_status"]: STATUS_COLLECTING,
         f["male_per_group"]: males_per_group,
@@ -878,6 +1070,10 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     base = {"activity_id": activity_id, "round": round_no, "activity_name": activity_name,
             "males_per_group": m_per, "females_per_group": f_per}
 
+    # 动作层互斥：执行分组时对面一对一 flag 为「是」→ 拒绝。假表无该栏位 → 不触发。
+    if counterpart_execute_active(activity, flag_field=f["onetoone_flag"]):
+        return dict(base, code=EXCLUSIVE_MODE, blocked_by=MODE_ONETOONE)
+
     # 幂等保护：该活动本轮已生成过结果则拒绝重跑（多轮分组可轮次递进），
     # 防止并发/重复执行互相删除覆盖分组结果。
     existing_results = client.search_records(t["group_result_table"], {
@@ -896,6 +1092,19 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_CLOSED})
 
     participants, selections, skipped = _collect_selections(client, rec_activity_id)
+
+    # 现场签到执行池过滤（设计 §3.3/§3.4）：只挡提交挡不住「早提交志愿、活动当天
+    # 没到」；执行时必须以「已到」为准再过滤一次。读失败 fail-closed：恢复「收集中」
+    # 并明报，绝不带着「读不到」把全部人放进来。
+    if signin_enabled(af):
+        attendance = attendance_map(rec_activity_id, client=client)
+        if attendance is None:
+            client.update_record(t["activity_table_id"], record_id,
+                                 {f["group_status"]: STATUS_COLLECTING})
+            return dict(base, code="SIGNIN_QUERY_FAILED")
+        participants = [p for p in participants
+                        if is_checked_in(attendance.get(p["id"]))]
+
     n_males = sum(1 for p in participants if p["gender"] == "male")
     n_females = sum(1 for p in participants if p["gender"] == "female")
 
@@ -966,19 +1175,88 @@ def _group_members(g):
             + [(fid, "女性") for fid in g["female_ids"]])
 
 
-def set_group_flag(activity_id, enabled, *, client, activity):
+def set_group_flag(activity_id, enabled, *, client, activity=None):
     """开启/关闭活动的分组功能（控制 H5「我的分组」入口显不显示）。
 
-    不加分组锁：只写一个与分组执行不相干的栏位，且两边都是「设定成明确值」的盲写，
-    后写者胜，不存在读-改-写丢更新。与 commands.py 里既有的开关联动同一口径。
+    整段（写决策 + 写）持 grouping_lock(activity_id)：飞书单条记录 update
+    **不是**整笔事务——同一记录并发两笔双栏位 PUT 会栏位级交错、持久留下「双是」
+    （2026-10-12 决定性实验 28/30，见 docs/读取一致性.md）。互斥不变量由写侧
+    串行化保证：bot 与 H5 共用同一批 `yixianqian_grouping_<活动>.lock`。抢锁撞上
+    执行作业（分钟级持锁）快速失败回 BUSY，不长时间等待。
+
+    **开启时合写对侧=否**：enabled=True 且活动表**schema 里有一对一栏位**时，把
+    「一对一功能开启=否」合进同一笔 update——一个 payload 里同时给出两栏的明确值；
+    但这一笔本身**不构成事务边界**（见上），保证来自锁串行化。
+
+    判别刻意用 schema 级的 field_exists，而不是活动记录里读到的现值：与 set_mode
+    并发时，「读现值→决定合写」的读-改-写窗口正是竞态来源（空值活动还会因
+    search_records 省略空值 key 而漏判）；schema 级判别与现值、快照新鲜度都无关。
+
+    桩表/未迁移环境（client 无 field_exists）→ 探测取不到 → 不合写，写入序列与
+    迁移前逐字相同（parity 保护面）。探测失败（field_type 返回 -1「不确定」）按
+    「可用」处理 → 合写：迁移后的真表上合写永远安全，宁可多写一个明确值，也不在
+    探测抖动时漏合写。
+
+    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
+    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
+    必回 0 行。`activity=None` 时在锁内按 activity_id 查一次——该路径仅供桩表/测试
+    使用、真表不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
+    """
+    _require_configured()
+    f = _cfg["fields"]
+    flag = "是" if enabled else "否"
+    name_hint = get_field_text((activity or {}).get("fields", {}), f["activity_name"])
+    try:
+        with grouping_lock(activity_id, timeout=FLAG_LOCK_TIMEOUT):
+            if activity is None:
+                records = client.search_records(_cfg["tables"]["activity_table_id"], {
+                    "conjunction": "and",
+                    "conditions": [{"field_name": f["activity_id"], "operator": "is",
+                                    "value": [activity_id]}]})
+                if records is None:
+                    return {"code": "SEARCH_FAILED", "activity_id": activity_id,
+                            "name": name_hint, "group_flag": "", "enabled": enabled}
+                if not records:
+                    return {"code": "NOT_FOUND", "activity_id": activity_id,
+                            "name": name_hint, "group_flag": "", "enabled": enabled}
+                activity = records[0]
+            af = activity.get("fields", {})
+            activity_name = get_field_text(af, f["activity_name"])
+            payload = {f["group_flag"]: flag}
+            probe = getattr(client, "field_exists", None)
+            has_counterpart = bool(probe and probe(_cfg["tables"]["activity_table_id"],
+                                                   f["onetoone_flag"]))
+            if enabled and f.get("onetoone_flag") and has_counterpart:
+                payload[f["onetoone_flag"]] = "否"
+            if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                        activity.get("record_id"), payload):
+                return {"code": "WRITE_FAILED", "activity_id": activity_id,
+                        "name": activity_name, "group_flag": "", "enabled": enabled}
+            log(f"管理员设置分组功能开关: {activity_name}({activity_id}) -> {flag}")
+            return {"code": "OK", "activity_id": activity_id, "name": activity_name,
+                    "group_flag": flag, "enabled": enabled}
+    except GroupingBusy:
+        return {"code": "BUSY", "activity_id": activity_id, "name": name_hint,
+                "group_flag": "", "enabled": enabled}
+
+
+def set_signin_flag(activity_id, enabled, *, client, activity):
+    """开启/关闭活动的「签到功能开启」开关（现场签到准入的总闸）。
+
+    不与其他功能联动、不加锁：签到开关与模式 flag 的互斥无关（写的是另一栏位，
+    不参与「双是」不变量），保持盲写、后写者胜。写失败如实回 WRITE_FAILED
+    （检查 update_record 返回值，不报成功）。
     """
     _require_configured()
     f = _cfg["fields"]
     flag = "是" if enabled else "否"
     af = activity.get("fields", {})
     activity_name = get_field_text(af, f["activity_name"])
-    client.update_record(_cfg["tables"]["activity_table_id"], activity.get("record_id"),
-                         {f["group_flag"]: flag})
-    log(f"管理员设置分组功能开关: {activity_name}({activity_id}) -> {flag}")
+    if not client.update_record(_cfg["tables"]["activity_table_id"],
+                                activity.get("record_id"), {f["signin_flag"]: flag}):
+        return {"code": "WRITE_FAILED", "activity_id": activity_id,
+                "name": activity_name, "signin_flag": "", "enabled": enabled}
+    log(f"管理员设置签到功能开关: {activity_name}({activity_id}) -> {flag}")
     return {"code": "OK", "activity_id": activity_id, "name": activity_name,
-            "group_flag": flag, "enabled": enabled}
+            "signin_flag": flag, "enabled": enabled}

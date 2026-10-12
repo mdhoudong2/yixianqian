@@ -6957,7 +6957,9 @@ createApp({
     async function loadGaOtoResult(round) {
       // 管理台一对一结果（改名避开用户端同名函数：同名函数声明后者覆盖前者，
       // 会把用户端「查看我的必聊」劫持到管理台端点）
-      if (!gaDetailId.value || gaOtoResultLoading.value) return;
+      // 不拦 loading：切轮次必须发新请求，过期响应按轮次丢弃（与 loadGroupResult 同款；
+      // 旧写法在加载中点另一个轮次会把新请求挡掉，旧响应又因轮次已变不清 loading → 死锁）
+      if (!gaDetailId.value) return;
       const wanted = round || gaOtoResultRound.value || gaOtoLatestRound.value;
       if (!wanted) return;
       gaOtoResultLoading.value = true; gaOtoResultError.value = false;

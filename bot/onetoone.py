@@ -388,6 +388,9 @@ def _render_execute_result(res, activity_id):
     的「刻意分歧」断言——其余等价性案例会直接红。
     """
     code = res["code"]
+    if code == "ROUND_OUT_OF_RANGE":
+        return (f"轮次超出范围：一对一结果只支持第 1-{res.get('max_round', 10)} 轮，"
+                f"当前请求第 {res['round']} 轮（本次未写入任何数据）。")
     if code == "EXCLUSIVE_MODE":
         return (f"无法执行一对一：活动「{res['activity_name']}」的分组模式已开启。\n"
                 f"请先在 H5「活动管理」把模式切换为「一对一」再执行。")

@@ -17,6 +17,9 @@
   python scripts/dev/add_onetoone_result_round.py check    # 检查缺不缺字段、多少行要回填（默认）
   python scripts/dev/add_onetoone_result_round.py apply    # 真的加 + 回填（幂等，重复跑安全）
 
+安全防护：字段已存在但缺选项时，若该字段已有非空值 → 拒绝补齐选项（name-only 的
+options 覆写 PUT 会清空该字段所有既有值，审计已实证）——必须人工处理。
+
 生产默认拦截（_prod_guard）；只允许 YIXIANQIAN_ENV=test 执行。
 """
 import json
@@ -89,6 +92,16 @@ def create_field(token):
         return True
     print(f"❌ 添加字段失败：{result.get('code')} {result.get('msg')}")
     return False
+
+
+def options_overwrite_allowed(total, empty_count):
+    """字段缺选项时的硬防护：该字段已有非空值 → 禁止覆盖选项。
+
+    飞书 PUT fields 的 options 不带 id 等于「整组替换」；审计用 scratch 字段实证：
+    name-only 的 PUT 会清空该字段所有既有值。补齐分支只在整字段零值时才安全，
+    有值一律拒绝，要求人工在飞书表格里处理。
+    """
+    return total - empty_count == 0
 
 
 def update_field_options(token, field, missing):
@@ -201,8 +214,13 @@ def main():
     else:
         opts = [o.get("name") for o in (field.get("property") or {}).get("options") or []]
         missing = [o for o in OPTIONS if o not in opts]
-        if missing and not update_field_options(token, field, missing):
-            sys.exit(1)
+        if missing:
+            if not options_overwrite_allowed(total, len(empty_ids)):
+                print(f"⛔ 字段「{FIELD_NAME}」已有 {total - len(empty_ids)} 行非空值；"
+                      f"覆盖选项会清空该字段所有既有值，拒绝补齐。请人工在飞书表格里补选项。")
+                sys.exit(1)
+            if not update_field_options(token, field, missing):
+                sys.exit(1)
 
     if empty_ids:
         updated = backfill(token, empty_ids)

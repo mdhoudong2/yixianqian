@@ -91,6 +91,17 @@ def main():
     print("性别数据回填")
     print("=" * 50)
 
+    # 0. 硬防护：覆盖选项 PUT 不带 id 会清空该字段所有既有值（审计已实证）——
+    #    只要已有任何非空性别值就拒绝，避免修复脚本变成清值脚本。
+    records = fetch_all_records()
+    total = len(records)
+    has_value = sum(1 for it in records
+                    if ftext(it["fields"].get(FIELD_GENDER)) not in ("", None))
+    if has_value:
+        print(f"⛔ 用户表已有 {has_value}/{total} 位用户有性别值；"
+              f"覆盖选项会清空既有值，拒绝执行。请人工处理。")
+        return 1
+
     # 1. 改选项
     if not update_field_options():
         print("终止：性别选项未改成功，先人工处理。")
@@ -99,8 +110,6 @@ def main():
     time.sleep(1)
 
     # 2. 回填
-    records = fetch_all_records()
-    total = len(records)
     filled = 0; skipped = 0; already = 0; noid = 0; fail = 0
     for it in records:
         f = it["fields"]

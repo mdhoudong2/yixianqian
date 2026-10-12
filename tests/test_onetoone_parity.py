@@ -869,6 +869,20 @@ def test_admin_stop_round_argument_validation(configured):
         assert new == expected
 
 
+def test_admin_stop_round_over_max_rejected_with_zero_writes(configured):
+    """轮次 >10：旧路把整串当活动ID；新路在 lib 写入路径收口并明确报错、零写入。"""
+    case = Case("stop/轮次越界", "stop", f"{ACT} 11")
+    _, old = _golden_run(configured, case)
+    assert old == "未找到活动：A-0002 11"
+
+    fake, new = _new_run(configured, case)
+    assert new == ("轮次超出范围：一对一结果只支持第 1-10 轮，"
+                   "当前请求第 11 轮（本次未写入任何数据）。")
+    assert fake.writes() == [], "越界轮次必须零写入"
+    assert fake.tables[ONETOONE_RESULT_TABLE] == [], "结果表不得出现任何本轮行"
+    assert _find_act(fake, ACT)["fields"].get("一对一状态") == "收集中", "状态不得被动"
+
+
 def test_admin_status_rounds_line_intentional_addition(configured):
     """「一对一状态」新增「已生成轮次」行（旧路无此信息）；迁移前行显示为第1轮。"""
     case = Case("status/成功", "status", ACT)

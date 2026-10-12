@@ -674,6 +674,11 @@ def test_job_endpoint_validation(api):
 def test_run_payload_validation_and_missing(api):
     api.install()
     assert api.post("/api/admin/onetoone/run", {"activity_id": ""}).status_code == 400
+    # 轮次上界在 H5 run 收口：>10 直接 400（lib.execute 还有第二道 ROUND_OUT_OF_RANGE）
+    assert api.post("/api/admin/onetoone/run",
+                    {"activity_id": ACT, "round": 11}).status_code == 400
+    assert api.post("/api/admin/onetoone/run",
+                    {"activity_id": ACT, "round": 999}).status_code == 400
     assert api.post("/api/admin/onetoone/run", {"activity_id": "A-9999"}).status_code == 404
     assert api.post("/api/admin/onetoone/start", {"activity_id": "A-9999"}).status_code == 404
     assert api.post("/api/admin/onetoone/preview", {}).status_code == 400

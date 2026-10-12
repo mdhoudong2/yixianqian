@@ -7012,7 +7012,8 @@ def admin_onetoone_run():
     round_no = data.get("round", 1)
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())

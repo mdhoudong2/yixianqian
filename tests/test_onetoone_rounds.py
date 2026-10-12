@@ -94,6 +94,31 @@ def test_execute_writes_round_field_on_every_row(configured):
     assert len(rows) == 8 and all(r["fields"]["活动ID"] == ACT for r in rows)
 
 
+def test_execute_round_out_of_range_is_rejected_with_zero_writes(configured):
+    """轮次越界（0/11/负数/非整数）在写入路径收口：ROUND_OUT_OF_RANGE、零读写。
+
+    preview 的「上限」blocker 只是提示，bot/H5 都可能绕过；这里钉死 execute 自身
+    的入口防线——越界时连一次表操作（含只读搜索）都不许发，更不能动状态。
+    """
+    for bad in (0, 11, -1, 100, "2", 2.0, True, None):
+        fake = FakeBitable(_default_tables())
+        res = _execute(fake, bad)
+        assert res["code"] == "ROUND_OUT_OF_RANGE", f"round={bad!r}"
+        assert res["round"] == bad
+        assert res["max_round"] == 10
+        assert fake.calls == [], f"越界 {bad!r} 不得有任何表操作（含只读搜索）"
+        assert _find_act(fake, ACT)["fields"].get("一对一状态") == "收集中"
+
+
+def test_execute_accepts_round_one_and_max(configured):
+    """边界内轮次照常执行：1 与 10 都能写入本轮结果（防收口误伤合法边界）。"""
+    for rnd in (1, 10):
+        fake = FakeBitable(_default_tables())
+        res = _execute(fake, rnd)
+        assert res["code"] == "OK" and res["round"] == rnd
+        assert len(_round_rows(fake, rnd)) == 8
+
+
 def test_fetch_result_latest_and_specific_round(configured):
     rows = [
         _row("rec_1_f1", "ou_m1", "ou_f1", 1, "1"),

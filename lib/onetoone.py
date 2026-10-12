@@ -653,6 +653,8 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
 
     `round_no`：写入与幂等都锚定「(活动, 轮次)」——同一轮重跑被 ALREADY_DONE
     拦住，换一轮即可产出第 N+1 轮（与 lib.grouping.execute_round 同语义）。
+    `round_no` 必须是 1..MAX_ROUND 的整数，越界直接回 ROUND_OUT_OF_RANGE，
+    零写入、零锁等待（preview 的 blockers 只是提示，bot/H5 都不能拿它当门禁）。
 
     **调用方不需要持锁**：本函数整体持 lib.grouping.grouping_lock（跨进程 flock，
     与 H5/分组共用同一批活动锁）。状态机每一步的读失败（raw client 返回 None）
@@ -666,8 +668,8 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
        本轮的部分写入并检查删除数；
     ⑦ 成功 → 状态「已完成」（检查返回值）。
 
-    返回 code：OK / BUSY / SEARCH_FAILED / ALREADY_DONE / CLOSE_FAILED /
-    SELECTIONS_SEARCH_FAILED / NO_PARTICIPANTS / ALGORITHM_ERROR /
+    返回 code：OK / BUSY / ROUND_OUT_OF_RANGE / SEARCH_FAILED / ALREADY_DONE /
+    CLOSE_FAILED / SELECTIONS_SEARCH_FAILED / NO_PARTICIPANTS / ALGORITHM_ERROR /
     PARTIAL_WRITE / PARTIAL_WRITE_VERIFY_FAILED / PARTIAL_WRITE_INCOMPLETE /
     DONE_STATUS_FAILED。
     """
@@ -677,6 +679,11 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
     f = _cfg["fields"]
     activity_name = get_field_text(activity.get("fields", {}), f["activity_name"])
     base = {"activity_id": activity_id, "round": round_no, "activity_name": activity_name}
+    # 写入路径的轮次收口：越界时飞书会为单选字段自动新增超范围选项（污染 schema），
+    # 且状态机会先把活动改成「已截止」。必须在任何读/写/锁之前拒绝。
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
+        return dict(base, code="ROUND_OUT_OF_RANGE", max_round=lib_grouping.MAX_ROUND)
     # 动作层互斥：执行一对一前对面分组 flag=「是」→ 拒绝（不自动动对面数据）。
     # 假表缺分组栏位 → 不触发；锁前判定，命中时零写入零等待。
     if lib_grouping.counterpart_execute_active(activity, flag_field=f["group_flag"]):

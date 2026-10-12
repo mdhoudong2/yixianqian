@@ -1231,6 +1231,9 @@
         </div>
         <div class="ga-row-name">{{ a.name || '(未命名活动)' }}<span class="ga-row-id">{{ a.activity_id }}</span></div>
         <div class="ga-row-sub">{{ gaRowSub(a) }}</div>
+        <div class="ga-actions" style="margin-top:10px;">
+          <van-button size="small" plain type="primary" color="#ff6b81" @click.stop="openGroupDetail(a, true)">📋 签到</van-button>
+        </div>
       </div>
     </div>
   </template>
@@ -1262,82 +1265,26 @@
       </div>
     </div>
 
-    <template v-if="gaDetailMode==='none'">
-      <div class="ga-card" style="text-align:center;">
-        <div class="ga-card-title" style="justify-content:center;">还没有选择模式</div>
-        <div class="ga-row-sub" style="margin-bottom:12px;">先决定这场活动用哪种模式，再开始收集。两种模式互斥，切换不会删除任何数据。</div>
-        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('group')">👥 启用分组</van-button>
-        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('onetoone')">💞 启用一对一</van-button>
-      </div>
-    </template>
-    <template v-else-if="gaDetailMode==='conflict'">
-      <div class="ga-card" style="text-align:center;">
-        <div class="ga-card-title" style="justify-content:center;">⚠ 两个模式都开着</div>
-        <div class="ga-row-sub" style="margin-bottom:12px;">这是历史数据。选择要保留的模式，另一个入口会被关掉；数据全部保留。</div>
-        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('group')">只保留分组</van-button>
-        <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('onetoone')">只保留一对一</van-button>
-        <van-button plain block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('none')">两个入口都关闭</van-button>
-      </div>
-      <van-tabs v-model:active="gaDetailTab" class="ga-detail-tabs">
-        <van-tab title="签到">
-        <div class="ga-card" style="margin-top:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div class="ga-card-title" style="margin:0;">现场签到</div>
-            <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
-          </div>
-          <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
-          <div class="ga-stats" style="margin-top:10px;">
-            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
-            <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
-            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
-          </div>
-        </div>
-        <div class="ga-card">
-          <div v-if="gaSigninLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
-          <div v-else-if="gaSigninError" class="ga-empty">
-            <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
-            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
-          </div>
-          <template v-else>
-            <div class="ga-roster-tabs">
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
-            </div>
-            <div v-if="gaSigninList.length" class="candidate-search-box">
-              <input v-model="gaSigninQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
-            </div>
-            <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
-            <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
-            <div v-else>
-              <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
-                <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
-                <div class="ga-row-main">
-                  <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                  <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
-                </div>
-                <div class="ga-signin-actions">
-                  <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
-                  <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
-                </div>
-              </div>
-              <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
-                <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
-              </div>
-            </div>
-          </template>
-        </div>
-        <div class="ga-card">
-          <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
-          <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
-        </div>
-        </van-tab>
-      </van-tabs>
-    </template>
-    <van-tabs v-else v-model:active="gaDetailTab" class="ga-detail-tabs">
-      <template v-if="gaDetailMode==='group'">
+    <van-tabs v-model:active="gaDetailTab" class="ga-detail-tabs">
       <van-tab title="进度">
+        <template v-if="gaDetailMode==='none'">
+          <div class="ga-card" style="text-align:center;">
+            <div class="ga-card-title" style="justify-content:center;">还没有选择模式</div>
+            <div class="ga-row-sub" style="margin-bottom:12px;">先决定这场活动用哪种模式，再开始收集。两种模式互斥，切换不会删除任何数据。</div>
+            <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('group')">👥 启用分组</van-button>
+            <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('onetoone')">💞 启用一对一</van-button>
+          </div>
+        </template>
+        <template v-else-if="gaDetailMode==='conflict'">
+          <div class="ga-card" style="text-align:center;">
+            <div class="ga-card-title" style="justify-content:center;">⚠ 两个模式都开着</div>
+            <div class="ga-row-sub" style="margin-bottom:12px;">这是历史数据。选择要保留的模式，另一个入口会被关掉；数据全部保留。</div>
+            <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('group')">只保留分组</van-button>
+            <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('onetoone')">只保留一对一</van-button>
+            <van-button plain block class="ga-main-btn" :disabled="gaModeSwitching" @click="switchMode('none')">两个入口都关闭</van-button>
+          </div>
+        </template>
+        <template v-else-if="gaDetailMode==='group'">
         <div class="ga-card" style="margin-top:12px;">
           <div class="ga-steps">
             <div v-for="(s, i) in gaStepDefs" :key="s" class="ga-step" :class="{on: gaStepIndex===i, done: gaStepIndex>i}">
@@ -1388,146 +1335,8 @@
         <div class="ga-card">
           <div class="ga-row-sub">入口开关已并入上方「模式卡」：切到「分组」模式即开启「我的分组」入口。</div>
         </div>
-      </van-tab>
-
-      <van-tab title="名单">
-        <div class="ga-card" style="margin-top:12px;">
-          <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
-          <div v-else-if="gaRosterError" class="ga-empty">
-            <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
-            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
-          </div>
-          <template v-else>
-            <div class="ga-roster-tabs">
-              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
-              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
-            </div>
-            <template v-if="gaRosterTab===0">
-              <div v-if="gaRosterList.length" class="candidate-search-box">
-                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
-              </div>
-              <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
-              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
-              <div v-else>
-                <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
-                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
-                  <div class="ga-row-main">
-                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
-                  </div>
-                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
-                </div>
-                <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
-                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
-                </div>
-              </div>
-            </template>
-            <template v-else>
-              <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
-                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
-              </div>
-              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
-              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
-              <div v-else>
-                <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
-                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
-                  <div class="ga-row-main">
-                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
-                  </div>
-                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
-                </div>
-                <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
-                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
-                </div>
-              </div>
-            </template>
-          </template>
-        </div>
-      </van-tab>
-
-      <van-tab title="结果">
-        <div class="ga-card" style="margin-top:12px;">
-          <van-empty v-if="!gaDetail.rounds.length" description="还没有分组结果"></van-empty>
-          <template v-else>
-            <div class="round-tabs" style="padding-top:0;" v-if="gaDetail.rounds.length">
-              <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="selectGaResultRound(r)">第{{ r }}轮</span>
-            </div>
-            <div v-if="gaResultLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
-            <template v-else-if="gaGroupsRound===gaResultRound && gaGroups.length">
-              <div class="ga-row-sub" style="text-align:center; margin:4px 0 10px;">共 {{ gaGroups.length }} 组 · 每组 {{ gaDetail.males_per_group }}男{{ gaDetail.females_per_group }}女</div>
-              <div v-for="(g, gi) in gaGroups" :key="gi" class="ga-group-card">
-                <div class="ga-card-title" style="margin-bottom:6px;">第 {{ g.group_id }} 组 <span class="ga-row-sub" style="margin:0;">{{ (g.members||[]).length }} 人</span></div>
-                <div class="ga-group-members">
-                  <span v-for="m in g.members" :key="m.open_id" class="ga-member-chip">{{ m.gender==='男性' ? '👨' : (m.gender==='女性' ? '👩' : '👤') }} {{ m.display_name }}</span>
-                </div>
-              </div>
-            </template>
-            <div v-else class="ga-tip" style="margin-top:4px;">
-              {{ gaResultError ? '这一轮的结果没载出来，检查一下网络后再点一次轮次。' : ('第' + gaResultRound + '轮没有可展示的分组结果。') }}
-            </div>
-          </template>
-        </div>
-      </van-tab>
-
-      <van-tab title="签到">
-        <div class="ga-card" style="margin-top:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div class="ga-card-title" style="margin:0;">现场签到</div>
-            <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
-          </div>
-          <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
-          <div class="ga-stats" style="margin-top:10px;">
-            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
-            <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
-            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
-          </div>
-        </div>
-        <div class="ga-card">
-          <div v-if="gaSigninLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
-          <div v-else-if="gaSigninError" class="ga-empty">
-            <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
-            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
-          </div>
-          <template v-else>
-            <div class="ga-roster-tabs">
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
-            </div>
-            <div v-if="gaSigninList.length" class="candidate-search-box">
-              <input v-model="gaSigninQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
-            </div>
-            <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
-            <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
-            <div v-else>
-              <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
-                <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
-                <div class="ga-row-main">
-                  <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                  <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
-                </div>
-                <div class="ga-signin-actions">
-                  <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
-                  <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
-                </div>
-              </div>
-              <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
-                <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
-              </div>
-            </div>
-          </template>
-        </div>
-        <div class="ga-card">
-          <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
-          <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
-        </div>
-      </van-tab>
-      </template>
-
-      <template v-else>
-      <van-tab title="进度">
+        </template>
+        <template v-else>
         <div class="ga-card" style="margin-top:12px;">
           <div class="ga-stats" style="margin-top:0;">
             <div class="ga-stat"><div class="ga-stat-num">{{ gaDetail.signup_count }}</div><div class="ga-stat-label">报名</div></div>
@@ -1564,9 +1373,65 @@
         <div class="ga-card">
           <div class="ga-row-sub">入口开关已并入上方「模式卡」：切到「一对一」模式即开启「我的一对一」入口。</div>
         </div>
+        </template>
       </van-tab>
 
-      <van-tab title="名单">
+      <van-tab v-if="gaDetailMode==='group'" title="名单">
+        <div class="ga-card" style="margin-top:12px;">
+          <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-else-if="gaRosterError" class="ga-empty">
+            <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
+          </div>
+          <template v-else>
+            <div class="ga-roster-tabs">
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+            </div>
+            <template v-if="gaRosterTab===0">
+              <div v-if="gaRosterList.length" class="candidate-search-box">
+                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              </div>
+              <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
+              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
+              <div v-else>
+                <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                  </div>
+                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
+                </div>
+                <div v-if="gaRosterFiltered.length>gaRosterShown" class="ga-more">
+                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
+                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+              </div>
+              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
+              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
+              <div v-else>
+                <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
+                  <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+                  <div class="ga-row-main">
+                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                  </div>
+                  <van-icon name="arrow" color="#c8c9cc"></van-icon>
+                </div>
+                <div v-if="gaSubmittedFiltered.length>gaRosterShown" class="ga-more">
+                  <van-button size="small" plain type="primary" color="#ff6b81" @click="gaRosterShown += 30">查看更多</van-button>
+                </div>
+              </div>
+            </template>
+          </template>
+        </div>
+      </van-tab>
+      <van-tab v-else-if="gaDetailMode==='onetoone'" title="名单">
         <div class="ga-card" style="margin-top:12px;">
           <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
           <div v-else-if="gaRosterError" class="ga-empty">
@@ -1622,7 +1487,30 @@
         </div>
       </van-tab>
 
-      <van-tab title="结果">
+      <van-tab v-if="gaDetailMode==='group'" title="结果">
+        <div class="ga-card" style="margin-top:12px;">
+          <van-empty v-if="!gaDetail.rounds.length" description="还没有分组结果"></van-empty>
+          <template v-else>
+            <div class="round-tabs" style="padding-top:0;" v-if="gaDetail.rounds.length">
+              <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="selectGaResultRound(r)">第{{ r }}轮</span>
+            </div>
+            <div v-if="gaResultLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+            <template v-else-if="gaGroupsRound===gaResultRound && gaGroups.length">
+              <div class="ga-row-sub" style="text-align:center; margin:4px 0 10px;">共 {{ gaGroups.length }} 组 · 每组 {{ gaDetail.males_per_group }}男{{ gaDetail.females_per_group }}女</div>
+              <div v-for="(g, gi) in gaGroups" :key="gi" class="ga-group-card">
+                <div class="ga-card-title" style="margin-bottom:6px;">第 {{ g.group_id }} 组 <span class="ga-row-sub" style="margin:0;">{{ (g.members||[]).length }} 人</span></div>
+                <div class="ga-group-members">
+                  <span v-for="m in g.members" :key="m.open_id" class="ga-member-chip">{{ m.gender==='男性' ? '👨' : (m.gender==='女性' ? '👩' : '👤') }} {{ m.display_name }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-else class="ga-tip" style="margin-top:4px;">
+              {{ gaResultError ? '这一轮的结果没载出来，检查一下网络后再点一次轮次。' : ('第' + gaResultRound + '轮没有可展示的分组结果。') }}
+            </div>
+          </template>
+        </div>
+      </van-tab>
+      <van-tab v-else-if="gaDetailMode==='onetoone'" title="结果">
         <div class="ga-card" style="margin-top:12px;">
           <van-empty v-if="!gaOtoRounds.length" description="还没有一对一结果"></van-empty>
           <template v-else>
@@ -1711,7 +1599,6 @@
           <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
         </div>
       </van-tab>
-      </template>
     </van-tabs>
   </template>
 </div>
@@ -6441,6 +6328,8 @@ createApp({
     const gaDetailId = ref(''), gaDetail = ref(null);
     const gaDetailLoading = ref(false), gaDetailError = ref(false), gaDetailTab = ref(0);
     const gaModeSwitching = ref(false);
+    // 清单页「📋 签到」直入：详情载入后按实际模式落到签到 tab（分组/一对一=3，未设定/冲突=1）
+    let gaPendingSigninTab = false;
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
@@ -6662,8 +6551,9 @@ createApp({
       }
       gaLoading.value = false;
     }
-    function openGroupDetail(a) {
+    function openGroupDetail(a, toSignin) {
       gaDetailId.value = a.activity_id; gaDetail.value = null; gaDetailError.value = false; gaDetailTab.value = 0;
+      gaPendingSigninTab = !!toSignin;
       gaGroups.value = []; gaGroupsRound.value = 0; gaResultRound.value = 0; gaRunTip.value = '';
       gaResultLoading.value = false; gaResultError.value = false;
       gaOtoPeople.value = []; gaOtoOpen.value = {}; gaOtoResultLoading.value = false; gaOtoResultError.value = false;
@@ -6687,6 +6577,10 @@ createApp({
           gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
           gaRosterList.value = []; gaRosterSubmittedList.value = []; gaRosterTotal.value = 0;
           gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false; gaSigninFlagOn.value = false;
+        }
+        if (gaPendingSigninTab) {
+          gaPendingSigninTab = false;
+          gaDetailTab.value = (d.mode === 'none' || d.mode === 'conflict') ? 1 : 3;
         }
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
         if (gaDetailTab.value === 2 && gaDetailMode.value === 'group'
@@ -7168,7 +7062,8 @@ createApp({
     }
 
     watch(gaDetailTab, (v) => {
-      if (v === 1 && !gaRosterList.value.length && !gaRosterLoading.value && gaDetailId.value) loadGroupRoster();
+      if (v === 1 && (gaDetailMode.value === 'group' || gaDetailMode.value === 'onetoone')
+          && !gaRosterList.value.length && !gaRosterLoading.value && gaDetailId.value) loadGroupRoster();
       if (v !== 2) return;
       // 结果 tab：分组/一对一都按当前轮次补拉
       if (gaDetailMode.value === 'onetoone') {
@@ -7212,11 +7107,10 @@ createApp({
       });
     });
     const gaSigninVisible = computed(() => gaSigninFiltered.value.slice(0, gaSigninShown.value));
-    // 签到 tab 索引：分组/一对一在末尾（3）；冲突模式只有签到一个 tab（0）
+    // 签到 tab 索引：分组/一对一四个 tab 在末尾（3）；未设定/冲突只有进度+签到两个 tab（1）
     const gaOnSigninTab = computed(() => {
       const d = gaDetailMode.value;
-      if (d === 'conflict') return gaDetailTab.value === 0;
-      if (d === 'none') return false;
+      if (d === 'none' || d === 'conflict') return gaDetailTab.value === 1;
       return gaDetailTab.value === 3;
     });
     watch(gaOnSigninTab, (v) => { if (v) loadSigninRoster(true); });

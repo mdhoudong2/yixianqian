@@ -140,6 +140,7 @@ def configure_onetoone_lib(lock_dir):
             "oto_user_gender": F_OTO_USER_GENDER,
             "oto_target_oid": F_OTO_TARGET_OID,
             "oto_target_name": F_OTO_TARGET_NAME,
+            "oto_round": F_OTO_ROUND,
             "signup_activity_id": F_SIGNUP_ACTIVITY_ID,
             "signup_openid": F_SIGNUP_OPENID,
             "signup_nickname": F_SIGNUP_NICKNAME,
@@ -5980,6 +5981,15 @@ def _onetoone_result_rows(results, activity_id):
             if bitable.get_field_text(r.get("fields", {}), F_OTO_ACTIVITY_ID) == activity_id]
 
 
+def _oto_rounds(rows):
+    """结果行的轮次（升序去重 int 列表；空轮次行 = 第 1 轮）。
+
+    归一化口径与 lib.onetoone.round_of 相同——迁移前的遗留行没有轮次值，
+    按第 1 轮处理才能在多轮上线后与迁移回填后的数据一致。
+    """
+    return sorted({lib_onetoone.round_of(r.get("fields", {})) for r in rows})
+
+
 def _onetoone_submitted_oids(rows):
     """非空「选择人open_id」去重列表（首次出现顺序；与分组端 /status 的去重口径一致）。"""
     seen = set()
@@ -6107,9 +6117,10 @@ def _create_grouping_job(job_id, activity_id, round_no, operator):
                        {"activity_id": activity_id, "round": round_no}, operator)
 
 
-def _create_onetoone_job(job_id, activity_id, operator):
-    """一对一 job：冲突键 = 活动（一对一没有轮次概念，同活动串行即可）。"""
-    return _create_job(ONETOONE_JOBS_FILE, job_id, {"activity_id": activity_id}, operator)
+def _create_onetoone_job(job_id, activity_id, round_no, operator):
+    """一对一 job：冲突键 = (活动, 轮次)（与分组 job 同构）。"""
+    return _create_job(ONETOONE_JOBS_FILE, job_id,
+                       {"activity_id": activity_id, "round": round_no}, operator)
 
 
 def _run_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack):
@@ -6161,8 +6172,8 @@ def _start_grouping_job(job_id, activity_id, round_no, activity_record, lock_sta
         args=(job_id, activity_id, round_no, activity_record, lock_stack)).start()
 
 
-def _run_onetoone_job(job_id, activity_id, activity_record):
-    """一对一 job 线程主体：执行 lib.onetoone.execute。
+def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
+    """一对一 job 线程主体：执行 lib.onetoone.execute（锚定轮次）。
 
     活动锁由 lib.execute 自己在 job 线程内获取/释放（带有上限的 flock 等待），
     请求线程**不**抢锁：start_collection/execute 都自持锁，若请求线程先抢再让
@@ -6176,7 +6187,7 @@ def _run_onetoone_job(job_id, activity_id, activity_record):
             state="running", started_at=int(time.time()),
             progress="正在执行一对一匹配（读取志愿、构建资料、写入结果）…"))
         res = lib_onetoone.execute(
-            activity_id, client=_grouping_client, activity=activity_record,
+            activity_id, round_no, client=_grouping_client, activity=activity_record,
             find_user_by_openid=_grouping_find_user_by_openid,
             lock_timeout=GROUPING_API_LOCK_TIMEOUT)
     except Exception as e:  # noqa: BLE001 — job 边界必须兜住异常并落盘，不能无声死掉
@@ -6201,10 +6212,10 @@ def _run_onetoone_job(job_id, activity_id, activity_record):
     refresh_snapshot_table_async("onetoone_results")
 
 
-def _start_onetoone_job(job_id, activity_id, activity_record):
+def _start_onetoone_job(job_id, activity_id, round_no, activity_record):
     threading.Thread(
         target=_run_onetoone_job, name=f"onetoone-job-{job_id}", daemon=True,
-        args=(job_id, activity_id, activity_record)).start()
+        args=(job_id, activity_id, round_no, activity_record)).start()
 
 
 def _active_job_for(activity_id):
@@ -6336,6 +6347,7 @@ def admin_group_status():
     oto_matched = {oid for oid in
                    (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID)
                     for r in oto_results) if oid}
+    oto_rounds = _oto_rounds(oto_results)
     mode = lib_grouping.derive_mode(act)
     return jsonify({
         "activity_id": act_id,
@@ -6360,6 +6372,8 @@ def admin_group_status():
         "onetoone_unsubmitted_count": oto_unsubmitted_count,
         "onetoone_result_count": len(oto_results),
         "onetoone_matched_count": len(oto_matched),
+        "onetoone_rounds": oto_rounds,
+        "onetoone_latest_round": oto_rounds[-1] if oto_rounds else None,
         "mode": mode,
         "conflict": mode == lib_grouping.MODE_CONFLICT,
         "active_job": _active_job_for(act_id),
@@ -6753,6 +6767,7 @@ def admin_onetoone_status():
     matched = {oid for oid in
                (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) for r in results)
                if oid}
+    rounds = _oto_rounds(results)
     mode = lib_grouping.derive_mode(act)
     return jsonify({
         "activity_id": act_id,
@@ -6768,6 +6783,8 @@ def admin_onetoone_status():
         "unsubmitted_count": unsubmitted_count,
         "result_count": len(results),
         "matched_count": len(matched),
+        "rounds": rounds,
+        "latest_round": rounds[-1] if rounds else None,
         "mode": mode,
         "conflict": mode == lib_grouping.MODE_CONFLICT,
         "active_job": _active_job_for(act_id),
@@ -6835,10 +6852,11 @@ def admin_onetoone_unsubmitted():
 
 @app.route("/api/admin/onetoone/result", methods=["GET"])
 def admin_onetoone_result():
-    """完整必聊结果（管理台结果 tab，按人折叠）。
+    """完整必聊结果（管理台结果 tab，按人折叠）：按轮次读，round 省略取最新。
 
-    结果表由 bot/本服务写入，判定与展示都必须实时读（fresh），不吃周期快照。
-    用户ID 从 users 快照补全（不逐人打飞书）；一人一行、按排名升序。
+    结果表由 bot/本服务写入，判定与展示都必须实时读（fresh），不吃周期快照；
+    轮次过滤/列表在 lib.onetoone.fetch_result 内实现（与执行结果同构）。
+    用户ID 从 users 快照补全（不逐人打飞书）；partners 按排名升序。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -6847,12 +6865,21 @@ def admin_onetoone_result():
     activity_id = (request.args.get("activity_id") or "").strip()
     if not activity_id:
         return jsonify({"error": "缺少 activity_id"}), 400
+    round_arg = (request.args.get("round") or "").strip()
+    round_no = None
+    if round_arg:
+        try:
+            round_no = int(round_arg)
+        except ValueError:
+            return jsonify({"error": "round 必须是整数"}), 400
+        if round_no < 1:
+            return jsonify({"error": "round 必须大于0"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id)
     if miss:
         return miss
 
-    results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id)
+    res = lib_onetoone.fetch_result(act_id, round_no, client=_grouping_client, activity=act)
     uid_by_oid = {}
     for u in _snap_live("users"):
         uf = u.get("fields", {})
@@ -6860,40 +6887,21 @@ def admin_onetoone_result():
         if oid and oid not in uid_by_oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
 
-    people = {}
-    for r in results:
-        rf = r.get("fields", {})
-        user_oid = bitable.get_field_text(rf, F_OTO_USER_OID)
-        target_oid = bitable.get_field_text(rf, F_OTO_TARGET_OID)
-        if not user_oid:
-            continue
-        person = people.get(user_oid)
-        if person is None:
-            person = {
-                "open_id": user_oid,
-                "nickname": bitable.get_field_text(rf, F_OTO_USER_NAME),
-                "gender": bitable.get_field_text(rf, F_OTO_USER_GENDER),
-                "user_id": uid_by_oid.get(user_oid, ""),
-                "partners": [],
-            }
-            people[user_oid] = person
-        if target_oid:
-            person["partners"].append({
-                "open_id": target_oid,
-                "nickname": bitable.get_field_text(rf, F_OTO_TARGET_NAME),
-                "user_id": uid_by_oid.get(target_oid, ""),
-                "rank": int(bitable.get_field_number(rf, F_OTO_RANK, 0)),
-            })
-    for person in people.values():
-        person["partners"].sort(key=lambda x: x["rank"])
-    ordered = sorted(people.values(), key=lambda p: (p["user_id"] or "~", p["open_id"]))
+    ordered = res["people"]
+    for person in ordered:
+        person["user_id"] = uid_by_oid.get(person["open_id"], "")
+        for target in person["partners"]:
+            target["user_id"] = uid_by_oid.get(target["open_id"], "")
+    ordered.sort(key=lambda p: (p["user_id"] or "~", p["open_id"]))
     return jsonify({
         "activity_id": act_id,
         "name": bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_NAME),
         "onetoone_status": (bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
                             or lib_grouping.STATUS_NOT_STARTED),
-        "result_count": len(results),
-        "matched_count": len(ordered),
+        "round": res["round"],
+        "rounds": res["rounds"],
+        "result_count": res["result_count"],
+        "matched_count": res["matched_count"],
         "people": ordered,
     })
 
@@ -6901,7 +6909,9 @@ def admin_onetoone_result():
 @app.route("/api/admin/onetoone/preview", methods=["POST"])
 def admin_onetoone_preview():
     """执行影响面预览（红线：零写入）——lib.onetoone.preview 是与 execute 完全
-    独立的只读路径；前端「开始一对一」的确认层用 existing_results 显示将清除的笔数。"""
+    独立的只读路径；前端「开始一对一」确认层用 existing_results 显示将清除的笔数，
+    「开启新一轮」用 rounds_preserved/results_preserved 显示保留量，执行确认用
+    round 查该轮是否已跑过（existing_round_results）。round 省略默认第 1 轮。"""
     open_id, err, code = _require_admin()
     if err:
         return err, code
@@ -6911,22 +6921,27 @@ def admin_onetoone_preview():
 
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
+    round_no = data.get("round", 1)
     if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
     if miss:
         return miss
 
-    res = lib_onetoone.preview(act_id, client=_grouping_client, activity=act,
+    res = lib_onetoone.preview(act_id, round_no, client=_grouping_client, activity=act,
                                find_user_by_openid=_grouping_find_user_by_openid)
     return jsonify(res)
 
 
 @app.route("/api/admin/onetoone/start", methods=["POST"])
 def admin_onetoone_start():
-    """开始一对一：开放收集 + 清空该活动全部历史结果（破坏性，前端确认层把关）。
+    """开始一对一：开放收集；clear_results=True（默认）时清空该活动全部历史结果。
 
+    `clear_results=False` 是「开启新一轮」——保留该活动全部历史轮次结果，只开放
+    收集，供已匹配过的活动接着跑第 N+1 轮（算法确定性，重跑旧轮次无意义）。
     lib.start_collection 自持活动锁（锁预算用 H5 的 5s：抢不到立刻 409，不占
     gunicorn 线程池）；EXCLUSIVE_MODE = 分组模式还开着/没收尾 → 拒绝，不自动动分组。
     """
@@ -6939,7 +6954,10 @@ def admin_onetoone_start():
 
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
+    clear_results = data.get("clear_results", True)
     if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(clear_results, bool):
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
@@ -6948,7 +6966,7 @@ def admin_onetoone_start():
 
     res = lib_onetoone.start_collection(
         act_id, client=_grouping_client, activity=act,
-        lock_timeout=GROUPING_API_LOCK_TIMEOUT)
+        lock_timeout=GROUPING_API_LOCK_TIMEOUT, clear_results=clear_results)
     res_code = res.get("code")
     if res_code == "BUSY":
         return jsonify({"error": "另一场分组/一对一正在执行中，请稍候",
@@ -6974,13 +6992,13 @@ def admin_onetoone_start():
 
 @app.route("/api/admin/onetoone/run", methods=["POST"])
 def admin_onetoone_run():
-    """执行一对一：入列 job 后立即回 202 + job_id，前端轮询 /job（长耗时作业）。
+    """执行一对一轮次：入列 job 后立即回 202 + job_id，前端轮询 /job（长耗时作业）。
 
     与分组 run 的差别：活动锁由 job 线程里的 lib.execute 自持（lib 在锁内跑完整条
     状态机：幂等检查→截止→读志愿→算法→写结果→已完成）。请求线程**不**抢锁——
     start_collection/execute 都自持锁，请求线程先抢会让 job 线程撞上同一把不可重入
-    的进程内锁而死锁。排队层幂等（同活动已有活跃 job → 409 + 既有 job_id）仍由
-    本端点负责，双提交不会双双入列。
+    的进程内锁而死锁。排队层幂等（同 (活动, 轮次) 已有活跃 job → 409 + 既有
+    job_id）仍由本端点负责，双提交不会双双入列。round 省略默认第 1 轮（兼容旧前端）。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -6991,7 +7009,10 @@ def admin_onetoone_run():
 
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
+    round_no = data.get("round", 1)
     if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
@@ -6999,22 +7020,23 @@ def admin_onetoone_run():
         return miss
 
     for jid, job in _read_onetoone_jobs().items():
-        if job.get("activity_id") == act_id and _job_is_active(job):
-            return jsonify({"ok": False, "error": "该活动的一对一任务已在执行中",
-                            "job_id": jid, "activity_id": act_id}), 409
+        if (job.get("activity_id") == act_id and _job_int(job.get("round")) == round_no
+                and _job_is_active(job)):
+            return jsonify({"ok": False, "error": "该轮一对一任务已在执行中",
+                            "job_id": jid, "activity_id": act_id, "round": round_no}), 409
 
     job_id = _uuid.uuid4().hex[:12]
     try:
-        existing = _create_onetoone_job(job_id, act_id, open_id)
+        existing = _create_onetoone_job(job_id, act_id, round_no, open_id)
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).warning("创建一对一 job 失败", exc_info=True)
         return jsonify({"error": "创建任务失败，请重试"}), 500
     if existing:
-        return jsonify({"ok": False, "error": "该活动的一对一任务已在执行中",
-                        "job_id": existing, "activity_id": act_id}), 409
+        return jsonify({"ok": False, "error": "该轮一对一任务已在执行中",
+                        "job_id": existing, "activity_id": act_id, "round": round_no}), 409
 
     try:
-        _start_onetoone_job(job_id, act_id, act)
+        _start_onetoone_job(job_id, act_id, round_no, act)
     except Exception:  # noqa: BLE001
         _update_onetoone_job(job_id, lambda j: j.update(
             state="failed", finished_at=int(time.time()), progress="", error="任务线程启动失败"))
@@ -7022,7 +7044,7 @@ def admin_onetoone_run():
         return jsonify({"error": "任务启动失败，请重试"}), 500
 
     return jsonify({"ok": True, "job_id": job_id, "activity_id": act_id,
-                    "state": "pending"}), 202
+                    "round": round_no, "state": "pending"}), 202
 
 
 @app.route("/api/admin/onetoone/job", methods=["GET"])
@@ -7050,6 +7072,7 @@ def admin_onetoone_job():
     return jsonify({
         "job_id": job_id,
         "activity_id": job.get("activity_id"),
+        "round": job.get("round"),
         "state": state,
         "created_at": job.get("created_at"),
         "started_at": job.get("started_at"),
@@ -7620,8 +7643,22 @@ def onetoone_result(activity_id):
         return jsonify({"error": "一对一匹配尚未完成", "onetoone_status": onetoone_status}), 400
 
     results = snap_onetoone_results(text_act_id)
+    # 轮次（与分组用户端同构）：空轮次的迁移前遗留行 = 第 1 轮；round 省略取最新。
+    # 不多轮过滤的话，多轮结果会在「我的必聊」里混在一起（同一对象重复出现）。
+    available_rounds = _oto_rounds(results)
+    if not available_rounds:
+        available_rounds = [1]
+    latest_round = available_rounds[-1]
+    req_round = request.args.get("round", "")
+    try:
+        req_round = int(req_round) if str(req_round).strip() else latest_round
+    except (TypeError, ValueError):
+        req_round = latest_round
+    if req_round not in available_rounds:
+        req_round = latest_round
     mine = [r for r in results
-            if bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) == open_id]
+            if bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) == open_id
+            and lib_onetoone.round_of(r.get("fields", {})) == req_round]
 
     # users 快照：open_id -> (用户ID, 昵称, 头像)
     users_snap = _snap("users")
@@ -7654,7 +7691,8 @@ def onetoone_result(activity_id):
             "chatted": target_oid in chatted,
         })
     partners.sort(key=lambda x: x["rank"])
-    return jsonify({"partners": partners, "count": len(partners)})
+    return jsonify({"partners": partners, "count": len(partners),
+                    "round": req_round, "rounds": available_rounds})
 
 # ========== 个人中心 ==========
 

@@ -434,7 +434,7 @@ def test_guard_noop_when_counterpart_fields_absent(api):
     fake = api.install(activity=act)
     res = lib_onetoone.start_collection(ACT, client=fake, activity=act)
     assert res["code"] == "OK"
-    res2 = lib_onetoone.execute(ACT, client=fake, activity=act,
+    res2 = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
                                 find_user_by_openid=app._grouping_find_user_by_openid)
     # 无参与者 → NO_PARTICIPANTS（与迁移前一致），绝无 EXCLUSIVE_MODE
     assert res2["code"] == "NO_PARTICIPANTS"
@@ -456,7 +456,7 @@ def test_guard_blocks_onetoone_execute_when_group_flag_on(api):
     """「执行一对一」：对面分组 flag=是 → EXCLUSIVE_MODE 零写入（状态层不拦执行）。"""
     act = _oto_act(oto_status="收集中", group_flag="是", group_status="已完成")
     fake = api.install(activity=act)
-    res = lib_onetoone.execute(ACT, client=fake, activity=act,
+    res = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
                                find_user_by_openid=app._grouping_find_user_by_openid)
     assert res["code"] == "EXCLUSIVE_MODE"
     assert fake.writes() == []
@@ -467,7 +467,7 @@ def test_guard_does_not_block_execute_on_group_status_only(api):
     signups, selections = _balanced(2, 2)
     act = _oto_act(oto_status="收集中", group_flag="否", group_status="已完成")
     fake = api.install(activity=act, signups=signups, selections=selections)
-    res = lib_onetoone.execute(ACT, client=fake, activity=act,
+    res = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
                                find_user_by_openid=app._grouping_find_user_by_openid)
     assert res["code"] == "OK"
 
@@ -648,16 +648,17 @@ def test_dead_process_job_reports_unknown_and_does_not_block(api):
 
 def test_onetoone_job_conflict_prunes_expired(api):
     now = int(time.time())
-    active = {"activity_id": ACT, "operator": ADMIN, "state": "running", "pid": os.getpid(),
-              "progress": "", "created_at": now, "started_at": now,
+    active = {"activity_id": ACT, "round": 1, "operator": ADMIN, "state": "running",
+              "pid": os.getpid(), "progress": "", "created_at": now, "started_at": now,
               "finished_at": None, "result": None, "error": ""}
-    expired = {"activity_id": "A-0009", "operator": ADMIN, "state": "done", "pid": os.getpid(),
-               "progress": "", "created_at": now - app.GROUPING_JOB_TTL - 10,
+    expired = {"activity_id": "A-0009", "round": 1, "operator": ADMIN, "state": "done",
+               "pid": os.getpid(), "progress": "",
+               "created_at": now - app.GROUPING_JOB_TTL - 10,
                "started_at": now - app.GROUPING_JOB_TTL - 10,
                "finished_at": None, "result": None, "error": ""}
     storage.update_json(app.ONETOONE_JOBS_FILE, {},
                         lambda jobs: {**jobs, "activejob001": active, "expiredjob01": expired})
-    conflict = app._create_onetoone_job("newjob000001", ACT, ADMIN)
+    conflict = app._create_onetoone_job("newjob000001", ACT, 1, ADMIN)
     assert conflict == "activejob001"
     jobs = storage.load_json(app.ONETOONE_JOBS_FILE, {})
     assert "expiredjob01" not in jobs
@@ -781,3 +782,101 @@ def test_group_configure_injection_matches_bot_for_new_fields(monkeypatch, tmp_p
     assert h5_kwargs["fields"]["onetoone_flag"] == "一对一功能开启"
     assert h5_kwargs["fields"]["onetoone_status"] == "一对一状态"
     assert set(h5_kwargs["fields"]) == set(lib_grouping._REQUIRED_FIELDS)
+
+
+# ---------------------------------------------------------------- 多轮（Phase 2 追加）
+
+def _oto_res_round(oid, target, rnd, rank=1):
+    row = _oto_res_row(oid, target, rank)
+    row["fields"]["轮次"] = str(rnd)
+    return row
+
+
+def test_status_includes_rounds(api):
+    """status 与 group/status 都补轮次信息（空轮次行 = 第 1 轮）。"""
+    api.install(activity=_oto_act(oto_status="已完成"),
+                results=[_oto_res_round("ou_m0", "ou_f0", 1),
+                         _oto_res_round("ou_m0", "ou_f1", 2)])
+    body = api.get("/api/admin/onetoone/status?activity_id=" + ACT).get_json()
+    assert body["rounds"] == [1, 2] and body["latest_round"] == 2
+
+    g = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert g["onetoone_rounds"] == [1, 2] and g["onetoone_latest_round"] == 2
+
+
+def test_result_endpoint_round_param_and_latest(api):
+    """result 端点：round 省略取最新、指定轮次取指定轮；round 非法 400。"""
+    api.install(activity=_oto_act(oto_status="已完成"),
+                results=[_oto_res_round("ou_m0", "ou_f0", 1),
+                         _oto_res_round("ou_m0", "ou_f1", 2)])
+    latest = api.get("/api/admin/onetoone/result?activity_id=" + ACT).get_json()
+    assert latest["round"] == 2 and latest["rounds"] == [1, 2]
+    assert [t["open_id"] for t in latest["people"][0]["partners"]] == ["ou_f1"]
+
+    first = api.get("/api/admin/onetoone/result?activity_id=" + ACT + "&round=1").get_json()
+    assert first["round"] == 1
+    assert [t["open_id"] for t in first["people"][0]["partners"]] == ["ou_f0"]
+
+    assert api.get("/api/admin/onetoone/result?activity_id=" + ACT
+                   + "&round=x").status_code == 400
+
+
+def test_preview_accepts_round_and_reports_round_fields(api):
+    api.install(results=[_oto_res_round("ou_m0", "ou_f0", 1)])
+    body = api.post("/api/admin/onetoone/preview",
+                    {"activity_id": ACT, "round": 1}).get_json()
+    assert body["round"] == 1 and body["existing_rounds"] == [1]
+    assert body["existing_round_results"] == 1 and body["can_execute"] is False
+
+    body2 = api.post("/api/admin/onetoone/preview",
+                     {"activity_id": ACT, "round": 2}).get_json()
+    assert body2["existing_round_results"] == 0
+    assert body2["results_preserved"] == 1, "开启新一轮保留历史"
+
+    assert api.post("/api/admin/onetoone/preview",
+                    {"activity_id": ACT, "round": "x"}).status_code == 400
+
+
+def test_start_with_clear_results_false_keeps_history(api):
+    """start 收 clear_results：False = 开启新一轮（保留历史），默认 True 不变。"""
+    signups, selections = _balanced(2, 2)
+    fake = api.install(activity=_oto_act(oto_status="已完成"), signups=signups,
+                       selections=selections,
+                       results=[_oto_res_round("ou_m0", "ou_f0", 1),
+                                _oto_res_round("ou_m0", "ou_f0", 2)])
+    r = api.post("/api/admin/onetoone/start", {"activity_id": ACT, "clear_results": False})
+    assert r.status_code == 200
+    assert r.get_json()["cleared_results"] == 0
+    assert len(fake.tables[RESULT_TBL]) == 2, "历史轮次结果保留"
+
+    assert api.post("/api/admin/onetoone/start",
+                    {"activity_id": ACT, "clear_results": "yes"}).status_code == 400
+
+
+def test_run_round_param_and_round_rows(api):
+    """run 收 round：job/结果都锚定该轮；round 非法 400。"""
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections)
+    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "round": 2})
+    assert r.status_code == 202
+    body = r.get_json()
+    assert body["round"] == 2
+    job = _poll_job(api, body["job_id"])
+    assert job["state"] == "done" and job["round"] == 2
+    assert job["result"]["round"] == 2
+    rows = [x for x in api.fake.tables[RESULT_TBL] if x["fields"].get("轮次") == "2"]
+    assert rows and len(rows) == job["result"]["total_pairs"]
+
+    assert api.post("/api/admin/onetoone/run",
+                    {"activity_id": ACT, "round": 0}).status_code == 400
+
+
+def test_onetoone_job_conflict_key_is_activity_and_round(api):
+    """排队层幂等键 = (活动, 轮次)：同轮冲突、异轮并行入列。"""
+    now = int(time.time())
+    active = {"activity_id": ACT, "round": 1, "operator": ADMIN, "state": "running",
+              "pid": os.getpid(), "progress": "", "created_at": now, "started_at": now,
+              "finished_at": None, "result": None, "error": ""}
+    storage.update_json(app.ONETOONE_JOBS_FILE, {}, lambda jobs: {**jobs, "activejob001": active})
+    assert app._create_onetoone_job("newjob000001", ACT, 1, ADMIN) == "activejob001"
+    assert app._create_onetoone_job("newjob000002", ACT, 2, ADMIN) is None

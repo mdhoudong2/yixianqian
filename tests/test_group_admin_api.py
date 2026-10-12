@@ -436,38 +436,85 @@ def test_a8_preview_blockers_cover_all_causes(api):
 # ---------------------------------------------------------------- A9 fresh 读取
 
 def test_a9_read_endpoints_use_fresh_snapshots(api):
-    """判定依赖 bot 写入的分组状态/结果 → 必须 fresh=True（docs/读取一致性.md 规则一）。"""
+    """判定依赖 bot 写入的分组状态/结果 → 必须 fresh=True（docs/读取一致性.md 规则一）；
+    并按活动实际模式/状态只读该模式 UI 用得到的表（mode=none 不读任何子表）。
+
+    省读的表格判定依据：index.html 详情页模板按 gaDetailMode 分支渲染（none 进度
+    tab 只有引导卡；group 用报名/志愿/轮次；onetoone 用报名/一对一志愿/结果），
+    列表行 gaRowSub 按 mode 与 group_status 分支。未读字段回应仍在（schema 不变）。
+    """
     signups, selections = _balanced(2, 2)
     signups.append(_signup("ou_f9", "阿东"))          # ou_f9 报名未提交
-    api.install(signups=signups, selections=selections,
-                results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "2")])
+    results = [_res("ou_m0", 1, "1"), _res("ou_f0", 1, "2")]
 
+    # ---- status：group 模式 → activities / group_selections / signups / group_results ----
+    api.install(activity=_act(分组功能开启="是"), signups=signups,
+                selections=selections, results=results)
+    api.fresh_calls.clear()
+    r = api.get("/api/admin/group/status?activity_id=" + ACT)
+    assert r.status_code == 200
+    assert set(api.fresh_calls) == {"activities", "group_selections", "signups",
+                                    "group_results"}
+    st = r.get_json()
+    assert st["signup_count"] == 5 and st["submitted_count"] == 4
+    assert st["unsubmitted_count"] == 1 and st["male_count"] == 2 and st["female_count"] == 2
+    assert st["rounds"] == [1, 2] and st["latest_round"] == 2
+    assert st["mode"] == "group" and st["active_job"] is None
+    # 未读的一对一栏位仍在（schema 不变，值为空）
+    assert st["onetoone_submitted_count"] == 0 and st["onetoone_rounds"] == []
+
+    # ---- status：mode=none（进度 tab 只有引导卡）→ 只读 activities ----
+    api.install(signups=signups, selections=selections, results=results)
+    api.fresh_calls.clear()
+    st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert set(api.fresh_calls) == {"activities"}
+    assert st["mode"] == "none"
+    assert st["signup_count"] == 0 and st["submitted_count"] == 0 and st["rounds"] == []
+    assert st["onetoone_submitted_count"] == 0 and st["onetoone_result_count"] == 0
+
+    # ---- status：onetoone 模式 → activities / signups / 一对一两表 ----
+    api.install(activity=_act(一对一功能开启="是", 一对一状态="已完成"))
+    api.fresh_calls.clear()
+    st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert set(api.fresh_calls) == {"activities", "signups",
+                                    "onetoone_selections", "onetoone_results"}
+    assert st["mode"] == "onetoone" and st["submitted_count"] == 0 and st["rounds"] == []
+
+    # ---- activities 列表：「活动集合联集」——分组行要计数与轮次、一对一行要计数 ----
+    act_done = _act(活动ID="A-0003", 分组功能开启="是", 分组状态="已完成")
+    act_oto = _act(活动ID="A-0004", 一对一功能开启="是", 一对一状态="已完成")
+    res_a3 = _res("ou_m0", 1, "1")
+    res_a3["fields"]["活动ID"] = "A-0003"
+    api.install(activity=_act(分组功能开启="是"), signups=signups, selections=selections,
+                results=results + [res_a3], extra_activities=[act_done, act_oto])
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/activities")
     assert r.status_code == 200
     assert set(api.fresh_calls) == {"activities", "group_selections", "group_results",
                                     "onetoone_selections"}
-    act = r.get_json()["activities"][0]
-    assert act["activity_id"] == ACT and act["group_status"] == "收集中"
-    assert act["available_rounds"] == [1, 2] and act["latest_round"] == 2
-    assert act["submitted_count"] == 4 and act["has_results"] is True
-    # C3 加法字段：模式派生值（默认活动无一对一栏位 → none/否）
-    assert act["mode"] == "none" and act["conflict"] is False
-    assert act["onetoone_flag"] == "否" and act["onetoone_status"] == "未开始"
-    assert act["onetoone_submitted_count"] == 0
+    by_id = {x["activity_id"]: x for x in r.get_json()["activities"]}
+    assert by_id[ACT]["group_status"] == "收集中"
+    assert by_id[ACT]["available_rounds"] == [1, 2] and by_id[ACT]["latest_round"] == 2
+    assert by_id[ACT]["submitted_count"] == 4 and by_id[ACT]["has_results"] is True
+    assert by_id["A-0003"]["submitted_count"] == 0
+    assert by_id["A-0003"]["available_rounds"] == [1] and by_id["A-0003"]["latest_round"] == 1
+    assert by_id["A-0004"]["mode"] == "onetoone" and by_id["A-0004"]["onetoone_submitted_count"] == 0
 
+    # ---- activities 列表：只有「未开始」的活动 → 一张子表都不读 ----
+    api.install(activity=_act(分组功能开启="是", 分组状态="未开始"),
+                extra_activities=[_act(活动ID="A-0005", 一对一功能开启="是",
+                                       一对一状态="未开始")])
     api.fresh_calls.clear()
-    r = api.get("/api/admin/group/status?activity_id=" + ACT)
-    assert r.status_code == 200
-    assert set(api.fresh_calls) == {"activities", "group_selections", "signups",
-                                    "group_results", "onetoone_selections",
-                                    "onetoone_results"}
-    st = r.get_json()
-    assert st["signup_count"] == 5 and st["submitted_count"] == 4
-    assert st["unsubmitted_count"] == 1 and st["male_count"] == 2 and st["female_count"] == 2
-    assert st["rounds"] == [1, 2] and st["latest_round"] == 2
-    assert st["mode"] == "none" and st["active_job"] is None
+    r = api.get("/api/admin/group/activities")
+    assert set(api.fresh_calls) == {"activities"}
+    by_id = {x["activity_id"]: x for x in r.get_json()["activities"]}
+    assert by_id[ACT]["submitted_count"] == 0 and by_id[ACT]["available_rounds"] == []
+    assert by_id["A-0005"]["onetoone_submitted_count"] == 0
 
+    # ---- unsubmitted：名册端仍按原契约读 activities/group_selections/signups ----
+    signups, selections = _balanced(2, 2)
+    signups.append(_signup("ou_f9", "阿东"))
+    api.install(signups=signups, selections=selections)
     api.fresh_calls.clear()
     r = api.get("/api/admin/group/unsubmitted?activity_id=" + ACT)
     assert r.status_code == 200
@@ -715,9 +762,12 @@ def _dirty_signups_and_selections():
 
 
 def test_status_shares_lib_dedup_and_adds_up_with_unsubmitted(api):
-    """必修 1/2/5：H5 状态、名单与 lib 共用去重口径，已提交 + 未提交 == 报名总数。"""
+    """必修 1/2/5：H5 状态、名单与 lib 共用去重口径，已提交 + 未提交 == 报名总数。
+
+    计数只在分组模式的详情 UI 显示，故用分组模式活动（读取契约见 test_a9）。
+    """
     signups, selections = _dirty_signups_and_selections()
-    api.install(signups=signups, selections=selections)
+    api.install(activity=_act(分组功能开启="是"), signups=signups, selections=selections)
 
     st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
     assert st["submitted_count"] == 2, "重复行只算一次"

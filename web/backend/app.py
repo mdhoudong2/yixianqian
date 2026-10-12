@@ -7327,11 +7327,14 @@ def admin_activity_signin():
 
 @app.route("/api/admin/activity/signin", methods=["POST"])
 def admin_activity_signin_write():
-    """单笔 {activity_id, open_id, state} 或批次补空 {activity_id, all_pending: true}。
+    """单笔 {activity_id, open_id, state}、批次补空 {activity_id, all_pending: true}
+    或全部清除 {activity_id, clear_all: true}。
 
     UI 只有两态：已到→「按时」、未到→「未到」；显式拒绝「迟到」（D13；历史值仍按
     已到判定）。直接对报名记录盲写（同活动/人只有一条；多条 → 明确报错，照 bot
-    签到指令的处理），不需要锁。批次只补空值，不覆盖已标记的。
+    签到指令的处理），不需要锁。批次只补空值，不覆盖已标记的（旧 UI 的入口，
+    保留兼容旧客户端与既有测试；新 UI 不再调用）。全部清除把该活动所有已报名
+    记录的「签到状态」清空回「未签到」。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7368,6 +7371,26 @@ def admin_activity_signin_write():
             app.logger.info(f"管理员批量签到: {act_id} 补标记 {updated} 人")
         return jsonify({"ok": True, "activity_id": act_id, "updated": updated,
                         "skipped": skipped, "failed": failed})
+
+    if data.get("clear_all"):
+        records = _signin_signup_records(act_id)
+        if records is None:
+            return jsonify({"error": "签到信息查询失败，请重试",
+                            "code": "SIGNIN_QUERY_FAILED"}), 500
+        marked = [rec for rec in records
+                  if bitable.get_field_text(rec.get("fields", {}), F_SIGNUP_ATTENDANCE)]
+        # 一次 batch_update（同 all_pending）：逐条写在几十人规模就会超过浏览器
+        # 15s fetch 预算。返回值如实回传，不足即 failed，不谎报成功。
+        cleared = _grouping_client.batch_update_records(
+            SIGNUP_TABLE_ID,
+            [{"record_id": rec.get("record_id"),
+              "fields": {F_SIGNUP_ATTENDANCE: ""}} for rec in marked]) or 0
+        failed = len(marked) - cleared
+        if cleared:
+            refresh_snapshot_table_async("signups")
+            app.logger.info(f"管理员全部清除签到: {act_id} 清除 {cleared} 人")
+        return jsonify({"ok": True, "activity_id": act_id, "cleared": cleared,
+                        "failed": failed, "total": len(records)})
 
     target = data.get("open_id")
     state = data.get("state")

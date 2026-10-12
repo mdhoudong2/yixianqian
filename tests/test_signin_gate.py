@@ -594,6 +594,61 @@ def test_admin_signin_batch_search_failure_500(api):
     assert r.status_code == 500 and r.get_json()["code"] == "SIGNIN_QUERY_FAILED"
 
 
+def test_admin_signin_clear_all_clears_marked(api):
+    """clear_all：只清非空的「签到状态」，空值/已取消记录不动，返回值如实。"""
+    signups = [
+        _signup_att("ou_m0", "按时"), _signup_att("ou_m1", "未到"),
+        _signup_att("ou_f0", "迟到"), _signup_att("ou_f1", None),
+        _signup_att("ou_f2", ""), _signup_att("ou_f3", "按时", status="已取消"),
+    ]
+    api.install(activity=_act_group(), signups=signups)
+    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "clear_all": True})
+    assert r.status_code == 200
+    assert r.get_json() == {"ok": True, "activity_id": ACT,
+                            "cleared": 3, "failed": 0, "total": 5}
+    by_oid = {x["fields"]["报名人open_id"]: x["fields"].get(ATT)
+              for x in api.fake.tables[SIGNUP_TABLE_ID]}
+    assert by_oid["ou_m0"] == "" and by_oid["ou_m1"] == "" and by_oid["ou_f0"] == ""
+    assert by_oid["ou_f1"] is None and by_oid["ou_f2"] in (None, "")
+    assert by_oid["ou_f3"] == "按时", "已取消记录不参与清除"
+    assert api.refresh_calls == ["signups"]
+
+
+def test_admin_signin_clear_all_reports_partial_failure(api, monkeypatch):
+    """batch_update 少写多少就报多少 failed，不谎报全清。"""
+    api.install(activity=_act_group(),
+                signups=[_signup_att("ou_m0", "按时"), _signup_att("ou_m1", "未到")])
+    monkeypatch.setattr(api.fake, "batch_update_records", lambda *a, **k: 1)
+    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "clear_all": True})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["cleared"] == 1 and body["failed"] == 1 and body["total"] == 2
+
+
+def test_admin_signin_clear_all_total_failure(api, monkeypatch):
+    api.install(activity=_act_group(), signups=[_signup_att("ou_m0", "按时")])
+    monkeypatch.setattr(api.fake, "batch_update_records", lambda *a, **k: 0)
+    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "clear_all": True})
+    body = r.get_json()
+    assert body["cleared"] == 0 and body["failed"] == 1
+    assert api.refresh_calls == [], "全失败不刷新快照"
+
+
+def test_admin_signin_clear_all_nothing_marked_no_write(api):
+    api.install(activity=_act_group(), signups=[_signup_att("ou_m0", None)])
+    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "clear_all": True})
+    assert r.get_json() == {"ok": True, "activity_id": ACT,
+                            "cleared": 0, "failed": 0, "total": 1}
+    assert api.fake.writes() == [] and api.refresh_calls == []
+
+
+def test_admin_signin_clear_all_search_failure_500(api):
+    api.install(activity=_act_group(), signups=[_signup_att("ou_m0", "按时")])
+    api.fake.search_fails = {SIGNUP_TABLE_ID}
+    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "clear_all": True})
+    assert r.status_code == 500 and r.get_json()["code"] == "SIGNIN_QUERY_FAILED"
+
+
 def test_admin_signin_flag_writes_and_idempotent(api):
     fake = api.install(activity=_act_group())
     r = api.post("/api/admin/activity/signin/flag", {"activity_id": ACT, "enabled": True})

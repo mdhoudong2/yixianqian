@@ -37,7 +37,7 @@ def configured(monkeypatch, tmp_path):
 
 
 def _execute(fake):
-    return lib_onetoone.execute(ACT, client=fake, activity=_find_act(fake, ACT),
+    return lib_onetoone.execute(ACT, 1, client=fake, activity=_find_act(fake, ACT),
                                 find_user_by_openid=_find_user)
 
 

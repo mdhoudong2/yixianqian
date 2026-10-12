@@ -226,7 +226,7 @@ def test_onetoone_pool_filter_excludes_unchecked_in(configured):
                   _sel_oto("ou_f1", "女性", ("ou_m0",))]
     fake = FakeBitable(_oto_tables(activity, signups, selections))
 
-    res = lib_onetoone.execute(ACT, client=fake, activity=activity,
+    res = lib_onetoone.execute(ACT, 1, client=fake, activity=activity,
                                find_user_by_openid=_find_user)
     assert res["code"] == "OK"
     assert res["participant_count"] == 2, "只留已到的 1 男 1 女"
@@ -244,7 +244,7 @@ def test_onetoone_pool_not_filtered_when_flag_off(configured):
                   _sel_oto("ou_f0", "女性", ("ou_m0",))]
     fake = FakeBitable(_oto_tables(activity, signups, selections))
 
-    res = lib_onetoone.execute(ACT, client=fake, activity=activity,
+    res = lib_onetoone.execute(ACT, 1, client=fake, activity=activity,
                                find_user_by_openid=_find_user)
     assert res["code"] == "OK"
     assert res["participant_count"] == 2
@@ -258,7 +258,7 @@ def test_onetoone_pool_fail_closed_on_search_failure(configured):
     fake = FakeBitable(_oto_tables(activity, signups, selections),
                        search_fails={SIGNUP_TABLE_ID})
 
-    res = lib_onetoone.execute(ACT, client=fake, activity=activity,
+    res = lib_onetoone.execute(ACT, 1, client=fake, activity=activity,
                                find_user_by_openid=_find_user)
     assert res["code"] == "SIGNIN_QUERY_FAILED"
     assert fake.tables[OTO_RESULT] == []

@@ -55,6 +55,7 @@ def configure_onetoone_lib(lock_dir):
             "oto_user_gender": FIELD_OTO_USER_GENDER,
             "oto_target_oid": FIELD_OTO_TARGET_OID,
             "oto_target_name": FIELD_OTO_TARGET_NAME,
+            "oto_round": FIELD_OTO_ROUND,
             "signup_activity_id": FIELD_SIGNUP_ACTIVITY_ID,
             "signup_openid": FIELD_SIGNUP_OPENID,
             "signup_nickname": FIELD_SIGNUP_NICKNAME,
@@ -391,8 +392,8 @@ def _render_execute_result(res, activity_id):
         return (f"无法执行一对一：活动「{res['activity_name']}」的分组模式已开启。\n"
                 f"请先在 H5「活动管理」把模式切换为「一对一」再执行。")
     if code == "ALREADY_DONE":
-        return (f"活动「{res['activity_name']}」已生成过一对一结果，请勿重复执行。如需重新匹配，请先发送"
-                f"「开始一对一 {activity_id}」重新开放，再执行。")
+        return (f"活动「{res['activity_name']}」第{res['round']}轮已生成过一对一结果，请勿重复执行。"
+                f"如需重新匹配，请先发送「开始一对一 {activity_id}」重新开放，再执行。")
     if code == "BUSY":
         return "当前已有一对一任务在执行中，请稍候再试。"
     if code == "SEARCH_FAILED":
@@ -438,22 +439,31 @@ def _render_execute_result(res, activity_id):
         return "结果已生成，但状态写入失败（当前状态：已截止），请稍后重试或让管理员检查"
 
     # 走到这里就是 OK
-    return (f"🎉 活动「{res['activity_name']}」一对一匹配完成：\n"
+    return (f"🎉 活动「{res['activity_name']}」第{res['round']}轮 一对一匹配完成：\n"
             f"参与 {res['participant_count']} 人，共生成 {res['total_pairs']} 条必聊关系。\n"
             f"用户可自查 H5「我的一对一」查看名单。")
 
 
 def handle_admin_stop_onetoone(keyword):
-    """管理员：执行一对一匹配 格式: 执行一对一 A-0002"""
-    activity_id = keyword.strip()
-    if not activity_id:
-        return "格式：执行一对一 活动ID\n例如：执行一对一 A-0002"
+    """管理员：执行一对一匹配 格式: 执行一对一 A-0002 [轮次]（轮次可选，默认第1轮）"""
+    parts = keyword.split()
+    if not parts:
+        return "格式：执行一对一 活动ID [轮次]\n例如：执行一对一 A-0002 或 执行一对一 A-0002 2"
+    activity_id = parts[0]
+    round_no = 1
+    if len(parts) >= 2:
+        try:
+            round_no = int(parts[1])
+            if round_no < 1:
+                return "轮次必须为大于0的整数"
+        except ValueError:
+            return f"轮次必须为数字，当前：{parts[1]}"
 
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    res = lib_onetoone.execute(activity_id, client=bitable, activity=activity,
+    res = lib_onetoone.execute(activity_id, round_no, client=bitable, activity=activity,
                                find_user_by_openid=find_user_by_openid)
     return _render_execute_result(res, activity_id)
 
@@ -470,10 +480,13 @@ def handle_admin_onetoone_status(keyword):
 
     res = lib_onetoone.fetch_status(activity_id, client=bitable, activity=activity,
                                     find_user_by_openid=find_user_by_openid)
+    rounds = res.get("rounds") or []
+    rounds_text = "、".join(f"第{r}轮" for r in rounds) if rounds else "无"
     return (f"活动「{res['name']}」一对一状态：\n"
             f"状态：{res['status']}\n"
             f"报名人数：{res['signup_count']}\n"
-            f"已提交选择：{res['submitted_count']}人")
+            f"已提交选择：{res['submitted_count']}人\n"
+            f"已生成轮次：{rounds_text}")
 
 
 def handle_admin_unsubmitted_onetoone(keyword):

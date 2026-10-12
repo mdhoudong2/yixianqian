@@ -496,6 +496,9 @@
   .ga-step-line { position: absolute; top: 11px; left: 50%; width: 100%; height: 2px; background: #ebedf0; }
   .ga-step.done .ga-step-line { background: var(--yxq-st-done-bg); }
   .ga-empty { text-align: center; padding: 40px 20px; } .ga-empty-retry { margin-top: 12px; }
+  /* 慢载入提示：加载超过 6s 时在转圈下方补一句话，避免用户以为卡死而重载（组件 ga-loading 共用） */
+  .ga-slow-loading { text-align: center; }
+  .ga-slow-hint { margin-top: 8px; font-size: 12px; color: #969799; }
   .ga-signin-row { gap: 8px; } .ga-signin-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
   .ga-form-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f2f3f5; } .ga-form-row .van-switch::after { content: ''; position: absolute; inset: -10px; }
   .ga-form-label { flex: 1; min-width: 0; font-size: 14px; color: #646566; }
@@ -1067,7 +1070,7 @@
   <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
   <div class="pa-title">🌾 麦穗管理</div>
 
-  <div v-if="paLoading" style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+  <div v-if="paLoading" style="text-align:center; padding:40px;"><ga-loading size="24px"></ga-loading></div>
   <template v-else>
     <div class="pa-stats">
       <div class="pa-stat"><div class="pa-stat-num">{{ paStats.outstanding }}</div><div class="pa-stat-label">待发放余额</div></div>
@@ -1091,7 +1094,7 @@
       </van-tab>
       <van-tab title="流水">
         <div v-if="paLedgerFilter" class="pa-filter-chip" @click="clearPaFilter">只看：{{ paLedgerFilterNick }} ✕</div>
-        <div v-if="paLedgerLoading" style="text-align:center; padding:24px;"><van-loading size="24px">加载中...</van-loading></div>
+        <div v-if="paLedgerLoading" style="text-align:center; padding:24px;"><ga-loading size="24px"></ga-loading></div>
         <template v-else>
           <div v-for="e in paLedger" :key="e.id" class="pa-row">
             <div class="pa-row-main">
@@ -1134,7 +1137,7 @@
   </template>
 
   <van-popup v-model:show="paUserDetailShow" position="bottom" round>
-    <div v-if="paUserDetailLoading" style="text-align:center; padding:48px;"><van-loading size="24px">加载中...</van-loading></div>
+    <div v-if="paUserDetailLoading" style="text-align:center; padding:48px;"><ga-loading size="24px"></ga-loading></div>
     <div v-else-if="paUserDetail" class="pa-detail">
       <div class="pa-detail-head">
         <div class="pa-detail-name">{{ paUserDetail.user.nickname }} <span v-if="paUserDetail.user.user_id" class="pa-row-id">{{ paUserDetail.user.user_id }}</span></div>
@@ -1197,7 +1200,7 @@
   <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
   <div class="ga-title">👥 活动管理</div>
 
-  <div v-if="gaLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+  <div v-if="gaLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
   <template v-else>
     <div class="ga-stats">
       <div class="ga-stat"><div class="ga-stat-num">{{ gaStats.progress }}</div><div class="ga-stat-label">进行中</div></div>
@@ -1247,7 +1250,7 @@
   </div>
   <div style="padding:2px 16px 0; font-size:12px; color:#646566;">{{ gaDetailId }} · {{ gaModeText }}</div>
 
-  <div v-if="gaDetailLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+  <div v-if="gaDetailLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
   <div v-else-if="gaDetailError" class="ga-empty">
     <van-empty image="error" description="活动没载出来，检查一下网络"></van-empty>
     <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="refreshGroupDetail()">重新载入</van-button>
@@ -1378,7 +1381,7 @@
 
       <van-tab v-if="gaDetailMode==='group'" title="名单">
         <div class="ga-card" style="margin-top:12px;">
-          <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-if="gaRosterLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
           <div v-else-if="gaRosterError" class="ga-empty">
             <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
             <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
@@ -1433,7 +1436,7 @@
       </van-tab>
       <van-tab v-else-if="gaDetailMode==='onetoone'" title="名单">
         <div class="ga-card" style="margin-top:12px;">
-          <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-if="gaRosterLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
           <div v-else-if="gaRosterError" class="ga-empty">
             <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
             <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
@@ -1494,7 +1497,7 @@
             <div class="round-tabs" style="padding-top:0;" v-if="gaDetail.rounds.length">
               <span v-for="r in gaDetail.rounds" :key="r" class="round-tab" :class="{active: gaResultRound===r}" @click="selectGaResultRound(r)">第{{ r }}轮</span>
             </div>
-            <div v-if="gaResultLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+            <div v-if="gaResultLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
             <template v-else-if="gaGroupsRound===gaResultRound && gaGroups.length">
               <div class="ga-row-sub" style="text-align:center; margin:4px 0 10px;">共 {{ gaGroups.length }} 组 · 每组 {{ gaDetail.males_per_group }}男{{ gaDetail.females_per_group }}女</div>
               <div v-for="(g, gi) in gaGroups" :key="gi" class="ga-group-card">
@@ -1517,7 +1520,7 @@
             <div class="round-tabs" style="padding-top:0;">
               <span v-for="r in gaOtoRounds" :key="r" class="round-tab" :class="{active: gaOtoResultRound===r}" @click="selectGaOtoResultRound(r)">第{{ r }}轮</span>
             </div>
-            <div v-if="gaOtoResultLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+            <div v-if="gaOtoResultLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
             <div v-else-if="gaOtoResultError" class="ga-empty">
               <van-empty image="error" description="结果没载出来，检查一下网络"></van-empty>
               <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGaOtoResult(gaOtoResultRound)">重新载入</van-button>
@@ -1559,7 +1562,7 @@
           </div>
         </div>
         <div class="ga-card">
-          <div v-if="gaSigninLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+          <div v-if="gaSigninLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
           <div v-else-if="gaSigninError" class="ga-empty">
             <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
             <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
@@ -1607,7 +1610,7 @@
   <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
   <div class="ga-title">{{ gaDetail ? (gaDetail.name || '活动') : '' }} 报名名单</div>
   <div class="ga-card" style="margin-top:12px;">
-    <div v-if="gaRosterLoading" class="ga-empty"><van-loading size="24px">加载中...</van-loading></div>
+    <div v-if="gaRosterLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
     <div v-else-if="gaRosterError" class="ga-empty">
       <van-empty image="error" description="名单没载出来，检查一下网络"></van-empty>
       <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupRoster(true)">重新载入</van-button>
@@ -1902,7 +1905,7 @@
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
   <div class="page">
-    <div v-if="loadingReported" style="text-align:center; padding:40px;"><van-loading size="24px">加载中...</van-loading></div>
+    <div v-if="loadingReported" style="text-align:center; padding:40px;"><ga-loading size="24px"></ga-loading></div>
     <van-empty v-else-if="!reportedMessages.length" description="暂无待处理的举报"></van-empty>
     <div v-else style="display:flex;flex-direction:column;gap:10px;">
       <div v-for="m in reportedMessages" :key="m.id" class="msg-card" style="align-items:flex-start; flex-direction:column;">
@@ -3002,8 +3005,25 @@
     new MutationObserver(disableImgDrag).observe(document.documentElement,{childList:true,subtree:true});
   }catch(e){}
 })();
-const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
+const { createApp, ref, computed, onMounted, watch, nextTick, onUnmounted } = Vue;
+// 管理台共用「慢载入」loading：超过 6s 在转圈下方追加提示（页面以为卡死而重载是本次要缓解的问题）。
+// 组件卸载自动清定时器；写操作遮罩等不需要的地方不用它。
+const GaLoading = {
+  props: { size: { type: String, default: '24px' } },
+  setup() {
+    const SLOW_HINT_MS = 6000;
+    const slow = ref(false);
+    const timer = setTimeout(() => { slow.value = true; }, SLOW_HINT_MS);
+    onUnmounted(() => clearTimeout(timer));
+    return { slow };
+  },
+  template: '<div class="ga-slow-loading">'
+    + '<van-loading :size="size">加载中...</van-loading>'
+    + '<div v-if="slow" class="ga-slow-hint">网络较慢，仍在加载…</div>'
+    + '</div>'
+};
 createApp({
+  components: { 'ga-loading': GaLoading },
   setup() {
     const page = ref('cards');
     // 四 Tab / 子页流畅过渡：按 tab 顺序与子页层级自动选动画
@@ -4010,7 +4030,9 @@ createApp({
       const baseHeaders = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
       if (csrf) baseHeaders['X-CSRF-Token'] = csrf;
       const controller = new AbortController();
-      const timeout = setTimeout(()=> controller.abort(), 15000);
+      // 管理读端点最慢 p99 约 10s（fresh 读多表），15s 上限会把最终成功的请求误判为超时；
+      // 放宽到 30s 覆盖 p99.9。文案与重试语义不变（超时不会触发自动重试）。
+      const timeout = setTimeout(()=> controller.abort(), 30000);
       try {
         const resp = await fetch(BASE_PATH + url, {
           credentials: 'same-origin',
@@ -6728,7 +6750,8 @@ createApp({
       const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
       if (csrf) headers['X-CSRF-Token'] = csrf;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      // 与 api() 同一阈值：run 的 409 body 要读 job_id，同样不能 15s 就掐掉（网络层失败不自动重试）
+      const timeout = setTimeout(() => controller.abort(), 30000);
       try {
         const resp = await fetch(BASE_PATH + url, { credentials: 'same-origin',
           headers: { ...headers, ...(options.headers || {}) }, signal: controller.signal, ...options });

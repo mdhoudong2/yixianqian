@@ -6240,9 +6240,37 @@ def admin_group_activities():
     keyword = (request.args.get("q") or "").strip().casefold()
 
     activities = _snap_fresh("activities")
-    selections = _snap_fresh("group_selections")
-    results = _snap_fresh("group_results")
-    oto_selections = _snap_fresh("onetoone_selections")
+
+    # 按活动集合的实际模式/状态做「联集」判断，只 fresh 读列表行真正会显示的子表。
+    # 行渲染（index.html gaRowSub）：一对一(非未开始)行显示 onetoone_submitted_count；
+    # 其余行按分组状态——未开始不用计数、已完成用轮次、收集中/已截止用 submitted_count；
+    # 冲突行只有纠偏提示，但冲突属罕见历史态，按任务口径保守读两模式全表。
+    # 未被任何行用到的表不读，回应字段仍在，值走空集合（schema 不变）。
+    need_selections = need_rounds = need_oto_selections = False
+    for a in activities:
+        f = a.get("fields", {})
+        mode = lib_grouping.derive_mode(a)
+        if mode == lib_grouping.MODE_CONFLICT:
+            need_selections = need_rounds = need_oto_selections = True
+            continue
+        if mode == lib_grouping.MODE_ONETOONE:
+            st = (bitable.get_field_text(f, F_ACTIVITY_ONETOONE_STATUS)
+                  or lib_grouping.STATUS_NOT_STARTED)
+            if st != lib_grouping.STATUS_NOT_STARTED:
+                need_oto_selections = True
+            continue
+        gst = (bitable.get_field_text(f, F_ACTIVITY_GROUP_STATUS)
+               or lib_grouping.STATUS_NOT_STARTED)
+        if gst == lib_grouping.STATUS_NOT_STARTED:
+            continue
+        if gst == lib_grouping.STATUS_DONE:
+            need_rounds = True
+        else:
+            need_selections = True
+
+    selections = _snap_fresh("group_selections") if need_selections else []
+    results = _snap_fresh("group_results") if need_rounds else []
+    oto_selections = _snap_fresh("onetoone_selections") if need_oto_selections else []
 
     # 总览需要按活动分别计数，这里一次遍历全表；去重口径（非空 open_id 去重）与
     # lib.summarize_selections 等价，是该口径在总览端的等价实现（逐活动调用会在
@@ -6321,34 +6349,46 @@ def admin_group_status():
     if not act:
         return jsonify({"error": "活动不存在"}), 404
     f = act.get("fields", {})
+    mode = lib_grouping.derive_mode(act)
 
-    selections = _group_selection_rows(_snap_fresh("group_selections"), act_id)
+    # 只 fresh 读该模式 UI 真正会渲染的字段对应的表（详情页按 mode 分支渲染）：
+    #  none    → 进度 tab 只有引导卡，任何计数都不显示 → 0 张子表
+    #  group   → 进度卡（报名/已填/未填/男女数）+ 结果 tab/模式副标题（轮次）
+    #            → group_selections + signups + group_results
+    #  onetoone→ 进度卡（报名/已填/未填/必聊条数/匹配人数/轮数）
+    #            → signups + onetoone_selections + onetoone_results
+    #  conflict→ 进度 tab 是纠偏卡（不渲染计数）；冲突属罕见历史态，保守起见
+    #            仍按两模式全读。决定性的表读取依然 fresh（读取一致性规则一），
+    #            省掉的只是该模式用不到的表。
+    read_group = mode in (lib_grouping.MODE_GROUP, lib_grouping.MODE_CONFLICT)
+    read_oto = mode in (lib_grouping.MODE_ONETOONE, lib_grouping.MODE_CONFLICT)
+
+    selections = _group_selection_rows(_snap_fresh("group_selections"), act_id) if read_group else []
     # 计数一律走 lib 的去重口径（与 bot「分组状态」同一份实现）：
     # 旧实现「首行性别缺失即吞掉整人」会让 male/female 与 preview 对不上（审查必修 2）。
     summary = lib_grouping.summarize_selections(selections)
     submitted_oids = set(summary["submitted_oids"])
 
-    signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+    signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id) if (read_group or read_oto) else []
     unsubmitted_count = sum(
         1 for s in signup_rows
         if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_oids)
 
-    rounds = _group_rounds(_snap_fresh("group_results"), act_id)
+    rounds = _group_rounds(_snap_fresh("group_results"), act_id) if read_group else []
 
     # 一对一摘要（加法字段）：详情页模式卡与动态 tabs 据此渲染；计数口径与
     # /api/admin/onetoone/status 一致（非空 open_id 去重）。
-    oto_rows = _onetoone_selection_rows(_snap_fresh("onetoone_selections"), act_id)
+    oto_rows = _onetoone_selection_rows(_snap_fresh("onetoone_selections"), act_id) if read_oto else []
     oto_submitted_oids = _onetoone_submitted_oids(oto_rows)
     oto_submitted_set = set(oto_submitted_oids)
     oto_unsubmitted_count = sum(
         1 for s in signup_rows
         if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in oto_submitted_set)
-    oto_results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id)
+    oto_results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id) if read_oto else []
     oto_matched = {oid for oid in
                    (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID)
                     for r in oto_results) if oid}
     oto_rounds = _oto_rounds(oto_results)
-    mode = lib_grouping.derive_mode(act)
     return jsonify({
         "activity_id": act_id,
         "name": bitable.get_field_text(f, F_ACTIVITY_NAME),

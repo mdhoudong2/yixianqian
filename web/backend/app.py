@@ -3824,18 +3824,31 @@ def _openid_directory():
 
 
 def _name_of(directory, oid):
+    """open_id → {nickname, user_id, account_status}。
+
+    **不要**把账号状态叫 `status`：调用端的行里已经有同名业务字段
+    （邀请/兑换记录的 `status`），update 进去会把业务状态覆盖成账号状态
+    （2026-10-12 管理台审计必修 3）。
+    """
     u = directory.get(oid) or {}
     return {
         "nickname": u.get("nickname") or oid,
         "user_id": u.get("user_id") or "",
-        "status": u.get("status") or "",
+        "account_status": u.get("status") or "",
     }
 
 
 def _admin_limit_offset():
-    limit = max(1, min(int(request.args.get("limit", 200)), 1000))
-    offset = max(0, int(request.args.get("offset", 0)))
-    return limit, offset
+    """解析 limit/offset；非整数回 (None, None, (resp, 400))，调用端原样 return。
+
+    裸 int() 会把 ?limit=abc / ?offset=abc 打成 500（管理台审计发现 4）。
+    """
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        return None, None, (jsonify({"error": "limit/offset 必须是整数"}), 400)
+    return limit, offset, None
 
 
 @app.route("/api/admin/points/overview", methods=["GET"])
@@ -3913,7 +3926,9 @@ def admin_points_ledger():
     open_id, err, code = _require_admin()
     if err:
         return err, code
-    limit, offset = _admin_limit_offset()
+    limit, offset, bad = _admin_limit_offset()
+    if bad:
+        return bad
     user_oid = request.args.get("user_oid", "").strip()
 
     conn = points_db.connection()
@@ -3941,7 +3956,9 @@ def admin_points_redemptions():
     open_id, err, code = _require_admin()
     if err:
         return err, code
-    limit, offset = _admin_limit_offset()
+    limit, offset, bad = _admin_limit_offset()
+    if bad:
+        return bad
 
     conn = points_db.connection()
     total = conn.execute("SELECT COUNT(*) FROM redemptions").fetchone()[0]
@@ -3970,7 +3987,9 @@ def admin_points_invites():
     open_id, err, code = _require_admin()
     if err:
         return err, code
-    limit, offset = _admin_limit_offset()
+    limit, offset, bad = _admin_limit_offset()
+    if bad:
+        return bad
 
     conn = points_db.connection()
     total = conn.execute("SELECT COUNT(*) FROM invites").fetchone()[0]
@@ -3983,6 +4002,7 @@ def admin_points_invites():
     out = []
     for r in rows:
         d = dict(r)
+        d["status_label"] = points_invite.STATUS_LABELS.get(d["status"], d["status"])
         d.update(_name_of(directory, d["inviter_oid"]))
         if d.get("invitee_oid"):
             d["invitee"] = _name_of(directory, d["invitee_oid"])

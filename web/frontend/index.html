@@ -1117,7 +1117,7 @@
         <div v-for="iv in paInvites" :key="iv.id" class="pa-row">
           <div class="pa-row-main">
             <div class="pa-row-name">{{ iv.nickname }} <span v-if="iv.user_id" class="pa-row-id">{{ iv.user_id }}</span></div>
-            <div class="pa-row-sub">{{ iv.phone_masked }} · {{ iv.status }} · {{ iv.created_at }}</div>
+            <div class="pa-row-sub">{{ iv.phone_masked }} · {{ iv.status_label }} · {{ iv.created_at }}</div>
           </div>
         </div>
         <van-empty v-if="!paInvites.length" description="暂无邀请记录" />

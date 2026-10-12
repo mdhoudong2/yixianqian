@@ -1235,7 +1235,7 @@
         <div class="ga-row-name">{{ a.name || '(未命名活动)' }}<span class="ga-row-id">{{ a.activity_id }}</span></div>
         <div class="ga-row-sub">{{ gaRowSub(a) }}</div>
         <div class="ga-actions" style="margin-top:10px;">
-          <van-button size="small" plain type="primary" color="#ff6b81" @click.stop="openGroupDetail(a, true)">📋 签到</van-button>
+          <van-button size="small" plain type="primary" color="#ff6b81" @click.stop="openCheckinPage(a)">📋 签到</van-button>
         </div>
       </div>
     </div>
@@ -1548,60 +1548,6 @@
         </div>
       </van-tab>
 
-      <van-tab title="签到">
-        <div class="ga-card" style="margin-top:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div class="ga-card-title" style="margin:0;">现场签到</div>
-            <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
-          </div>
-          <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
-          <div class="ga-stats" style="margin-top:10px;">
-            <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
-            <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
-            <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
-          </div>
-        </div>
-        <div class="ga-card">
-          <div v-if="gaSigninLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
-          <div v-else-if="gaSigninError" class="ga-empty">
-            <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
-            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
-          </div>
-          <template v-else>
-            <div class="ga-roster-tabs">
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
-              <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
-            </div>
-            <div v-if="gaSigninList.length" class="candidate-search-box">
-              <input v-model="gaSigninQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
-            </div>
-            <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
-            <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
-            <div v-else>
-              <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
-                <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
-                <div class="ga-row-main">
-                  <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-                  <div class="ga-row-sub">{{ r.real_name || '-' }} · {{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
-                </div>
-                <div class="ga-signin-actions">
-                  <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
-                  <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
-                </div>
-              </div>
-              <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
-                <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
-              </div>
-            </div>
-          </template>
-        </div>
-        <div class="ga-card">
-          <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
-          <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
-        </div>
-      </van-tab>
     </van-tabs>
   </template>
 </div>
@@ -1661,6 +1607,66 @@
         </div>
       </template>
     </template>
+  </div>
+</div>
+<!-- ========== 管理员·现场签到（独立页：只做签到，避免误触其他功能） ========== -->
+<div v-else-if="page==='checkin'" key="checkin" class="page ga-page">
+  <div class="back-nav" @click="handleBack"><van-icon name="arrow-left"></van-icon> 返回</div>
+  <div class="ga-title">✅ 现场签到</div>
+  <div style="padding:2px 16px 0; font-size:15px; font-weight:600; color:#323233;">{{ gaCheckinName || '活动' }}<span class="ga-row-id">{{ gaDetailId }}</span></div>
+
+  <div class="ga-card" style="margin-top:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <div class="ga-card-title" style="margin:0;">现场签到</div>
+      <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
+    </div>
+    <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
+    <div class="ga-stats" style="margin-top:10px;">
+      <div class="ga-stat"><div class="ga-stat-num ok">{{ gaSigninStats.checked_in }}</div><div class="ga-stat-label">已到</div></div>
+      <div class="ga-stat"><div class="ga-stat-num">{{ gaSigninStats.signed_up }}</div><div class="ga-stat-label">报名</div></div>
+      <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaSigninStats.not_checked_in>0}">{{ gaSigninStats.not_checked_in }}</div><div class="ga-stat-label">未到</div></div>
+    </div>
+    <van-button size="small" plain type="primary" color="#ff6b81" style="margin-top:10px;" :loading="gaSigninLoading" @click="loadSigninRoster(true)">重新载入名册</van-button>
+  </div>
+  <div class="ga-card">
+    <div v-if="gaSigninLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
+    <div v-else-if="gaSigninError" class="ga-empty">
+      <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
+      <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadSigninRoster(true)">重新载入</van-button>
+    </div>
+    <template v-else>
+      <div class="ga-roster-tabs">
+        <div class="ga-roster-tab" :class="{active: gaSigninFilter==='all'}" @click="gaSigninFilter='all'">全部 {{ gaSigninList.length }}</div>
+        <div class="ga-roster-tab" :class="{active: gaSigninFilter==='pending'}" @click="gaSigninFilter='pending'">未签到 {{ gaSigninPendingCount }}</div>
+        <div class="ga-roster-tab" :class="{active: gaSigninFilter==='in'}" @click="gaSigninFilter='in'">已到 {{ gaSigninStats.checked_in }}</div>
+        <div class="ga-roster-tab" :class="{active: gaSigninFilter==='out'}" @click="gaSigninFilter='out'">未到 {{ gaSigninOutCount }}</div>
+      </div>
+      <div v-if="gaSigninList.length" class="candidate-search-box">
+        <input v-model="gaSigninQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
+      </div>
+      <van-empty v-if="!gaSigninList.length" description="还没有人报名"></van-empty>
+      <van-empty v-else-if="!gaSigninFiltered.length" description="没有匹配的人"></van-empty>
+      <div v-else>
+        <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
+          <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
+          <div class="ga-row-main">
+            <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+            <div class="ga-row-sub">{{ r.real_name || '-' }} · {{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
+          </div>
+          <div class="ga-signin-actions">
+            <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
+            <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
+          </div>
+        </div>
+        <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
+          <van-button size="small" plain type="primary" color="#ff6b81" @click="gaSigninShown += 30">查看更多</van-button>
+        </div>
+      </div>
+    </template>
+  </div>
+  <div class="ga-card">
+    <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
+    <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
   </div>
 </div>
 <!-- ========== 我的资料详情 ========== -->
@@ -3109,7 +3115,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster'];
+    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster','checkin'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -5843,7 +5849,7 @@ createApp({
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
         'my_activities': 'profile', 'my_groups': 'profile', 'my_onetoone': 'profile', 'points': 'profile', 'points_admin': 'profile',
-        'group_admin': 'profile', 'group_detail': 'group_admin', 'group_roster': 'group_detail',
+        'group_admin': 'profile', 'group_detail': 'group_admin', 'group_roster': 'group_detail', 'checkin': 'group_admin',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
@@ -5867,6 +5873,7 @@ createApp({
       if (p === 'group_admin') loadGroupAdminList();
       if (p === 'group_detail' && gaDetailId.value) refreshGroupDetail();
       if (p === 'group_roster' && gaDetailId.value) loadGroupRoster(true);
+      if (p === 'checkin' && gaDetailId.value) loadSigninRoster(true);
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); maybeShowUpdateNotes(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
@@ -6350,8 +6357,6 @@ createApp({
     const gaDetailId = ref(''), gaDetail = ref(null);
     const gaDetailLoading = ref(false), gaDetailError = ref(false), gaDetailTab = ref(0);
     const gaModeSwitching = ref(false);
-    // 清单页「📋 签到」直入：详情载入后按实际模式落到签到 tab（分组/一对一=3，未设定/冲突=1）
-    let gaPendingSigninTab = false;
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
@@ -6573,16 +6578,20 @@ createApp({
       }
       gaLoading.value = false;
     }
-    function openGroupDetail(a, toSignin) {
+    function openGroupDetail(a) {
       gaDetailId.value = a.activity_id; gaDetail.value = null; gaDetailError.value = false; gaDetailTab.value = 0;
-      gaPendingSigninTab = !!toSignin;
       gaGroups.value = []; gaGroupsRound.value = 0; gaResultRound.value = 0; gaRunTip.value = '';
       gaResultLoading.value = false; gaResultError.value = false;
       gaOtoPeople.value = []; gaOtoOpen.value = {}; gaOtoResultLoading.value = false; gaOtoResultError.value = false;
       gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
       gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false;
-      gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false; gaSigninQuery.value = ''; gaSigninFilter.value = 'all'; gaSigninFlagOn.value = false;
       page.value = 'group_detail';
+    }
+    function openCheckinPage(a) {
+      gaDetailId.value = a.activity_id; gaCheckinName.value = a.name || '';
+      gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false;
+      gaSigninQuery.value = ''; gaSigninFilter.value = 'all'; gaSigninShown.value = 30; gaSigninFlagOn.value = false;
+      page.value = 'checkin';
     }
     async function refreshGroupDetail() {
       if (gaDetailLoading.value || !gaDetailId.value) return;
@@ -6598,11 +6607,6 @@ createApp({
           gaOtoPeople.value = []; gaOtoOpen.value = {};
           gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
           gaRosterList.value = []; gaRosterSubmittedList.value = []; gaRosterTotal.value = 0;
-          gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false; gaSigninFlagOn.value = false;
-        }
-        if (gaPendingSigninTab) {
-          gaPendingSigninTab = false;
-          gaDetailTab.value = (d.mode === 'none' || d.mode === 'conflict') ? 1 : 3;
         }
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
         if (gaDetailTab.value === 2 && gaDetailMode.value === 'group'
@@ -7099,7 +7103,8 @@ createApp({
     });
     watch(gaRosterQuery, () => { gaRosterShown.value = 30; });
 
-    // ---- 现场签到（R3）：开关 + 名册 + 乐观标记（两态：已到→按时 / 未到→未到，D13）----
+    // ---- 现场签到独立页（R3）：页头活动名 + 开关 + 名册 + 乐观标记（两态：已到→按时 / 未到→未到，D13）----
+    const gaCheckinName = ref('');   // 页头活动名（列表页带入，仅展示）
     const gaSigninFlagOn = ref(false), gaSigninFlagBusy = ref(false);
     const gaSigninList = ref([]), gaSigninLoading = ref(false), gaSigninError = ref(false), gaSigninLoaded = ref(false);
     const gaSigninQuery = ref(''), gaSigninFilter = ref('all'), gaSigninShown = ref(30);
@@ -7131,13 +7136,6 @@ createApp({
       });
     });
     const gaSigninVisible = computed(() => gaSigninFiltered.value.slice(0, gaSigninShown.value));
-    // 签到 tab 索引：分组/一对一四个 tab 在末尾（3）；未设定/冲突只有进度+签到两个 tab（1）
-    const gaOnSigninTab = computed(() => {
-      const d = gaDetailMode.value;
-      if (d === 'none' || d === 'conflict') return gaDetailTab.value === 1;
-      return gaDetailTab.value === 3;
-    });
-    watch(gaOnSigninTab, (v) => { if (v) loadSigninRoster(true); });
 
     async function loadSigninRoster(force) {
       if (gaSigninLoading.value || !gaDetailId.value) return;
@@ -7171,6 +7169,15 @@ createApp({
     }
     async function onToggleSigninFlag(val) {
       if (gaSigninFlagBusy.value || !gaDetailId.value) return;
+      // 误触防护：关闭是「闸门静默失效」方向（未签到者可填志愿），关前必经确认；
+      // 开启方向是正常现场操作且误开后后果可逆，不拦。取消时开关受控于 gaSigninFlagOn，原地不动。
+      if (!val) {
+        try {
+          await vant.showConfirmDialog({ title: '关闭现场签到？',
+            message: '关闭后，未签到的人也能填志愿、参与分组 / 一对一。确认关闭吗？',
+            confirmButtonText: '确认关闭', cancelButtonText: '再想想', confirmButtonColor: '#ee0a24' });
+        } catch(e) { return; }
+      }
       gaSigninFlagBusy.value = true;
       try {
         await api('/api/admin/activity/signin/flag', { method: 'POST',
@@ -7282,12 +7289,12 @@ createApp({
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
       paUserDetail, paUserDetailShow, paUserDetailLoading, paUserDetailOid,
       openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,
-      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaModeFilter, gaModeFilters, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail,
+      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaModeFilter, gaModeFilters, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail, openCheckinPage,
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaDetailMode, gaModeText, gaModeSwitching, switchMode, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
-      gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninStats, gaSigninLoading, gaSigninError, gaSigninLoaded,
+      gaCheckinName, gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninStats, gaSigninLoading, gaSigninError, gaSigninLoaded,
       gaSigninQuery, gaSigninFilter, gaSigninShown, gaSigninBusy, gaSigninBatchBusy, gaSigninFiltered, gaSigninVisible,
       gaSigninPendingCount, gaSigninOutCount, gaSigninStateText, loadSigninRoster, markSignin, onToggleSigninFlag,
-      confirmMarkAllPending, gaOnSigninTab,
+      confirmMarkAllPending,
       gaShowStartMain, gaShowDanger, gaShowNewRound, refreshGroupDetail,
       gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
       gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartMode, gaStartPreviewData, gaStartExpected, gaNewRoundKeepRounds, gaNewRoundKeepResults, openStartPopup, closeStartPopup, submitStartPreview,

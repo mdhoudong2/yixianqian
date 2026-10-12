@@ -5743,13 +5743,17 @@ def group_select(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体不合法"}), 400
     choices = data.get("choices", [])  # [openid1, openid2, ...] 最多7个
 
     if not choices or not isinstance(choices, list):
         return jsonify({"error": "请至少选择一个志愿"}), 400
     if len(choices) > 7:
         return jsonify({"error": "最多选择7个志愿"}), 400
+    if not all(isinstance(c, str) and c for c in choices):
+        return jsonify({"error": "志愿格式不合法"}), 400
 
     # 检查活动状态（分组状态由 bot 进程写入，判定依赖它 → 实时读）
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
@@ -5766,6 +5770,7 @@ def group_select(activity_id):
 
     # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
     af = act_record.get("fields", {})
+    attendance = None
     if lib_grouping.signin_enabled(af):
         attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
         if attendance is None:
@@ -5777,9 +5782,21 @@ def group_select(activity_id):
 
     # 获取用户信息（快照）
     me = snap_self_user()
+    if not me:
+        return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
     me_fields = me.get("fields", {})
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
+
+    # 与一对一 select 同一份校验：1..7、无重复、每个志愿都必须∈本活动
+    # 「已报名 + 已到（签到开启时）+ 异性」候选集（审计 G1：旧实现全放行且零校验）。
+    if len(set(choices)) != len(choices):
+        return jsonify({"error": "不能重复选择同一人"}), 400
+    candidates = _activity_candidate_oids(text_act_id, open_id, my_gender,
+                                          attendance=attendance)
+    for i, c in enumerate(choices):
+        if c not in candidates:
+            return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400
 
     fields = {
         F_GS_ACTIVITY_ID: text_act_id,
@@ -7571,11 +7588,11 @@ def onetoone_candidates(activity_id):
                 })
     return jsonify({"candidates": candidates})
 
-def _onetoone_candidate_oids(act_id, open_id, my_gender, attendance=None):
+def _activity_candidate_oids(act_id, open_id, my_gender, attendance=None):
     """本活动「异性＋已报名」候选 open_id 集合（与 candidates 端点同口径）。
 
     attendance 非 None（签到开启且查询成功）时只留已到者，与 candidates 的池过滤
-    和提交闸门同一口径。
+    和提交闸门同一口径。分组与一对一两个 select 共用这一份校验。
     """
     target_gender = "女性" if my_gender == "男性" else "男性"
     candidates = set()
@@ -7645,7 +7662,7 @@ def onetoone_select(activity_id):
     # 与 bot 统一为 1..7：无重复 + 每个志愿都必须是本活动已报名的异性（错误具体到第N个）
     if len(set(choices)) != len(choices):
         return jsonify({"error": "不能重复选择同一人"}), 400
-    candidates = _onetoone_candidate_oids(text_act_id, open_id, my_gender, attendance=attendance)
+    candidates = _activity_candidate_oids(text_act_id, open_id, my_gender, attendance=attendance)
     for i, c in enumerate(choices):
         if c not in candidates:
             return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400

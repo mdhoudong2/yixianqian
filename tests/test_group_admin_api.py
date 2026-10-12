@@ -970,6 +970,10 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
                         lambda: {"record_id": "rec_u",
                                  "fields": {"昵称": "小北", "性别": "男性"}})
     monkeypatch.setattr(app, "snap_group_selection", lambda aid, oid: None)
+    # 新增的候选集校验要读实表报名（与 onetoone/select 同口径）：桩一行有效候选，
+    # ou_f0 在 _find_user 里是女性
+    monkeypatch.setattr(app.bitable, "get_signups",
+                        lambda aid: [_signup("ou_f0", "阿南")])
 
     def _lookup(aid, oid):
         events.append("lookup")

@@ -473,8 +473,6 @@
   .ga-chip.done { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
   .ga-chip.danger { background: var(--yxq-st-danger-bg); color: var(--yxq-st-danger-fg); }
   .ga-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
-  .ga-filters { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 10px; }
-  .ga-filter-chip { cursor: pointer; padding: 10px 14px; position: relative; } .ga-filter-chip::after { content: ''; position: absolute; inset: -5px -4px; } .ga-filter-chip.active { background: #ff6b81; color: #fff; }
   .ga-act-row { cursor: pointer; } .ga-act-row .ga-chip { margin-bottom: 5px; }
   .ga-row { display: flex; align-items: center; gap: 10px; padding: 12px 0; border-bottom: 1px solid #f2f3f5; }
   .ga-row:last-child { border-bottom: none; }
@@ -620,7 +618,6 @@
   .van-theme-dark .ga-tip-ok { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
   .van-theme-dark .ga-roster-tab { background: #2c2c30; color: #c8c9cc; }
   .van-theme-dark .ga-roster-tab.active { background: #ff6b81; color: #fff; }
-  .van-theme-dark .ga-filter-chip.active { background: #ff6b81; color: #fff; }
   .van-theme-dark .ga-avatar { background: rgba(255,107,129,0.14); }
   .van-theme-dark .ga-group-card { background: #2c2c30; }
   .van-theme-dark .ga-member-chip { background: #222226; color: #f5f5f5; }
@@ -1212,12 +1209,6 @@
       <div class="candidate-search-box" style="margin-bottom:0;">
         <input v-model="gaQ" placeholder="搜活动名称或 A-0002" class="candidate-search-input" />
       </div>
-      <div class="ga-filters">
-        <span v-for="f in gaFilters" :key="f" class="ga-chip ga-filter-chip" :class="{active: gaStatusFilter===f}" @click="gaStatusFilter = (gaStatusFilter===f ? '' : f)">{{ f }}</span>
-      </div>
-      <div class="ga-filters">
-        <span v-for="f in gaModeFilters" :key="f[0]" class="ga-chip ga-filter-chip" :class="{active: gaModeFilter===f[0]}" @click="gaModeFilter = (gaModeFilter===f[0] ? '' : f[0])">模式：{{ f[1] }}</span>
-      </div>
     </div>
 
     <div v-if="gaError" class="ga-empty">
@@ -1225,7 +1216,7 @@
       <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadGroupAdminList()">重新载入</van-button>
     </div>
     <van-empty v-else-if="!gaList.length" description="还没有要管理的活动"></van-empty>
-    <van-empty v-else-if="!gaFilteredList.length" :description="gaQ ? ('没有符合「'+gaQ+'」的活动') : '没有符合筛选的活动'"></van-empty>
+    <van-empty v-else-if="!gaFilteredList.length" :description="gaQ ? ('没有符合「'+gaQ+'」的活动') : '没有找到匹配的活动'"></van-empty>
     <div v-else>
       <div v-for="a in gaFilteredList" :key="a.record_id" class="ga-card ga-act-row" @click="openGroupDetail(a)">
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:5px;">
@@ -1654,8 +1645,7 @@
             <div class="ga-row-sub">{{ r.real_name || '-' }} · {{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
           </div>
           <div class="ga-signin-actions">
-            <van-button size="mini" type="primary" color="#ff6b81" :plain="!r.checked_in" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '按时')">已到</van-button>
-            <van-button size="mini" type="danger" :plain="r.state !== '未到'" :loading="!!gaSigninBusy[r.open_id]" @click="markSignin(r, '未到')">未到</van-button>
+            <van-button size="mini" :color="r.checked_in ? '#0a8548' : '#ee0a24'" :loading="!!gaSigninBusy[r.open_id]" @click="toggleSignin(r)">{{ gaSigninStateText(r.state) }}</van-button>
           </div>
         </div>
         <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
@@ -1665,8 +1655,8 @@
     </template>
   </div>
   <div class="ga-card">
-    <van-button plain type="primary" color="#ff6b81" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="confirmMarkAllPending()">未签到者全部标记已到</van-button>
-    <div class="ga-row-sub" style="margin-top:6px;">只补「未签到」的空值，不会覆盖已标记的「已到 / 未到」。</div>
+    <van-button plain type="danger" color="#ee0a24" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="openClearAllSignins()">全部清除签到状态</van-button>
+    <div class="ga-row-sub" style="margin-top:6px;">清除后所有人回到「未签到」；若签到功能开着，未签到者将无法填志愿、参与分组 / 一对一。</div>
   </div>
 </div>
 <!-- ========== 我的资料详情 ========== -->
@@ -2842,6 +2832,26 @@
       <van-button :color="gaConfirmN>0 ? '#ee0a24' : '#ff6b81'" :disabled="!gaConfirmOk || gaStartBusy" :loading="gaStartBusy" @click="doStartGroup()">确认重新开放</van-button>
     </div>
     </template>
+  </div>
+</van-dialog>
+<!-- 确认层：全部清除签到状态（破坏性，需输入活动编号） -->
+<van-dialog v-model:show="gaClearConfirmShow" title="全部清除签到状态" :show-confirm-button="false" :show-cancel-button="false" :close-on-click-overlay="false">
+  <div class="ga-confirm-body">
+    <div class="ga-row-sub" style="margin-top:6px;">清除后所有人回到「未签到」；若签到功能开着，未签到者将无法填志愿、参与分组 / 一对一。</div>
+    <div v-if="gaSigninFlagOn" class="ga-danger-hint" style="font-size:13px; margin-top:6px;">⚠ 当前签到功能开着：清完要重新把到场者标回「已到」，否则他们无法填志愿、参与分组 / 一对一</div>
+    <div class="ga-confirm-box">
+      <div class="ga-confirm-row"><span>将清除</span><b class="danger">{{ gaSigninMarkedCount }} 人的签到标记</b></div>
+      <div class="ga-confirm-row"><span>清除后</span><b>所有 {{ gaSigninList.length }} 人回到「未签到」</b></div>
+    </div>
+    <div style="margin-top:10px;">
+      <div class="ga-row-sub" style="margin-bottom:6px;">这项操作无法撤销。请输入活动编号 {{ gaDetailId }} 以确认：</div>
+      <input v-model="gaClearConfirmInput" class="ga-confirm-input" :placeholder="gaDetailId" />
+      <div v-if="gaClearConfirmInput && !gaClearConfirmOk" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">活动编号不对，再确认一下喔</div>
+    </div>
+    <div class="ga-actions">
+      <van-button plain @click="cancelClearAllSignins()">取消</van-button>
+      <van-button color="#ee0a24" :disabled="!gaClearConfirmOk || gaSigninBatchBusy" :loading="gaSigninBatchBusy" @click="doClearAllSignins()">确认清除</van-button>
+    </div>
   </div>
 </van-dialog>
 <!-- ========== 一对一管理台：开始一对一确认层（danger=破坏性清历史；new=开启新一轮保留历史） ========== -->
@@ -6350,8 +6360,7 @@ createApp({
     // 模式（分组/一对一）由「模式卡」切换；破坏性的是「开始填志愿」与「开始一对一」
     // （都会清空该活动对应模式的历史结果），执行动作有幂等保护与互斥 guard。见设计 §2。
     const gaLoading = ref(false), gaError = ref(false), gaList = ref([]);
-    const gaQ = ref(''), gaStatusFilter = ref(''), gaFilters = ['收集中', '已截止', '已完成', '未开始'];
-    const gaModeFilter = ref(''), gaModeFilters = [['group', '分组'], ['onetoone', '一对一'], ['none', '未设定'], ['conflict', '⚠冲突']];
+    const gaQ = ref('');
     const gaAdminBadge = ref(''); let gaBadgeAt = 0;
 
     const gaDetailId = ref(''), gaDetail = ref(null);
@@ -6439,9 +6448,8 @@ createApp({
     });
     const gaFilteredList = computed(() => {
       const q = gaQ.value.trim().toLowerCase();
-      return gaList.value.filter(a => (!gaStatusFilter.value || a.group_status === gaStatusFilter.value)
-        && (!gaModeFilter.value || a.mode === gaModeFilter.value)
-        && (!q || String(a.name || '').toLowerCase().includes(q) || String(a.activity_id || '').toLowerCase().includes(q)));
+      return gaList.value.filter(a => !q || String(a.name || '').toLowerCase().includes(q)
+        || String(a.activity_id || '').toLowerCase().includes(q));
     });
     function gaIsCollecting(a) {
       return a.group_status === '收集中' || a.onetoone_status === '收集中';
@@ -6564,7 +6572,7 @@ createApp({
         gaAdminBadge.value = n > 0 ? (n + '场收集中') : ''; gaBadgeAt = Date.now();
       } catch(e) { /* 入口徽标静默失败，不打扰 */ }
     }
-    function openGroupAdmin() { gaQ.value = ''; gaStatusFilter.value = ''; gaModeFilter.value = ''; gaError.value = false; page.value = 'group_admin'; }
+    function openGroupAdmin() { gaQ.value = ''; gaError.value = false; page.value = 'group_admin'; }
     async function loadGroupAdminList() {
       if (gaLoading.value) return;
       gaLoading.value = true; gaError.value = false;
@@ -7109,6 +7117,7 @@ createApp({
     const gaSigninList = ref([]), gaSigninLoading = ref(false), gaSigninError = ref(false), gaSigninLoaded = ref(false);
     const gaSigninQuery = ref(''), gaSigninFilter = ref('all'), gaSigninShown = ref(30);
     const gaSigninBusy = ref({}), gaSigninBatchBusy = ref(false);
+    const gaClearConfirmShow = ref(false), gaClearConfirmInput = ref('');
     function gaSigninStateText(state) {
       // 只显示两态（D13）：历史遗留的「迟到」按已到显示，不出现「迟到」字样
       if (isAttendancePresent(state)) return '已到';
@@ -7122,6 +7131,9 @@ createApp({
     });
     const gaSigninPendingCount = computed(() => gaSigninList.value.filter(r => !r.state).length);
     const gaSigninOutCount = computed(() => gaSigninList.value.filter(r => r.state === '未到').length);
+    const gaSigninMarkedCount = computed(() => gaSigninList.value.filter(r => !!r.state).length);
+    const gaClearConfirmOk = computed(() => String(gaClearConfirmInput.value || '').trim().toLowerCase()
+      === String(gaDetailId.value || '').trim().toLowerCase());
     const gaSigninFiltered = computed(() => {
       const q = gaSigninQuery.value.trim().toLowerCase();
       const f = gaSigninFilter.value;
@@ -7167,6 +7179,10 @@ createApp({
       delete busy[r.open_id];
       gaSigninBusy.value = busy;
     }
+    function toggleSignin(r) {
+      if (gaSigninBusy.value[r.open_id]) return;
+      markSignin(r, r.checked_in ? '未到' : '按时');   // 单按钮两态循环：已到→未到；未到/未签到→已到
+    }
     async function onToggleSigninFlag(val) {
       if (gaSigninFlagBusy.value || !gaDetailId.value) return;
       // 误触防护：关闭是「闸门静默失效」方向（未签到者可填志愿），关前必经确认；
@@ -7192,25 +7208,28 @@ createApp({
       }
       gaSigninFlagBusy.value = false;
     }
-    async function confirmMarkAllPending() {
+    function openClearAllSignins() {
       if (gaSigninBatchBusy.value) return;
-      const pending = gaSigninPendingCount.value;
-      if (!pending) { vant.showToast('没有未签到的人'); return; }
-      try {
-        await vant.showConfirmDialog({ title: '全部标记已到',
-          message: '将把 ' + pending + ' 位「未签到」者标记为「已到」；已标记的「已到 / 未到」不会被覆盖。',
-          confirmButtonText: '确认标记', confirmButtonColor: '#ff6b81' });
-      } catch(e) { return; }
+      if (!gaSigninMarkedCount.value) { vant.showToast('没有需要清除的签到状态'); return; }
+      gaClearConfirmInput.value = '';
+      gaClearConfirmShow.value = true;
+    }
+    function cancelClearAllSignins() { gaClearConfirmShow.value = false; }
+    async function doClearAllSignins() {
+      if (!gaClearConfirmOk.value || gaSigninBatchBusy.value) return;   // 输入的活动编号不符时按钮本就 disabled，这里是双保险
       gaSigninBatchBusy.value = true;
       try {
         const data = await api('/api/admin/activity/signin', { method: 'POST',
-          body: JSON.stringify({ activity_id: gaDetailId.value, all_pending: true }) });
-        gaSigninList.value.forEach(r => { if (!r.state) { r.state = '按时'; r.checked_in = true; } });
-        const failed = data.failed || 0;
-        if (failed) { gaSigninLoaded.value = false; loadSigninRoster(true); }
-        vant.showToast(failed ? ('已标记 ' + (data.updated || 0) + ' 人，' + failed + ' 人失败') : ('已标记 ' + (data.updated || 0) + ' 人已到'));
+          body: JSON.stringify({ activity_id: gaDetailId.value, clear_all: true }) });
+        gaClearConfirmShow.value = false;
+        gaSigninLoaded.value = false;   // 服务端才是准数（可能部分失败）：重新拉名册与统计
+        await loadSigninRoster(true);
+        const cleared = data.cleared || 0, failed = data.failed || 0;
+        if (failed) vant.showToast('已清除 ' + cleared + ' 人，' + failed + ' 人失败，请重试');
+        else if (cleared) vant.showToast('已清除 ' + cleared + ' 人的签到状态');
+        else vant.showToast('没有需要清除的签到状态');
       } catch(e) {
-        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '批量标记失败，再试一次'));
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '清除失败，再试一次'));
       }
       gaSigninBatchBusy.value = false;
     }
@@ -7289,12 +7308,12 @@ createApp({
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,
       paUserDetail, paUserDetailShow, paUserDetailLoading, paUserDetailOid,
       openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,
-      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaStatusFilter, gaFilters, gaModeFilter, gaModeFilters, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail, openCheckinPage,
+      gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail, openCheckinPage,
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaDetailMode, gaModeText, gaModeSwitching, switchMode, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
       gaCheckinName, gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninStats, gaSigninLoading, gaSigninError, gaSigninLoaded,
       gaSigninQuery, gaSigninFilter, gaSigninShown, gaSigninBusy, gaSigninBatchBusy, gaSigninFiltered, gaSigninVisible,
-      gaSigninPendingCount, gaSigninOutCount, gaSigninStateText, loadSigninRoster, markSignin, onToggleSigninFlag,
-      confirmMarkAllPending,
+      gaSigninPendingCount, gaSigninOutCount, gaSigninMarkedCount, gaSigninStateText, loadSigninRoster, markSignin, toggleSignin, onToggleSigninFlag,
+      gaClearConfirmShow, gaClearConfirmInput, gaClearConfirmOk, openClearAllSignins, cancelClearAllSignins, doClearAllSignins,
       gaShowStartMain, gaShowDanger, gaShowNewRound, refreshGroupDetail,
       gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
       gaStartShow, gaStartM, gaStartF, gaStartBusy, gaStartMode, gaStartPreviewData, gaStartExpected, gaNewRoundKeepRounds, gaNewRoundKeepResults, openStartPopup, closeStartPopup, submitStartPreview,

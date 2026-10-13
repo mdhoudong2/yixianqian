@@ -1604,6 +1604,9 @@ def format_activity(record):
         "poster": poster_url,
         "group_status": bitable.get_select_value(fields, F_ACTIVITY_GROUP_STATUS),
         "onetoone_status": bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_STATUS),
+        # 模式入口开关（是/否）：用户端卡片入口整块由它控制（关闭全部后不显示任何入口）
+        "group_flag": bitable.get_select_value(fields, F_ACTIVITY_GROUP_FLAG),
+        "onetoone_flag": bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_FLAG),
         "male_per_group": int(bitable.get_field_number(fields, F_ACTIVITY_MALE_PER_GROUP, 0)),
         "female_per_group": int(bitable.get_field_number(fields, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
         "start_time": fields.get(F_ACTIVITY_START_TIME),

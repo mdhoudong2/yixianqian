@@ -482,6 +482,7 @@ def test_my_activities_carries_signin_state(api):
     items = r.get_json()["activities"]
     assert len(items) == 1
     assert items[0]["signin_enabled"] is True and items[0]["my_attendance"] == "按时"
+    assert items[0]["group_flag"] == "否", "「我的活动」也要带模式 flag（关闭全部后隐藏入口）"
     assert "activities" in api.fresh_calls, "活动状态必须实时读（bot 写入，快照会过期）"
 
 
@@ -518,6 +519,20 @@ def test_activities_list_attendance_carried_when_not_collecting(api):
     item = _first_activity(c.get("/api/activities"))
     assert item["my_signup"] is True
     assert item["signin_enabled"] is True and item["my_attendance"] == "按时"
+
+
+def test_activities_list_carries_mode_flags(api):
+    """卡片入口由模式开关控制（「关闭全部」后前端整块隐藏）：列表必须带两个 flag。"""
+    act = _act_group()  # 默认「分组功能开启=否」（= 关闭全部后的状态）
+    api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
+    c = _me_client("ou_m0")
+    item = _first_activity(c.get("/api/activities"))
+    assert item["group_flag"] == "否" and item.get("onetoone_flag", "") != "是"
+
+    act2 = _act_group(分组功能开启="是")
+    api.install(activity=act2, signups=[_signup_att("ou_m0", "按时")])
+    item2 = _first_activity(c.get("/api/activities"))
+    assert item2["group_flag"] == "是"
 
 
 def test_group_select_allowed_when_not_collecting(api):

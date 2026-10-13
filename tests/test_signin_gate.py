@@ -473,7 +473,7 @@ def test_my_groups_carries_my_attendance(api, monkeypatch):
 
 
 def test_my_activities_carries_signin_state(api):
-    """「我的活动」卡片与「活动」页一致：带 signin_enabled / my_attendance（读报名记录，零额外查询）。"""
+    """「我的活动」卡片与「活动」页一致：带 signin_enabled / my_attendance，且活动状态实时读。"""
     act = _act_group()
     api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
     c = _me_client("ou_m0")
@@ -482,6 +482,7 @@ def test_my_activities_carries_signin_state(api):
     items = r.get_json()["activities"]
     assert len(items) == 1
     assert items[0]["signin_enabled"] is True and items[0]["my_attendance"] == "按时"
+    assert "activities" in api.fresh_calls, "活动状态必须实时读（bot 写入，快照会过期）"
 
 
 def _first_activity(r):

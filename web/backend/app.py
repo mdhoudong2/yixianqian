@@ -3504,8 +3504,11 @@ def activities():
     if gate:
         return jsonify(gate[0]), gate[1]
 
+    # 活动状态（分组/一对一）由 bot 进程写入，卡片上的「填志愿/看结果」入口依赖它判定：
+    # 必须实时读（与 my_groups / 详情页同口径），吃周期快照最长白等 3 分钟。
+    # 一次全表即时读后本地匹配，不要逐活动各读一次。
     result = []
-    for item in snap_all_activities():
+    for item in _snap_fresh("activities"):
         act = format_activity(item)
         act["my_signup"] = bool(snap_signup(act["activity_id"], open_id))
         attach_signin_state(act, item, open_id)
@@ -8395,18 +8398,19 @@ def my_activities():
 
     signups = snap_active_signups_by_openid(open_id)
 
+    # 与「活动」页卡片同口径（见 /api/activities）：活动状态实时读，一次全表后本地匹配
+    acts_fresh = _snap_fresh("activities")
     result = []
     for s in signups:
         fields = s.get("fields", {})
         act_id = bitable.get_field_text(fields, F_SIGNUP_ACTIVITY_ID)
-        act = snap_find_activity(act_id)
+        act = _match_activity(acts_fresh, act_id)
         if act:
             act_data = format_activity(act)
             act_data["my_signup"] = True
             act_data["signup_status"] = bitable.get_field_text(fields, F_SIGNUP_STATUS)
-            # 现场签到三态（本人视角，与「我的分组」同口径）：卡片上停用填志愿入口用
-            act_data["signin_enabled"] = lib_grouping.signin_enabled(act.get("fields", {}))
-            act_data["my_attendance"] = bitable.get_field_text(fields, F_SIGNUP_ATTENDANCE)
+            # 现场签到三态与「活动」页同口径（实时查签到表，签到后立即可填志愿）
+            attach_signin_state(act_data, act, open_id)
             result.append(act_data)
     return jsonify({"activities": result})
 

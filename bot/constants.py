@@ -215,9 +215,10 @@ FIELD_ACT_GROUP_FLAG = "分组功能开启"  # 单选(是/否)：控制 H5 我�
 FIELD_GR_ROUND = "轮次"  # 分组结果轮次，单选(1/2/3...)，支持同活动多次分组
 
 # 一对一功能（与分组同构，但匹配算法是「各自独立 top-N 必聊名单」）。
-# 两张表留空默认值：表 ID 按 base 分配，需建表后填进 local_config.py（照点赞表模式）。
-# 建表：python scripts/dev/create_onetoone_tables.py apply
-ONETOONE_SELECT_TABLE = _cfg_get("ONETOONE_SELECT_TABLE", getattr(_cfg, "ONETOONE_SELECT_TABLE", ""))
+# 志愿表已统一（2026-10-13）：一對一与分组共用同一张志愿表（栏位逐字同构），
+# 用户只维护一份志愿、随时可改，执行时各自实时读取；local_config 里旧的
+# ONETOONE_SELECT_TABLE 不再生效（保留无害）。结果表仍独立。
+ONETOONE_SELECT_TABLE = GROUP_SELECT_TABLE
 ONETOONE_RESULT_TABLE = _cfg_get("ONETOONE_RESULT_TABLE", getattr(_cfg, "ONETOONE_RESULT_TABLE", ""))
 FIELD_OTO_ACTIVITY_ID = "活动ID"
 FIELD_OTO_SELECTOR_OID = "选择人open_id"

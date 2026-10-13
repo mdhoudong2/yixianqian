@@ -62,7 +62,7 @@ _EXPECTED_TABLES = {
     "SIGNUP_TABLE_ID": "tblSUxXKbG7gdqVU",
     "GROUP_SELECT_TABLE": "tblykkDzC0LaJxi8",
     "GROUP_RESULT_TABLE": "tblRg2riWkq88iJP",
-    "ONETOONE_SELECT_TABLE": "tblTRXtuLhODm8Q0",
+    "ONETOONE_SELECT_TABLE": "tblykkDzC0LaJxi8",  # 志愿表已统一：= 分组选择表（2026-10-13）
     "ONETOONE_RESULT_TABLE": "tbllYrqHD81gHyI2",
 }
 _GROUP_ACT_NAME = "验收演示·分组"

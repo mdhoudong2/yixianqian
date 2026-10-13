@@ -45,8 +45,11 @@ ACTIVITY_TABLE_ID = _lc_get("ACTIVITY_TABLE_ID", getattr(_lc, "ACTIVITY_TABLE_ID
 SIGNUP_TABLE_ID = _lc_get("SIGNUP_TABLE_ID", getattr(_lc, "SIGNUP_TABLE_ID", "tblNVJCnohVaWf8t"))
 GROUP_SELECT_TABLE = _lc_get("GROUP_SELECT_TABLE", getattr(_lc, "GROUP_SELECT_TABLE", "tblYo86Vd7dmzRQJ"))
 GROUP_RESULT_TABLE = _lc_get("GROUP_RESULT_TABLE", getattr(_lc, "GROUP_RESULT_TABLE", "tbl3xxAYhyTDGWAB"))
-# 一对一两张表：留空默认值，建表后把 ID 填进 local_config.py（照点赞表模式）。
-ONETOONE_SELECT_TABLE = _lc_get("ONETOONE_SELECT_TABLE", getattr(_lc, "ONETOONE_SELECT_TABLE", ""))
+# 志愿表已统一（2026-10-13）：分组与一对一共用同一张志愿表——用户只维护一份志愿，
+# 随时可改；执行分组/一对一时各自实时读取。两表栏位逐字同构（活动ID/选择人open_id/
+# 选择人昵称/选择人性别/第1-7志愿），故一對一直接复用分组选择表；
+# local_config 里旧的 ONETOONE_SELECT_TABLE 不再生效（保留无害）。
+ONETOONE_SELECT_TABLE = GROUP_SELECT_TABLE
 ONETOONE_RESULT_TABLE = _lc_get("ONETOONE_RESULT_TABLE", getattr(_lc, "ONETOONE_RESULT_TABLE", ""))
 REPORT_TABLE_ID = _lc_get("REPORT_TABLE_ID", getattr(_lc, "REPORT_TABLE_ID", "tblDj4PMHitAmo4T"))
 MESSAGE_TABLE_ID = _lc_get("MESSAGE_TABLE_ID", getattr(_lc, "MESSAGE_TABLE_ID", ""))  # 留言表（生产表ID待建，测试服在 local_config 覆盖）

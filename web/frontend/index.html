@@ -969,20 +969,17 @@
           <div class="signup-count" v-if="showSignupInfo">已报名 <b>{{ act.current_signup }}</b>/{{ act.max_signup || '不限' }}</div>
           <van-icon name="arrow" color="#c8c9cc" />
         </div>
-        <!-- 现场任务入口（报名后显示）：志愿收集/结果查看直达（卡片本身仍进详情页）；
-             签到未到/未签到时停用填志愿入口并提示 -->
-        <div v-if="act.my_signup && (act.group_status==='收集中' || act.group_status==='已完成' || act.onetoone_status==='收集中' || act.onetoone_status==='已完成')" style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
-          <van-button v-if="act.group_status==='收集中'" type="primary" color="#ff6b81" size="small" block
+        <!-- 志愿入口（报名后显示、随时可改；签到未到/未签到时停用并提示）+ 结果入口。
+             志愿表已统一（2026-10-13）：不再分「分组/一对一志愿」两个按钮 -->
+        <div v-if="act.my_signup" style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+          <van-button v-if="act.my_signup" type="primary" color="#ff6b81" size="small" block
             :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
-            @click.stop="goGroupSelect(act.record_id)">🎯 分组志愿选择</van-button>
+            @click.stop="goGroupSelect(act.record_id)">✏️ 志愿选择</van-button>
           <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block
             @click.stop="goGroupResult(act.record_id)">🎉 查看分组结果</van-button>
-          <van-button v-if="act.onetoone_status==='收集中'" type="primary" color="#ff6b81" size="small" block
-            :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
-            @click.stop="goOnetooneSelect(act.record_id)">💞 一对一志愿选择</van-button>
           <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block
             @click.stop="goOnetooneResult(act.record_id)">💬 查看我的必聊</van-button>
-          <div v-if="(act.group_status==='收集中' || act.onetoone_status==='收集中') && act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
+          <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
         </div>
       </div>
     </div>
@@ -1989,21 +1986,18 @@
           </div>
           <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
         </div>
-        <!-- 现场任务入口，与「活动」页卡片保持一致：志愿收集/结果查看直达；
-             签到未到/未签到时停用填志愿入口并提示（卡片信息区仍可点进详情） -->
+        <!-- 志愿入口与「活动」页卡片保持一致（随时可改、签到未到置灰+提示）+ 结果入口；
+             志愿表已统一：不再分「分组/一对一志愿」两个按钮（2026-10-13） -->
         <div class="activity-body" style="padding-top:0;">
-          <div v-if="act.group_status==='收集中' || act.group_status==='已完成' || act.onetoone_status==='收集中' || act.onetoone_status==='已完成'" style="display:flex; flex-direction:column; gap:8px;">
-            <van-button v-if="act.group_status==='收集中'" type="primary" color="#ff6b81" size="small" block
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <van-button v-if="act.my_signup" type="primary" color="#ff6b81" size="small" block
               :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
-              @click="goGroupSelect(act.record_id)">🎯 分组志愿选择</van-button>
+              @click="goGroupSelect(act.record_id)">✏️ 志愿选择</van-button>
             <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block
               @click="goGroupResult(act.record_id)">🎉 查看分组结果</van-button>
-            <van-button v-if="act.onetoone_status==='收集中'" type="primary" color="#ff6b81" size="small" block
-              :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
-              @click="goOnetooneSelect(act.record_id)">💞 一对一志愿选择</van-button>
             <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block
               @click="goOnetooneResult(act.record_id)">💬 查看我的必聊</van-button>
-            <div v-if="(act.group_status==='收集中' || act.onetoone_status==='收集中') && act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
+            <div v-if="act.my_signup && act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
           </div>
         </div>
       </div>
@@ -2137,19 +2131,19 @@
         </div>
       </div>
     </div>
-    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中' && !detailSigninBlocked" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
+    <div v-if="currentActivity && currentActivity.my_signup && !detailSigninBlocked" class="activity-card" @click="goGroupSelect(currentActivity.record_id)" style="cursor:pointer;">
       <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
         <div>
-          <div style="font-size:16px; font-weight:500;">🎯 分组志愿选择</div>
-          <div style="font-size:13px; color:#969799; margin-top:4px;">选择你心仪的TA，最多7个志愿</div>
+          <div style="font-size:16px; font-weight:500;">✏️ 志愿选择</div>
+          <div style="font-size:13px; color:#969799; margin-top:4px;">选择你心仪的TA，最多7个志愿（随时可改）</div>
         </div>
         <van-icon name="arrow" color="#ff6b81"></van-icon>
       </div>
     </div>
-    <div v-else-if="currentActivity && currentActivity.my_signup && currentActivity.group_status==='收集中' && detailSigninBlocked" class="activity-card" style="opacity:.65;">
+    <div v-else-if="currentActivity && currentActivity.my_signup && detailSigninBlocked" class="activity-card" style="opacity:.65;">
       <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
         <div>
-          <div style="font-size:16px; font-weight:500;">🎯 分组志愿选择</div>
+          <div style="font-size:16px; font-weight:500;">✏️ 志愿选择</div>
           <div style="font-size:13px; color:#969799; margin-top:4px;">本活动需现场签到后才能填志愿，请联系管理员</div>
         </div>
         <van-icon name="lock" color="#c8c9cc"></van-icon>
@@ -2162,24 +2156,6 @@
           <div style="font-size:13px; color:#969799; margin-top:4px;">看看你和谁一组</div>
         </div>
         <van-icon name="arrow" color="#ff6b81"></van-icon>
-      </div>
-    </div>
-    <div v-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='收集中' && !detailSigninBlocked" class="activity-card" @click="goOnetooneSelect(currentActivity.record_id)" style="cursor:pointer;">
-      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div style="font-size:16px; font-weight:500;">💞 一对一志愿选择</div>
-          <div style="font-size:13px; color:#969799; margin-top:4px;">选择你心仪的TA，最多7个志愿</div>
-        </div>
-        <van-icon name="arrow" color="#ff6b81"></van-icon>
-      </div>
-    </div>
-    <div v-else-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='收集中' && detailSigninBlocked" class="activity-card" style="opacity:.65;">
-      <div class="activity-body" style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <div style="font-size:16px; font-weight:500;">💞 一对一志愿选择</div>
-          <div style="font-size:13px; color:#969799; margin-top:4px;">本活动需现场签到后才能填志愿，请联系管理员</div>
-        </div>
-        <van-icon name="lock" color="#c8c9cc"></van-icon>
       </div>
     </div>
     <div v-if="currentActivity && currentActivity.my_signup && currentActivity.onetoone_status==='已完成'" class="activity-card" @click="goOnetooneResult(currentActivity.record_id)" style="cursor:pointer;">
@@ -2298,10 +2274,10 @@
           <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
         </div>
         <div class="activity-body" style="padding-top:0;">
-          <van-button v-if="act.onetoone_status==='收集中'" type="primary" color="#ff6b81" size="small" block :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goOnetooneSelect(act.record_id)">
-            {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '🎯 提交志愿' }}
+          <van-button type="primary" color="#ff6b81" size="small" block :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goGroupSelect(act.record_id)">
+            {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '✏️ 志愿选择' }}
           </van-button>
-          <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance) && act.onetoone_status==='收集中'" style="font-size:13px; color:#ee0a24; text-align:center; padding:6px 0;">本活动需现场签到后才能填志愿，请联系管理员</div>
+          <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:13px; color:#ee0a24; text-align:center; padding:6px 0;">本活动需现场签到后才能填志愿，请联系管理员</div>
           <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
             💬 查看我的必聊
           </van-button>
@@ -5759,6 +5735,7 @@ createApp({
         if (groupSelectFrom.value === 'activity_detail') await openActivity(activityId);
         else if (groupSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
         else if (groupSelectFrom.value === 'my_activities') { openMyActivities(); }
+        else if (groupSelectFrom.value === 'my_onetoone') { openMyOnetoone(); }
         else openMyGroups();
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;

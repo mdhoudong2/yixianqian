@@ -826,6 +826,17 @@ def test_configure_injection_matches_bot(monkeypatch, tmp_path):
     assert set(h5_kwargs["fields"]) == set(lib_onetoone._REQUIRED_FIELDS)
 
 
+def test_single_preference_table_wiring():
+    """志愿表统一（2026-10-13）：H5 与 bot 的一对一志愿表都必须 = 分组志愿表。
+
+    用户只维护一份志愿（随时可改），执行分组/一对一时各自实时读取；若哪天有人把
+    local_config 的 ONETOONE_SELECT_TABLE 填回旧表，这条会红。
+    """
+    assert app.ONETOONE_SELECT_TABLE == app.GROUP_SELECT_TABLE
+    import constants as bot_constants  # noqa: E402
+    assert bot_constants.ONETOONE_SELECT_TABLE == bot_constants.GROUP_SELECT_TABLE
+
+
 def test_group_configure_injection_matches_bot_for_new_fields(monkeypatch, tmp_path):
     """lib.grouping 新增的一对一栏位两端注入一致（set_mode/guard 的配置面）。"""
     import grouping as bot_grouping

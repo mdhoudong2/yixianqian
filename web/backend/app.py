@@ -1615,15 +1615,13 @@ def attach_signin_state(act, record, open_id):
     """活动列表卡片附加「现场签到」状态（首页/活动页卡片上的现场任务入口用）。
 
     signin_enabled：活动是否开启签到；my_attendance：本人签到状态（未报名/开关
-    关闭时为空串）。签到查询只对「我已报名 + 开启签到 + 志愿正在收集」的活动执行：
-    列表逐活动查飞书会放大请求，没有现场任务的活动不查。查询失败保持空串——
-    前端一律按未签到处理（门禁侧 fail-closed，与详情页同口径）。
+    关闭时为空串）。志愿改为随时可改后，只要「我已报名 + 开启签到」就查签到表
+    （不再依赖收集状态）；查询失败保持空串——前端一律按未签到处理（门禁侧
+    fail-closed，与详情页同口径）。
     """
     act["signin_enabled"] = lib_grouping.signin_enabled(record.get("fields", {}))
     act["my_attendance"] = ""
     if not act.get("my_signup") or not act["signin_enabled"]:
-        return
-    if act.get("group_status") != "收集中" and act.get("onetoone_status") != "收集中":
         return
     attendance = lib_grouping.attendance_map(act["activity_id"], client=_grouping_client)
     if attendance is not None:
@@ -5718,9 +5716,7 @@ def group_candidates(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
-    if group_status != "收集中":
-        return jsonify({"error": f"分组状态为「{group_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：候选列表不再要求「收集中」；签到闸门保留。
 
     # 检查是否报名（直读飞书，避免报名快照 stale 导致误判未报名）
     signup = bitable.get_user_signup(text_act_id, open_id)
@@ -5810,9 +5806,8 @@ def group_select(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
-    if group_status != "收集中":
-        return jsonify({"error": f"分组状态为「{group_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：不再要求「收集中」——执行分组/一对一时各自读取
+    # 当前志愿；现场签到闸门保留（未签到者不可用现场功能）。
 
     # 检查报名（快照优先，未命中回退实时，防刚报名即提交被误判）
     signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
@@ -5875,7 +5870,9 @@ def group_select(activity_id):
     if not ok:
         return jsonify({"error": "提交失败，请稍后重试"}), 500
 
+    # 志愿表已统一（一對一与分组同表）：两个快照键都刷，避免另一侧读到旧缓存
     refresh_snapshot_table_async("group_selections")
+    refresh_snapshot_table_async("onetoone_selections")
     return jsonify({"ok": True, "message": "志愿提交成功"})
 
 @app.route("/api/activities/<activity_id>/group/status", methods=["GET"])
@@ -7578,9 +7575,7 @@ def onetoone_candidates(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
-    if onetoone_status != "收集中":
-        return jsonify({"error": f"一对一状态为「{onetoone_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：候选列表不再要求「收集中」；签到闸门保留。
 
     signup = bitable.get_user_signup(text_act_id, open_id)
     if not signup:
@@ -7678,9 +7673,7 @@ def onetoone_select(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
-    if onetoone_status != "收集中":
-        return jsonify({"error": f"一对一状态为「{onetoone_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：不再要求「收集中」；签到闸门保留。
 
     signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
     if not signup:
@@ -7729,12 +7722,7 @@ def onetoone_select(activity_id):
     # 防双击/双端并发各插一行；锁外查空的双击修复与分组端「审查必修 7」同款。
     try:
         with lib_grouping.grouping_lock(text_act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
-            # 拿到锁后重查状态：防「检查后、执行前」被管理员截止的窗口
-            act_now, _ = snap_resolve_activity(activity_id, fresh=True)
-            status_now = bitable.get_select_value(
-                act_now.get("fields", {}) if act_now else {}, F_ACTIVITY_ONETOONE_STATUS)
-            if status_now != "收集中":
-                return jsonify({"error": f"一对一状态为「{status_now}」，无法选择"}), 400
+            # 志愿随时可改：原「拿到锁后重查状态」随状态闸门一并移除（编辑不再与收集窗口绑定）
             # 快照优先、未命中回退实时（live）——与旧实现同一读取路径，只换了执行时机
             existing = (snap_onetoone_selection(text_act_id, open_id)
                         or bitable.get_user_onetoone_selection(text_act_id, open_id))
@@ -7747,7 +7735,9 @@ def onetoone_select(activity_id):
     if not ok:
         return jsonify({"error": "提交失败，请稍后重试"}), 500
 
+    # 志愿表已统一（一對一与分组同表）：两个快照键都刷，避免另一侧读到旧缓存
     refresh_snapshot_table_async("onetoone_selections")
+    refresh_snapshot_table_async("group_selections")
     return jsonify({"ok": True, "message": "志愿提交成功"})
 
 @app.route("/api/activities/<activity_id>/onetoone/status", methods=["GET"])

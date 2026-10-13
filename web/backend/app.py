@@ -1611,6 +1611,24 @@ def format_activity(record):
         "record_id": record.get("record_id")
     }
 
+def attach_signin_state(act, record, open_id):
+    """活动列表卡片附加「现场签到」状态（首页/活动页卡片上的现场任务入口用）。
+
+    signin_enabled：活动是否开启签到；my_attendance：本人签到状态（未报名/开关
+    关闭时为空串）。签到查询只对「我已报名 + 开启签到 + 志愿正在收集」的活动执行：
+    列表逐活动查飞书会放大请求，没有现场任务的活动不查。查询失败保持空串——
+    前端一律按未签到处理（门禁侧 fail-closed，与详情页同口径）。
+    """
+    act["signin_enabled"] = lib_grouping.signin_enabled(record.get("fields", {}))
+    act["my_attendance"] = ""
+    if not act.get("my_signup") or not act["signin_enabled"]:
+        return
+    if act.get("group_status") != "收集中" and act.get("onetoone_status") != "收集中":
+        return
+    attendance = lib_grouping.attendance_map(act["activity_id"], client=_grouping_client)
+    if attendance is not None:
+        act["my_attendance"] = attendance.get(open_id, "")
+
 # ========== 卡片动态字段 ==========
 def _field_value(fields, fname, ftype):
     """按类型读取字段值，返回字符串（空则返回 ''）"""
@@ -3392,6 +3410,7 @@ def home():
     for item in snap_all_activities():
         act = format_activity(item)
         act["my_signup"] = bool(snap_signup(act["activity_id"], open_id))
+        attach_signin_state(act, item, open_id)
         activities.append(act)
 
     user_brief = format_user_brief(user)
@@ -3489,6 +3508,7 @@ def activities():
     for item in snap_all_activities():
         act = format_activity(item)
         act["my_signup"] = bool(snap_signup(act["activity_id"], open_id))
+        attach_signin_state(act, item, open_id)
         result.append(act)
     return jsonify({"activities": result})
 

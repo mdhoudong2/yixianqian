@@ -472,6 +472,52 @@ def test_my_groups_carries_my_attendance(api, monkeypatch):
     assert items2[0]["signin_enabled"] is True and items2[0]["my_attendance"] == "未到"
 
 
+def _first_activity(r):
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()["activities"][0]
+
+
+def test_activities_list_carries_my_attendance(api):
+    """活动列表（首页/活动页卡片）也要带现场签到三态：已报名+收集中才查签到表。"""
+    act = _act_group()
+    api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
+    c = _me_client("ou_m0")
+    item = _first_activity(c.get("/api/activities"))
+    assert item["my_signup"] is True
+    assert item["signin_enabled"] is True and item["my_attendance"] == "按时"
+
+
+def test_activities_list_attendance_empty_when_not_signed_up(api):
+    """未报名的活动不查签到表：my_attendance 恒为空串（卡片入口也不显示）。"""
+    act = _act_group()
+    api.install(activity=act, signups=[_signup_att("ou_f0", "按时")])
+    c = _me_client("ou_m0")
+    item = _first_activity(c.get("/api/activities"))
+    assert item["my_signup"] is False
+    assert item["signin_enabled"] is True and item["my_attendance"] == ""
+
+
+def test_activities_list_skips_attendance_without_collection(api):
+    """没有现场任务（志愿未在收集）的活动不查签到表：宽查询被禁也不影响列表。"""
+    act = _act_group(分组状态="未开始")
+    api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
+    _fail_broad_signup_search(api.fake)
+    c = _me_client("ou_m0")
+    item = _first_activity(c.get("/api/activities"))
+    assert item["my_signup"] is True
+    assert item["signin_enabled"] is True and item["my_attendance"] == ""
+
+
+def test_activities_list_fail_closed_on_attendance_error(api):
+    """签到查询失败 → my_attendance 回空串（按未签到处理），列表不报错。"""
+    act = _act_group()
+    api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
+    _fail_broad_signup_search(api.fake)
+    c = _me_client("ou_m0")
+    item = _first_activity(c.get("/api/activities"))
+    assert item["signin_enabled"] is True and item["my_attendance"] == ""
+
+
 # ---------------------------------------------------------------- 管理端点：名册
 
 def _admin_signin_url(aid=ACT):

@@ -2,16 +2,18 @@
 # -*- coding: utf-8 -*-
 """测试环境「一对一」端到端种子 + 执行 + 读回验证（只允许在 /opt/yixianqian-test 执行）。
 
-复用 A-0011 的报名（U-0006 真号 + 8 假男 + 7 假女 = 16 人，8 男 8 女，与
-seed_test_grouping.py 同一批人），给每人预填 7 个异性志愿（轮转法），然后走真实
-bot 命令链：handle_admin_start_onetoone → handle_admin_stop_onetoone（内部
-_do_onetoone 做匹配并写结果），最后读回结果表逐条验证。
+复用 A-0011 的报名（U-0006 真号 + 假号，与 seed_test_grouping.py 同一批人），给
+每人预填 7 个异性志愿（轮转法），然后走真实 bot 命令链：
+handle_admin_start_onetoone → handle_admin_stop_onetoone("A-0011 <女生场次>")——
+「女生坐镇、男生上门」均衡分配（每女恰好 K 场、男配额 base~base+1、双向一致），
+最后读回结果表逐条验证均衡不变量。
 
 端到端要覆盖的核心断言：
-- 16 人 × 每人 8 个异性 = 128 条结果行（异性 8 < top_n 10，有多少算多少）；
-- 每人名单顺序 = 双向奔赴公式重算（0.5×我的优先级得分 + 0.3×对方的优先级得分 +
-  0.2×资料相似度，未选择=30）逐条相等（含「没被我选、但选了我」的惊喜位插队）；
-- 无自己、无同性、排名 1..8 无重复。
+- 结果行数 = 2 × 女生数 × K（男名单 + 女名单各一份）；
+- 每个女生恰好 K 位不同男性来访、排名 1..K 无重复；
+- 每个男生 base~base+1 位、排名 1..base(+1) 无重复；
+- 双向一致：女 f 名单含男 m ⇔ 男 m 名单含女 f（0 处不一致）；
+- 无自己、无同性。
 
 用法（在 /opt/yixianqian-test 仓库根，必须显式 YIXIANQIAN_ENV=dev）：
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_onetoone.py plan    # 只打印计划，不写
@@ -43,7 +45,7 @@ _EXPECTED_TABLES = {
     "ONETOONE_SELECT_TABLE": "tblykkDzC0LaJxi8",  # 志愿表已统一：= 分组选择表（2026-10-13）
     "ONETOONE_RESULT_TABLE": "tbllYrqHD81gHyI2",
 }
-_TOP_N = 10
+_FEMALE_CHATS = 4   # 女生场次 K：每个女生聊几场（必须 ≤ 男生人数）
 _FIELD_USER_ID = "用户ID"
 
 C = None
@@ -248,10 +250,11 @@ def _compute_plan():
     users = _read_users()
     signups = _read_signups()
     males, females = _build_participants(signups, users)
-    if len(males) < 8 or len(females) < 8:
-        _fail(f"A-0011 参与者不足：男 {len(males)}/8，女 {len(females)}/8"
+    if len(males) < _FEMALE_CHATS or len(females) < 1:
+        _fail(f"A-0011 参与者不足：男 {len(males)}/{_FEMALE_CHATS}，女 {len(females)}/1"
               f"（先跑 seed_test_grouping.py run 补齐报名）")
-    males, females = males[:8], females[:8]
+    if len(males) < 8 or len(females) < 8:
+        _fail(f"A-0011 参与人数不足以每人预填 7 个异性志愿：男 {len(males)}，女 {len(females)}")
     participants = males + females
     plan = _build_selection_plan(males, females)
 
@@ -291,9 +294,12 @@ def _print_plan(p):
           f"（历史结果 {len(p['results'])} 条，将清除）")
     print(f"  2) handle_admin_toggle_onetoone_flag(\"{_ACTIVITY_ID} 开\")：一对一功能开启 "
           f"{get_select_value(af, C.FIELD_ACT_ONETOONE_FLAG) or '空'}→是")
-    print(f"\n【执行】handle_admin_stop_onetoone(\"{_ACTIVITY_ID}\")：匹配并写结果。")
-    print(f"【预期】{len(p['participants'])} 人 × 每人 8 个异性 = "
-          f"{len(p['participants']) * 8} 条结果；名单顺序=双向奔赴公式重算。")
+    print(f"\n【执行】handle_admin_stop_onetoone(\"{_ACTIVITY_ID} {_FEMALE_CHATS}\")："
+          f"女生坐镇均衡分配（每女 {_FEMALE_CHATS} 场）。")
+    print(f"【预期】2 × {len(p['females'])} 女 × {_FEMALE_CHATS} = "
+          f"{2 * len(p['females']) * _FEMALE_CHATS} 条结果；"
+          f"男配额 base~base+1 = {len(p['females']) * _FEMALE_CHATS // len(p['males'])}"
+          f"~{len(p['females']) * _FEMALE_CHATS // len(p['males']) + 1}。")
 
 
 def _seed_selections(p):
@@ -338,31 +344,21 @@ def _apply_activity_settings():
 def _run_matching():
     from onetoone import handle_admin_stop_onetoone
 
-    reply = handle_admin_stop_onetoone(_ACTIVITY_ID)
+    reply = handle_admin_stop_onetoone(f"{_ACTIVITY_ID} {_FEMALE_CHATS}")
     print(f"  handle_admin_stop_onetoone -> {reply.splitlines()[0]}")
     if "匹配完成" not in reply:
         _fail(f"执行一对一失败：{reply}")
     return reply
 
 
-def _expected_matches(p):
-    """用双向奔赴公式重算每人名单（喂给 run_onetoone_matching 与 _do_onetoone 完全相同的输入）。"""
-    from onetoone import run_onetoone_matching, _build_profiles
-
-    participants = [{"id": x["oid"], "gender": "male" if x["gender"] == "男性" else "female"}
-                    for x in p["participants"]]
-    selections = {}
-    for item in p["plan"]:
-        sel = item["selector"]
-        selections[sel["oid"]] = [{"id": t["oid"], "priority": i + 1}
-                                  for i, t in enumerate(item["targets"])]
-    profiles = _build_profiles([x["oid"] for x in p["participants"]])
-    return run_onetoone_matching(participants, selections, profiles, top_n=_TOP_N)
-
-
 def _verify_state(p):
+    """读回结果表，逐条验证「女生坐镇均衡分配」的不变量（不重算具体配对顺序）。
+
+    均衡算法（run_offline_onetoone_matching）的正确性由单测钉死（tests/test_onetoone_offline.py）；
+    这里只验证端到端落库后的结构性不变量：行数 = 2×女×K、每女恰好 K 位、男配额均衡、
+    双向一致、无自己无同性。
+    """
     lines, issues = [], []
-    expected_matches = _expected_matches(p)
     results = _read_results()
     af = _read_activity().get("fields", {})
     status = get_select_value(af, C.FIELD_ACT_ONETOONE_STATUS)
@@ -375,48 +371,68 @@ def _verify_state(p):
     for r in results:
         f = r.get("fields", {})
         uoid = get_field_text(f, C.FIELD_OTO_USER_OID)
-        by_user.setdefault(uoid, []).append(r)
+        tgt = get_field_text(f, C.FIELD_OTO_TARGET_OID)
+        rank = get_field_number(f, C.FIELD_OTO_RANK, 0)
+        gender = get_field_text(f, C.FIELD_OTO_USER_GENDER)
+        by_user.setdefault(uoid, {"gender": gender, "pairs": []})["pairs"].append((rank, tgt))
 
-    lines.append(f"[结果] 总行数 {len(results)}（期望 {len(p['participants']) * 8}）")
-    if len(results) != len(p["participants"]) * 8:
-        issues.append(f"结果行数不符：{len(results)}")
+    males = {x["oid"]: x for x in p["males"]}
+    females = {x["oid"]: x for x in p["females"]}
+    F, M = len(females), len(males)
+    K = _FEMALE_CHATS
+    expected_total = 2 * F * K
+    lines.append(f"[结果] 总行数 {len(results)}（期望 2×{F}×{K}={expected_total}）")
+    if len(results) != expected_total:
+        issues.append(f"结果行数不符：{len(results)}≠{expected_total}")
 
-    n_ok = 0
-    for person in p["participants"]:
-        oid = person["oid"]
-        rows = by_user.get(oid, [])
-        got = []
-        for r in rows:
-            f = r.get("fields", {})
-            got.append({
-                "rank": get_field_number(f, C.FIELD_OTO_RANK, 0),
-                "target": get_field_text(f, C.FIELD_OTO_TARGET_OID),
-                "tgender": get_field_text(f, C.FIELD_OTO_USER_GENDER),
-            })
-        ranks = sorted([g["rank"] for g in got])
-        targets = [g["target"] for g in got]
-        opp = p["females"] if person["gender"] == "男性" else p["males"]
-        opp_oids = {x["oid"] for x in opp}
-        bad = []
-        if len(got) != len(opp_oids):
-            bad.append(f"名单人数 {len(got)}≠异性 {len(opp_oids)}")
-        if ranks != list(range(1, len(got) + 1)):
-            bad.append(f"排名非 1..{len(got)}：{ranks}")
-        if any(t not in opp_oids for t in targets):
-            bad.append("含非异性/自己")
-        if oid in targets:
-            bad.append("含自己")
-        # 名单顺序 = 双向奔赴公式重算（0.5×我 + 0.3×对方，未选择=30），逐条比对
-        expect_targets = [t for t, _ in expected_matches.get(oid, [])]
-        got_order = [g["target"] for g in sorted(got, key=lambda g: g["rank"])]
-        if got_order != expect_targets:
-            bad.append(f"名单顺序与公式不符：得 {got_order[:4]}… 应 {expect_targets[:4]}…")
-        if bad:
-            issues.append(f"{person['uid']}({person['gender']})：{'; '.join(bad)}")
-        else:
-            n_ok += 1
-    lines.append(f"[逐人验证] {n_ok}/{len(p['participants'])} 人通过（每人 8 异性、排名 1..8、"
-                 f"名单顺序=双向奔赴公式、无自己无同性）")
+    # 每个女生恰好 K 位不同男性、排名 1..K
+    for oid, u in females.items():
+        got = by_user.get(oid)
+        if got is None:
+            issues.append(f"女 {u['uid']}：结果表里没有她的名单")
+            continue
+        targets = [t for _, t in sorted(got["pairs"])]
+        ranks = sorted([rk for rk, _ in got["pairs"]])
+        if len(targets) != K or len(set(targets)) != K:
+            issues.append(f"女 {u['uid']}：名单 {len(targets)}≠K{K}")
+        if ranks != list(range(1, K + 1)):
+            issues.append(f"女 {u['uid']}：排名非 1..{K}：{ranks}")
+        if any(t not in males for t in targets):
+            issues.append(f"女 {u['uid']}：含非男性来访")
+
+    # 每个男生 base~base+1 位不同女性、排名 1..n
+    base = (F * K) // M
+    for oid, u in males.items():
+        got = by_user.get(oid)
+        if got is None:
+            issues.append(f"男 {u['uid']}：结果表里没有他的名单")
+            continue
+        targets = [t for _, t in sorted(got["pairs"])]
+        ranks = sorted([rk for rk, _ in got["pairs"]])
+        if len(targets) not in (base, base + 1):
+            issues.append(f"男 {u['uid']}：配额 {len(targets)}∉{{{base},{base + 1}}}")
+        if ranks != list(range(1, len(targets) + 1)):
+            issues.append(f"男 {u['uid']}：排名非 1..{len(targets)}：{ranks}")
+        if any(t not in females for t in targets):
+            issues.append(f"男 {u['uid']}：含非女性来访")
+
+    # 双向一致 + 无自己无同性
+    mismatch = self_same = 0
+    for oid, u in by_user.items():
+        for _, tgt in u["pairs"]:
+            if tgt == oid or by_user.get(tgt, {}).get("gender") == u["gender"]:
+                self_same += 1
+            other = by_user.get(tgt)
+            if other is None or oid not in [t for _, t in other["pairs"]]:
+                mismatch += 1
+    lines.append(f"[双向] 不一致 {mismatch} 处（应 0）；[自己/同性] {self_same} 条（应 0）")
+    if mismatch:
+        issues.append(f"双向不一致：{mismatch} 处")
+    if self_same:
+        issues.append(f"含自己/同性：{self_same} 条")
+
+    lines.append(f"[逐人验证] 女 {len(females)} 人各 {K} 场、男 {len(males)} 人配额 "
+                 f"{base}~{base + 1}、双向一致、无自己无同性")
 
     for line in lines:
         print("  " + line)

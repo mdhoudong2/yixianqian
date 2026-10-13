@@ -4,12 +4,13 @@
 
 造 100 个假号（50 男 + 50 女，open_id=ou_fake_oto_{male|female}_NNN），新建一个专用活动，
 全部报名 + 轮转法预填 7 志愿，走真实 bot 命令链 handle_admin_start_onetoone →
-handle_admin_stop_onetoone 做匹配，最后读回结果表逐条验证。
+handle_admin_stop_onetoone("<活动ID> <女生场次>")——「女生坐镇、男生上门」均衡分配，
+最后读回结果表逐条验证均衡不变量。
 
-- 100 人 × 每人 10 个必聊（异性 50 > top_n 10）= 1000 条结果；
-- 每人名单顺序 = 双向奔赴公式（0.5×我的优先级 + 0.3×对方优先级 + 0.2×资料相似度，
-  未选择=30）逐条比对；
-- 无自己、无同性、排名 1..10 无重复。
+- 结果行数 = 2 × 女生数 × K（50 女 × 10 = 500 女名单 + 500 男名单 = 1000 条）；
+- 每个女生恰好 K 位不同男性来访、排名 1..K 无重复；
+- 每个男生 base~base+1 位、排名 1..base(+1) 无重复（50/50 时恰好 10）；
+- 双向一致：女 f 名单含男 m ⇔ 男 m 名单含女 f；无自己、无同性。
 
 「用户ID」是自动编号(type=1005)不可写；「活动ID」同样是自动编号，创建后读回。所以
 本脚本不写这两个字段，只写 飞书用户ID/open_id 等可写字段。
@@ -42,7 +43,7 @@ _EXPECTED_TABLES = {
 }
 _N_MALE = 50
 _N_FEMALE = 50
-_TOP_N = 10
+_FEMALE_CHATS = 10  # 女生场次 K：每个女生坐镇、由 K 位男生上门（50 男时 ≤ 50）
 _PREFIX_MALE = "ou_fake_oto_male_"
 _PREFIX_FEMALE = "ou_fake_oto_female_"
 _FIELD_USER_ID = "用户ID"  # 自动编号，只读
@@ -320,82 +321,91 @@ def _run_matching(act_id):
     print(f"  handle_admin_start_onetoone -> {reply.splitlines()[0]}")
     if "志愿填写已开始" not in reply:
         _fail(f"开始一对一失败：{reply}")
-    reply = handle_admin_stop_onetoone(act_id)
-    print(f"  handle_admin_stop_onetoone -> {reply.splitlines()[0]}")
+    reply = handle_admin_stop_onetoone(f"{act_id} {_FEMALE_CHATS}")
+    print(f"  handle_admin_stop_onetoone({act_id} {_FEMALE_CHATS}) -> {reply.splitlines()[0]}")
     if "匹配完成" not in reply:
         _fail(f"执行一对一失败：{reply}")
     return reply
 
 
-def _expected_matches(act_id, males, females, plan):
-    from onetoone import run_onetoone_matching, _build_profiles
-    participants = [{"id": x["oid"], "gender": "male" if x["gender"] == "男性" else "female"}
-                    for x in males + females]
-    selections = {}
-    for item in plan:
-        selections[item["selector"]["oid"]] = [
-            {"id": t["oid"], "priority": i + 1} for i, t in enumerate(item["targets"])]
-    profiles = _build_profiles([x["id"] for x in participants])
-    return run_onetoone_matching(participants, selections, profiles, top_n=_TOP_N)
-
-
-def _verify(act_id, males, females, plan):
-    expected = _expected_matches(act_id, males, females, plan)
+def _verify(act_id):
+    """读回结果表，逐条验证「女生坐镇」均衡不变量（纯读，自包含，性别取结果行本身）。"""
     results = bitable.search_records(C.ONETOONE_RESULT_TABLE, [
         {"field_name": C.FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]}])
     results = _must(results, "一对一结果表")
 
-    participants = males + females
-    p_by_oid = {p["oid"]: p for p in participants}
-    issues = []
-    n_people = len(participants)
-    lines = [f"[结果] 总行数 {len(results)}（期望 {n_people * _TOP_N}）"]
-    if len(results) != n_people * _TOP_N:
-        issues.append(f"结果行数不符：{len(results)}")
-
-    by_user = {}
+    owners = {}  # oid -> {"gender": "男性"/"女性", "rows": [(rank, target_oid)]}
     for r in results:
         f = r.get("fields", {})
         uoid = get_field_text(f, C.FIELD_OTO_USER_OID)
-        by_user.setdefault(uoid, []).append(r)
+        gender = get_field_text(f, C.FIELD_OTO_USER_GENDER)
+        rank = get_field_number(f, C.FIELD_OTO_RANK, 0)
+        target = get_field_text(f, C.FIELD_OTO_TARGET_OID)
+        owners.setdefault(uoid, {"gender": gender, "rows": []})["rows"].append((rank, target))
 
-    n_ok = 0
-    for p in participants:
-        rows = by_user.get(p["oid"], [])
-        got = []
-        for r in rows:
-            f = r.get("fields", {})
-            got.append((get_field_number(f, C.FIELD_OTO_RANK, 0),
-                        get_field_text(f, C.FIELD_OTO_TARGET_OID)))
-        got.sort(key=lambda x: x[0])
-        ranks = [g[0] for g in got]
-        targets = [g[1] for g in got]
-        opp = females if p["gender"] == "男性" else males
-        opp_oids = {x["oid"] for x in opp}
+    male_oids = {o for o, v in owners.items() if v["gender"] == "男性"}
+    female_oids = {o for o, v in owners.items() if v["gender"] == "女性"}
+    m, f = len(male_oids), len(female_oids)
+    issues = []
+    lines = []
+
+    if f == 0 or m == 0:
+        issues.append(f"性别侧缺失：男 {m} / 女 {f}")
+
+    # 每个女生 K 场（K 从任意女生名单长度推出，要求全部一致）
+    female_counts = {len(v["rows"]) for v in owners.values() if v["gender"] == "女性"}
+    k = (female_counts or {0}).pop() if len(female_counts) == 1 else None
+    if k is None or len(female_counts) != 1:
+        issues.append(f"女生名单长度不一致：{sorted(female_counts)}")
+        k = None
+    base = (f * k) // m if (k is not None and m) else None
+    total_expected = 2 * f * k if (k is not None) else None
+
+    lines.append(f"[结果] 总行数 {len(results)}（男 {m} / 女 {f}，女生场次 K={k}，"
+                 f"期望 {total_expected}）")
+    if total_expected is not None and len(results) != total_expected:
+        issues.append(f"结果行数不符：{len(results)}≠{total_expected}")
+
+    bidir_mismatch = 0
+    for oid, v in owners.items():
+        rows = sorted(v["rows"], key=lambda x: x[0])
+        ranks = [x[0] for x in rows]
+        targets = [x[1] for x in rows]
         bad = []
-        if len(got) != _TOP_N:
-            bad.append(f"名单人数 {len(got)}≠{_TOP_N}")
-        if ranks != list(range(1, len(got) + 1)):
-            bad.append(f"排名非 1..{len(got)}：{ranks}")
-        if any(t not in opp_oids for t in targets):
-            bad.append("含非异性/自己")
-        if p["oid"] in targets:
-            bad.append("含自己")
-        expect_targets = [t for t, _ in expected.get(p["oid"], [])]
-        if targets != expect_targets:
-            bad.append(f"名单顺序与公式不符：得 {targets[:3]}… 应 {expect_targets[:3]}…")
-        if bad:
-            issues.append(f"{p['nickname']}({p['gender']})：{'; '.join(bad)}")
+        if v["gender"] == "女性":
+            if k is not None and len(rows) != k:
+                bad.append(f"名单人数 {len(rows)}≠K {k}")
         else:
-            n_ok += 1
-    lines.append(f"[逐人验证] {n_ok}/{n_people} 人通过（每人 {_TOP_N} 异性、排名 1..{_TOP_N}、"
-                 f"名单顺序=双向奔赴公式、无自己无同性）")
+            if base is not None and len(rows) not in (base, base + 1):
+                bad.append(f"名单人数 {len(rows)}∉{{{base},{base + 1}}}")
+        if ranks != list(range(1, len(rows) + 1)):
+            bad.append(f"排名非 1..{len(rows)}：{ranks}")
+        if len(set(targets)) != len(targets):
+            bad.append("名单含重复")
+        opp = female_oids if v["gender"] == "男性" else male_oids
+        if any(t not in opp for t in targets):
+            bad.append("含非异性/自己")
+        if bad:
+            issues.append(f"{oid}({v['gender']})：{'; '.join(bad)}")
 
+    # 双向一致：男 m 名单含女 f ⇔ 女 f 名单含男 m
+    for mo in male_oids:
+        for to in [t for _, t in sorted(owners[mo]["rows"])]:
+            if to not in owners or owners[to]["gender"] != "女性":
+                continue
+            if mo not in {t for _, t in owners[to]["rows"]}:
+                bidir_mismatch += 1
+    if bidir_mismatch:
+        issues.append(f"双向不一致：{bidir_mismatch} 条（男名单含女但女名单缺男）")
+
+    ok = not issues
+    lines.append(f"[均衡不变量] {'✅ 通过' if ok else '未通过'}："
+                 f"女生 {f} 人×K={k}、男生 {m} 人×{base}~{base + 1}、总行数=2×F×K、双向一致、无自己无同性")
     for line in lines:
         print("  " + line)
     for issue in issues:
         print("  ⛔ " + issue)
-    return (not issues), lines
+    return ok, lines
 
 
 def _find_activity(act_id):
@@ -406,54 +416,13 @@ def _find_activity(act_id):
     return None
 
 
-def _read_plan_from_tables(act_id):
-    """从一对一选择表重建 participants（保持表序，不重排，避免打破同分 tie-break）+
-    plan + 性别分组。verify 模式用，纯读。"""
-    sels = _must(bitable.search_records(C.ONETOONE_SELECT_TABLE, {
-        "conjunction": "and",
-        "conditions": [{"field_name": C.FIELD_OTO_ACTIVITY_ID, "operator": "is", "value": [act_id]}],
-    }), "一对一选择表")
-    people = {}
-    order = []
-    for r in sels:
-        f = r.get("fields", {})
-        oid = get_field_text(f, C.FIELD_OTO_SELECTOR_OID)
-        if not oid or oid in people:
-            continue
-        people[oid] = {
-            "oid": oid,
-            "gender": get_field_text(f, C.FIELD_OTO_SELECTOR_GENDER),
-            "nickname": get_field_text(f, C.FIELD_OTO_SELECTOR_NAME),
-        }
-        order.append(oid)
-    plan = []
-    for r in sels:
-        f = r.get("fields", {})
-        oid = get_field_text(f, C.FIELD_OTO_SELECTOR_OID)
-        if oid not in people:
-            continue
-        targets = []
-        for cf in C.FIELD_OTO_CHOICES:
-            t = get_field_text(f, cf)
-            if t and t in people:
-                targets.append(people[t])
-        plan.append({"selector": people[oid], "targets": targets})
-    males = [people[o] for o in order if people[o]["gender"] == "男性"]
-    females = [people[o] for o in order if people[o]["gender"] == "女性"]
-    return males, females, plan
-
-
 def _cmd_verify(act_id):
     if not act_id:
         _fail("用法：verify 活动ID，例如 verify A-0012")
     if not _find_activity(act_id):
         _fail(f"活动表中未找到活动ID：{act_id}")
-    males, females, plan = _read_plan_from_tables(act_id)
-    if not plan:
-        _fail(f"活动 {act_id} 无选择记录")
     print(f"========== VERIFY（只读复核） {act_id} ==========")
-    print(f"  参与者 {len(males) + len(females)} 人（男 {len(males)} / 女 {len(females)}），志愿 {len(plan)} 条")
-    ok, _ = _verify(act_id, males, females, plan)
+    ok, _ = _verify(act_id)
     if not ok:
         _fail("复核未通过（见上方 ⛔ 项）")
     print("✅ 复核通过。")
@@ -468,9 +437,11 @@ def _cmd_plan():
     print(f"  资料相似度：学历 {_EDUCATIONS} / 城市 {_CITIES} / 教堂 {_CHURCHES} + 爱好/运动/性格/MBTI 轮转")
     print(f"【活动】新建「百人对一对一演示」：报名中、一对一功能开启=是")
     print(f"【志愿】轮转法：每人选 7 位异性（跳过同序位），共 {len(males) + len(females)} 条")
-    print(f"【执行】handle_admin_start_onetoone → handle_admin_stop_onetoone")
-    print(f"【预期】{len(males) + len(females)} 人 × {_TOP_N} 必聊 = "
-          f"{(len(males) + len(females)) * _TOP_N} 条结果")
+    print(f"【执行】handle_admin_start_onetoone → "
+          f"handle_admin_stop_onetoone('<活动ID> {_FEMALE_CHATS}')")
+    print(f"【预期】女 {len(females)} 人 × K {_FEMALE_CHATS} 场 = "
+          f"{len(females) * _FEMALE_CHATS} 女名单 + {len(females) * _FEMALE_CHATS} 男名单 = "
+          f"{2 * len(females) * _FEMALE_CHATS} 条结果")
 
 
 def _cmd_run():
@@ -486,11 +457,11 @@ def _cmd_run():
     print("[3/6] 报名：")
     _enroll(act_id, users)
     print("[4/6] 预填志愿：")
-    plan = _seed_choices(act_id, males, females)
+    _seed_choices(act_id, males, females)
     print("[5/6] 执行匹配：")
     _run_matching(act_id)
     print("[6/6] 读回验证：")
-    ok, _ = _verify(act_id, males, females, plan)
+    ok, _ = _verify(act_id)
     if not ok:
         _fail("读回验证未全部通过（见上方 ⛔ 项）")
 

@@ -13,6 +13,7 @@
 `run_onetoone_matching` 的权重常量已随算法从 bot/constants.py 搬进本模块：
 两端永远相同，不是环境配置。
 """
+import collections
 from concurrent.futures import ThreadPoolExecutor
 
 from lib import grouping as lib_grouping
@@ -91,6 +92,9 @@ WEIGHT_ONETOONE_MY_PRIORITY = 0.5
 WEIGHT_ONETOONE_THEIR_PRIORITY = 0.3
 WEIGHT_ONETOONE_MATCH = 0.2
 ONETOONE_UNSELECTED_SCORE = 30
+# 线下一对一（女生坐镇、男生上门）均衡分配：一条边是双向奔赴，双方优先级对称各占 0.4、
+# 资料相似度 0.2，再用运输问题求「每个女生恰好 K 场、男生配额均衡」下的总分最大。
+WEIGHT_OFFLINE_PRIORITY = 0.4
 
 # 一对一执行互斥已改走 lib.grouping.grouping_lock（跨进程 flock，bot 与 H5 共用
 # 同一批 yixianqian_grouping_<活动>.lock）。等待预算：执行/开始收集是分钟级作业，
@@ -166,6 +170,166 @@ def run_onetoone_matching(participants, selections, profiles, top_n=10):
         top = scored[:min(top_n, len(scored))]
         result[pid] = [(qid, rank) for rank, (_, qid) in enumerate(top, 1)]
     return result
+
+
+class _MinCostFlow:
+    """SPFA 连续最短路增广的最小费用最大流（用于线下均衡分配的运输问题求解）。"""
+
+    def __init__(self, n):
+        self.n = n
+        self.g = [[] for _ in range(n)]
+
+    def add_edge(self, u, v, cap, cost):
+        # 正向边 + 反向边；正向边 rev 指向反边在 g[v] 中的位置
+        self.g[u].append([v, cap, cost, len(self.g[v])])
+        self.g[v].append([u, 0, -cost, len(self.g[u]) - 1])
+
+    def run(self, s, t, max_flow):
+        flow = 0
+        total_cost = 0
+        INF = float("inf")
+        while flow < max_flow:
+            dist = [INF] * self.n
+            inq = [False] * self.n
+            prev_v = [-1] * self.n
+            prev_e = [-1] * self.n
+            dist[s] = 0
+            dq = collections.deque([s])
+            inq[s] = True
+            while dq:
+                u = dq.popleft()
+                inq[u] = False
+                for i, (v, cap, cost, _rev) in enumerate(self.g[u]):
+                    if cap > 0 and dist[v] > dist[u] + cost:
+                        dist[v] = dist[u] + cost
+                        prev_v[v] = u
+                        prev_e[v] = i
+                        if not inq[v]:
+                            dq.append(v)
+                            inq[v] = True
+            if dist[t] == INF:
+                break
+            d = max_flow - flow
+            v = t
+            while v != s:
+                d = min(d, self.g[prev_v[v]][prev_e[v]][1])
+                v = prev_v[v]
+            flow += d
+            total_cost += d * dist[t]
+            v = t
+            while v != s:
+                e = self.g[prev_v[v]][prev_e[v]]
+                e[1] -= d
+                self.g[v][e[3]][1] += d
+                v = prev_v[v]
+        return flow, total_cost
+
+
+def run_offline_onetoone_matching(participants, selections, profiles, female_chats):
+    """线下均衡分配：女生坐镇各聊 female_chats 场，男生按配额上门，总分最大。
+
+    与线上「各自独立 top-N」不同，线下是一场运输问题（b-matching）：
+      - 每个女生恰好 female_chats 场（女生坐镇不动，男生来找她）；
+      - 每个男生 base 或 base+1 场，base = floor(F×K / M)，总和 = F×K；
+      - 每条边（男↔女）最多聊一次；
+      - 目标：所有配对的总分最大（双向奔赴对称分）。
+
+    participants / selections / profiles 形状与 run_onetoone_matching 完全一致。
+    对称分 = WEIGHT_OFFLINE_PRIORITY × (男对女优先级得分 + 女对男优先级得分)
+           + WEIGHT_ONETOONE_MATCH × 资料相似度
+    即 0.4×男对女 + 0.4×女对男 + 0.2×资料相似度，未选择某方记 ONETOONE_UNSELECTED_SCORE(30)。
+
+    返回: {
+      "male_lists":   {男 open_id: [(女 open_id, rank, score), ...]}，rank 从 1 起、按得分降序；
+      "female_lists": {女 open_id: [(男 open_id, score), ...]}，按得分降序；
+      "male_quota":   {男 open_id: 该男共几场}，
+    }
+    """
+    males = [p["id"] for p in participants if p.get("gender") == "male"]
+    females = [p["id"] for p in participants if p.get("gender") == "female"]
+    M = len(males)
+    F = len(females)
+    K = int(female_chats)
+    if M == 0 or F == 0:
+        return {"male_lists": {}, "female_lists": {}, "male_quota": {}}
+    if K < 1:
+        raise ValueError(f"女生场次 female_chats 必须 ≥ 1，当前 {K}")
+    if K > M:
+        raise ValueError(
+            f"女生场次 female_chats={K} 不能超过男生人数 {M}（每个女生最多和 {M} 位男生各聊一次）")
+
+    # 我的选择：selector -> {target: 最小优先级（最高意愿）}
+    my_choice = {}
+    for sel_oid, choices in selections.items():
+        mc = {}
+        for c in choices:
+            if c["id"] not in mc or c["priority"] < mc[c["id"]]:
+                mc[c["id"]] = c["priority"]
+        my_choice[sel_oid] = mc
+
+    def prio(a, b):
+        p = my_choice.get(a, {}).get(b)
+        return PRIORITY_SCORES.get(p, ONETOONE_UNSELECTED_SCORE)
+
+    # 对称分矩阵 score[i][j]（男 i × 女 j）
+    score = [[0.0] * F for _ in range(M)]
+    for i, m in enumerate(males):
+        pm = profiles.get(m, {})
+        for j, f in enumerate(females):
+            try:
+                mch = recommend.match_score(pm, profiles.get(f, {}))[0]
+            except Exception:
+                mch = 0
+            score[i][j] = (WEIGHT_OFFLINE_PRIORITY * (prio(m, f) + prio(f, m))
+                           + WEIGHT_ONETOONE_MATCH * mch)
+
+    # 男生配额：base 或 base+1，总和 = F×K
+    E = F * K
+    base, rem = divmod(E, M)
+    quota = [base + 1 if i < rem else base for i in range(M)]
+
+    # 建图：S=0，男=1..M，女=1+M..M+F，T=1+M+F
+    S = 0
+    male_base = 1
+    female_base = 1 + M
+    T = 1 + M + F
+    mf = _MinCostFlow(T + 1)
+    for i in range(M):
+        mf.add_edge(S, male_base + i, quota[i], 0)
+    mf_edges = [[None] * F for _ in range(M)]
+    for i in range(M):
+        for j in range(F):
+            cost = -int(round(score[i][j] * 1000))  # 最大化总分 → 最小化负分
+            mf.add_edge(male_base + i, female_base + j, 1, cost)
+            mf_edges[i][j] = mf.g[male_base + i][-1]  # 正向边引用，之后读残余容量
+    for j in range(F):
+        mf.add_edge(female_base + j, T, K, 0)
+
+    flow, _ = mf.run(S, T, E)
+    if flow != E:
+        raise RuntimeError(f"线下均衡分配未收敛：实际配对 {flow}/{E} 条")
+
+    male_lists = {}
+    female_lists = {}
+    male_quota = {}
+    for i, m in enumerate(males):
+        lst = []
+        for j in range(F):
+            if mf_edges[i][j][1] == 0:  # 正向边被用满 → 该边入选
+                lst.append((females[j], score[i][j]))
+        lst.sort(key=lambda x: (-x[1], x[0]))
+        male_lists[m] = [(fid, rank, sc) for rank, (fid, sc) in enumerate(lst, 1)]
+        male_quota[m] = quota[i]
+
+    for j, f in enumerate(females):
+        lst = []
+        for i in range(M):
+            if mf_edges[i][j][1] == 0:
+                lst.append((males[i], score[i][j]))
+        lst.sort(key=lambda x: (-x[1], x[0]))
+        female_lists[f] = lst
+
+    return {"male_lists": male_lists, "female_lists": female_lists, "male_quota": male_quota}
 
 
 def profile_of(fields, field_names=None):

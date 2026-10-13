@@ -16,10 +16,12 @@ from lib import grouping as lib_grouping
 from lib import onetoone as lib_onetoone
 from lib.onetoone import (  # noqa: F401 — re-export 兼容旧入口，勿删
     ONETOONE_UNSELECTED_SCORE,
+    WEIGHT_OFFLINE_PRIORITY,
     WEIGHT_ONETOONE_MATCH,
     WEIGHT_ONETOONE_MY_PRIORITY,
     WEIGHT_ONETOONE_THEIR_PRIORITY,
     profile_of,
+    run_offline_onetoone_matching,
     run_onetoone_matching,
 )
 

@@ -7,15 +7,21 @@
 本脚本把缺失行按栏位逐字复制进统一表；已存在的以统一表为准（不覆盖、不删除）。
 两表栏位逐字同构（活动ID/选择人open_id/选择人昵称/选择人性别/第1-7志愿）。
 
+运行有进程级互斥锁（同机并发跑两次会拒绝第二个）——2026-10-13 曾因并发双跑产生
+重复行，另提供 --dedupe 清理（同 活动ID+选择人open_id 多行时保留第一条，删除多余）。
+
 用法（仓库根，测试服）：
   YIXIANQIAN_ENV=dev web/backend/venv/bin/python scripts/dev/unify_preference_tables.py            # 干跑
+  YIXIANQIAN_ENV=dev web/backend/venv/bin/python scripts/dev/unify_preference_tables.py --dedupe   # 清理重复行
   YIXIANQIAN_ENV=dev web/backend/venv/bin/python scripts/dev/unify_preference_tables.py --apply    # 写入
 生产（发版时）需显式 YX_DEV_ALLOW=1 才允许执行。
 """
 
 import argparse
+import fcntl
 import os
 import sys
+import tempfile
 
 _D = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _D)
@@ -38,12 +44,56 @@ def _row_key(fields):
             bitable.get_field_text(fields, "选择人open_id"))
 
 
+def _acquire_lock():
+    """同机互斥：防止两个迁移进程并发各插一遍（2026-10-13 事故）。"""
+    fh = open(os.path.join(tempfile.gettempdir(), "yxq_unify_preference_tables.lock"), "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("⛔ 已有另一个迁移进程在运行（锁被占用），退出。")
+        sys.exit(2)
+    return fh
+
+
+def dedupe(table_id):
+    """同（活动ID, 选择人open_id）多行时保留第一条，删除其余。"""
+    rows = bitable.raw_search_records(table_id) or []
+    seen, extras = set(), []
+    for r in rows:
+        key = _row_key(r.get("fields", {}))
+        if not all(key):
+            continue
+        if key in seen:
+            extras.append((key, r.get("record_id")))
+        else:
+            seen.add(key)
+    print("统一表行数=%d，唯一键=%d，重复多余=%d" % (len(rows), len(seen), len(extras)))
+    for key, rid in extras[:20]:
+        print("  删除重复:", key, rid)
+    if len(extras) > 20:
+        print("  ...（共 %d 行）" % len(extras))
+    ok = 0
+    for key, rid in extras:
+        if bitable._client.delete_record(table_id, rid):
+            ok += 1
+        else:
+            print("  删除失败:", key, rid)
+    print("去重完成：成功 %d / %d" % (ok, len(extras)))
+    return 0 if ok == len(extras) else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="实际写入（默认只干跑）")
+    ap.add_argument("--dedupe", action="store_true", help="清理统一表里的重复行（保留第一条）")
     args = ap.parse_args()
 
+    _acquire_lock()
+
     unified = config.GROUP_SELECT_TABLE
+    if args.dedupe:
+        return dedupe(unified)
+
     legacy = getattr(local_config, "ONETOONE_SELECT_TABLE", "") or ""
     if not legacy or legacy == unified:
         print("旧一对一志愿表未配置或已与统一表相同（legacy=%r），无需迁移" % legacy)
@@ -77,11 +127,13 @@ def main():
         return 0
 
     ok = 0
-    for key, fields in todo:
+    for i, (key, fields) in enumerate(todo, 1):
         if bitable.create_record(unified, fields):
             ok += 1
         else:
             print("  写入失败:", key)
+        if i % 20 == 0:
+            print("  ...已处理 %d/%d（成功 %d）" % (i, len(todo), ok), flush=True)
     print("补录完成：成功 %d / %d" % (ok, len(todo)))
     return 0 if ok == len(todo) else 1
 

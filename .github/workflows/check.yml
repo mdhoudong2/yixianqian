@@ -41,6 +41,10 @@ jobs:
 
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -54,53 +58,26 @@ jobs:
         run: |
           pip install -q pytest
           pip install -q -r bot/requirements.txt -r web/backend/requirements.txt
-      - name: 单测（4 分片并行，不新增任何依赖）
+      - name: 单测（分片 ${{ matrix.shard }}/4，独立 runner）
         run: |
           set -uo pipefail
           if [ ! -d tests ]; then
             echo "无单测，跳过"
             exit 0
           fi
-          mkdir -p /tmp/pytest-shards
-          # 动态发现，递归 tests/（排除 __pycache__），新增测试文件必被纳入，绝不硬编码
-          mapfile -t FILES < <(find tests -name 'test_*.py' -not -path '*/__pycache__/*' | sort)
+          SHARD=${{ matrix.shard }}
+          SHARDS=4
+          # 动态发现，递归 tests/（排除 __pycache__），新增测试文件必被纳入，绝不硬编码。
+          # 按文件行数降序做 LPT 轮转分片：重文件交错到不同分片，避免全堆一片
+          # （旧版按文件名轮转 + 单 runner 4 进程，曾出现 3 片各 <15s、1 片 215s 的失衡）。
+          mapfile -t FILES < <(find tests -name 'test_*.py' -not -path '*/__pycache__/*' -print0 | xargs -0 wc -l | sort -rn | awk 'NF==2 && $2!="total"{print $2}')
           total=${#FILES[@]}
-          shards=4
-          [ "$total" -ge "$shards" ] || shards=$total
-          pids=()
-          for ((i=0;i<shards;i++)); do
-            subset=()
-            for ((j=i;j<total;j+=shards)); do subset+=("${FILES[j]}"); done
-            # 空分片必须跳过：pytest 无参数会退化成收集整个目录
-            [ "${#subset[@]}" -gt 0 ] || continue
-            ( pytest -q "${subset[@]}" > "/tmp/pytest-shards/shard$i.log" 2>&1 ) &
-            pids+=($!)
-          done
-          fail=0
-          for pid in "${pids[@]}"; do wait "$pid" || fail=1; done
-          for f in /tmp/pytest-shards/shard*.log; do
-            echo "===== $f ====="
-            tail -3 "$f"
-          done
-          if [ "$fail" -ne 0 ]; then
-            # 失败时必须倒出整份日志：tail -3 的 "1 failed" 只是症状，
-            # 真正的 traceback 与断言细节都被截掉了，摘要之外没有别的信息源。
-            printed=0
-            for f in /tmp/pytest-shards/shard*.log; do
-              if grep -qE 'failed|error|FAILED|ERROR' "$f"; then
-                echo "===== $f（完整日志）====="
-                cat "$f"
-                printed=1
-              fi
-            done
-            # 兜底：正则没命中（例如信号杀死导致日志残缺）就全量输出，宁可啰嗦也不丢原因
-            if [ "$printed" -eq 0 ]; then
-              for f in /tmp/pytest-shards/shard*.log; do
-                echo "===== $f（完整日志）====="
-                cat "$f"
-              done
-            fi
-            echo "有分片失败，上面已打印失败分片的完整日志"
-            exit 1
+          [ "$total" -ge "$SHARDS" ] || SHARDS=$total
+          subset=()
+          for ((j=SHARD;j<total;j+=SHARDS)); do subset+=("${FILES[j]}"); done
+          if [ "${#subset[@]}" -eq 0 ]; then
+            echo "本分片无文件，跳过"
+            exit 0
           fi
-          echo "全部分片通过（${#pids[@]} 片，${total} 个测试文件）"
+          echo "分片 $SHARD：${#subset[@]} 个文件 / 共 $total 个"
+          pytest -q "${subset[@]}"

@@ -47,6 +47,10 @@ def _guard_and_import():
         if p not in sys.path:
             sys.path.insert(0, p)
 
+    # 按仓库根锁定 YIXIANQIAN_ENV（test→dev、prod→prod）再 import：constants 靠它
+    # 选 ASSISTANT_APP_ID / FEISHU_APP_ID，跑错环境会连错 base 或报 invalid param。
+    os.environ["YIXIANQIAN_ENV"] = "dev" if env == "test" else "prod"
+
     import constants as C
     c_file = os.path.realpath(C.__file__)
     if not c_file.startswith(real_root + os.sep):

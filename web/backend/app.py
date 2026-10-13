@@ -1282,9 +1282,12 @@ def _check_rate(key, limit=5, window=60):
         _rate_store[key] = lst
         return True
 
-def _rate_limit(limit=5, window=60, key_prefix="rl", include_path=True):
-    open_id = g.get("yxq_open_id") or request.remote_addr or "anon"
-    k = f"{key_prefix}:{open_id}"
+def _rate_limit(limit=5, window=60, key_prefix="rl", include_path=True, key=None):
+    """轻量限流：key 非空时用它做分桶标识（如已换码的 open_id）；
+    否则用会话 open_id / remote_addr——注意 nginx 反代后 remote_addr 恒为
+    127.0.0.1、现场 WiFi 出口 IP 也相同，两者都不能作为身份分桶依据。"""
+    ident = key if key else (g.get("yxq_open_id") or request.remote_addr or "anon")
+    k = f"{key_prefix}:{ident}"
     if include_path:
         k = f"{k}:{request.path}"
     if not _check_rate(k, limit, window):
@@ -2940,55 +2943,78 @@ def _norm_name(v):
 
 def _claim_auto_signup(open_id, user_fields):
     """认领时若资料已审核（单身）且注册表单选了「微信缴费=我已缴费」，立即报名
-    PROMO_ACTIVITY_ID，让用户认领后无需再手动报名。幂等：非单身/未缴费/活动非报名中/
-    满员/已报名一律跳过。机器人 auto_signup_new_user 30 秒轮询会再做一次幂等兜底，
-    所以这里任何失败都只记日志、不影响认领本身。"""
+    PROMO_ACTIVITY_ID，让用户认领后无需再手动报名。
+
+    返回 (已报名?, 原因)。原因：signed（成功）/ pending（非单身，等审核）/
+    not_paid（未缴费）/ no_activity / not_open / full / already / retry。
+
+    fail-closed：任何「状态查不清」的失败（活动解析不到、报名查重探测失败、写库
+    失败）一律 retry 且绝不 create——飞书瞬时失败绝不能被当成「未报名/未满员」，
+    否则会写出重复报名/超员。retry 由机器人 auto_signup_new_user 的轮询幂等兜底
+    重试；此处失败只记日志，不影响认领本身。"""
     try:
         if bitable.get_select_value(user_fields, F_ACCOUNT_STATUS) != "单身":
-            return False
+            return False, "pending"
         if bitable.get_select_value(user_fields, F_WECHAT_PAYMENT) != WECHAT_PAY_PAID:
-            return False
+            return False, "not_paid"
         act_record, text_act_id = snap_resolve_activity(PROMO_ACTIVITY_ID)
         if not act_record:
-            app.logger.warning("认领即时报名跳过：未找到活动 %s", PROMO_ACTIVITY_ID)
-            return False
+            # snap 解析把「查询失败」与「确无活动」都归为 None，无法区分，宁可不报
+            return False, "retry"
         act_fields = act_record.get("fields", {})
         if bitable.get_select_value(act_fields, F_ACTIVITY_STATUS) != "报名中":
-            return False
-        if bitable.get_user_signup(text_act_id, open_id):
-            return False  # 已报名，幂等
+            return False, "not_open"
+        ok, signed = bitable.user_signup_probe(text_act_id, open_id)
+        if not ok:
+            return False, "retry"
+        if signed:
+            return False, "already"
         nickname = (bitable.get_field_text(user_fields, F_NICKNAME)
                     or bitable.get_field_text(user_fields, F_REAL_NAME) or "用户")
         with file_lock:
-            if bitable.get_user_signup(text_act_id, open_id):
-                return False
+            ok, signed = bitable.user_signup_probe(text_act_id, open_id)
+            if not ok:
+                return False, "retry"
+            if signed:
+                return False, "already"
             max_signup = int(bitable.get_field_number(act_fields, F_ACTIVITY_MAX_SIGNUP, 0))
-            if max_signup > 0 and len(bitable.get_signups(text_act_id) or []) >= max_signup:
-                return False
+            if max_signup > 0:
+                ok, count = bitable.signup_count_probe(text_act_id)
+                if not ok:
+                    return False, "retry"
+                if count >= max_signup:
+                    return False, "full"
             created = bitable.create_record(SIGNUP_TABLE_ID, {
                 F_SIGNUP_ACTIVITY_ID: text_act_id,
                 F_SIGNUP_OPENID: open_id,
                 F_SIGNUP_NICKNAME: nickname,
                 F_SIGNUP_STATUS: "已报名",
             })
-        if not created:
-            return False
+            if not created:
+                return False, "retry"
         refresh_snapshot_table_async("signups")
         refresh_snapshot_table_async("activities")
         app.logger.warning(f"认领即时自动报名: {nickname} -> {text_act_id}")
-        return True
+        return True, "signed"
     except Exception as e:
-        app.logger.warning(f"认领即时报名异常(轮询兜底): {e}")
-        return False
+        app.logger.warning(f"认领即时报名异常（等待 bot 轮询兜底）: {e}")
+        return False, "retry"
+
+# 认领后未自动报名时的可见原因（前端在 toast 里追加展示）；
+# pending/already 属正常跳过，不加提示
+_AUTO_SIGNUP_NOTES = {
+    "not_paid": "未查到缴费记录，暂未自动报名",
+    "no_activity": "活动暂未开放报名，可稍后在活动页报名",
+    "not_open": "活动暂未开放报名，可稍后在活动页报名",
+    "full": "活动名额已满，暂未自动报名",
+    "retry": "报名服务繁忙，稍后会自动重试",
+}
 
 @app.route("/api/auth/claim", methods=["POST"])
 def auth_claim():
     """微信/浏览器预报名后的现场认领：用「手机号+姓名」把当前飞书身份(open_id)
     合并到一条「飞书用户ID为空」的预填记录上（更新原记录，绝不新建重复档案）。
     认领后账号保持/置为「待审核」，由现场小天使核验本人与缴费后改「单身」。"""
-    rl = _rate_limit(8, 600, "claim")  # 10 分钟 8 次，防手机号枚举
-    if rl:
-        return rl
     body = request.get_json(silent=True) or {}
     code = str(body.get("code", "")).strip()
     phone = _norm_phone(body.get("phone", ""))
@@ -3000,9 +3026,20 @@ def auth_claim():
     if not (2 <= len(name) <= 30):
         return jsonify({"error": "请输入注册时填写的真实姓名"}), 400
 
+    # 认领发生在登录前，不能按 IP 分桶：nginx 反代后 remote_addr 恒为 127.0.0.1，
+    # 现场 WiFi 出口 IP 也人人相同。换码前先用「全服熔断」防洪水（阈值远高于正常
+    # 用量）；换码后再按 open_id 身份级限流（保留 8/600 防按手机号枚举）。
+    rl = _rate_limit(300, 600, "claim-all", key="all")
+    if rl:
+        return rl
+
     open_id = _exchange_code_for_openid(code)
     if not open_id:
         return jsonify({"error": "飞书登录失败，请重试"}), 401
+
+    rl = _rate_limit(8, 600, "claim", key=open_id)
+    if rl:
+        return rl
 
     # 幂等：该飞书身份已有档案（含已认领过）直接登录，不报错
     existing = snap_find_user_by_openid(open_id)
@@ -3037,19 +3074,35 @@ def auth_claim():
         return jsonify({"error": "找到多条匹配记录，请联系现场小天使人工处理。"}), 409
 
     rec = cands[0]
-    upd = {F_FEISHU_ID: open_id}
-    if not bitable.get_select_value(rec.get("fields", {}), F_ACCOUNT_STATUS):
-        upd[F_ACCOUNT_STATUS] = "待审核"  # 预填记录无状态时补待审核，小天使现场核验后改单身
-    updated = bitable.update_record(USER_TABLE_ID, rec.get("record_id"), upd)
-    if not updated:
-        return jsonify({"error": "认领写入失败，请稍后重试（或联系现场小天使）"}), 502
+    with file_lock:
+        # 锁内重读：两个飞书身份并发认领同一条预填记录时，后到者会被先写入的
+        # 飞书用户ID 拦下，绝不覆盖他人绑定
+        live = bitable.get_record(USER_TABLE_ID, rec.get("record_id"))
+        if live is None:
+            return jsonify({"error": "服务繁忙，请稍后重试（或联系现场小天使）"}), 502
+        live_fields = live.get("fields", {})
+        if bitable.get_field_text(live_fields, F_FEISHU_ID).strip():
+            return jsonify({"error": "该资料已被认领，请联系现场小天使"}), 409
+        upd = {F_FEISHU_ID: open_id}
+        if not bitable.get_select_value(live_fields, F_ACCOUNT_STATUS):
+            upd[F_ACCOUNT_STATUS] = "待审核"  # 预填记录无状态时补待审核，小天使现场核验后改单身
+        updated = bitable.update_record(USER_TABLE_ID, rec.get("record_id"), upd)
+        if not updated:
+            return jsonify({"error": "认领写入失败，请稍后重试（或联系现场小天使）"}), 502
+    refresh_snapshot_table_async("users")
 
-    user = updated if isinstance(updated, dict) and updated.get("fields") else rec
+    # 更新响应的 fields 只含本笔写入的字段（实测），自动报名与登录响应需要完整档案：
+    # 用锁内读到的完整字段与本次写入合并，不能只看 updated
+    user = {"record_id": rec.get("record_id"), "fields": {**live_fields, **upd}}
     # 资料已审核（单身）且已微信缴费 → 认领即自动报名活动；待审核则等小天使改单身后由轮询报名
-    auto_signed = _claim_auto_signup(open_id, user.get("fields", {}))
-    app.logger.warning(f"认领成功: phone={phone} name={name} open_id={open_id} auto_signed={auto_signed}")
-    return _make_login_resp(open_id, user, "user", claimed=True,
-                            extra={"auto_signed_up": auto_signed})
+    auto_signed, reason = _claim_auto_signup(open_id, user.get("fields", {}))
+    app.logger.warning(f"认领成功: phone={phone} name={name} open_id={open_id} "
+                       f"auto_signed={auto_signed} reason={reason}")
+    extra = {"auto_signed_up": auto_signed}
+    note = None if auto_signed else _AUTO_SIGNUP_NOTES.get(reason)
+    if note:
+        extra["auto_signed_note"] = note
+    return _make_login_resp(open_id, user, "user", claimed=True, extra=extra)
 
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
@@ -3136,6 +3189,23 @@ def _register_has_user_record(open_id):
         if bitable.get_select_value(it.get("fields", {}), F_ACCOUNT_STATUS) in _REGISTER_VALID_STATUS:
             return it
     return None
+
+
+def _register_user_record_strict(open_id):
+    """注册写库前的严格查重（fail-closed）：返回 (ok, record)。
+
+    raw 查询失败 → (False, None)，调用方必须拒绝本次写入；不能用 search_records
+    （失败转 []）把飞书瞬时失败当成「没注册过」而写出重复档案。
+    record 非空 = 已有有效档案（单身/待审核/已脱单）。
+    """
+    items = bitable.raw_search_records(USER_TABLE_ID, [
+        {"field_name": F_FEISHU_ID, "operator": "is", "value": [open_id]}])
+    if items is None:
+        return False, None
+    for it in items:
+        if bitable.get_select_value(it.get("fields", {}), F_ACCOUNT_STATUS) in _REGISTER_VALID_STATUS:
+            return True, it
+    return True, None
 
 
 @app.route("/api/auth/feishu_register", methods=["GET"])
@@ -3273,9 +3343,17 @@ def submit_register():
     if inviter:
         fields["邀请人ID"] = inviter
 
-    rec = bitable.create_record(USER_TABLE_ID, fields)
+    with file_lock:
+        # 锁内 fail-closed 重查：并发/重试的第二个请求会被挡下，飞书瞬时失败也绝不盲写
+        ok, existed = _register_user_record_strict(open_id)
+        if not ok:
+            return jsonify({"error": "服务繁忙，请稍后重试（或联系管理员）"}), 502
+        if existed:
+            return jsonify({"error": "你已经注册过啦，无需重复注册"}), 409
+        rec = bitable.create_record(USER_TABLE_ID, fields)
     if not rec:
         return jsonify({"error": "提交失败，请稍后重试（或联系管理员）"}), 502
+    refresh_snapshot_table_async("users")
     new_uid = bitable.get_field_text(rec.get("fields", {}), F_USER_ID)
     app.logger.warning(f"H5注册提交成功: open_id={open_id} uid={new_uid}")
     return jsonify({"ok": True, "user_id": new_uid})

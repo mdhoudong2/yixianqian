@@ -1070,7 +1070,6 @@
     <div class="section-title">活动</div>
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
       <van-cell title="🎟️ 我的活动" is-link @click="openMyActivities"></van-cell>
-      <van-cell v-if="hasGroupEntry" title="🧩 我的分组" is-link @click="openMyGroups"></van-cell>
       <van-cell v-if="hasOnetooneEntry" title="💞 我的一对一" is-link @click="openMyOnetoone"></van-cell>
     </van-cell-group>
   </div>
@@ -1990,16 +1989,22 @@
           </div>
           <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
         </div>
+        <!-- 现场任务入口，与「活动」页卡片保持一致：志愿收集/结果查看直达；
+             签到未到/未签到时停用填志愿入口并提示（卡片信息区仍可点进详情） -->
         <div class="activity-body" style="padding-top:0;">
-          <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goGroupResult(act.record_id)">
-            🎉 查看分组结果
-          </van-button>
-          <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
-            💬 查看我的必聊
-          </van-button>
-          <van-button v-if="act.status==='报名中'" plain type="primary" color="#ff6b81" size="small" block @click="openActivity(act.record_id)" style="margin-top:8px;">
-            查看活动详情
-          </van-button>
+          <div v-if="act.group_status==='收集中' || act.group_status==='已完成' || act.onetoone_status==='收集中' || act.onetoone_status==='已完成'" style="display:flex; flex-direction:column; gap:8px;">
+            <van-button v-if="act.group_status==='收集中'" type="primary" color="#ff6b81" size="small" block
+              :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
+              @click="goGroupSelect(act.record_id)">🎯 分组志愿选择</van-button>
+            <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block
+              @click="goGroupResult(act.record_id)">🎉 查看分组结果</van-button>
+            <van-button v-if="act.onetoone_status==='收集中'" type="primary" color="#ff6b81" size="small" block
+              :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
+              @click="goOnetooneSelect(act.record_id)">💞 一对一志愿选择</van-button>
+            <van-button v-if="act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block
+              @click="goOnetooneResult(act.record_id)">💬 查看我的必聊</van-button>
+            <div v-if="(act.group_status==='收集中' || act.onetoone_status==='收集中') && act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
+          </div>
         </div>
       </div>
     </div>
@@ -5749,6 +5754,7 @@ createApp({
         // 按原路返回并刷新
         if (groupSelectFrom.value === 'activity_detail') await openActivity(activityId);
         else if (groupSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
+        else if (groupSelectFrom.value === 'my_activities') { myActivitiesLoaded.value = false; openMyActivities(); }
         else openMyGroups();
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
@@ -5824,6 +5830,7 @@ createApp({
         vant.showToast('志愿提交成功');
         if (onetooneSelectFrom.value === 'activity_detail') await openActivity(activityId);
         else if (onetooneSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
+        else if (onetooneSelectFrom.value === 'my_activities') { myActivitiesLoaded.value = false; openMyActivities(); }
         else openMyOnetoone();
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;

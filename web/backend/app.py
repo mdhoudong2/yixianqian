@@ -8404,6 +8404,9 @@ def my_activities():
             act_data = format_activity(act)
             act_data["my_signup"] = True
             act_data["signup_status"] = bitable.get_field_text(fields, F_SIGNUP_STATUS)
+            # 现场签到三态（本人视角，与「我的分组」同口径）：卡片上停用填志愿入口用
+            act_data["signin_enabled"] = lib_grouping.signin_enabled(act.get("fields", {}))
+            act_data["my_attendance"] = bitable.get_field_text(fields, F_SIGNUP_ATTENDANCE)
             result.append(act_data)
     return jsonify({"activities": result})
 

@@ -3,12 +3,13 @@ import datetime
 import re
 import time
 
-from auto_tasks import auto_signup_new_user, reward_inviter
+from auto_tasks import _auto_signup_new_user_ex, reward_inviter
 from cards import WELCOME_TEXT, generate_h5_url, send_claim_card, send_main_menu_card
 from clients import *
 from constants import *
 from queries import find_activity_by_id, find_user_by_id_or_name, find_user_by_openid
 from store import (
+    add_signup_retry,
     generate_observer_codes,
     load_observer_codes,
     reserve_notified,
@@ -293,8 +294,12 @@ def handle_admin_approve(keyword):
                 # 与轮询路径（auto_send_view_after_approval）对齐：轮询端看到
                 # approval_sent 已被本函数占用会整条跳过，自动报名与邀请奖励
                 # 只有在这里补上，否则「管理员回复通过」这条主路径永远不触发它们。
-                auto_signup_new_user(
+                # 瞬时错误（retry_*）交给重试队列，与轮询路径同一套补偿机制。
+                signup_code = _auto_signup_new_user_ex(
                     open_id, nickname, get_select_value(fields, FIELD_WECHAT_PAYMENT))
+                if signup_code.startswith("retry_"):
+                    add_signup_retry(record_id)
+                    log(f"自动报名待重试（{signup_code}）: {nickname} record_id={record_id}")
                 inviter_id = get_field_text(fields, FIELD_INVITER_ID)
                 if inviter_id:
                     reward_inviter(open_id, nickname, inviter_id)

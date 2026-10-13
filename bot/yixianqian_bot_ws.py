@@ -567,7 +567,7 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
     if not reply:
         if text_lower in ["注册", "register", "我要注册", "报名"]:
             reply = handle_register_command(sender_id)
-        elif text_lower in ["认领", "claim", "认领资料", "认领报名", "现场认领"]:
+        elif text_lower.startswith(("认领", "claim", "现场认领")):
             reply = handle_claim_command(sender_id)
         elif text_lower in ["邀请", "invite", "邀请好友", "分享"]:
             reply = handle_invite_command(sender_id)

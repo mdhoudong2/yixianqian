@@ -1032,7 +1032,7 @@
       </div>
       <div class="profile-card-divider"></div>
       <div class="profile-card-row" style="cursor:pointer;" @click="openPointsRules">
-        <span class="row-label" style="color:#969799; font-size:13px; line-height:1.5;">麦穗能换「实名喜欢」名额、「优先报名」名额、「心愿名额」、「红娘人工推荐」</span>
+        <span class="row-label" style="color:#969799; font-size:13px; line-height:1.5;">🛍️ 麦穗能换「实名喜欢」名额、「优先报名」名额、「心愿名额」、「红娘人工推荐」</span>
         <van-icon name="arrow" color="#c8c9cc" />
       </div>
       <div class="profile-card-divider"></div>
@@ -1060,20 +1060,20 @@
   </div>
   <div style="padding:12px 12px 0;">
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
-      <van-cell v-if="!isObserver" title="我的资料" is-link @click="openProfileDetail"></van-cell>
-      <van-cell v-if="!isObserver" title="我的活动" is-link @click="openMyActivities"></van-cell>
-      <van-cell v-if="hasGroupEntry && !isObserver" title="我的分组" is-link @click="openMyGroups"></van-cell>
-      <van-cell v-if="hasOnetooneEntry && !isObserver" title="我的一对一" is-link @click="openMyOnetoone"></van-cell>
-      <van-cell v-if="availableRoles.length > 1" :title="isObserver ? '切换为普通用户' : '切换为村情六处'" is-link @click="switchRole"></van-cell>
+      <van-cell v-if="!isObserver" title="👤 我的资料" is-link @click="openProfileDetail"></van-cell>
+      <van-cell v-if="!isObserver" title="🎟️ 我的活动" is-link @click="openMyActivities"></van-cell>
+      <van-cell v-if="hasGroupEntry && !isObserver" title="🧩 我的分组" is-link @click="openMyGroups"></van-cell>
+      <van-cell v-if="hasOnetooneEntry && !isObserver" title="💞 我的一对一" is-link @click="openMyOnetoone"></van-cell>
+      <van-cell v-if="availableRoles.length > 1" :title="'🔄 ' + (isObserver ? '切换为普通用户' : '切换为村情六处')" is-link @click="switchRole"></van-cell>
       <van-cell v-if="user.is_admin" title="🌾 麦穗管理" is-link @click="openPointsAdmin"></van-cell>
-      <van-cell v-if="user.is_admin" title="管理员指令" is-link @click="showAdminHelp = true"></van-cell>
-      <van-cell v-if="user.is_admin" title="举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
+      <van-cell v-if="user.is_admin" title="🤖 管理员指令" is-link @click="showAdminHelp = true"></van-cell>
+      <van-cell v-if="user.is_admin" title="🚨 举报管理" :value="reportedCount ? reportedCount+'条待处理' : ''" is-link @click="openReportedMessages"></van-cell>
       <van-cell v-if="user.is_admin" title="👥 活动管理" :value="gaAdminBadge" is-link @click="openGroupAdmin"></van-cell>
     </van-cell-group>
   </div>
   <div style="padding:12px 12px 24px;">
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
-      <van-cell title="意见反馈" is-link @click="openSuggestionDialog"></van-cell>
+      <van-cell title="📮 意见反馈" is-link @click="openSuggestionDialog"></van-cell>
     </van-cell-group>
   </div>
 </div>

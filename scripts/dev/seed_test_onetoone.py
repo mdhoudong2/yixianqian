@@ -40,7 +40,7 @@ _EXPECTED_TABLES = {
     "USER_TABLE_ID": "tblMFjHwrTlTqrKZ",
     "ACTIVITY_TABLE_ID": "tblFg5jAXaHzUweF",
     "SIGNUP_TABLE_ID": "tblSUxXKbG7gdqVU",
-    "ONETOONE_SELECT_TABLE": "tblTRXtuLhODm8Q0",
+    "ONETOONE_SELECT_TABLE": "tblykkDzC0LaJxi8",  # 志愿表已统一：= 分组选择表（2026-10-13）
     "ONETOONE_RESULT_TABLE": "tbllYrqHD81gHyI2",
 }
 _TOP_N = 10

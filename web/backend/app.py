@@ -1604,6 +1604,9 @@ def format_activity(record):
         "poster": poster_url,
         "group_status": bitable.get_select_value(fields, F_ACTIVITY_GROUP_STATUS),
         "onetoone_status": bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_STATUS),
+        # 模式入口开关（是/否）：用户端卡片入口整块由它控制（关闭全部后不显示任何入口）
+        "group_flag": bitable.get_select_value(fields, F_ACTIVITY_GROUP_FLAG),
+        "onetoone_flag": bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_FLAG),
         "male_per_group": int(bitable.get_field_number(fields, F_ACTIVITY_MALE_PER_GROUP, 0)),
         "female_per_group": int(bitable.get_field_number(fields, F_ACTIVITY_FEMALE_PER_GROUP, 0)),
         "start_time": fields.get(F_ACTIVITY_START_TIME),
@@ -1615,15 +1618,13 @@ def attach_signin_state(act, record, open_id):
     """活动列表卡片附加「现场签到」状态（首页/活动页卡片上的现场任务入口用）。
 
     signin_enabled：活动是否开启签到；my_attendance：本人签到状态（未报名/开关
-    关闭时为空串）。签到查询只对「我已报名 + 开启签到 + 志愿正在收集」的活动执行：
-    列表逐活动查飞书会放大请求，没有现场任务的活动不查。查询失败保持空串——
-    前端一律按未签到处理（门禁侧 fail-closed，与详情页同口径）。
+    关闭时为空串）。志愿改为随时可改后，只要「我已报名 + 开启签到」就查签到表
+    （不再依赖收集状态）；查询失败保持空串——前端一律按未签到处理（门禁侧
+    fail-closed，与详情页同口径）。
     """
     act["signin_enabled"] = lib_grouping.signin_enabled(record.get("fields", {}))
     act["my_attendance"] = ""
     if not act.get("my_signup") or not act["signin_enabled"]:
-        return
-    if act.get("group_status") != "收集中" and act.get("onetoone_status") != "收集中":
         return
     attendance = lib_grouping.attendance_map(act["activity_id"], client=_grouping_client)
     if attendance is not None:
@@ -3504,8 +3505,11 @@ def activities():
     if gate:
         return jsonify(gate[0]), gate[1]
 
+    # 活动状态（分组/一对一）由 bot 进程写入，卡片上的「填志愿/看结果」入口依赖它判定：
+    # 必须实时读（与 my_groups / 详情页同口径），吃周期快照最长白等 3 分钟。
+    # 一次全表即时读后本地匹配，不要逐活动各读一次。
     result = []
-    for item in snap_all_activities():
+    for item in _snap_fresh("activities"):
         act = format_activity(item)
         act["my_signup"] = bool(snap_signup(act["activity_id"], open_id))
         attach_signin_state(act, item, open_id)
@@ -5715,9 +5719,7 @@ def group_candidates(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
-    if group_status != "收集中":
-        return jsonify({"error": f"分组状态为「{group_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：候选列表不再要求「收集中」；签到闸门保留。
 
     # 检查是否报名（直读飞书，避免报名快照 stale 导致误判未报名）
     signup = bitable.get_user_signup(text_act_id, open_id)
@@ -5807,9 +5809,8 @@ def group_select(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    group_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
-    if group_status != "收集中":
-        return jsonify({"error": f"分组状态为「{group_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：不再要求「收集中」——执行分组/一对一时各自读取
+    # 当前志愿；现场签到闸门保留（未签到者不可用现场功能）。
 
     # 检查报名（快照优先，未命中回退实时，防刚报名即提交被误判）
     signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
@@ -5872,7 +5873,9 @@ def group_select(activity_id):
     if not ok:
         return jsonify({"error": "提交失败，请稍后重试"}), 500
 
+    # 志愿表已统一（一對一与分组同表）：两个快照键都刷，避免另一侧读到旧缓存
     refresh_snapshot_table_async("group_selections")
+    refresh_snapshot_table_async("onetoone_selections")
     return jsonify({"ok": True, "message": "志愿提交成功"})
 
 @app.route("/api/activities/<activity_id>/group/status", methods=["GET"])
@@ -7275,9 +7278,10 @@ def admin_onetoone_flag():
 def admin_activity_mode():
     """模式切换（互斥写入器）：一次 PUT 同时写「分组功能开启」「一对一功能开启」。
 
-    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若 flag=「是」或状态 ∈
-    {收集中, 已截止}，或该活动有活跃 job → 409 拒绝并提示先收尾。例外：冲突态
-    （双 flag=是）纠偏时，只按被关闭侧的状态拦（正在跑的一侧不能被关掉）。
+    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若状态 ∈ {收集中, 已截止}，
+    或该活动有活跃 job → 409 拒绝并提示先收尾；已收尾的 flag=「是」**不拦**——
+    切换是一次原子双栏位写（同一 PUT 关旧入口、开新入口），与 bot 开关同一语义；
+    正在收集/已截止的一侧仍按状态拦（不能关掉真正在跑的模式，冲突态纠偏同理）。
     切换本身只改入口 flag，不删任何数据。
     """
     open_id, err, code = _require_admin()
@@ -7304,29 +7308,23 @@ def admin_activity_mode():
         return jsonify({"error": "该活动有任务正在执行，请等它结束后再切换模式",
                         "code": "MODE_SWITCH_BLOCKED", "active_job": active}), 409
 
-    # 关闭侧「仍活跃」判定：状态∈{收集中,已截止} 必拦——用户端 select 只认状态不看
-    # flag，通道其实还开着，放行切换等于绕过互斥（2026-10-12 审计必修 1）；flag=是
-    # 也拦（与 lib.counterpart_start_active 对齐，常态下要求先收尾再切）。
-    # 例外：冲突态（双 flag=是 的历史脏数据）且被关闭侧状态已收尾时放行——控制台
-    # 「一键纠偏」就靠这条路径；正在收集/已截止的一侧仍按状态拦截，纠偏只能保留
-    # 真正在跑的模式（误伤纠偏等于删功能，见 index.html 冲突卡）。
-    conflict = lib_grouping.derive_mode(act) == lib_grouping.MODE_CONFLICT
-
-    def _closing_blocked(flag_field, status_field):
-        if bitable.get_field_text(af, status_field) in (
-                lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
-            return True
-        return not conflict and bitable.get_field_text(af, flag_field) == "是"
+    # 关闭侧「仍在跑」判定：状态∈{收集中,已截止} 必拦——用户端 select 只认状态不看
+    # flag，通道其实还开着，放行切换等于绕过互斥（2026-10-12 审计必修 1）。
+    # 已收尾的 flag=「是」不再拦：切换本身就是一次原子双栏位写（set_mode 同一 PUT
+    # 关闭旧入口、开启新入口），与 bot「开启一对一功能」同一套语义（该路径本就不拦
+    # flag，见 lib.onetoone.set_onetoone_flag）；此前拦 flag 造成「完成分组后无法切
+    # 一对一、控制台又无手动关 flag 入口」的死锁（2026-10-13 修）。
+    def _closing_blocked(status_field):
+        return bitable.get_field_text(af, status_field) in (
+            lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED)
 
     closing = []
-    if mode != lib_grouping.MODE_GROUP and _closing_blocked(
-            F_ACTIVITY_GROUP_FLAG, F_ACTIVITY_GROUP_STATUS):
+    if mode != lib_grouping.MODE_GROUP and _closing_blocked(F_ACTIVITY_GROUP_STATUS):
         closing.append("分组")
-    if mode != lib_grouping.MODE_ONETOONE and _closing_blocked(
-            F_ACTIVITY_ONETOONE_FLAG, F_ACTIVITY_ONETOONE_STATUS):
+    if mode != lib_grouping.MODE_ONETOONE and _closing_blocked(F_ACTIVITY_ONETOONE_STATUS):
         closing.append("一对一")
     if closing:
-        return jsonify({"error": "「%s」入口仍开启或仍处于收集中/已截止，请先收尾再切换模式" % "、".join(closing),
+        return jsonify({"error": "「%s」仍在收集中/已截止，请先收尾再切换模式" % "、".join(closing),
                         "code": "MODE_SWITCH_BLOCKED", "blocked_sides": closing}), 409
 
     res = lib_grouping.set_mode(act_id, mode, client=_grouping_client, activity=act)
@@ -7580,9 +7578,7 @@ def onetoone_candidates(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
-    if onetoone_status != "收集中":
-        return jsonify({"error": f"一对一状态为「{onetoone_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：候选列表不再要求「收集中」；签到闸门保留。
 
     signup = bitable.get_user_signup(text_act_id, open_id)
     if not signup:
@@ -7680,9 +7676,7 @@ def onetoone_select(activity_id):
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
         return jsonify({"error": "活动不存在"}), 404
-    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
-    if onetoone_status != "收集中":
-        return jsonify({"error": f"一对一状态为「{onetoone_status}」，无法选择"}), 400
+    # 志愿随时可改（2026-10-13）：不再要求「收集中」；签到闸门保留。
 
     signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
     if not signup:
@@ -7731,12 +7725,7 @@ def onetoone_select(activity_id):
     # 防双击/双端并发各插一行；锁外查空的双击修复与分组端「审查必修 7」同款。
     try:
         with lib_grouping.grouping_lock(text_act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
-            # 拿到锁后重查状态：防「检查后、执行前」被管理员截止的窗口
-            act_now, _ = snap_resolve_activity(activity_id, fresh=True)
-            status_now = bitable.get_select_value(
-                act_now.get("fields", {}) if act_now else {}, F_ACTIVITY_ONETOONE_STATUS)
-            if status_now != "收集中":
-                return jsonify({"error": f"一对一状态为「{status_now}」，无法选择"}), 400
+            # 志愿随时可改：原「拿到锁后重查状态」随状态闸门一并移除（编辑不再与收集窗口绑定）
             # 快照优先、未命中回退实时（live）——与旧实现同一读取路径，只换了执行时机
             existing = (snap_onetoone_selection(text_act_id, open_id)
                         or bitable.get_user_onetoone_selection(text_act_id, open_id))
@@ -7749,7 +7738,9 @@ def onetoone_select(activity_id):
     if not ok:
         return jsonify({"error": "提交失败，请稍后重试"}), 500
 
+    # 志愿表已统一（一對一与分组同表）：两个快照键都刷，避免另一侧读到旧缓存
     refresh_snapshot_table_async("onetoone_selections")
+    refresh_snapshot_table_async("group_selections")
     return jsonify({"ok": True, "message": "志愿提交成功"})
 
 @app.route("/api/activities/<activity_id>/onetoone/status", methods=["GET"])
@@ -8395,15 +8386,19 @@ def my_activities():
 
     signups = snap_active_signups_by_openid(open_id)
 
+    # 与「活动」页卡片同口径（见 /api/activities）：活动状态实时读，一次全表后本地匹配
+    acts_fresh = _snap_fresh("activities")
     result = []
     for s in signups:
         fields = s.get("fields", {})
         act_id = bitable.get_field_text(fields, F_SIGNUP_ACTIVITY_ID)
-        act = snap_find_activity(act_id)
+        act = _match_activity(acts_fresh, act_id)
         if act:
             act_data = format_activity(act)
             act_data["my_signup"] = True
             act_data["signup_status"] = bitable.get_field_text(fields, F_SIGNUP_STATUS)
+            # 现场签到三态与「活动」页同口径（实时查签到表，签到后立即可填志愿）
+            attach_signin_state(act_data, act, open_id)
             result.append(act_data)
     return jsonify({"activities": result})
 

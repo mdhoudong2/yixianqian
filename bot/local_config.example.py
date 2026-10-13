@@ -19,9 +19,10 @@ SHARED_DATA_DIR = "/opt/yixianqian"  # bot 与 H5 共享运行时 JSON 目录（
 # MATCH_TABLE_ID = "tbl8eu9Y85tQZCu7"
 # GROUP_SELECT_TABLE = "tblYo86Vd7dmzRQJ"
 # GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
-# 一对一选择表 / 结果表（Phase 2）：先在多维表格建表，再把表 ID 填到这里；
+# 一对一结果表（Phase 2）：先在多维表格建表，再把表 ID 填到这里；
 # 留空＝一对一功能不可用（constants.py 缺省为空，不补默认值）。
-# ONETOONE_SELECT_TABLE = "tblxxxx"
+# 注：志愿表已统一（2026-10-13）——一对一志愿与分组志愿共用 GROUP_SELECT_TABLE，
+#     旧 ONETOONE_SELECT_TABLE 配置不再生效（constants.ONETOONE_SELECT_TABLE 恒等于 GROUP_SELECT_TABLE）。
 # ONETOONE_RESULT_TABLE = "tblxxxx"
 
 # H5 前端入口（测试服覆盖为测试域名，卡片/通知链接据此生成）

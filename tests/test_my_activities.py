@@ -4,8 +4,8 @@
 按活动去重），my_activities 原先漏用不过滤的 snap_signups_by_openid：
 取消报名后活动仍留在「我的活动」，且与活动详情页的 my_signup=false 矛盾。
 
-桩法比照 tests/test_messages_api.py：只桩快照读取，过滤/去重/格式化全跑真实现；
-bitable.search_records 直接 fail 掉，确保不触达飞书实时查询。
+桩法比照 tests/test_messages_api.py：只桩快照读取（`_snap` / `_snap_live` / `_snap_fresh`），
+过滤/去重/格式化全跑真实现；bitable.search_records 直接 fail 掉，确保不触达飞书实时查询。
 """
 import os
 import sys
@@ -49,6 +49,7 @@ def api(monkeypatch):
         return [dict(r) for r in tables.get(key, [])]
 
     monkeypatch.setattr(app, "_snap_live", snap)
+    monkeypatch.setattr(app, "_snap_fresh", snap)
     monkeypatch.setattr(app, "_snap", snap)
     monkeypatch.setattr(
         app.bitable, "search_records",

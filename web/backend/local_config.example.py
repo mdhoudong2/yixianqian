@@ -13,9 +13,10 @@ ADMIN_OPEN_IDS = ["ou_xxxx"]  # 管理员飞书 open_id 列表
 # SIGNUP_TABLE_ID = "tblNVJCnohVaWf8t"
 # GROUP_SELECT_TABLE = "tblYo86Vd7dmzRQJ"
 # GROUP_RESULT_TABLE = "tbl3xxAYhyTDGWAB"
-# 一对一选择表 / 结果表（Phase 2）：先在多维表格建表，再把表 ID 填到这里；
+# 一对一结果表（Phase 2）：先在多维表格建表，再把表 ID 填到这里；
 # 留空＝一对一功能不可用（config.py 缺省为空，不补默认值）。两份配置必须同 base。
-# ONETOONE_SELECT_TABLE = "tblxxxx"
+# 注：志愿表已统一（2026-10-13）——一对一志愿与分组志愿共用 GROUP_SELECT_TABLE，
+#     旧 ONETOONE_SELECT_TABLE 配置不再生效（config.ONETOONE_SELECT_TABLE 恒等于 GROUP_SELECT_TABLE）。
 # ONETOONE_RESULT_TABLE = "tblxxxx"
 # REPORT_TABLE_ID = "tblDj4PMHitAmo4T"
 

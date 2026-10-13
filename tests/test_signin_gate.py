@@ -472,6 +472,20 @@ def test_my_groups_carries_my_attendance(api, monkeypatch):
     assert items2[0]["signin_enabled"] is True and items2[0]["my_attendance"] == "未到"
 
 
+def test_my_activities_carries_signin_state(api):
+    """「我的活动」卡片与「活动」页一致：带 signin_enabled / my_attendance，且活动状态实时读。"""
+    act = _act_group()
+    api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
+    c = _me_client("ou_m0")
+    r = c.get("/api/activities/mine")
+    assert r.status_code == 200, r.get_json()
+    items = r.get_json()["activities"]
+    assert len(items) == 1
+    assert items[0]["signin_enabled"] is True and items[0]["my_attendance"] == "按时"
+    assert items[0]["group_flag"] == "否", "「我的活动」也要带模式 flag（关闭全部后隐藏入口）"
+    assert "activities" in api.fresh_calls, "活动状态必须实时读（bot 写入，快照会过期）"
+
+
 def _first_activity(r):
     assert r.status_code == 200, r.get_json()
     return r.get_json()["activities"][0]
@@ -497,15 +511,64 @@ def test_activities_list_attendance_empty_when_not_signed_up(api):
     assert item["signin_enabled"] is True and item["my_attendance"] == ""
 
 
-def test_activities_list_skips_attendance_without_collection(api):
-    """没有现场任务（志愿未在收集）的活动不查签到表：宽查询被禁也不影响列表。"""
+def test_activities_list_attendance_carried_when_not_collecting(api):
+    """志愿随时可改（2026-10-13）：非「收集中」状态也照常带签到态（卡片闸门判断用）。"""
     act = _act_group(分组状态="未开始")
     api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
-    _fail_broad_signup_search(api.fake)
     c = _me_client("ou_m0")
     item = _first_activity(c.get("/api/activities"))
     assert item["my_signup"] is True
-    assert item["signin_enabled"] is True and item["my_attendance"] == ""
+    assert item["signin_enabled"] is True and item["my_attendance"] == "按时"
+
+
+def test_activities_list_carries_mode_flags(api):
+    """卡片入口由模式开关控制（「关闭全部」后前端整块隐藏）：列表必须带两个 flag。"""
+    act = _act_group()  # 默认「分组功能开启=否」（= 关闭全部后的状态）
+    api.install(activity=act, signups=[_signup_att("ou_m0", "按时")])
+    c = _me_client("ou_m0")
+    item = _first_activity(c.get("/api/activities"))
+    assert item["group_flag"] == "否" and item.get("onetoone_flag", "") != "是"
+
+    act2 = _act_group(分组功能开启="是")
+    api.install(activity=act2, signups=[_signup_att("ou_m0", "按时")])
+    item2 = _first_activity(c.get("/api/activities"))
+    assert item2["group_flag"] == "是"
+
+
+def test_group_select_allowed_when_not_collecting(api):
+    """志愿随时可改：状态非「收集中」也能提交（2026-10-13），两个快照键都刷。"""
+    act = _act_group(分组状态="已完成")
+    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
+    api.install(activity=act, signups=signups)
+    c = _me_client("ou_m0")
+    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
+               headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.status_code == 200, r.get_json()
+    rows = api.fake.tables[GROUP_SELECT_TABLE]
+    assert len(rows) == 1 and rows[0]["fields"]["选择人open_id"] == "ou_m0"
+    assert set(api.refresh_calls) >= {"group_selections", "onetoone_selections"}
+
+
+def test_group_candidates_allowed_when_not_collecting(api):
+    """志愿随时可改：非「收集中」状态候选列表也能打开。"""
+    act = _act_group(分组状态="未开始")
+    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
+    api.install(activity=act, signups=signups)
+    c = _me_client("ou_m0")
+    r = c.get("/api/activities/" + ACT + "/group/candidates")
+    assert r.status_code == 200, r.get_json()
+    assert {x["openid"] for x in r.get_json()["candidates"]} == {"ou_f0"}
+
+
+def test_onetoone_select_allowed_when_not_collecting(api):
+    """志愿随时可改：一对一状态非「收集中」也能提交。"""
+    act = _act_oto(一对一状态="已完成")
+    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
+    api.install(activity=act, signups=signups)
+    c = _me_client("ou_m0")
+    r = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f0"]},
+               headers={"X-Requested-With": "XMLHttpRequest"})
+    assert r.status_code == 200, r.get_json()
 
 
 def test_activities_list_fail_closed_on_attendance_error(api):

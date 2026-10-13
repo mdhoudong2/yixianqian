@@ -352,17 +352,20 @@ def test_activity_mode_blocked_when_flag_off_but_collecting(api):
     assert fake.writes() == [], "拒绝切换必须零写入"
 
 
-def test_activity_mode_blocked_when_closing_flag_on_even_if_done(api):
-    """OR 对齐 lib.counterpart_start_active：关闭侧 flag=是（即使状态已完成）也要拦。
+def test_activity_mode_allows_switch_when_closing_flag_on_but_done(api):
+    """已收尾（状态=已完成）的 flag=是 不再拦截（2026-10-13 修死锁）。
 
-    否则切过去后对面 start 会被 lib 的 EXCLUSIVE_MODE 拦下，得先手动关 flag，
-    不如在切换这一步就明确提示。
+    切换本身是一次原子双栏位写：同一 PUT 关闭旧入口、开启新入口，与 bot
+    「开启一对一功能」同一套 set_mode 语义（该路径本就不拦 flag）。拦 flag 会造成
+    「完成分组后无法切一对一、控制台又无手动关 flag 入口」的死锁（A-0011 实测）。
+    只有 收集中/已截止 才必须先收尾（另两条用例锁定）。
     """
-    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="否"))
+    fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是",
+                                         group_flag="否", group_status="已完成"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
-    assert r.status_code == 409
-    assert r.get_json()["code"] == "MODE_SWITCH_BLOCKED"
-    assert fake.writes() == []
+    assert r.status_code == 200, r.get_json()
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
 
 
 def test_activity_mode_blocked_when_active_job(api):
@@ -821,6 +824,17 @@ def test_configure_injection_matches_bot(monkeypatch, tmp_path):
                 "signup_table_id", "lock_dir"):
         assert h5_kwargs[key] == bot_kwargs[key], key
     assert set(h5_kwargs["fields"]) == set(lib_onetoone._REQUIRED_FIELDS)
+
+
+def test_single_preference_table_wiring():
+    """志愿表统一（2026-10-13）：H5 与 bot 的一对一志愿表都必须 = 分组志愿表。
+
+    用户只维护一份志愿（随时可改），执行分组/一对一时各自实时读取；若哪天有人把
+    local_config 的 ONETOONE_SELECT_TABLE 填回旧表，这条会红。
+    """
+    assert app.ONETOONE_SELECT_TABLE == app.GROUP_SELECT_TABLE
+    import constants as bot_constants  # noqa: E402
+    assert bot_constants.ONETOONE_SELECT_TABLE == bot_constants.GROUP_SELECT_TABLE
 
 
 def test_group_configure_injection_matches_bot_for_new_fields(monkeypatch, tmp_path):

@@ -20,6 +20,9 @@ jobs:
       - name: 内联模板检查（自闭合非 void 标签吞兄弟节点，零依赖）
         run: python3 scripts/dev/check_inline_template.py
 
+      - name: 内联 JS 重名函数检查（后声明静默覆盖同名实现，零依赖）
+        run: python3 scripts/dev/check_duplicate_functions.py
+
   lint:
     runs-on: ubuntu-latest
     steps:

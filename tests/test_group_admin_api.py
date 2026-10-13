@@ -345,7 +345,7 @@ def test_a5_run_returns_202_and_job_reaches_done(api):
     assert job["result"]["group_count"] == 1
     assert job["result"]["participant_count"] == 4
     assert api.fake.tables[GROUP_RESULT_TABLE], "结果必须真的写进表"
-    assert set(api.refresh_calls) >= {"activities", "group_results"}
+    _wait_refresh_calls(api, {"activities", "group_results"})
 
 
 # ---------------------------------------------------------------- A6 排队层幂等

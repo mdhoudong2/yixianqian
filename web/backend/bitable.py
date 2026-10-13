@@ -46,6 +46,7 @@ raw_search_records = _client.search_records
 get_record = _client.get_record
 create_record = _client.create_record
 update_record = _client.update_record
+delete_record = _client.delete_record
 field_exists = _client.field_exists
 upload_attachment = _client.upload_attachment
 
@@ -103,6 +104,36 @@ def get_user_signup(activity_id, open_id):
         {"field_name": F_SIGNUP_STATUS, "operator": "isNot", "value": ["已取消"]}
     ])
     return items[0] if items else None
+
+
+def user_signup_probe(activity_id, open_id):
+    """该用户是否已报名某活动（fail-closed）：返回 (ok, signed)。
+
+    与 get_user_signup 的区别：raw 查询失败时 ok=False，调用方必须当成「未知」重试，
+    绝不能当「未报名」——search_records 把失败转成 []，认领自动报名曾据此写出重复报名。
+    """
+    items = raw_search_records(SIGNUP_TABLE_ID, [
+        {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+        {"field_name": F_SIGNUP_OPENID, "operator": "is", "value": [open_id]},
+        {"field_name": F_SIGNUP_STATUS, "operator": "isNot", "value": ["已取消"]}
+    ])
+    if items is None:
+        return False, False
+    return True, bool(items)
+
+
+def signup_count_probe(activity_id):
+    """活动的有效报名数（fail-closed）：返回 (ok, count)，失败时 count=0 不可信。
+
+    满员判定必须先看 ok：失败当 0 人继续写，超员就是把活动挤爆。
+    """
+    items = raw_search_records(SIGNUP_TABLE_ID, [
+        {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [activity_id]},
+        {"field_name": F_SIGNUP_STATUS, "operator": "isNot", "value": ["已取消"]}
+    ])
+    if items is None:
+        return False, 0
+    return True, len(items)
 
 
 # ========== 喜欢相关 ==========

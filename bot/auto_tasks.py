@@ -1,4 +1,5 @@
 """后台轮询任务：自动绑定 / 审核通知 / 喜欢处理 / 报名处理 / 每周推荐位。"""
+import re
 import time
 
 import requests
@@ -15,9 +16,14 @@ from queries import (
     update_user_feishu_id,
 )
 from store import (
+    SIGNUP_RETRY_MAX,
     add_notification,
+    add_signup_retry,
+    bump_signup_retry,
+    clear_signup_retry,
     consume_observer_code,
     invite_retry_due,
+    list_signup_retries,
     load_invite_rewarded,
     load_observer_codes,
     release_observer_code,
@@ -80,7 +86,11 @@ def _move_record_to_observer_table(record_id, fields, open_id):
 
 
 def auto_bind_from_creator():
-    """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册"""
+    """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册。
+
+    创建人=应用自身（接口/脚本自建的预填记录）的整条跳过：这类记录绝不可能是
+    「本人在飞书里填表」，绑定它会把预填记录占走，真实用户永远无法认领。
+    """
     items = search_records(USER_TABLE_ID, {
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "isEmpty", "value": []}]
@@ -117,6 +127,10 @@ def auto_bind_from_creator():
 
     bound_count = 0
     duplicate_count = 0
+    skipped_self = 0
+    # 应用自身 open_id：接口/脚本创建的记录创建人会被飞书记为应用自己。
+    # 取不到时返回 None → 不跳过任何人，行为与本改动前完全一致。
+    self_id = get_bot_self_openid()
     for item in items:
         record_id = item.get("record_id")
         fields = item.get("fields", {})
@@ -124,6 +138,12 @@ def auto_bind_from_creator():
         nickname = get_field_text(fields, FIELD_NICKNAME)
 
         if not open_id:
+            continue
+
+        # 创建人=应用自身 → 接口/脚本自建的预填记录，整条跳过：不绑定、不删除、
+        # 不写字段，也不进邀请码/去重任何分支（否则预填记录被占走，用户无法认领）。
+        if self_id and open_id == self_id:
+            skipped_self += 1
             continue
 
         # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→删除记录，空→普通注册
@@ -249,6 +269,8 @@ def auto_bind_from_creator():
         log(f"自动绑定轮询完成，本次绑定 {bound_count} 个用户")
     if duplicate_count > 0:
         log(f"重复注册拦截完成，本次拦截 {duplicate_count} 个")
+    if skipped_self > 0:
+        log(f"自动绑定跳过应用自建记录 {skipped_self} 条")
     # 同时填充缺少喜欢链接的用户
     auto_fill_like_links()
 
@@ -404,36 +426,63 @@ def auto_bind_loop(interval=30):
 
 
 
-def auto_signup_new_user(open_id, nickname, pay_status):
-    """新用户审核通过后自动报名 AUTO_SIGNUP_ACTIVITY_ID 指定活动（默认 A-0001）。
+def _find_activity_raw(activity_id):
+    """直查活动表，区分「查询失败(None)」与「活动不存在([])」。
 
-    pay_status 为注册表单「微信缴费」字段值：**只有「我已缴费」才报名**。选「只注册
-    App」、字段为空或选项文本对不上，一律不报名——把人塞进线下活动报名名单却让他
-    自己去取消，比漏报名更麻烦，所以这里 fail-closed。
+    queries.find_activity_by_id 经 clients.search_records 把查询失败压成空表，
+    两种情况都返回 None，无法回答「该重试还是该放弃」。自动报名要能区分：
+    查询失败 → retry_activity（下轮再试），查无此活动 → skip_no_activity。
+    """
+    m = re.search(r"(\d+)", str(activity_id or ""))
+    if not m:
+        return None, False
+    items = bitable.search_records(ACTIVITY_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_ACTIVITY_ID, "operator": "is",
+                        "value": [str(int(m.group(1)))]}]
+    })
+    if items is None:
+        return None, True
+    return (items[0] if items else None), False
 
-    幂等：该用户在该活动已有「已报名」记录时跳过，重复调用安全。
-    仅在活动「报名中」且未满员时写入，不绕过活动状态机；其余情况记日志跳过。
-    报名人数由 auto_update_activity_signup_count 每 30 秒对账，此处不写「当前报名人数」。
-    返回 True 表示本次确实创建了报名记录。
+
+def _auto_signup_new_user_ex(open_id, nickname, pay_status):
+    """自动报名的内部实现，返回明确返回码（auto_signup_new_user 的兼容壳见下）。
+
+    返回码：
+      created          本次新建报名记录
+      already          已有「已报名」记录（幂等跳过）
+      skip_not_paid    缴费门禁不通过（fail-closed，不做任何网络请求）
+      skip_no_activity 未配置活动 / 活动不存在
+      skip_not_open    活动非「报名中」
+      skip_full        已满员
+      retry_activity   活动查询失败（瞬时错误，可重试）
+      retry_query      报名表查询失败（瞬时错误，可重试）
+      retry_create     报名写入失败（瞬时错误，可重试）
+
+    「retry_」前缀 = 飞书瞬时错误，重试有意义；其余为业务性结果，重试无意义。
     """
     if not AUTO_SIGNUP_ACTIVITY_ID:
-        return False
+        return "skip_no_activity"
     # 缴费判断放最前：不满足就整段跳过，不做任何网络请求
     if pay_status != WECHAT_PAY_PAID:
         log(f"自动报名跳过：{nickname}「{FIELD_WECHAT_PAYMENT}」=「{pay_status or '空'}」，"
             f"非「{WECHAT_PAY_PAID}」")
-        return False
-    activity = find_activity_by_id(AUTO_SIGNUP_ACTIVITY_ID)
+        return "skip_not_paid"
+    activity, activity_failed = _find_activity_raw(AUTO_SIGNUP_ACTIVITY_ID)
+    if activity_failed:
+        log(f"自动报名跳过：活动 {AUTO_SIGNUP_ACTIVITY_ID} 查询失败，下轮重试（{nickname}）")
+        return "retry_activity"
     if not activity:
         log(f"自动报名跳过：未找到活动 {AUTO_SIGNUP_ACTIVITY_ID}（{nickname}）")
-        return False
+        return "skip_no_activity"
 
     act_fields = activity.get("fields", {})
     act_id = get_field_text(act_fields, FIELD_ACTIVITY_ID)
     status = get_select_value(act_fields, FIELD_ACTIVITY_STATUS)
     if status != "报名中":
         log(f"自动报名跳过：活动 {act_id} 状态为「{status}」，非报名中（{nickname}）")
-        return False
+        return "skip_not_open"
 
     # 直接走 bitable 而非 clients.search_records：后者把查询失败转成 []，
     # 那样飞书瞬时失败会被误判成「未报名」从而写入重复报名记录。
@@ -446,24 +495,82 @@ def auto_signup_new_user(open_id, nickname, pay_status):
     })
     if existing is None:
         log(f"自动报名跳过：报名表查询失败，下轮重试（{nickname}）")
-        return False
+        return "retry_query"
     if any(get_field_text(s.get("fields", {}), FIELD_SIGNUP_OPENID) == open_id for s in existing):
-        return False
+        return "already"
     capacity = get_field_number(act_fields, "报名人数上限", 0)
     if capacity > 0 and len(existing) >= capacity:
         log(f"自动报名跳过：活动 {act_id} 已满员 {len(existing)}/{capacity}（{nickname}）")
-        return False
+        return "skip_full"
 
-    if create_record(SIGNUP_TABLE_ID, {
+    if bitable.create_record(SIGNUP_TABLE_ID, {
         FIELD_SIGNUP_ACTIVITY_ID: act_id,
         FIELD_SIGNUP_OPENID: open_id,
         FIELD_SIGNUP_NICKNAME: nickname,
         FIELD_SIGNUP_STATUS: "已报名",
     }):
         log(f"新用户自动报名成功: {nickname} -> 活动 {act_id}")
-        return True
+        return "created"
     log(f"新用户自动报名失败: {nickname} -> 活动 {act_id}")
-    return False
+    return "retry_create"
+
+
+def auto_signup_new_user(open_id, nickname, pay_status):
+    """新用户审核通过后自动报名 AUTO_SIGNUP_ACTIVITY_ID 指定活动（默认 A-0001）。
+
+    pay_status 为注册表单「微信缴费」字段值：**只有「我已缴费」才报名**。选「只注册
+    App」、字段为空或选项文本对不上，一律不报名——把人塞进线下活动报名名单却让他
+    自己去取消，比漏报名更麻烦，所以这里 fail-closed。
+
+    幂等：该用户在该活动已有「已报名」记录时跳过，重复调用安全。
+    仅在活动「报名中」且未满员时写入，不绕过活动状态机；其余情况记日志跳过。
+    报名人数由 auto_update_activity_signup_count 每 30 秒对账，此处不写「当前报名人数」。
+    返回 True 表示本次确实创建了报名记录。
+
+    兼容壳：瞬时错误（retry_*）由调用方交给 store 的重试队列（见
+    auto_send_view_after_approval / handle_admin_approve），这里的布尔返回不变。
+    """
+    return _auto_signup_new_user_ex(open_id, nickname, pay_status) == "created"
+
+
+def process_signup_retries(limit=10):
+    """补偿重试：处理自动报名因飞书瞬时错误失败的用户（signup_retry 队列）。
+
+    审核通知发送成功后才会触发报名，而通知去重位先于发送占下且失败不回滚——
+    报名那一次撞上瞬时错误（活动/报名表查询失败、写入失败）时必须另记一笔，
+    由本函数在每轮轮询里补试，直到成功、业务性跳过，或达到 SIGNUP_RETRY_MAX
+    （≈2 小时）放弃并留下醒目日志。
+
+    单轮最多处理 limit 条（按已重试次数升序，失败少的先试）；函数内部不 sleep，
+    节流交给 30s 的调用轮询。用户记录已不存在（或读取不到）→ 出队。
+    """
+    rows = list_signup_retries(limit)
+    for record_id, _attempts in rows:
+        rec = bitable.get_record(USER_TABLE_ID, record_id)
+        if not rec:
+            # get_record 失败与记录已删不区分：都当不存在出队（最坏丢一次重试，
+            # 可由管理员人工补报名；而留着会每 30 秒空查一次）。
+            clear_signup_retry(record_id)
+            log(f"自动报名重试出队：用户记录 {record_id} 不存在")
+            continue
+        fields = rec.get("fields", {})
+        open_id = get_field_text(fields, FIELD_FEISHU_ID)
+        nickname = get_field_text(fields, FIELD_NICKNAME)
+        if not open_id:
+            clear_signup_retry(record_id)
+            log(f"自动报名重试出队：{nickname} 未绑定飞书（record_id={record_id}）")
+            continue
+        code = _auto_signup_new_user_ex(
+            open_id, nickname, get_select_value(fields, FIELD_WECHAT_PAYMENT))
+        if not code.startswith("retry_"):
+            clear_signup_retry(record_id)
+            log(f"自动报名重试结束（{code}）: {nickname} record_id={record_id}")
+            continue
+        attempts = bump_signup_retry(record_id)
+        if attempts > SIGNUP_RETRY_MAX:
+            clear_signup_retry(record_id)
+            log(f"自动报名重试放弃: {nickname} record_id={record_id} "
+                f"已重试 {attempts} 次仍失败（{code}），请人工核对")
 
 
 def auto_send_view_after_approval():
@@ -475,10 +582,8 @@ def auto_send_view_after_approval():
             {"field_name": FIELD_FEISHU_ID, "operator": "isNotEmpty", "value": []}
         ]
     })
-    if not items:
-        return
     sent_count = 0
-    for item in items:
+    for item in items or []:
         record_id = item.get("record_id")
         if not reserve_notified("approval_sent", record_id):
             continue
@@ -510,8 +615,13 @@ def auto_send_view_after_approval():
             # 自动报名：本函数被 reserve_notified("approval_sent") 逐条去重，
             # 只有本轮首次通过审核的用户会走到这里，因此部署前已审核的老用户不会被补报名。
             # 只有注册表单里选了「我已缴费」的才报名，具体判断见 auto_signup_new_user。
-            auto_signup_new_user(
+            # 瞬时错误（retry_*）进重试队列：approval_sent 占位已写下且不回滚，
+            # 不另记一笔的话这条记录会被去重整条跳过、永远不会再试报名。
+            signup_code = _auto_signup_new_user_ex(
                 open_id, nickname, get_select_value(fields, FIELD_WECHAT_PAYMENT))
+            if signup_code.startswith("retry_"):
+                add_signup_retry(record_id)
+                log(f"自动报名待重试（{signup_code}）: {nickname} record_id={record_id}")
 
             inviter_id = get_field_text(fields, FIELD_INVITER_ID)
             # 不论有没有邀请人ID 都要走一遍：手机号可能早就在账本里登记过
@@ -524,6 +634,8 @@ def auto_send_view_after_approval():
 
     if sent_count > 0:
         log(f"审核通过通知轮询完成，本次发送 {sent_count} 条")
+    # 无条件跑补偿重试：items 为空（本轮没有新审核通过的人）时队列里仍有待补报名的人。
+    process_signup_retries()
 
 
 

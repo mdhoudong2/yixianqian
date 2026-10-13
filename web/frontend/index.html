@@ -4202,6 +4202,9 @@ createApp({
         await loadHome();
         restoreDeck();
         if (data.auto_signed_up) { vant.showToast('认领成功，已为你报名活动 🎉'); }
+        else if (data.auto_signed_note) {
+          vant.showToast((data.claimed ? '认领成功' : '登录成功') + '；' + data.auto_signed_note);
+        }
         else { vant.showToast(data.claimed ? '认领成功' : '登录成功'); }
       } catch (e) {
         vant.showToast(e.message || '认领失败，请重试');

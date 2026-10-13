@@ -47,6 +47,84 @@ def unreserve_notified(key, item_key):
     storage.update_json(NOTIFIED_FILE, {"likes": [], "mutual": []}, _m)
 
 
+# ========== 自动报名重试队列 ==========
+# 审核通过通知发送前就占下了 approval_sent 去重位，报名若因飞书瞬时错误失败
+# 占位也不会回滚——没有这个队列，那条记录会被整条去重、永远不再尝试报名。
+# 存在 NOTIFIED_FILE 的 "signup_retry" 键：{user表record_id: 已重试次数}。
+SIGNUP_RETRY_MAX = 240  # ≈2 小时（30s 轮询一轮补试一次）
+
+
+def add_signup_retry(record_id):
+    """加入自动报名重试队列；已在队列则不重置已有计数（避免反复入队把计数清零）。"""
+    if not record_id:
+        return
+
+    def _m(data):
+        q = data.setdefault("signup_retry", {})
+        if record_id in q:
+            return None
+        q[record_id] = 0
+        return data
+
+    storage.update_json(NOTIFIED_FILE, {"likes": [], "mutual": []}, _m)
+
+
+def get_signup_retry(record_id):
+    """该记录当前已重试次数；0 = 不在队列。"""
+    q = storage.load_json(NOTIFIED_FILE, {}) or {}
+    try:
+        return int((q.get("signup_retry", {}) or {}).get(record_id, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def bump_signup_retry(record_id):
+    """重试次数 +1 并返回新值（跨进程原子，每次 retry_* 失败调用一次）。"""
+    new_value = [0]
+
+    def _m(data):
+        q = data.setdefault("signup_retry", {})
+        try:
+            n = int(q.get(record_id, 0) or 0) + 1
+        except (TypeError, ValueError):
+            n = 1
+        q[record_id] = n
+        new_value[0] = n
+        return data
+
+    storage.update_json(NOTIFIED_FILE, {"likes": [], "mutual": []}, _m)
+    return new_value[0]
+
+
+def clear_signup_retry(record_id):
+    """出队（报名成功 / 业务性跳过 / 用户记录已不存在）。不在队列则零写入。"""
+    def _m(data):
+        q = data.get("signup_retry", {})
+        if record_id not in q:
+            return None
+        q.pop(record_id, None)
+        return data
+
+    storage.update_json(NOTIFIED_FILE, {"likes": [], "mutual": []}, _m)
+
+
+def list_signup_retries(limit):
+    """按已重试次数升序返回 [(record_id, attempts), ...]，最多 limit 条。
+
+    次数少的先补试：新入队（0 次）的重试成功率最高，不会排在一群老失败后面饿死。
+    attempts 相同时按 record_id 排序，保证跨进程输出稳定可比。
+    """
+    q = storage.load_json(NOTIFIED_FILE, {}) or {}
+    items = []
+    for k, v in (q.get("signup_retry", {}) or {}).items():
+        try:
+            items.append((k, int(v or 0)))
+        except (TypeError, ValueError):
+            items.append((k, 0))
+    items.sort(key=lambda kv: (kv[1], kv[0]))
+    return items[:limit]
+
+
 def reserve_praise_week(week, open_id):
     """占一个「这个周已经给这个人发过点赞汇总」的位。True = 这次该我发。
 

@@ -11,6 +11,7 @@ from queries import (
     find_user_by_id_or_name,
     find_user_by_nickname,
     find_user_by_openid,
+    get_creator_name,
     get_creator_openid,
     pick_primary_record,
     update_user_feishu_id,
@@ -85,11 +86,33 @@ def _move_record_to_observer_table(record_id, fields, open_id):
     return new_record_id
 
 
+# 「跳过」类轮末日志节流：轮询间隔 30 秒，存量跳过记录若每轮都记会刷屏。
+# 计数变化时立即记一条；计数不变时距上次 ≥_SKIP_LOG_INTERVAL 秒补记一条。
+_SKIP_LOG_INTERVAL = 1800.0
+_skip_log_state = {}  # 日志键 -> (上次计数, 上次记录时间)
+
+
+def _log_skip_throttled(key, count, msg):
+    now = time.time()
+    last_count, last_at = _skip_log_state.get(key, (None, 0.0))
+    if count == last_count and now - last_at < _SKIP_LOG_INTERVAL:
+        return
+    _skip_log_state[key] = (count, now)
+    log(msg)
+
+
+def _is_guest_creator_name(name):
+    """外部访客经微信问卷提交时创建人名为「访客 XXXX」（英文界面为 Guest）。"""
+    return isinstance(name, str) and name.startswith(("访客", "Guest"))
+
+
 def auto_bind_from_creator():
     """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册。
 
     创建人=应用自身（接口/脚本自建的预填记录）的整条跳过：这类记录绝不可能是
     「本人在飞书里填表」，绑定它会把预填记录占走，真实用户永远无法认领。
+    创建人=外部访客且无邀请码（微信问卷预填）同样整条跳过：绑定到访客身份后
+    用户在飞书注册的新身份就认领不到这条记录，须保持空档留待认领。
     """
     items = search_records(USER_TABLE_ID, {
         "conjunction": "and",
@@ -128,6 +151,7 @@ def auto_bind_from_creator():
     bound_count = 0
     duplicate_count = 0
     skipped_self = 0
+    skipped_guest = 0
     # 应用自身 open_id：接口/脚本创建的记录创建人会被飞书记为应用自己。
     # 取不到时返回 None → 不跳过任何人，行为与本改动前完全一致。
     self_id = get_bot_self_openid()
@@ -135,6 +159,7 @@ def auto_bind_from_creator():
         record_id = item.get("record_id")
         fields = item.get("fields", {})
         open_id = get_creator_openid(fields)
+        creator_name = get_creator_name(fields)
         nickname = get_field_text(fields, FIELD_NICKNAME)
 
         if not open_id:
@@ -156,6 +181,13 @@ def auto_bind_from_creator():
             code_valid = invite_code in codes and not codes.get(invite_code, {}).get("used")
             is_observer = code_valid
             is_wrong_code = not code_valid
+
+        # 创建人=外部访客且无邀请码（微信问卷预填）→ 整条跳过：访客身份非本人，
+        # 绑定后用户在飞书注册的新身份就认领不到（认领要求飞书用户ID为空）；
+        # 保持空档留待认领。带邀请码的访客记录走原观察员分支，不受影响。
+        if not invite_code and _is_guest_creator_name(creator_name):
+            skipped_guest += 1
+            continue
 
         # 防重复：只拦「同类型」重复，跨类型（普通↔观察员）放行
         if is_observer and open_id in existing_observer_oids:
@@ -270,7 +302,10 @@ def auto_bind_from_creator():
     if duplicate_count > 0:
         log(f"重复注册拦截完成，本次拦截 {duplicate_count} 个")
     if skipped_self > 0:
-        log(f"自动绑定跳过应用自建记录 {skipped_self} 条")
+        _log_skip_throttled("self", skipped_self, f"自动绑定跳过应用自建记录 {skipped_self} 条")
+    if skipped_guest > 0:
+        _log_skip_throttled(
+            "guest", skipped_guest, f"自动绑定跳过访客预填记录 {skipped_guest} 条（留待认领）")
     # 同时填充缺少喜欢链接的用户
     auto_fill_like_links()
 

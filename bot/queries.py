@@ -57,6 +57,15 @@ def get_creator_openid(fields):
     return creator.get("id") if isinstance(creator, dict) else None
 
 
+def get_creator_name(fields):
+    """从创建人字段获取name（外部访客提交的创建人名形如「访客 XXXX」）"""
+    creators = fields.get(FIELD_CREATOR, [])
+    if not creators:
+        return None
+    creator = creators[0] if isinstance(creators, list) else creators
+    return creator.get("name") if isinstance(creator, dict) else None
+
+
 
 
 def find_user_by_id_or_name(keyword):

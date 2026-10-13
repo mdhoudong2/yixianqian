@@ -86,7 +86,11 @@ def _move_record_to_observer_table(record_id, fields, open_id):
 
 
 def auto_bind_from_creator():
-    """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册"""
+    """查找飞书用户ID为空但创建人不为空的记录，自动绑定；含防重复注册。
+
+    创建人=应用自身（接口/脚本自建的预填记录）的整条跳过：这类记录绝不可能是
+    「本人在飞书里填表」，绑定它会把预填记录占走，真实用户永远无法认领。
+    """
     items = search_records(USER_TABLE_ID, {
         "conjunction": "and",
         "conditions": [{"field_name": FIELD_FEISHU_ID, "operator": "isEmpty", "value": []}]
@@ -123,6 +127,10 @@ def auto_bind_from_creator():
 
     bound_count = 0
     duplicate_count = 0
+    skipped_self = 0
+    # 应用自身 open_id：接口/脚本创建的记录创建人会被飞书记为应用自己。
+    # 取不到时返回 None → 不跳过任何人，行为与本改动前完全一致。
+    self_id = get_bot_self_openid()
     for item in items:
         record_id = item.get("record_id")
         fields = item.get("fields", {})
@@ -130,6 +138,12 @@ def auto_bind_from_creator():
         nickname = get_field_text(fields, FIELD_NICKNAME)
 
         if not open_id:
+            continue
+
+        # 创建人=应用自身 → 接口/脚本自建的预填记录，整条跳过：不绑定、不删除、
+        # 不写字段，也不进邀请码/去重任何分支（否则预填记录被占走，用户无法认领）。
+        if self_id and open_id == self_id:
+            skipped_self += 1
             continue
 
         # 先判目标类型（邀请码）：有效未用码→观察员，错误/已用→删除记录，空→普通注册
@@ -255,6 +269,8 @@ def auto_bind_from_creator():
         log(f"自动绑定轮询完成，本次绑定 {bound_count} 个用户")
     if duplicate_count > 0:
         log(f"重复注册拦截完成，本次拦截 {duplicate_count} 个")
+    if skipped_self > 0:
+        log(f"自动绑定跳过应用自建记录 {skipped_self} 条")
     # 同时填充缺少喜欢链接的用户
     auto_fill_like_links()
 

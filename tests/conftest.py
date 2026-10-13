@@ -61,3 +61,22 @@ def clock(points_db, monkeypatch):
     monkeypatch.setattr(points_db, "now_dt", lambda: state["t"])
     advance.__doc__ = "把时钟往前拨，返回拨完的时刻。"
     return advance
+
+
+@pytest.fixture(autouse=True)
+def _no_real_bitable_network(monkeypatch):
+    """兜底拆雷：未被用例显式桩掉的读取会打到真实飞书网络——假凭证下
+    get_token 反复重试 + 退避 sleep（实测单用例膨胀 11s，CI 上更不稳定）。
+
+    统一把两个读取入口兜成空表；需要数据的用例照旧 monkeypatch.setattr(bitable, ...)
+    自行覆盖即可：autouse 先执行，用例后设置者生效，既有桩法不受影响。
+    """
+    _web_backend = os.path.join(_ROOT, "web", "backend")
+    if _web_backend not in sys.path:
+        sys.path.insert(0, _web_backend)
+    import bitable
+
+    # raw_search_records：快照抓取入口，默认「读成功，空表」；
+    # search_records：普通读取入口，本就把失败转 []，空表与失败兜底语义一致。
+    monkeypatch.setattr(bitable, "search_records", lambda *a, **k: [])
+    monkeypatch.setattr(bitable, "raw_search_records", lambda *a, **k: [])

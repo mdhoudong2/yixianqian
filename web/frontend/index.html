@@ -6708,7 +6708,7 @@ createApp({
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
         if (gaDetailTab.value === 2 && gaDetailMode.value === 'group'
             && gaResultRound.value && gaGroupsRound.value !== gaResultRound.value) {
-          loadGroupResult(gaResultRound.value);   // 状态比结果 tab 先到：补拉当前轮次
+          loadGaGroupResult(gaResultRound.value);   // 状态比结果 tab 先到：补拉当前轮次
         }
         gaOtoResultRound.value = gaOtoLoadedRound.value || d.onetoone_latest_round || 0;
         if (gaDetailTab.value === 2 && gaDetailMode.value === 'onetoone'
@@ -6776,7 +6776,7 @@ createApp({
       gaRosterLoading.value = false;
     }
     function openGroupRoster() { page.value = 'group_roster'; gaRosterQuery.value = ''; }
-    async function loadGroupResult(r) {
+    async function loadGaGroupResult(r) {
       if (!gaDetailId.value || !r) return;
       const wanted = r;
       gaResultLoading.value = true; gaResultError.value = false;
@@ -6793,7 +6793,7 @@ createApp({
     function selectGaResultRound(r) {
       if (gaResultRound.value === r && gaGroupsRound.value === r && !gaResultError.value) return;
       gaResultRound.value = r;
-      loadGroupResult(r);
+      loadGaGroupResult(r);
     }
     async function gaOpenUser(openid) {
       if (!openid) return;
@@ -7204,7 +7204,7 @@ createApp({
         if (gaOtoResultRound.value && gaOtoLoadedRound.value !== gaOtoResultRound.value
             && !gaOtoResultLoading.value) loadGaOtoResult(gaOtoResultRound.value);
       } else if (gaGroupsRound.value !== gaResultRound.value && !gaResultLoading.value) {
-        loadGroupResult(gaResultRound.value);
+        loadGaGroupResult(gaResultRound.value);
       }
     });
     watch(gaRosterQuery, () => { gaRosterShown.value = 30; });

@@ -332,6 +332,20 @@ def run_offline_onetoone_matching(participants, selections, profiles, female_cha
     return {"male_lists": male_lists, "female_lists": female_lists, "male_quota": male_quota}
 
 
+def _offline_result_to_lists(offline):
+    """均衡结果 → {oid: [(target_oid, rank), ...]}（与 run_onetoone_matching 同形）。
+
+    male_lists 已带 rank；female_lists 按得分降序补 rank=1..。用于复用 execute 的
+    结果写表循环，不改变 fetch_result / H5 结果页的读取口径。
+    """
+    out = {}
+    for m, lst in offline["male_lists"].items():
+        out[m] = [(fid, rank) for fid, rank, _sc in lst]
+    for f, lst in offline["female_lists"].items():
+        out[f] = [(mid, rank) for rank, (mid, _sc) in enumerate(lst, 1)]
+    return out
+
+
 def profile_of(fields, field_names=None):
     """用户表一行 → 打分用的资料 dict（键与 lib.recommend.match_score 对齐）。
 
@@ -559,7 +573,7 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
     }
 
 
-def preview(activity_id, round_no, *, client, activity, find_user_by_openid):
+def preview(activity_id, round_no, *, client, activity, find_user_by_openid, female_chats=None):
     """执行前的影响面预览——**一个栏位都不写**（对照 lib.grouping.preview_round）。
 
     绝不碰「一对一状态」：执行路径一进门就把活动改成「已截止」，preview 若沿用同
@@ -569,6 +583,7 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid):
     round_no：本次拟执行的轮次。`existing_round_results` 是该轮已有结果数（非 0 时
     执行会被幂等拦住）；`historical_results_to_clear` / `rounds_preserved` 等回答
     「开始一对一」会清掉 / 「开启新一轮」会留下什么。
+    `female_chats`：女生场次 K；缺/非法/超男生数时进 blockers，不让前端确认执行。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -581,7 +596,16 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid):
         "conjunction": "and",
         "conditions": [{"field_name": f["oto_activity_id"], "operator": "is", "value": [rec_activity_id]}],
     }) or []
-    participants, _selections, skipped = _scan_selections(rows)
+    _selection_participants, _selections, skipped = _scan_selections(rows)
+
+    # 与 execute 同口径：参与者 = 全部「已报名」者（含未提交志愿的人）。
+    signups = build_participants(rec_activity_id, client=client,
+                                 find_user_by_openid=find_user_by_openid)
+    participants = [{"id": s["open_id"],
+                     "gender": "male" if s["gender"] == "男性" else "female"}
+                    for s in signups if s["gender"] in ("男性", "女性")]
+    male_count = sum(1 for p in participants if p["gender"] == "male")
+    female_count = sum(1 for p in participants if p["gender"] == "female")
 
     existing = client.search_records(_cfg["tables"]["onetoone_result_table"], {
         "conjunction": "and",
@@ -592,11 +616,24 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid):
 
     blockers = []
     if not participants:
-        blockers.append("没有已提交志愿的参与者")
+        blockers.append("没有已报名且性别有效的参与者")
     if this_round:
         blockers.append(f"第{round_no}轮已生成一对一结果，请勿重复执行")
     if not 1 <= round_no <= lib_grouping.MAX_ROUND:
         blockers.append(f"第{round_no}轮超出单选字段上限（轮次字段只支持 1-{lib_grouping.MAX_ROUND}）")
+    # 女生场次 K 校验（与 execute 进门同口径）
+    if female_chats is None:
+        blockers.append("请指定女生场次（每个女生聊几场）")
+    elif (not isinstance(female_chats, int) or isinstance(female_chats, bool)
+            or female_chats < 1):
+        blockers.append(f"女生场次必须是 ≥1 的整数，当前 {female_chats}")
+    elif male_count and female_chats > male_count:
+        blockers.append(f"女生场次 {female_chats} 超过男生人数 {male_count}"
+                        f"（每个女生最多和每位男生各聊一次）")
+
+    total_pairs_expected = 2 * female_count * female_chats if (
+        isinstance(female_chats, int) and not isinstance(female_chats, bool)
+        and female_chats >= 1) else 0
 
     return {
         "code": "OK",
@@ -605,6 +642,10 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid):
         "onetoone_status": status,
         "round": round_no,
         "participant_count": len(participants),
+        "male_count": male_count,
+        "female_count": female_count,
+        "female_chats": female_chats,
+        "total_pairs_expected": total_pairs_expected,
         "skipped_no_gender": skipped,
         # 旧字段语义不动：始终回答「开始一对一会删掉多少历史结果」。
         "existing_results": len(existing),
@@ -812,13 +853,18 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None, clear_
         return dict(base, code="BUSY")
 
 
-def execute(activity_id, round_no, *, client, activity, find_user_by_openid, lock_timeout=None):
+def execute(activity_id, round_no, *, client, activity, find_user_by_openid, lock_timeout=None,
+            female_chats=None):
     """执行一对一匹配（幂等检查 + 状态机 + 写结果）。
 
     `round_no`：写入与幂等都锚定「(活动, 轮次)」——同一轮重跑被 ALREADY_DONE
     拦住，换一轮即可产出第 N+1 轮（与 lib.grouping.execute_round 同语义）。
     `round_no` 必须是 1..MAX_ROUND 的整数，越界直接回 ROUND_OUT_OF_RANGE，
     零写入、零锁等待（preview 的 blockers 只是提示，bot/H5 都不能拿它当门禁）。
+
+    `female_chats`：女生坐镇、男生上门的均衡分配里「每个女生聊几场」（K）。
+    运行时必填，≥1 的整数；缺省回 FEMALE_CHATS_REQUIRED、非法回 FEMALE_CHATS_INVALID
+    （均为零写入）。K > 男生人数在锁内读报名后由算法 ValueError 收口。
 
     **调用方不需要持锁**：本函数整体持 lib.grouping.grouping_lock（跨进程 flock，
     与 H5/分组共用同一批活动锁）。状态机每一步的读失败（raw client 返回 None）
@@ -834,8 +880,8 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
 
     返回 code：OK / BUSY / ROUND_OUT_OF_RANGE / SEARCH_FAILED / ALREADY_DONE /
     CLOSE_FAILED / SELECTIONS_SEARCH_FAILED / NO_PARTICIPANTS / ALGORITHM_ERROR /
-    PARTIAL_WRITE / PARTIAL_WRITE_VERIFY_FAILED / PARTIAL_WRITE_INCOMPLETE /
-    DONE_STATUS_FAILED。
+    FEMALE_CHATS_REQUIRED / FEMALE_CHATS_INVALID / PARTIAL_WRITE /
+    PARTIAL_WRITE_VERIFY_FAILED / PARTIAL_WRITE_INCOMPLETE / DONE_STATUS_FAILED。
     """
     if lock_timeout is None:
         lock_timeout = START_LOCK_TIMEOUT
@@ -848,6 +894,12 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
     if (not isinstance(round_no, int) or isinstance(round_no, bool)
             or not 1 <= round_no <= lib_grouping.MAX_ROUND):
         return dict(base, code="ROUND_OUT_OF_RANGE", max_round=lib_grouping.MAX_ROUND)
+    # 女生场次收口（零写入）：缺省 / 非正整数都直接回，别让管理员跑完才发现没配对。
+    if female_chats is None:
+        return dict(base, code="FEMALE_CHATS_REQUIRED")
+    if (not isinstance(female_chats, int) or isinstance(female_chats, bool)
+            or female_chats < 1):
+        return dict(base, code="FEMALE_CHATS_INVALID", female_chats=female_chats)
     # 动作层互斥：执行一对一前对面分组 flag=「是」→ 拒绝（不自动动对面数据）。
     # 假表缺分组栏位 → 不触发；锁前判定，命中时零写入零等待。
     if lib_grouping.counterpart_execute_active(activity, flag_field=f["group_flag"]):
@@ -855,12 +907,14 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
     try:
         with grouping_lock(activity_id, timeout=lock_timeout):
             return _execute_locked(activity_id, round_no, client=client, activity=activity,
-                                   find_user_by_openid=find_user_by_openid)
+                                   find_user_by_openid=find_user_by_openid,
+                                   female_chats=female_chats)
     except GroupingBusy:
         return dict(base, code="BUSY")
 
 
-def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_openid):
+def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_openid,
+                    female_chats=None):
     _require_configured()
     f = _cfg["fields"]
     t = _cfg["tables"]
@@ -900,7 +954,15 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
         restored = bool(client.update_record(t["activity_table_id"], record_id,
                                              {f["onetoone_status"]: "收集中"}))
         return dict(base, code="SELECTIONS_SEARCH_FAILED", restored=restored)
-    participants, selections, skipped = _scan_selections(selections_records)
+    _selection_participants, selections, skipped = _scan_selections(selections_records)
+
+    # 参与者 = 全部「已报名」者（含未提交志愿的人）——线下「女生坐镇」必须人人有
+    # 位，未提交志愿的女生按匹配度 + 对方意愿参与，绝不坐冷板凳。性别缺失者排除。
+    signups = build_participants(rec_activity_id, client=client,
+                                 find_user_by_openid=find_user_by_openid)
+    participants = [{"id": s["open_id"],
+                     "gender": "male" if s["gender"] == "男性" else "female"}
+                    for s in signups if s["gender"] in ("男性", "女性")]
 
     # ③.5 现场签到执行池过滤（设计 §3.3/§3.4，与 lib.grouping.execute_round 同一
     # 兜底）：只挡提交挡不住「早提交、活动当天未到」；读失败（None）fail-closed，
@@ -923,17 +985,22 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
     profiles = build_profiles([p["id"] for p in participants],
                               find_user_by_openid=find_user_by_openid)
 
-    # ⑤ 算法异常：恢复状态
+    # ⑤ 算法异常（含 K 非法）恢复状态
     try:
-        matches = run_onetoone_matching(participants, selections, profiles, top_n=10)
+        offline = run_offline_onetoone_matching(participants, selections, profiles,
+                                                female_chats)
+        matches = _offline_result_to_lists(offline)
+    except ValueError as e:
+        restored = bool(client.update_record(t["activity_table_id"], record_id,
+                                             {f["onetoone_status"]: "收集中"}))
+        return dict(base, code="FEMALE_CHATS_INVALID", error=str(e), restored=restored)
     except Exception as e:
         restored = bool(client.update_record(t["activity_table_id"], record_id,
                                              {f["onetoone_status"]: "收集中"}))
         return dict(base, code="ALGORITHM_ERROR", error=str(e), restored=restored)
 
-    # 报名信息：open_id -> 昵称
-    oid_to_nickname = {p["open_id"]: p["nickname"] for p in build_participants(
-        rec_activity_id, client=client, find_user_by_openid=find_user_by_openid)}
+    # 报名信息：open_id -> 昵称（复用上面已读的报名表）
+    oid_to_nickname = {s["open_id"]: s["nickname"] for s in signups}
     result_records = []
     for p in participants:
         pid = p["id"]

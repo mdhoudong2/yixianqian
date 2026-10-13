@@ -36,9 +36,9 @@ def configured(monkeypatch, tmp_path):
     bot_onetoone.configure_onetoone_lib(str(tmp_path))
 
 
-def _execute(fake):
+def _execute(fake, female_chats=2):
     return lib_onetoone.execute(ACT, 1, client=fake, activity=_find_act(fake, ACT),
-                                find_user_by_openid=_find_user)
+                                find_user_by_openid=_find_user, female_chats=female_chats)
 
 
 def _status(fake):
@@ -147,13 +147,46 @@ def test_done_status_write_failure_keeps_results_and_reports(configured):
 
 
 def test_algorithm_error_restores_status(configured, monkeypatch):
-    """⑤ 算法异常 → 恢复「收集中」；不得留下「已截止」。"""
-    def _boom(*a, **k):
-        raise ValueError("炸了")
+    """⑤ 算法异常 → 恢复「收集中」；不得留下「已截止」。
 
-    monkeypatch.setattr(lib_onetoone, "run_onetoone_matching", _boom)
+    均衡算法（run_offline_onetoone_matching）抛非 ValueError 异常 → ALGORITHM_ERROR；
+    抛 ValueError（如女生场次 > 男生数）走 FEMALE_CHATS_INVALID，另测。
+    """
+    def _boom(*a, **k):
+        raise RuntimeError("炸了")
+
+    monkeypatch.setattr(lib_onetoone, "run_offline_onetoone_matching", _boom)
     fake = FakeBitable(_default_tables())
     res = _execute(fake)
     assert res["code"] == "ALGORITHM_ERROR"
+    assert _status(fake) == "收集中"
+    assert not [c for c in fake.writes() if c[0] == "batch_create"]
+
+
+def test_female_chats_entry_validation_zero_writes(configured):
+    """女生场次入口校验：缺省 / 非正整数 → 对应码，零读零写（连锁都不等）。
+
+    缺省回 FEMALE_CHATS_REQUIRED、非正整数（0/字符串/布尔/负数）回
+    FEMALE_CHATS_INVALID；都在任何表操作之前收口，管理员跑之前就被拦下。
+    """
+    for fc, code in ((None, "FEMALE_CHATS_REQUIRED"),
+                     (0, "FEMALE_CHATS_INVALID"),
+                     ("2", "FEMALE_CHATS_INVALID"),
+                     (True, "FEMALE_CHATS_INVALID"),
+                     (-1, "FEMALE_CHATS_INVALID")):
+        fake = FakeBitable(_default_tables())
+        res = lib_onetoone.execute(ACT, 1, client=fake, activity=_find_act(fake, ACT),
+                                   find_user_by_openid=_find_user, female_chats=fc)
+        assert res["code"] == code, f"female_chats={fc!r}"
+        assert fake.calls == [], f"入口校验 {fc!r} 不得有任何表操作（含只读）"
+        assert _status(fake) == "收集中", f"入口校验 {fc!r} 不得动状态"
+
+
+def test_female_chats_over_male_count_restores_status(configured):
+    """女生场次 > 男生数 → 算法 ValueError → FEMALE_CHATS_INVALID，恢复「收集中」。"""
+    fake = FakeBitable(_default_tables())   # 2 男 2 女
+    res = _execute(fake, female_chats=3)    # 3 > 男生数 2
+    assert res["code"] == "FEMALE_CHATS_INVALID"
+    assert "女生场次" in res["error"] and "男生人数" in res["error"]
     assert _status(fake) == "收集中"
     assert not [c for c in fake.writes() if c[0] == "batch_create"]

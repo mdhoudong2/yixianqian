@@ -35,7 +35,7 @@ def configured(monkeypatch, tmp_path):
 
 def _execute(fake, round_no):
     return lib_onetoone.execute(ACT, round_no, client=fake, activity=_find_act(fake, ACT),
-                                find_user_by_openid=_find_user)
+                                find_user_by_openid=_find_user, female_chats=2)
 
 
 def _row(record_id, oid, target, rank=1, round_no="1"):
@@ -179,22 +179,23 @@ def test_preview_reports_round_state_and_preserve_counts(configured):
                             _row("rec_r2", "ou_m1", "ou_f1", 1, "2")]})
 
     pv = lib_onetoone.preview(ACT, 3, client=fake, activity=_find_act(fake, ACT),
-                              find_user_by_openid=_find_user)
+                              find_user_by_openid=_find_user, female_chats=2)
     assert pv["can_execute"] is True
     assert pv["round"] == 3
     assert pv["existing_rounds"] == [1, 2]
     assert pv["existing_round_results"] == 0
     assert pv["historical_results_to_clear"] == 2
     assert pv["rounds_preserved"] == [1, 2] and pv["results_preserved"] == 2
+    assert pv["male_count"] == 2 and pv["female_count"] == 2
 
     pv2 = lib_onetoone.preview(ACT, 1, client=fake, activity=_find_act(fake, ACT),
-                               find_user_by_openid=_find_user)
+                               find_user_by_openid=_find_user, female_chats=2)
     assert pv2["can_execute"] is False
     assert any("第1轮已生成" in b for b in pv2["blockers"])
     assert pv2["existing_round_results"] == 1
 
     pv3 = lib_onetoone.preview(ACT, 11, client=fake, activity=_find_act(fake, ACT),
-                               find_user_by_openid=_find_user)
+                               find_user_by_openid=_find_user, female_chats=2)
     assert any("上限" in b for b in pv3["blockers"])
 
 

@@ -1389,7 +1389,7 @@
             <div class="ga-stat"><div class="ga-stat-num" :class="{warn: gaDetail.onetoone_unsubmitted_count>0}">{{ gaDetail.onetoone_unsubmitted_count }}</div><div class="ga-stat-label">未填</div></div>
             <div class="ga-stat"><div class="ga-stat-num">{{ gaDetail.onetoone_result_count }}</div><div class="ga-stat-label">必聊条数</div></div>
           </div>
-          <div class="ga-row-sub" style="margin-top:4px;">状态：{{ gaDetail.onetoone_status }} · 已匹配 {{ gaDetail.onetoone_matched_count }} 人 · {{ gaOtoRounds.length }} 轮结果 · 每人最多 10 位必聊</div>
+          <div class="ga-row-sub" style="margin-top:4px;">状态：{{ gaDetail.onetoone_status }} · 已匹配 {{ gaDetail.onetoone_matched_count }} 人 · {{ gaOtoRounds.length }} 轮结果 · 女生坐镇、男生上门均衡匹配</div>
           <div v-if="gaDetail.onetoone_status==='收集中' && gaDetail.onetoone_unsubmitted_count>0" class="ga-tip" @click="openGroupRoster()">⚠ 还有 {{ gaDetail.onetoone_unsubmitted_count }} 人没填志愿，点这里看名单</div>
           <div v-else-if="gaDetail.onetoone_status==='收集中' && gaDetail.onetoone_submitted_count>0" class="ga-tip ga-tip-ok">大家都填好啦，可以执行匹配了 🎉</div>
           <div v-if="gaRunTip" class="ga-tip">⏳ {{ gaRunTip }} <span class="ga-link" @click="resumeGaPolling()">继续查看</span></div>
@@ -2924,6 +2924,21 @@
     </van-button>
   </div>
 </van-popup>
+<!-- ========== 一对一管理台：执行一对一确认层（输入女生场次 K） ========== -->
+<van-popup v-model:show="gaOtoRunShow" position="bottom" round :close-on-click-overlay="!gaOtoRunBusy">
+  <div class="ga-start-popup">
+    <div class="ga-start-head">执行第 {{ gaOtoNextRound }} 轮一对一 <van-icon name="cross" color="#c8c9cc" @click="closeOtoRun()"></van-icon></div>
+    <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
+    <div class="ga-confirm-box">
+      <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaOtoRunPreview ? (gaOtoRunPreview.male_count + ' 男 · ' + gaOtoRunPreview.female_count + ' 女') : '…' }}</b></div>
+      <div class="ga-confirm-row"><span>女生场次</span><b>每个女生聊几场（必填）</b></div>
+    </div>
+    <input v-model="gaOtoRunFemaleChats" type="number" inputmode="numeric" class="ga-confirm-input" placeholder="例如：15（每个女生聊 15 场）" />
+    <div v-if="gaOtoRunSummary" class="ga-tip ga-tip-ok" style="margin-top:10px;">✓ {{ gaOtoRunSummary }}</div>
+    <div v-if="gaOtoRunK && gaOtoRunPreview && gaOtoRunPreview.male_count && gaOtoRunK > gaOtoRunPreview.male_count" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">女生场次不能超过男生人数 {{ gaOtoRunPreview.male_count }}</div>
+    <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaOtoRunBusy" @click="confirmOtoRun()">确认执行（状态将变为「已完成」）</van-button>
+  </div>
+</van-popup>
 <!-- 执行中断（后端重启导致 job 失联）三分支指引 -->
 <van-dialog v-model:show="gaUnknownShow" title="执行中断（后端重启）" :show-confirm-button="false" :show-cancel-button="false" close-on-click-overlay>
   <div class="ga-confirm-body">
@@ -3352,7 +3367,7 @@ createApp({
         "【开始一对一 活动ID】开始填志愿（每人7个）",
         "【开启一对一功能 活动ID 开/关】控制「我的一对一」入口",
         "【查看未提交一对一 活动ID】查看未提交志愿的报名者",
-        "【执行一对一 活动ID】执行匹配（每人最多10位必聊）",
+        "【执行一对一 活动ID 女生场次 [轮次]】女生坐镇、男生上门均衡匹配",
         "【一对一状态 活动ID】查看一对一进度",
         "【一对一帮助】一对一指令说明",
       ]},
@@ -6467,6 +6482,7 @@ createApp({
     const gaOtoStartMode = ref('danger');
     const gaOtoConfirmInput = ref('');
     const gaOtoRunBusy = ref(false);
+    const gaOtoRunShow = ref(false), gaOtoRunFemaleChats = ref(''), gaOtoRunPreview = ref(null);
 
     const gaRunShow = ref(false), gaRunBusy = ref(false);
     const gaJobId = ref(''), gaJobRound = ref(1), gaJobActivityName = ref(''), gaJobProgress = ref('');
@@ -6949,6 +6965,17 @@ createApp({
       gaOtoStartBusy.value = false;
     }
     // ---- 一对一：执行（job + 轮询）----
+    const gaOtoRunK = computed(() => {
+      const k = Number(String(gaOtoRunFemaleChats.value || '').trim());
+      return Number.isInteger(k) && k >= 1 ? k : 0;
+    });
+    const gaOtoRunSummary = computed(() => {
+      const pv = gaOtoRunPreview.value, k = gaOtoRunK.value;
+      if (!pv || !k || !pv.male_count || !pv.female_count) return '';
+      const E = pv.female_count * k;
+      const base = Math.floor(E / pv.male_count), rem = E % pv.male_count;
+      return '女生每人 ' + k + ' 场 · 共 ' + E + ' 场；男生每人 ' + base + (rem ? '~' + (base + 1) : '') + ' 场';
+    });
     async function startOtoRunFlow() {
       if (gaOtoRunBusy.value || !gaDetailId.value) return;
       gaOtoRunBusy.value = true;
@@ -6956,30 +6983,41 @@ createApp({
       try {
         const pv = await api('/api/admin/onetoone/preview', { method: 'POST',
           body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
-        if (!pv.can_execute) {
+        // 女生场次由弹层里输入，这里只挡「场次之外」的硬拦截（已截止、已生成、无参与者…）
+        const hardBlockers = (pv.blockers || []).filter(b => b.indexOf('女生场次') < 0);
+        if (hardBlockers.length) {
           gaOtoRunBusy.value = false;
-          const msg = (pv.blockers && pv.blockers.length) ? pv.blockers.join('\n') : '现在还跑不了，稍后再试';
-          vant.showConfirmDialog({ title: '还差一点', message: msg, showCancelButton: false, confirmButtonColor: '#ff6b81' }).catch(() => {});
+          vant.showConfirmDialog({ title: '还差一点', message: hardBlockers.join('\n'), showCancelButton: false, confirmButtonColor: '#ff6b81' }).catch(() => {});
           return;
         }
-        try {
-          await vant.showConfirmDialog({
-            title: '执行第 ' + rd + ' 轮一对一',
-            message: '将依 ' + pv.participant_count + ' 位参与者的志愿计算第 ' + rd + ' 轮必聊名单（每人最多 10 位）。\n执行后状态变为「已完成」，期间大家不能再改志愿。',
-            confirmButtonColor: '#ff6b81'
-          });
-        } catch(e) { gaOtoRunBusy.value = false; return; }  // 取消
-        await doOtoRun(rd);
+        gaOtoRunPreview.value = pv;
+        gaOtoRunFemaleChats.value = '';
+        gaOtoRunShow.value = true;
       } catch(e) {
-        gaOtoRunBusy.value = false;
         if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
       }
+      gaOtoRunBusy.value = false;
     }
-    async function doOtoRun(rd) {
+    function closeOtoRun() { if (!gaOtoRunBusy.value) gaOtoRunShow.value = false; }
+    async function confirmOtoRun() {
+      if (gaOtoRunBusy.value) return;
+      const rd = gaOtoNextRound.value;
+      const pv = gaOtoRunPreview.value || {};
+      const K = gaOtoRunK.value;
+      if (!K) { vant.showToast('女生场次必须是 ≥1 的整数'); return; }
+      if (pv.male_count && K > pv.male_count) {
+        vant.showToast('女生场次不能超过男生人数 ' + pv.male_count);
+        return;
+      }
+      gaOtoRunBusy.value = true;
+      gaOtoRunShow.value = false;
+      await doOtoRun(rd, K);
+    }
+    async function doOtoRun(rd, K) {
       const name = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
       gaJobKind.value = 'onetoone';
       try {
-        const r = await gaApi('/api/admin/onetoone/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd }) });
+        const r = await gaApi('/api/admin/onetoone/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd, female_chats: K }) });
         if ((r.status === 202 || r.status === 200) && r.data && r.data.job_id) {
           attachGaJob(r.data.job_id, r.data.round || rd, name);
         } else if (r.status === 409 && r.data && r.data.job_id) {

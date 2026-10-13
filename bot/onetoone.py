@@ -396,6 +396,20 @@ def _render_execute_result(res, activity_id):
     if code == "EXCLUSIVE_MODE":
         return (f"无法执行一对一：活动「{res['activity_name']}」的分组模式已开启。\n"
                 f"请先在 H5「活动管理」把模式切换为「一对一」再执行。")
+    if code == "FEMALE_CHATS_REQUIRED":
+        return ("请指定女生场次（每个女生聊几场）。\n"
+                "格式：执行一对一 活动ID 女生场次 [轮次]\n"
+                "例如：执行一对一 A-0002 15")
+    if code == "FEMALE_CHATS_INVALID":
+        if "error" in res:
+            # 锁内算法拒绝（如女生场次 > 男生人数），状态已切过「已截止」需恢复
+            if res.get("restored", True):
+                return f"女生场次不合法：{res['error']}，状态已恢复为「收集中」"
+            return (f"女生场次不合法：{res['error']}；且状态恢复为「收集中」失败"
+                    f"（当前可能仍为「已截止」），请让管理员检查。")
+        # 进门校验（女生场次非正整数），零写入
+        return (f"女生场次必须是 ≥1 的整数，当前 {res.get('female_chats')}。\n"
+                "格式：执行一对一 活动ID 女生场次 [轮次]")
     if code == "ALREADY_DONE":
         return (f"活动「{res['activity_name']}」第{res['round']}轮已生成过一对一结果，请勿重复执行。"
                 f"如需重新匹配，请先发送「开始一对一 {activity_id}」重新开放，再执行。")
@@ -412,8 +426,8 @@ def _render_execute_result(res, activity_id):
                 "（当前可能仍为「已截止」），请让管理员检查。")
     if code == "NO_PARTICIPANTS":
         if res.get("restored", True):
-            return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
-        return ("没有已提交志愿的参与者；且状态恢复为「收集中」失败"
+            return "没有已报名且性别有效的参与者，状态已恢复为「收集中」。"
+        return ("没有已报名且性别有效的参与者；且状态恢复为「收集中」失败"
                 "（当前可能仍为「已截止」），请让管理员检查。")
     if code == "ALGORITHM_ERROR":
         if res.get("restored", True):
@@ -450,26 +464,34 @@ def _render_execute_result(res, activity_id):
 
 
 def handle_admin_stop_onetoone(keyword):
-    """管理员：执行一对一匹配 格式: 执行一对一 A-0002 [轮次]（轮次可选，默认第1轮）"""
+    """管理员：执行一对一（女生坐镇均衡分配） 格式: 执行一对一 活动ID 女生场次 [轮次]"""
     parts = keyword.split()
-    if not parts:
-        return "格式：执行一对一 活动ID [轮次]\n例如：执行一对一 A-0002 或 执行一对一 A-0002 2"
+    if len(parts) < 2:
+        return ("格式：执行一对一 活动ID 女生场次 [轮次]\n"
+                "例如：执行一对一 A-0002 15 或 执行一对一 A-0002 15 2")
     activity_id = parts[0]
+    try:
+        female_chats = int(parts[1])
+        if female_chats < 1:
+            return "女生场次必须为大于0的整数"
+    except ValueError:
+        return f"女生场次必须为数字，当前：{parts[1]}"
     round_no = 1
-    if len(parts) >= 2:
+    if len(parts) >= 3:
         try:
-            round_no = int(parts[1])
+            round_no = int(parts[2])
             if round_no < 1:
                 return "轮次必须为大于0的整数"
         except ValueError:
-            return f"轮次必须为数字，当前：{parts[1]}"
+            return f"轮次必须为数字，当前：{parts[2]}"
 
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
 
     res = lib_onetoone.execute(activity_id, round_no, client=bitable, activity=activity,
-                               find_user_by_openid=find_user_by_openid)
+                               find_user_by_openid=find_user_by_openid,
+                               female_chats=female_chats)
     return _render_execute_result(res, activity_id)
 
 

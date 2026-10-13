@@ -6338,8 +6338,8 @@ def _start_grouping_job(job_id, activity_id, round_no, activity_record, lock_sta
         args=(job_id, activity_id, round_no, activity_record, lock_stack)).start()
 
 
-def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
-    """一对一 job 线程主体：执行 lib.onetoone.execute（锚定轮次）。
+def _run_onetoone_job(job_id, activity_id, round_no, activity_record, female_chats):
+    """一对一 job 线程主体：执行 lib.onetoone.execute（锚定轮次 + 女生场次）。
 
     活动锁由 lib.execute 自己在 job 线程内获取/释放（带有上限的 flock 等待），
     请求线程**不**抢锁：start_collection/execute 都自持锁，若请求线程先抢再让
@@ -6355,7 +6355,7 @@ def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
         res = lib_onetoone.execute(
             activity_id, round_no, client=_grouping_client, activity=activity_record,
             find_user_by_openid=_grouping_find_user_by_openid,
-            lock_timeout=GROUPING_API_LOCK_TIMEOUT)
+            lock_timeout=GROUPING_API_LOCK_TIMEOUT, female_chats=female_chats)
     except Exception as e:  # noqa: BLE001 — job 边界必须兜住异常并落盘，不能无声死掉
         err = e
     if err is not None:
@@ -6378,10 +6378,10 @@ def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
     refresh_snapshot_table_async("onetoone_results")
 
 
-def _start_onetoone_job(job_id, activity_id, round_no, activity_record):
+def _start_onetoone_job(job_id, activity_id, round_no, activity_record, female_chats):
     threading.Thread(
         target=_run_onetoone_job, name=f"onetoone-job-{job_id}", daemon=True,
-        args=(job_id, activity_id, round_no, activity_record)).start()
+        args=(job_id, activity_id, round_no, activity_record, female_chats)).start()
 
 
 def _active_job_for(activity_id):
@@ -7139,6 +7139,7 @@ def admin_onetoone_preview():
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
     round_no = data.get("round", 1)
+    female_chats = data.get("female_chats")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
     if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
@@ -7149,7 +7150,8 @@ def admin_onetoone_preview():
         return miss
 
     res = lib_onetoone.preview(act_id, round_no, client=_grouping_client, activity=act,
-                               find_user_by_openid=_grouping_find_user_by_openid)
+                               find_user_by_openid=_grouping_find_user_by_openid,
+                               female_chats=female_chats)
     return jsonify(res)
 
 
@@ -7227,11 +7229,15 @@ def admin_onetoone_run():
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
     round_no = data.get("round", 1)
+    female_chats = data.get("female_chats")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
     if (not isinstance(round_no, int) or isinstance(round_no, bool)
             or not 1 <= round_no <= lib_grouping.MAX_ROUND):
         return jsonify({"error": "请求体不合法"}), 400
+    if (not isinstance(female_chats, int) or isinstance(female_chats, bool)
+            or female_chats < 1):
+        return jsonify({"error": "请求体不合法（缺少女生场次）"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
     if miss:
@@ -7254,7 +7260,7 @@ def admin_onetoone_run():
                         "job_id": existing, "activity_id": act_id, "round": round_no}), 409
 
     try:
-        _start_onetoone_job(job_id, act_id, round_no, act)
+        _start_onetoone_job(job_id, act_id, round_no, act, female_chats)
     except Exception:  # noqa: BLE001
         _update_onetoone_job(job_id, lambda j: j.update(
             state="failed", finished_at=int(time.time()), progress="", error="任务线程启动失败"))

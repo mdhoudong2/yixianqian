@@ -493,7 +493,8 @@ def test_guard_noop_when_counterpart_fields_absent(api):
     res = lib_onetoone.start_collection(ACT, client=fake, activity=act)
     assert res["code"] == "OK"
     res2 = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
-                                find_user_by_openid=app._grouping_find_user_by_openid)
+                                find_user_by_openid=app._grouping_find_user_by_openid,
+                                female_chats=2)
     # 无参与者 → NO_PARTICIPANTS（与迁移前一致），绝无 EXCLUSIVE_MODE
     assert res2["code"] == "NO_PARTICIPANTS"
 
@@ -515,7 +516,8 @@ def test_guard_blocks_onetoone_execute_when_group_flag_on(api):
     act = _oto_act(oto_status="收集中", group_flag="是", group_status="已完成")
     fake = api.install(activity=act)
     res = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
-                               find_user_by_openid=app._grouping_find_user_by_openid)
+                               find_user_by_openid=app._grouping_find_user_by_openid,
+                               female_chats=2)
     assert res["code"] == "EXCLUSIVE_MODE"
     assert fake.writes() == []
 
@@ -526,7 +528,8 @@ def test_guard_does_not_block_execute_on_group_status_only(api):
     act = _oto_act(oto_status="收集中", group_flag="否", group_status="已完成")
     fake = api.install(activity=act, signups=signups, selections=selections)
     res = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
-                               find_user_by_openid=app._grouping_find_user_by_openid)
+                               find_user_by_openid=app._grouping_find_user_by_openid,
+                               female_chats=2)
     assert res["code"] == "OK"
 
 
@@ -557,15 +560,23 @@ def test_preview_writes_nothing(api):
 def test_preview_participant_count_and_blockers(api):
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    body = api.post("/api/admin/onetoone/preview", {"activity_id": ACT}).get_json()
+    body = api.post("/api/admin/onetoone/preview",
+                    {"activity_id": ACT, "female_chats": 2}).get_json()
     assert body["participant_count"] == 4
+    assert body["male_count"] == 2 and body["female_count"] == 2
     assert body["existing_results"] == 0 and body["can_execute"] is True
     assert body["blockers"] == []
 
-    api.install()
+    # 女生场次缺省 → 拦下（can_execute False）
     body = api.post("/api/admin/onetoone/preview", {"activity_id": ACT}).get_json()
     assert body["can_execute"] is False
-    assert any("没有已提交志愿" in b for b in body["blockers"])
+    assert any("请指定女生场次" in b for b in body["blockers"])
+
+    api.install()
+    body = api.post("/api/admin/onetoone/preview",
+                    {"activity_id": ACT, "female_chats": 2}).get_json()
+    assert body["can_execute"] is False
+    assert any("没有已报名" in b for b in body["blockers"])
 
 
 # ---------------------------------------------------------------- start：破坏性且如实上报
@@ -609,7 +620,7 @@ def test_start_busy_lock_returns_409(api, monkeypatch):
 def test_run_returns_202_and_job_reaches_done(api):
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
     assert r.status_code == 202
     body = r.get_json()
     assert body["ok"] is True and body["state"] == "pending" and body["job_id"]
@@ -638,12 +649,12 @@ def test_run_duplicate_submission_returns_existing_job(api):
     orig = lib_onetoone.execute
     lib_onetoone.execute = slow_execute
     try:
-        r1 = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+        r1 = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
         assert r1.status_code == 202
         job_id = r1.get_json()["job_id"]
         assert entered.wait(timeout=5), "job 线程应已开始执行"
 
-        r2 = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+        r2 = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
         assert r2.status_code == 409
         assert r2.get_json()["job_id"] == job_id
 
@@ -657,7 +668,7 @@ def test_run_search_failure_aborts_without_writes(api):
     signups, selections = _balanced(2, 2)
     fake = api.install(signups=signups, selections=selections)
     fake.search_fails = {RESULT_TBL}
-    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "done"
@@ -675,7 +686,7 @@ def test_job_exception_recorded_and_lock_released(api):
 
     lib_onetoone.execute = boom
     try:
-        r = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+        r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
         assert r.status_code == 202
         job = _poll_job(api, r.get_json()["job_id"])
         assert job["state"] == "failed" and "写表炸了" in job["error"]
@@ -684,7 +695,7 @@ def test_job_exception_recorded_and_lock_released(api):
         lib_onetoone.execute = orig
 
     # 异常路径也必须放锁：重跑能正常跑完
-    r2 = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+    r2 = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
     assert r2.status_code == 202
     assert _poll_job(api, r2.get_json()["job_id"])["state"] == "done"
 
@@ -699,7 +710,7 @@ def test_dead_process_job_reports_unknown_and_does_not_block(api):
 
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    r2 = api.post("/api/admin/onetoone/run", {"activity_id": ACT})
+    r2 = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
     assert r2.status_code == 202, "上个进程的残留 job 不能永远挡住重跑"
     assert _poll_job(api, r2.get_json()["job_id"])["state"] == "done"
 
@@ -737,11 +748,22 @@ def test_run_payload_validation_and_missing(api):
                     {"activity_id": ACT, "round": 11}).status_code == 400
     assert api.post("/api/admin/onetoone/run",
                     {"activity_id": ACT, "round": 999}).status_code == 400
-    assert api.post("/api/admin/onetoone/run", {"activity_id": "A-9999"}).status_code == 404
+    # 女生场次缺省在 H5 run 收口（非法值另测，避免撞 run 端点的 5 次/60s 限流）
+    assert api.post("/api/admin/onetoone/run", {"activity_id": ACT}).status_code == 400
+    assert api.post("/api/admin/onetoone/run",
+                    {"activity_id": "A-9999", "female_chats": 2}).status_code == 404
     assert api.post("/api/admin/onetoone/start", {"activity_id": "A-9999"}).status_code == 404
     assert api.post("/api/admin/onetoone/preview", {}).status_code == 400
     assert api.post("/api/admin/onetoone/flag",
                     {"activity_id": ACT, "enabled": "yes"}).status_code == 400
+
+
+def test_run_female_chats_invalid_values_rejected(api):
+    """女生场次非法值（0/非整数/布尔）在 H5 run 收口 → 400。"""
+    api.install()
+    for bad in (0, "2", True):
+        assert api.post("/api/admin/onetoone/run",
+                        {"activity_id": ACT, "female_chats": bad}).status_code == 400, bad
 
 
 # ---------------------------------------------------------------- 读端点
@@ -931,7 +953,7 @@ def test_run_round_param_and_round_rows(api):
     """run 收 round：job/结果都锚定该轮；round 非法 400。"""
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "round": 2})
+    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "round": 2, "female_chats": 2})
     assert r.status_code == 202
     body = r.get_json()
     assert body["round"] == 2

@@ -328,17 +328,10 @@ CASES = [
          tables={**_default_tables(),
                  ONETOONE_RESULT_TABLE: [_res("ou_m1", "ou_f1")]}),
 
-    # ---- 管理员执行（10）----
-    # 「stop/格式错误」「stop/幂等拦截」「stop/执行成功」「stop/成功无结果」
-    # 「stop/写入不完整」因本次多轮功能刻意分歧（回复带轮次、结果写入带「轮次」
-    # 栏位），移到文件末尾的「本次功能（多轮）：刻意分歧」一节做旧/新双断言。
-    Case("stop/活动不存在", "stop", "A-9999"),
-    Case("stop/无参与", "stop", ACT,
-         tables={**_default_tables(), ONETOONE_SELECT_TABLE: []}),
-    Case("stop/全无性别", "stop", ACT,
-         tables={**_default_tables(),
-                 ONETOONE_SELECT_TABLE: [_sel("ou_m1", ""), _sel("ou_f1", "")]}),
-    Case("stop/算法异常", "stop", ACT, algorithm=_raise(ValueError("炸了"))),
+    # ---- 管理员执行 ----
+    # 「stop/*」全部案例因本次「女生坐镇均衡」刻意分歧（命令格式加女生场次、参与者
+    # 口径改为全部报名、算法换成均衡分配），移到文件末尾的「本次功能（女生坐镇均衡）：
+    # 刻意分歧」一节做旧/新双断言。
 
     # ---- 管理员状态（3）----
     Case("status/格式错误", "status", "   "),
@@ -413,7 +406,7 @@ def _patch_new(monkey, fake, case):
     monkey.setattr(bot_onetoone, "send_card_message", noop)
     monkey.setattr(lib_onetoone, "log", noop)
     if case.algorithm is not None:
-        monkey.setattr(lib_onetoone, "run_onetoone_matching", case.algorithm)
+        monkey.setattr(lib_onetoone, "run_offline_onetoone_matching", case.algorithm)
 
 
 def _run_golden(case):
@@ -576,6 +569,7 @@ def test_admin_stop_idempotency_read_failure_aborts_zero_writes(configured):
     assert "一对一匹配完成" in old
     assert [c for c in fake_g.writes() if c[0] == "batch_create"], "旧路读失败仍重跑"
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次
     _patch_new(configured, fake, case)
     new = _run_new(case)
     assert new == "查询历史结果失败，无法确认是否已执行过，已中止（本次未写入任何数据），请稍后重试。"
@@ -591,6 +585,7 @@ def test_admin_stop_selections_read_failure_restores_and_reports(configured):
     assert old == "没有已提交志愿的参与者，状态已恢复为「收集中」。", \
         "旧路把读失败伪装成「没有参与者」"
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次
     fake, new = _new_run(configured, case,
                          FakeBitable(case.tables, search_fails={ONETOONE_SELECT_TABLE}))
     assert new == "读取一对一志愿失败，已中止匹配，状态已恢复为「收集中」，请稍后重试。"
@@ -610,6 +605,7 @@ def test_partial_write_rollback_verify_failure_never_claims_rollback(configured)
     assert "已回滚" in old
     assert len(fake_g.tables[ONETOONE_RESULT_TABLE]) == 1, "旧路实际残留 1 条却谎称已回滚"
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次
     fake, new = _new_run(configured, case,
                          FakeBitable(case.tables, fail_create_after=1,
                                      search_fail_plan={ONETOONE_RESULT_TABLE: {2}}))
@@ -621,7 +617,7 @@ def test_partial_write_rollback_verify_failure_never_claims_rollback(configured)
 
 def test_partial_write_delete_incomplete_reports_residual(configured):
     """审核修复 #5⑥：回查成功但删除数不足 → 明报残留条数，不得说「已回滚」。"""
-    case = Case("stop/删除不完整", "stop", ACT)
+    case = Case("stop/删除不完整", "stop", f"{ACT} 2")
     fake, new = _new_run(configured, case,
                          FakeBitable(case.tables, fail_create_after=3, delete_limit=1))
     assert new == ("一对一结果写入失败（成功 3/8 条），回滚不完整（残留 2 条结果），"
@@ -631,7 +627,7 @@ def test_partial_write_delete_incomplete_reports_residual(configured):
 
 def test_partial_write_clean_rollback_keeps_original_message(configured):
     """回滚干净时保留原文案（与旧路逐字相同），只有回滚异常才换措辞。"""
-    case = Case("stop/写入不完整", "stop", ACT)
+    case = Case("stop/写入不完整", "stop", f"{ACT} 2")
     fake, new = _new_run(configured, case, FakeBitable(case.tables, fail_create_after=1))
     assert new == ("一对一结果写入失败（成功 1/8 条），已回滚，"
                    "状态恢复为「收集中」，请稍后重试。")
@@ -646,6 +642,7 @@ def test_admin_stop_close_status_write_failure_aborts(configured):
                          FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {1}}))
     assert "一对一匹配完成" in old, "旧路状态写失败也一样报成功"
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次
     fake, new = _new_run(configured, case,
                          FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {1}}))
     assert new == "活动状态写入失败（无法切换为「已截止」），已中止匹配，请稍后重试。"
@@ -656,7 +653,7 @@ def test_admin_stop_close_status_write_failure_aborts(configured):
 
 def test_admin_stop_done_status_write_failure_reports_explicit_error(configured):
     """审核修复 #4⑦：结果已生成但「已完成」写失败 → 明确错误（不说成功）。"""
-    case = Case("stop/完成写失败", "stop", ACT)
+    case = Case("stop/完成写失败", "stop", f"{ACT} 2")
     fake, new = _new_run(configured, case,
                          FakeBitable(case.tables, write_fail_plan={ACTIVITY_TABLE_ID: {2}}))
     assert new == "结果已生成，但状态写入失败（当前状态：已截止），请稍后重试或让管理员检查"
@@ -757,15 +754,15 @@ def test_status_submitted_count_uses_dedupe_intentional_fix(configured):
 # 回退成「和旧路一致」还以为是保真。
 # ================================================================
 
-def test_admin_stop_help_line_mentions_round(configured):
-    """空参格式说明补 [轮次]（旧路没有轮次）。"""
+def test_admin_stop_help_line_mentions_female_chats_and_round(configured):
+    """空参格式说明含「女生场次」+ [轮次]（旧路只有 活动ID）。"""
     case = Case("stop/格式错误", "stop", "")
     _, old = _golden_run(configured, case)
     assert old == "格式：执行一对一 活动ID\n例如：执行一对一 A-0002"
 
     _, new = _new_run(configured, case)
-    assert new == ("格式：执行一对一 活动ID [轮次]\n"
-                   "例如：执行一对一 A-0002 或 执行一对一 A-0002 2")
+    assert new == ("格式：执行一对一 活动ID 女生场次 [轮次]\n"
+                   "例如：执行一对一 A-0002 15 或 执行一对一 A-0002 15 2")
 
 
 def test_admin_stop_round1_legacy_row_still_idempotent_text_has_round(configured):
@@ -779,6 +776,7 @@ def test_admin_stop_round1_legacy_row_still_idempotent_text_has_round(configured
                    "「开始一对一 A-0002」重新开放，再执行。")
     assert old_fake.writes() == []
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次（第 1 轮）
     new_fake, new = _new_run(configured, case)
     assert new == ("活动「关系自洽」第1轮已生成过一对一结果，请勿重复执行。如需重新匹配，请先发送"
                    "「开始一对一 A-0002」重新开放，再执行。")
@@ -796,6 +794,7 @@ def test_admin_stop_success_text_and_writes_carry_round(configured):
     old_created = [c for c in old_fake.writes() if c[0] == "batch_create"][0]
     assert old_created[2] and all("轮次" not in r for r in old_created[2])
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次（第 1 轮）
     new_fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
                    "参与 4 人，共生成 8 条必聊关系。\n"
@@ -805,16 +804,18 @@ def test_admin_stop_success_text_and_writes_carry_round(configured):
 
 
 def test_admin_stop_success_without_pairs_text_has_round(configured):
-    """成功但 0 条必聊（无异性参与者）：回执仍带轮次（旧路无轮次）。"""
-    case = Case("stop/成功无结果", "stop", ACT,
-                tables={**_default_tables(),
-                        ONETOONE_SELECT_TABLE: [_sel("ou_m1", "男性"), _sel("ou_m2", "男性")]})
+    """成功但 0 条必聊（无异性参与者）：旧路按「提交志愿者」、新路按「全部报名」。"""
+    tables = {**_default_tables(),
+              SIGNUP_TABLE_ID: [_signup("ou_m1", "小北"), _signup("ou_m2", "阿北")],
+              ONETOONE_SELECT_TABLE: [_sel("ou_m1", "男性"), _sel("ou_m2", "男性")]}
+    case = Case("stop/成功无结果", "stop", ACT, tables=tables)
 
     _, old = _golden_run(configured, case)
     assert old == ("🎉 活动「关系自洽」一对一匹配完成：\n"
                    "参与 2 人，共生成 0 条必聊关系。\n"
                    "用户可自查 H5「我的一对一」查看名单。")
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次
     _, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
                    "参与 2 人，共生成 0 条必聊关系。\n"
@@ -830,6 +831,7 @@ def test_admin_stop_partial_write_writes_carry_round(configured):
     old_created = [c for c in old_fake.writes() if c[0] == "batch_create"][0]
     assert old_created[2] and all("轮次" not in r for r in old_created[2])
 
+    case.keyword = f"{ACT} 2"   # 新格式：活动ID + 女生场次
     new_fake, new = _new_run(configured, case)
     assert new == old, "回滚文案不变（只有写入行多了轮次）"
     new_created = [c for c in new_fake.writes() if c[0] == "batch_create"][0]
@@ -838,15 +840,15 @@ def test_admin_stop_partial_write_writes_carry_round(configured):
 
 
 def test_admin_stop_round2_runs_and_keeps_round1(configured):
-    """旧路完全不认「A-0002 2」（整串当活动ID找不到）；新路跑第2轮且保留第1轮结果。"""
+    """旧路完全不认「A-0002 2 2」（整串当活动ID找不到）；新路跑第2轮且保留第1轮结果。"""
     tables = {**_default_tables(),
               ONETOONE_RESULT_TABLE: [
                   {"record_id": "rec_r1",
                    "fields": {**_res("ou_m1", "ou_f1")["fields"], "轮次": "1"}}]}
-    case = Case("stop/第2轮", "stop", f"{ACT} 2", tables=tables)
+    case = Case("stop/第2轮", "stop", f"{ACT} 2 2", tables=tables)
 
     _, old = _golden_run(configured, case)
-    assert old == "未找到活动：A-0002 2"
+    assert old == "未找到活动：A-0002 2 2"
 
     fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第2轮 一对一匹配完成：\n"
@@ -858,11 +860,13 @@ def test_admin_stop_round2_runs_and_keeps_round1(configured):
     assert len(r1) == 1 and len(r2) == 8, "第1轮历史保留，第2轮新写入"
 
 
-def test_admin_stop_round_argument_validation(configured):
-    """非法轮次：新路明确报轮次错误（旧路把整串当活动ID）。"""
-    for keyword, expected in ((f"{ACT} 0", "轮次必须为大于0的整数"),
-                              (f"{ACT} x", "轮次必须为数字，当前：x")):
-        case = Case("stop/坏轮次", "stop", keyword)
+def test_admin_stop_argument_validation(configured):
+    """非法女生场次 / 轮次：新路分别报错（旧路把整串当活动ID）。"""
+    for keyword, expected in ((f"{ACT} 0", "女生场次必须为大于0的整数"),
+                              (f"{ACT} x", "女生场次必须为数字，当前：x"),
+                              (f"{ACT} 2 0", "轮次必须为大于0的整数"),
+                              (f"{ACT} 2 x", "轮次必须为数字，当前：x")):
+        case = Case("stop/坏参数", "stop", keyword)
         _, old = _golden_run(configured, case)
         assert old == f"未找到活动：{keyword}"
         _, new = _new_run(configured, case)
@@ -871,9 +875,9 @@ def test_admin_stop_round_argument_validation(configured):
 
 def test_admin_stop_round_over_max_rejected_with_zero_writes(configured):
     """轮次 >10：旧路把整串当活动ID；新路在 lib 写入路径收口并明确报错、零写入。"""
-    case = Case("stop/轮次越界", "stop", f"{ACT} 11")
+    case = Case("stop/轮次越界", "stop", f"{ACT} 2 11")
     _, old = _golden_run(configured, case)
-    assert old == "未找到活动：A-0002 11"
+    assert old == "未找到活动：A-0002 2 11"
 
     fake, new = _new_run(configured, case)
     assert new == ("轮次超出范围：一对一结果只支持第 1-10 轮，"
@@ -903,3 +907,94 @@ def test_admin_status_rounds_line_intentional_addition(configured):
                  tables={**_default_tables(), ONETOONE_RESULT_TABLE: [_res("ou_m1", "ou_f1")]})
     _, new2 = _new_run(configured, case2)
     assert new2.endswith("已生成轮次：第1轮")
+
+
+# ================================================================
+# 本次功能（女生坐镇均衡）：刻意分歧（旧路行为 ≠ 新路行为）
+# ----------------------------------------------------------------
+# 「执行一对一」改为「女生坐镇、男生上门」均衡分配：
+#   命令格式加「女生场次」（第 2 位）、参与者口径改为全部「已报名」（不再只算提交
+#   志愿者）、算法换成 run_offline_onetoone_matching（每女恰好 K 场、男配额均衡）。
+# 冻结旧实作是「各自独立 top-N、只算提交志愿者」；以下路径刻意分歧。每条同时钉旧
+# 行为与新行为，防止日后有人把均衡匹配回退成「和旧路一致」还以为是保真。
+# ================================================================
+
+def test_admin_stop_activity_not_found_requires_female_chats(configured):
+    """活动不存在：旧路整串当活动ID；新路带女生场次后才走到「未找到活动」。"""
+    case = Case("stop/活动不存在", "stop", "A-9999")
+    _, old = _golden_run(configured, case)
+    assert old == "未找到活动：A-9999"
+
+    case.keyword = "A-9999 2"
+    _, new = _new_run(configured, case)
+    assert new == "未找到活动：A-9999"
+
+
+def test_admin_stop_participant_source_is_all_signups(configured):
+    """参与者口径：旧路只算提交志愿者（无志愿→「没有参与者」）；新路算全部报名。"""
+    case = Case("stop/无参与", "stop", ACT,
+                tables={**_default_tables(), ONETOONE_SELECT_TABLE: []})
+
+    _, old = _golden_run(configured, case)
+    assert old == "没有已提交志愿的参与者，状态已恢复为「收集中」。"
+
+    case.keyword = f"{ACT} 2"
+    fake, new = _new_run(configured, case)
+    assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
+                   "参与 4 人，共生成 8 条必聊关系。\n"
+                   "用户可自查 H5「我的一对一」查看名单。")
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 8, "未提交志愿的报名者也参与配对"
+
+
+def test_admin_stop_gender_comes_from_signup_not_selection(configured):
+    """性别口径：旧路读志愿表的性别栏（空则排除）；新路读报名+用户表性别。"""
+    case = Case("stop/全无性别", "stop", ACT,
+                tables={**_default_tables(),
+                        ONETOONE_SELECT_TABLE: [_sel("ou_m1", ""), _sel("ou_f1", "")]})
+
+    _, old = _golden_run(configured, case)
+    assert old == "没有已提交志愿的参与者，状态已恢复为「收集中」。"
+
+    case.keyword = f"{ACT} 2"
+    fake, new = _new_run(configured, case)
+    assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
+                   "参与 4 人，共生成 8 条必聊关系。\n"
+                   "用户可自查 H5「我的一对一」查看名单。")
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 8
+
+
+def test_admin_stop_algorithm_value_error_is_female_chats_invalid(configured):
+    """算法异常：旧路把 ValueError 也当「匹配出错」；新路区分 ValueError=女生场次非法。"""
+    case = Case("stop/算法异常", "stop", ACT, algorithm=_raise(ValueError("炸了")))
+
+    _, old = _golden_run(configured, case)
+    assert old == "一对一匹配出错：炸了，状态已恢复为「收集中」"
+
+    case.keyword = f"{ACT} 2"
+    _, new = _new_run(configured, case)
+    assert new == "女生场次不合法：炸了，状态已恢复为「收集中」"
+
+
+def test_admin_stop_female_chats_over_male_count_reports_and_restores(configured):
+    """女生场次 > 男生数：均衡算法 ValueError → FEMALE_CHATS_INVALID + 恢复「收集中」。"""
+    case = Case("stop/女生场次超男数", "stop", f"{ACT} 3")
+    fake, new = _new_run(configured, case)
+    assert new == ("女生场次不合法：女生场次 female_chats=3 不能超过男生人数 2"
+                   "（每个女生最多和 2 位男生各聊一次），状态已恢复为「收集中」")
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
+    assert not [c for c in fake.writes() if c[0] == "batch_create"]
+
+
+def test_admin_stop_balanced_result_rows_equal_twice_female_chats(configured):
+    """均衡结果条数 = 2×女数×K（男名单 + 女名单各一份，双向一致）。"""
+    tables = _rich_tables()   # 1 男 7 女
+    case = Case("stop/均衡条数", "stop", f"{ACT} 1", tables=tables)
+    fake, new = _new_run(configured, case)
+    assert "参与 8 人，共生成 14 条必聊关系" in new
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 14
+    # 每个女生恰好 1 位来访（K=1）；唯一男生 7 位必聊（男配额均衡=base 7）
+    female_rows = [r for r in fake.tables[ONETOONE_RESULT_TABLE]
+                   if r["fields"].get("用户性别") == "女性"]
+    male_rows = [r for r in fake.tables[ONETOONE_RESULT_TABLE]
+                 if r["fields"].get("用户性别") == "男性"]
+    assert len(female_rows) == 7 and len(male_rows) == 7

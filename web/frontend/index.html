@@ -430,6 +430,8 @@
   .redeem-form-label { font-size: 13px; color: #969799; margin: 14px 0 6px; }
   .redeem-form-tip { font-size: 12px; color: #969799; padding: 8px 0; }
   .redeem-form-actions { display: flex; gap: 10px; margin-top: 20px; }
+  /* 兑换提交中：列表/表单整块禁点（取消钮走 requestCloseRedeemPanel 的 busy 拦截 + toast） */
+  .redeem-busy .redeem-list, .redeem-busy .redeem-form { pointer-events: none; }
   /* 规则说明 */
   .points-rules-title { font-size: 13px; font-weight: 600; color: #ff6b81; margin: 14px 0 4px; }
   .points-rules-title:first-child { margin-top: 0; }
@@ -570,6 +572,8 @@
   .ga-run-mask-progress { font-size: 13px; color: rgba(255,255,255,.65); line-height: 1.6; }
   .ga-run-mask-secs { font-size: 15px; color: #ffd666; font-variant-numeric: tabular-nums; }
   .ga-run-mask-tip { font-size: 13px; color: rgba(255,255,255,.6); margin-top: 8px; }
+  /* 页面级忙碌遮罩（pageBusy）：高于底栏(30)与弹层托盘(2000)；不可点穿、不可关闭 */
+  .page-busy-mask { position: fixed; inset: 0; z-index: 9997; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; touch-action: none; }
   @media (min-width: 600px) {
     .ga-page, .ga-title { max-width: 560px; margin-left: auto; margin-right: auto; }
     .ga-stats { gap: 12px; } .ga-stat-num { font-size: 26px; }
@@ -767,9 +771,9 @@
     <div style="background:#fff5f6;border:1px solid #ffd9e0;border-radius:12px;padding:14px;box-sizing:border-box;">
       <div style="font-size:14px;color:#ad2139;font-weight:600;margin-bottom:6px;">📝 认领预报名资料</div>
       <div style="font-size:12px;color:#6b7280;line-height:1.6;margin-bottom:12px;">如果你已在微信或手机浏览器填过注册表，输入当时填写的姓名和手机号，即可把资料与你的飞书账号连起来。</div>
-      <van-field v-model="claimName" label="姓名" placeholder="注册时填的真实姓名" clearable class="claim-field"
+      <van-field v-model="claimName" label="姓名" placeholder="注册时填的真实姓名" clearable :disabled="claiming" class="claim-field"
         style="border-radius:8px;overflow:hidden;margin-bottom:8px;background:#fff;"></van-field>
-      <van-field v-model="claimPhone" label="手机号" type="tel" maxlength="11" placeholder="11 位手机号" clearable class="claim-field"
+      <van-field v-model="claimPhone" label="手机号" type="tel" maxlength="11" placeholder="11 位手机号" clearable :disabled="claiming" class="claim-field"
         style="border-radius:8px;overflow:hidden;margin-bottom:12px;background:#fff;"></van-field>
       <van-button type="primary" color="#ff6b81" block :loading="claiming" @click="submitClaim">认领并进入</van-button>
       <div style="text-align:center;margin-top:10px;font-size:12px;">
@@ -1698,7 +1702,7 @@
   <div class="ga-card" style="margin-top:12px;">
     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
       <div class="ga-card-title" style="margin:0;">现场签到</div>
-      <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
+      <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" :disabled="gaSigninBatchBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
     </div>
     <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
     <van-button size="small" plain type="primary" color="#ff6b81" style="margin-top:10px;" :loading="gaSigninLoading" @click="loadSigninRoster(true)">重新载入名册</van-button>
@@ -1732,7 +1736,7 @@
             <div class="ga-row-sub">{{ r.user_id || '-' }}{{ r.real_name ? ' · ' + r.nickname : '' }}</div>
           </div>
           <div class="ga-signin-actions">
-            <van-button size="small" class="ga-signin-btn" :plain="r.checked_in" :color="r.checked_in ? '#969799' : '#0a8548'" :loading="!!gaSigninBusy[r.open_id]" @click="toggleSignin(r)">{{ r.checked_in ? '取消签到' : '签到' }}</van-button>
+            <van-button size="small" class="ga-signin-btn" :plain="r.checked_in" :color="r.checked_in ? '#969799' : '#0a8548'" :loading="!!gaSigninBusy[r.open_id]" :disabled="!!gaSigninBusy[r.open_id] || gaSigninBatchBusy" @click="toggleSignin(r)">{{ r.checked_in ? '取消签到' : '签到' }}</van-button>
           </div>
         </div>
         <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
@@ -2486,9 +2490,9 @@
     </div>
   </div>
 </div>
-<!-- 保存中全屏 Loading -->
-<div v-if="savingProfile" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:10000; background:rgba(0,0,0,0.55); display:flex; align-items:center; justify-content:center;">
-  <van-loading color="#fff" size="24px" text-color="#fff" vertical>保存中…</van-loading>
+<!-- 页面级忙碌遮罩（pageBusy）：提交志愿/报名/保存资料/发送留言等整页动作期间盖住全屏，不可点穿、不可关闭 -->
+<div v-if="pageBusy" class="page-busy-mask" @click.stop @touchmove.stop.prevent>
+  <van-loading color="#fff" size="24px" text-color="#fff" vertical>{{ pageBusyText }}</van-loading>
 </div>
 <!-- 身份证有误全屏强制提示 -->
 <div v-if="showIdInvalidDialog" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999; background:rgba(0,0,0,0.85); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
@@ -2524,6 +2528,7 @@
 <van-dialog v-model:show="showLikeDialog" :title="likeDialogTitle" show-cancel-button
   confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :close-on-popstate="false"
+  :cancel-button-disabled="likeSubmitting" :confirm-button-disabled="likeSubmitting"
   :before-close="onLikeDialogBeforeClose">
   <div class="like-dialog-body">
     <div class="like-notes">
@@ -2536,7 +2541,7 @@
       <div>· 如果对方也喜欢你，就会自动获得对方的联系方式</div>
       <div>· 如果一方报名了某个活动，会相互收到通知</div>
     </div>
-    <van-radio-group v-model="likeType" direction="horizontal" class="like-radio-group" style="padding: 0 0 8px;">
+    <van-radio-group v-model="likeType" direction="horizontal" class="like-radio-group" style="padding: 0 0 8px;" :disabled="likeSubmitting">
       <van-radio name="匿名" :disabled="(user.anon_left || 0) <= 0">
         匿名喜欢（剩 {{ user.anon_left || 0 }} 颗）
       </van-radio>
@@ -2544,7 +2549,7 @@
         实名喜欢（剩 {{ user.real_left || 0 }} 次）
       </van-radio>
     </van-radio-group>
-    <van-field v-model="likeMessage" type="textarea" rows="3" autosize
+    <van-field v-model="likeMessage" type="textarea" rows="3" autosize :readonly="likeSubmitting"
       placeholder="为什么关注TA？（必填，须10字以上。单向喜欢不发送，相互喜欢后会发给TA。）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
@@ -2552,15 +2557,16 @@
 <van-dialog v-model:show="showFeedbackDialog" title="反馈该用户" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :close-on-popstate="false"
+  :cancel-button-disabled="feedbackSubmitting" :confirm-button-disabled="feedbackSubmitting"
   :before-close="onFeedbackBeforeClose">
   <div class="like-dialog-body">
-    <van-radio-group v-model="feedbackReason" class="feedback-radio-group" style="padding-bottom: 8px;">
+    <van-radio-group v-model="feedbackReason" class="feedback-radio-group" style="padding-bottom: 8px;" :disabled="feedbackSubmitting">
       <van-radio name="已有对象">已有对象</van-radio>
       <van-radio name="不是教友">不是教友</van-radio>
       <van-radio name="资料不实">资料不实</van-radio>
       <van-radio name="其他">其他</van-radio>
     </van-radio-group>
-    <van-field v-model="feedbackText" type="textarea" rows="2" autosize
+    <van-field v-model="feedbackText" type="textarea" rows="2" autosize :readonly="feedbackSubmitting"
       placeholder="补充说明（选填）" class="like-textarea"></van-field>
   </div>
 </van-dialog>
@@ -2568,12 +2574,13 @@
 <van-dialog v-model:show="showOnetooneMsg" :title="onetooneMsgTarget ? '留言给 ' + onetooneMsgTarget.nickname : '留言'" show-cancel-button
   confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :close-on-popstate="false"
+  :cancel-button-disabled="onetooneMsgSubmitting" :confirm-button-disabled="onetooneMsgSubmitting"
   :before-close="onOnetooneMsgBeforeClose">
   <div class="like-dialog-body">
     <div class="like-notes">
       写下对TA的评价，发送后对方可见，该人即标记为「已聊」。
     </div>
-    <van-field v-model="onetooneMsgText" type="textarea" rows="3" autosize
+    <van-field v-model="onetooneMsgText" type="textarea" rows="3" autosize :readonly="onetooneMsgSubmitting"
       placeholder="写下你的评价…" class="like-textarea"></van-field>
   </div>
 </van-dialog>
@@ -2581,15 +2588,16 @@
 <van-dialog v-model:show="showReportDialog" title="举报留言" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ee0a24"
   :close-on-popstate="false"
+  :cancel-button-disabled="reportSubmitting" :confirm-button-disabled="reportSubmitting"
   :before-close="onReportBeforeClose">
   <div class="like-dialog-body">
-    <van-radio-group v-model="reportReason" class="feedback-radio-group" style="padding-bottom: 8px;">
+    <van-radio-group v-model="reportReason" class="feedback-radio-group" style="padding-bottom: 8px;" :disabled="reportSubmitting">
       <van-radio name="骚扰/引战">骚扰/引战</van-radio>
       <van-radio name="广告/推销">广告/推销</van-radio>
       <van-radio name="不适内容">不适内容</van-radio>
       <van-radio name="其他">其他</van-radio>
     </van-radio-group>
-    <van-field v-model="reportReasonText" type="textarea" rows="2" autosize
+    <van-field v-model="reportReasonText" type="textarea" rows="2" autosize :readonly="reportSubmitting"
       placeholder="补充说明（选填，最多200字）" class="like-textarea" maxlength="200"></van-field>
   </div>
 </van-dialog>
@@ -2597,14 +2605,15 @@
 <van-dialog v-model:show="showSuggestionDialog" title="意见反馈" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
   :close-on-popstate="false"
+  :cancel-button-disabled="suggestionSubmitting" :confirm-button-disabled="suggestionSubmitting"
   :before-close="onSuggestionBeforeClose">
   <div class="like-dialog-body">
-    <van-radio-group v-model="suggestionType" class="feedback-radio-group" style="padding-bottom: 8px;">
+    <van-radio-group v-model="suggestionType" class="feedback-radio-group" style="padding-bottom: 8px;" :disabled="suggestionSubmitting">
       <van-radio name="功能建议">功能建议</van-radio>
       <van-radio name="问题反馈">问题反馈</van-radio>
       <van-radio name="其他">其他</van-radio>
     </van-radio-group>
-    <van-field v-model="suggestionText" type="textarea" rows="3" autosize maxlength="500" show-word-limit
+    <van-field v-model="suggestionText" type="textarea" rows="3" autosize maxlength="500" show-word-limit :readonly="suggestionSubmitting"
       placeholder="请写下你的建议或遇到的问题（必填）" class="like-textarea" />
   </div>
 </van-dialog>
@@ -2667,7 +2676,7 @@
 <!-- ========== 麦穗兑换面板 ========== -->
 <!-- 未选条目时是列表，选中后同一层内切到参数表单：避免再套一层弹层，返回手势只需处理一层 -->
 <van-popup v-model:show="showRedeemPanel" position="bottom" round :close-on-click-overlay="false" @click-overlay="requestCloseRedeemPanel">
-  <div class="redeem-panel">
+  <div class="redeem-panel" :class="{'redeem-busy': redeemSubmitting}">
     <div class="picker-header">
       <span @click="requestCloseRedeemPanel">取消</span>
       <span style="font-weight:600;">{{ redeemItem ? redeemItem.label : '兑换麦穗' }}</span>
@@ -2739,9 +2748,9 @@
       </template>
 
       <div class="redeem-form-actions">
-        <van-button plain type="primary" color="#ff6b81" block @click="redeemItem = null">上一步</van-button>
+        <van-button plain type="primary" color="#ff6b81" block :disabled="redeemSubmitting" @click="redeemItem = null">上一步</van-button>
         <!-- 必须写成 submitRedeem()：直接写函数名会把 click 事件当成第一个参数（那个参数是「要兑换的条目」） -->
-        <van-button type="primary" color="#ff6b81" block :loading="redeemSubmitting" @click="submitRedeem()">确认兑换</van-button>
+        <van-button type="primary" color="#ff6b81" block :loading="redeemSubmitting" :disabled="redeemSubmitting" @click="submitRedeem()">确认兑换</van-button>
       </div>
     </div>
   </div>
@@ -2849,7 +2858,7 @@
       <div v-if="gaConfirmInput && !gaConfirmOk" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">活动编号不对，再确认一下喔</div>
     </div>
     <div class="ga-actions">
-      <van-button plain @click="cancelGaConfirm()">取消</van-button>
+      <van-button plain :disabled="gaConfirmBusy" @click="cancelGaConfirm()">取消</van-button>
       <van-button color="#ee0a24" :disabled="!gaConfirmOk || gaConfirmBusy" :loading="gaConfirmBusy" @click="doGaReset()">确认清空</van-button>
     </div>
   </div>
@@ -2869,7 +2878,7 @@
       <div v-if="gaClearConfirmInput && !gaClearConfirmOk" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">活动编号不对，再确认一下喔</div>
     </div>
     <div class="ga-actions">
-      <van-button plain @click="cancelClearAllSignins()">取消</van-button>
+      <van-button plain :disabled="gaSigninBatchBusy" @click="cancelClearAllSignins()">取消</van-button>
       <van-button color="#ee0a24" :disabled="!gaClearConfirmOk || gaSigninBatchBusy" :loading="gaSigninBatchBusy" @click="doClearAllSignins()">确认清除</van-button>
     </div>
   </div>
@@ -2888,7 +2897,7 @@
       <div v-if="gaOtoConfirmInput && !gaOtoResetOk" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">活动编号不对，再确认一下喔</div>
     </div>
     <div class="ga-actions">
-      <van-button plain @click="cancelOtoReset()">取消</van-button>
+      <van-button plain :disabled="gaOtoResetBusy" @click="cancelOtoReset()">取消</van-button>
       <van-button color="#ee0a24" :disabled="!gaOtoResetOk || gaOtoResetBusy" :loading="gaOtoResetBusy" @click="doOtoReset()">确认清空</van-button>
     </div>
   </div>
@@ -3192,6 +3201,14 @@ createApp({
     const activityDetailLoading = computed(() => loadingActivityDetail.value
       && !(currentActivity.value && String(currentActivity.value.record_id) === String(currentActivityId.value)));
     const actionLoading = ref(false);
+    // —— 页面级忙碌锁（P16）——
+    // 整页动作（提交志愿/报名/保存资料/发送留言等）进入请求前置 busy、结束解除：
+    // 期间全屏遮罩（.page-busy-mask，z-index 高于底栏与托盘）不可点穿/不可关闭；
+    // guardLeave / handlePopState 命中 pageBusy（或页面自身 busy）时 → toast「正在提交，请稍候」并停留。
+    const pageBusy = ref(false);
+    const pageBusyText = ref('');
+    function setPageBusy(text){ pageBusyText.value = text || '正在提交…'; pageBusy.value = true; }
+    function clearPageBusy(){ pageBusy.value = false; pageBusyText.value = ''; }
     const activityDetailFrom = ref('home'); // 进入活动详情前的页面，用于返回
 
     // 喜欢卡片
@@ -3311,10 +3328,12 @@ createApp({
     const likeDialogTitle = ref('');
     const likeTarget = ref(null);  // 当前要喜欢的对象 {openid, nickname}
     const likeType = ref('匿名');  // 喜欢方式：匿名/实名
+    const likeSubmitting = ref(false);  // 发送在途（弹窗按钮禁用、不可 before-close 关闭，P16）
     const showFeedbackDialog = ref(false);
     const feedbackReason = ref('已有对象');
     const feedbackText = ref('');
     const feedbackTarget = ref(null);  // 当前要反馈的对象 {openid, nickname}
+    const feedbackSubmitting = ref(false);  // 提交在途（弹窗按钮禁用、不可 before-close 关闭，P16）
     const showSuggestionDialog = ref(false);
     const suggestionType = ref('功能建议');
     const suggestionText = ref('');
@@ -3774,36 +3793,43 @@ createApp({
       cardsMsg: cardsMsgGuard,
       likeDialog: {
         dirty: () => !!likeMessage.value.trim(),
+        busy: () => likeSubmitting.value,   // 发送执行中：关闭/返回 → 提示并停留（P16）
         body: '留言还没发送，离开后内容不会保存。',
         discard: (cb) => { likeMessage.value = ''; if(cb) cb(); else showLikeDialog.value = false; }
       },
       onetooneMsg: {
         dirty: () => !!onetooneMsgText.value.trim(),
+        busy: () => onetooneMsgSubmitting.value,   // 发送执行中：关闭/返回 → 提示并停留（P16）
         body: '留言还没发送，离开后内容不会保存。',
         discard: (cb) => { onetooneMsgText.value = ''; if(cb) cb(); else showOnetooneMsg.value = false; }
       },
       feedbackDialog: {
         dirty: () => !!feedbackText.value.trim() || feedbackReason.value !== '已有对象',
+        busy: () => feedbackSubmitting.value,   // 提交执行中：关闭/返回 → 提示并停留（P16）
         body: '反馈还没提交，离开后内容不会保存。',
         discard: (cb) => { feedbackReason.value = '已有对象'; feedbackText.value = ''; if(cb) cb(); else showFeedbackDialog.value = false; }
       },
       reportDialog: {
         dirty: () => !!reportReasonText.value.trim() || reportReason.value !== '骚扰/引战',
+        busy: () => reportSubmitting.value,   // 提交执行中：关闭/返回 → 提示并停留（P16）
         body: '举报还没提交，离开后内容不会保存。',
         discard: (cb) => { reportReason.value = '骚扰/引战'; reportReasonText.value = ''; if(cb) cb(); else showReportDialog.value = false; }
       },
       suggestionDialog: {
         dirty: () => !!suggestionText.value.trim() || suggestionType.value !== '功能建议',
+        busy: () => suggestionSubmitting.value,   // 提交执行中：关闭/返回 → 提示并停留（P16）
         body: '反馈内容还没提交，离开后内容不会保存。',
         discard: (cb) => { suggestionType.value = '功能建议'; suggestionText.value = ''; if(cb) cb(); else showSuggestionDialog.value = false; }
       },
       claim: {
         dirty: () => !!(claimName.value.trim() || claimPhone.value.trim()),
+        busy: () => claiming.value,   // 认领执行中：返回 → 提示并停留（P16）
         body: '认领信息还没提交，离开后需要重新填写。',
         discard: (cb) => { claimName.value = ''; claimPhone.value = ''; if(cb) cb(); else backToLogin(); }
       },
       redeemPanel: {
         dirty: () => !!redeemItem.value && (!!redeemCondition.value.trim() || !!wishQuery.value.trim() || !!redeemTarget.value),
+        busy: () => redeemSubmitting.value,   // 兑换执行中：关闭/返回 → 提示并停留（P16）
         body: '兑换信息还没提交，离开后需要重新填写。',
         discard: (cb) => { if(cb) cb(); else closeRedeemPanel(); }
       },
@@ -3831,8 +3857,9 @@ createApp({
     function guardLeave(doLeave){
       if(showUnsavedConfirm.value) return false;   // 弹窗已开：由调用方走「只关弹窗」分支
       const g = leaveGuards[page.value];
+      // 页面级忙碌（pageBusy）或页面自身 busy（如志愿提交 actionLoading）→ 提示并停留（P15/P16 同口径）
+      if(pageBusy.value || (g && g.busy && g.busy())){ vant.showToast('正在提交，请稍候'); return true; }
       if(!g) return false;
-      if(g.busy && g.busy()){ vant.showToast('正在提交，请稍候'); return true; }
       if(!g.dirty()) return false;
       pendingGuard.value = g;
       pendingLeaveCb = doLeave;
@@ -3842,6 +3869,8 @@ createApp({
     // 浮层版统一入口：命中脏守卫 → 拦截本次关闭/离开（调用方不得继续关闭流程），返回 true=已拦截。
     function guardOverlay(key, doLeave){
       if(showUnsavedConfirm.value) return false;   // 弹窗已开：由调用方走「只关弹窗」分支
+      // 页面级忙碌（pageBusy）：浮层/浮层性动作（如切卡键盘操作）也统一拦截（与 guardLeave 同口径）
+      if(pageBusy.value){ vant.showToast('正在提交，请稍候'); return true; }
       const g = overlayGuards[key];
       if(!g) return false;
       if(g.busy && g.busy()){ vant.showToast('正在提交，请稍候'); return true; }
@@ -3889,7 +3918,7 @@ createApp({
       pendingGuard.value = null;
       page.value = 'profile_edit';
     }
-    function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
+    function pickPhoto() { if (uploadingPhoto.value) return; if (photoInput.value) photoInput.value.click(); }
     function pollFaceResult() {
       // 上传/删除后 has_face 仍 false 时轮询最终态，达标即隐去红字；最多约20秒
       faceChecking.value = true;
@@ -3962,6 +3991,7 @@ createApp({
     }
     async function onPhotoChange(e) {
       const file = e.target.files && e.target.files[0];
+      if (uploadingPhoto.value) { e.target.value = ''; return; }   // 上传在途：不叠加第二次上传
       if (!file) return;
       if (!file.type || !file.type.startsWith('image/')) { vant.showToast('请选择图片文件'); return; }
       if (file.size > 10 * 1024 * 1024) { vant.showToast('图片不能超过10MB'); return; }
@@ -3993,6 +4023,7 @@ createApp({
     }
     async function deletePhoto(i) {
       if (i < 0 || i >= profilePhotos.value.length) return;
+      if (uploadingPhoto.value) { vant.showToast('照片处理中，请稍候'); return; }   // 并发照片操作按索引互踩：在途时禁点
       // 避免 forbidClick 永久遮罩：用轻量 loading，不阻塞点击
       uploadingPhoto.value = true; uploadStage.value='process'; uploadProgress.value=30;
       let done=false;
@@ -4016,6 +4047,7 @@ createApp({
     }
     async function setCover(i) {
       if (i <= 0 || i >= profilePhotos.value.length) return;
+      if (uploadingPhoto.value) { vant.showToast('照片处理中，请稍候'); return; }   // 与删除/上传共用同一互斥态：在途时禁点
       try {
         const data = await api('/api/profile/photo/cover', { method: 'POST', body: JSON.stringify({ index: i }) });
         profilePhotos.value = data.photos || [];
@@ -4036,9 +4068,12 @@ createApp({
       if (i >= 0) arr.splice(i, 1); else arr.push(opt);
     }
     async function saveProfile() {
+      if (savingProfile.value) return;
+      if (uploadingPhoto.value) { vant.showToast('照片还在处理中，请稍候'); return; }   // 照片在途：保存会让页面与服务端状态对不上
       const payload = {};
       editableFields.value.forEach(f => { payload[f.field] = f.value; });
       savingProfile.value = true;
+      setPageBusy('保存中…');   // 页面级锁：保存在途期间页面不可改（P16）
       try {
         await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
         vant.showToast('保存成功');
@@ -4047,6 +4082,7 @@ createApp({
         await openProfileDetail();
       } catch(e) { vant.showToast(e.message); }
       savingProfile.value = false;
+      clearPageBusy();
     }
 
     // 分组
@@ -4090,6 +4126,7 @@ createApp({
     const onetooneResultFrom = ref('my_activities');   // 进入一对一结果前的页面，用于返回
     const onetooneMsgTarget = ref(null);
     const onetooneMsgText = ref('');
+    const onetooneMsgSubmitting = ref(false);  // 发送在途（弹窗按钮禁用、不可 before-close 关闭，P16）
     const showOnetooneMsg = ref(false);
 
     // 全屏图片
@@ -4331,6 +4368,7 @@ createApp({
       if (name.replace(/\s+/g, '').length < 2) { vant.showToast('请输入注册时填写的真实姓名'); return false; }
       if (phone.length !== 11 || !phone.startsWith('1')) { vant.showToast('请输入正确的 11 位手机号'); return false; }
       if (!isInFeishu()) { vant.showToast('请在飞书 App 里打开本页面后再认领'); return false; }
+      if (claiming.value) return false;
       claiming.value = true;
       try {
         const silent = await getFeishuSilentCode(6000);
@@ -4490,7 +4528,9 @@ createApp({
       await doSignup();
     }
     async function doSignup() {
+      if (actionLoading.value) return;
       actionLoading.value = true;
+      setPageBusy('正在报名…');   // 页面级锁：报名在途期间不可再操作/返回（P16）
       try {
         const data = await api('/api/activities/' + currentActivity.value.record_id + '/signup',
           { method: 'POST' });
@@ -4499,10 +4539,12 @@ createApp({
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
-      actionLoading.value = false;
+      finally { actionLoading.value = false; clearPageBusy(); }
     }
     async function cancelSignup() {
+      if (actionLoading.value) return;
       actionLoading.value = true;
+      setPageBusy('正在取消报名…');   // 页面级锁：取消在途期间不可再操作/返回（P16）
       try {
         await api('/api/activities/' + currentActivity.value.record_id + '/signup', { method: 'DELETE' });
         vant.showToast('已取消报名');
@@ -4510,7 +4552,7 @@ createApp({
         myActivitiesLoaded.value = false; myGroupsLoaded.value = false;
         await openActivity(currentActivity.value.record_id);
       } catch(e) { vant.showToast(e.message); }
-      actionLoading.value = false;
+      finally { actionLoading.value = false; clearPageBusy(); }
     }
 
     // 牵线左右滑动新手引导（首次进入牵线且有卡片时弹一次，localStorage 记忆；成功翻页或点击后关闭）
@@ -5311,28 +5353,34 @@ createApp({
 
     // 账号状态切换（单身 <-> 已脱单）
     const accountStatusLabel = computed(() => (user.value && user.value.account_status === '已脱单') ? '已脱单' : '单身');
+    let accountStatusProc = false;   // 确认弹窗阶段也要防连点（弹窗是异步的，actionLoading 覆盖不到）
     async function toggleAccountStatus() {
-      const toHidden = user.value && user.value.account_status === '单身';
+      if (accountStatusProc || actionLoading.value) return;
+      accountStatusProc = true;
       try {
-        await vant.showConfirmDialog({
-          title: toHidden ? '脱单' : '恢复单身',
-          message: toHidden
-            ? '脱单后你将不出现在他人的牵线卡片中（自己仍可浏览），确定吗？'
-            : '恢复单身后你的资料将重新出现在他人的牵线卡片中，确定吗？',
-          confirmButtonColor: '#ff6b81',
-        });
-      } catch(e) { return; }
-      actionLoading.value = true;
-      try {
-        const data = await api('/api/account/status', { method: 'POST' });
-        if (user.value) user.value.account_status = data.account_status;
-        vant.showToast(data.account_status === '已脱单' ? '已脱单，将不再出现在他人牵线中' : '已恢复单身');
-      } catch(e) { vant.showToast(e.message); }
-      actionLoading.value = false;
+        const toHidden = user.value && user.value.account_status === '单身';
+        try {
+          await vant.showConfirmDialog({
+            title: toHidden ? '脱单' : '恢复单身',
+            message: toHidden
+              ? '脱单后你将不出现在他人的牵线卡片中（自己仍可浏览），确定吗？'
+              : '恢复单身后你的资料将重新出现在他人的牵线卡片中，确定吗？',
+            confirmButtonColor: '#ff6b81',
+          });
+        } catch(e) { return; }
+        actionLoading.value = true;
+        try {
+          const data = await api('/api/account/status', { method: 'POST' });
+          if (user.value) user.value.account_status = data.account_status;
+          vant.showToast(data.account_status === '已脱单' ? '已脱单，将不再出现在他人牵线中' : '已恢复单身');
+        } catch(e) { vant.showToast(e.message); }
+        finally { actionLoading.value = false; }
+      } finally { accountStatusProc = false; }
     }
 
     // 切换身份（普通用户 <-> 观察员）
     async function switchRole() {
+      if (actionLoading.value) return;
       const target = isObserver.value ? 'user' : 'observer';
       const roles = availableRoles.value || [];
       if (roles.length <= 1 || !roles.includes(target)) {
@@ -5429,6 +5477,7 @@ createApp({
       return await doLike();
     }
     async function onLikeDialogBeforeClose(action) {
+      if (likeSubmitting.value) return false;   // 发送在途：确认/取消/遮罩/返回一律不关（结果回来才允许关，P16）
       if (action === 'confirm') return await trySubmitLike();
       // 取消/点遮罩关闭：有未发送附言 → 先走通用离开拦截
       if (showUnsavedConfirm.value) return false;   // 通用弹窗已开（叠在本弹窗上）：只允许通过它收尾
@@ -5437,8 +5486,10 @@ createApp({
     }
     async function doLike() {
       if (!likeTarget.value || !likeTarget.value.openid) return false;
+      if (likeSubmitting.value) return false;
       const target = likeTarget.value;
       actionLoading.value = true;
+      likeSubmitting.value = true;
       let ok = false;
       try {
         const data = await api('/api/like', {
@@ -5483,6 +5534,7 @@ createApp({
         ok = true;
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+      likeSubmitting.value = false;
       return ok;
     }
 
@@ -5495,6 +5547,7 @@ createApp({
       showFeedbackDialog.value = true;
     }
     async function onFeedbackBeforeClose(action) {
+      if (feedbackSubmitting.value) return false;   // 提交在途：任何关闭都被拦（结果回来才允许关，P16）
       if (action === 'confirm') return await doFeedback();
       // 取消/点遮罩关闭：有未提交内容 → 先走通用离开拦截
       if (showUnsavedConfirm.value) return false;
@@ -5503,6 +5556,7 @@ createApp({
     }
     async function doFeedback() {
       if (!feedbackTarget.value || !feedbackTarget.value.openid) return false;
+      if (feedbackSubmitting.value) return false;
       if (feedbackReason.value === '其他' && !feedbackText.value.trim()) {
         vant.showToast('请补充说明');
         return false;
@@ -5510,6 +5564,7 @@ createApp({
       let reason = feedbackReason.value;
       if (feedbackText.value.trim()) reason = reason + '：' + feedbackText.value.trim();
       actionLoading.value = true;
+      feedbackSubmitting.value = true;
       let ok = false;
       try {
         await api('/api/feedback', {
@@ -5521,6 +5576,7 @@ createApp({
         ok = true;
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+      feedbackSubmitting.value = false;
       return ok;
     }
 
@@ -5532,6 +5588,7 @@ createApp({
       showReportDialog.value = true;
     }
     async function onReportBeforeClose(action) {
+      if (reportSubmitting.value) return false;   // 提交在途：任何关闭都被拦（结果回来才允许关，P16）
       if (action === 'confirm') {
         if (reportSubmitting.value) return false;
         await doReport();
@@ -5652,6 +5709,7 @@ createApp({
       showSuggestionDialog.value = true;
     }
     async function onSuggestionBeforeClose(action) {
+      if (suggestionSubmitting.value) return false;   // 提交在途：任何关闭都被拦（结果回来才允许关，P16）
       if (action === 'confirm') {
         if (suggestionSubmitting.value) return false;
         await submitSuggestion();
@@ -6075,6 +6133,7 @@ createApp({
       if (actionLoading.value) return false;
       showGsTray.value = false;
       actionLoading.value = true;
+      setPageBusy('正在提交志愿…');   // 页面级锁：提交期间点候选/托盘/搜索/返回皆无效（P16）
       try {
         await api('/api/activities/' + activityId + '/group/select', {
           method: 'POST', body: JSON.stringify({ choices: selectedChoices.value.map(c => c.openid) })
@@ -6090,6 +6149,7 @@ createApp({
         return false;
       } finally {
         actionLoading.value = false;
+        clearPageBusy();   // 成功跳页也在此解除（无遗留计时器）；失败解锁后原选中保留
       }
     }
     async function loadGroupResult(activityId, round) {
@@ -6135,6 +6195,7 @@ createApp({
       showOnetooneMsg.value = true;
     }
     async function onOnetooneMsgBeforeClose(action) {
+      if (onetooneMsgSubmitting.value) return false;   // 发送在途：任何关闭都被拦（结果回来才允许关，P16）
       if (action === 'confirm') {
         if (!onetooneMsgText.value.trim()) { vant.showToast('请先输入留言内容'); return false; }
         return await doOnetooneMsg();
@@ -6147,7 +6208,9 @@ createApp({
     async function doOnetooneMsg() {
       const t = onetooneMsgTarget.value;
       if (!t || !t.openid) return false;
+      if (onetooneMsgSubmitting.value) return false;
       actionLoading.value = true;
+      onetooneMsgSubmitting.value = true;
       let ok = false;
       try {
         await api('/api/messages', {
@@ -6162,6 +6225,7 @@ createApp({
         ok = true;
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+      onetooneMsgSubmitting.value = false;
       return ok;
     }
 
@@ -6171,6 +6235,8 @@ createApp({
       if(consumeIgnorePop > 0){ consumeIgnorePop--; popConsumeBusy = false; popConsumeStep(); return; }
       if(ignoreNextPop){ ignoreNextPop=false; return; }
       isHandlingPopState = true;
+      // 页面级忙碌（pageBusy）：系统返回吞掉并停留（与 guardLeave / P15 同口径）
+      if(pageBusy.value){ isHandlingPopState=false; pushHistory({page: page.value}); vant.showToast('正在提交，请稍候'); return; }
       // 分组管理台：执行中遮罩吞掉返回；其余弹层关掉并停在原页（re-push 防 history 漂移）
       if(gaRunShow.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       // 通用未保存弹窗：返回只关弹窗、停留（不触发离开拦截）
@@ -6186,7 +6252,11 @@ createApp({
       }
       // 管理台「输入活动编号确认」类弹层（清空分组结果/清空签到/清空一对一结果）：
       // 确认级输入，关闭=作废输入符合直觉 → 豁免，不做未保存拦截（见 docs/文案对照表.md 豁免清单）。
-      if(gaConfirmShow.value){ gaConfirmShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaConfirmShow.value){
+        // 清空执行中：返回吞掉并停留（防请求在途时关层暴露底层操作）
+        if(gaConfirmBusy.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); vant.showToast('正在提交，请稍候'); return; }
+        gaConfirmShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return;
+      }
       if(gaRunPopupShow.value){
         if(guardOverlay('gaRun', () => { gaRunPopupShow.value=false; })){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
         closeGaRunPopup(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return;
@@ -6195,7 +6265,11 @@ createApp({
         if(guardOverlay('gaOtoRun', () => { gaOtoRunShow.value=false; })){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
         closeOtoRun(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return;
       }
-      if(gaOtoResetShow.value){ cancelOtoReset(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaOtoResetShow.value){
+        // 清空执行中：返回吞掉并停留（同 gaConfirmShow）
+        if(gaOtoResetBusy.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); vant.showToast('正在提交，请稍候'); return; }
+        cancelOtoReset(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return;
+      }
       if(gaUnknownShow.value){ gaUnknownShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(showPhotoViewer.value){
         const p = viewerLightbox && viewerLightbox.pswp;
@@ -6470,6 +6544,7 @@ createApp({
         } catch (_) {}
       });
       msgSending.value = true;
+      setPageBusy('正在发送…');   // 页面级锁：发送在途切卡/切页会串卡片计数与列表，先锁（P16）
       let realId = null;
       let ok = false;
       try {
@@ -6515,6 +6590,7 @@ createApp({
         vant.showToast(e.message || '发送失败');
       } finally {
         msgSending.value = false;
+        clearPageBusy();
       }
       return ok;
     }
@@ -7099,7 +7175,7 @@ createApp({
       gaConfirmInput.value = '';
       gaConfirmShow.value = true;
     }
-    function cancelGaConfirm() { gaConfirmShow.value = false; }
+    function cancelGaConfirm() { if (gaConfirmBusy.value) return; gaConfirmShow.value = false; }
     async function doGaReset() {
       if (!gaConfirmOk.value || gaConfirmBusy.value) return;
       gaConfirmBusy.value = true;
@@ -7177,6 +7253,7 @@ createApp({
     async function doGaRun(rd, m, f) {
       const name = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
       gaJobKind.value = 'group';
+      setPageBusy('正在启动任务…');   // 启动请求在途：遮罩未开时页面不可误操作（job 遮罩随 after 接管，P16）
       try {
         const r = await gaApi('/api/admin/group/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd, males_per_group: m, females_per_group: f }) });
         if ((r.status === 202 || r.status === 200) && r.data && r.data.job_id) {
@@ -7191,6 +7268,7 @@ createApp({
         if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
       }
       gaRunBusy.value = false;
+      clearPageBusy();
     }
     // ---- 一对一：清空结果确认层（破坏性，输入活动编号）----
     function openOtoResetConfirm() {
@@ -7271,6 +7349,7 @@ createApp({
     async function doOtoRun(rd, K) {
       const name = (gaDetail.value && gaDetail.value.name) || gaDetailId.value;
       gaJobKind.value = 'onetoone';
+      setPageBusy('正在启动任务…');   // 启动请求在途：遮罩未开时页面不可误操作（job 遮罩随 after 接管，P16）
       try {
         const r = await gaApi('/api/admin/onetoone/run', { method: 'POST', body: JSON.stringify({ activity_id: gaDetailId.value, round: rd, female_chats: K }) });
         if ((r.status === 202 || r.status === 200) && r.data && r.data.job_id) {
@@ -7285,6 +7364,7 @@ createApp({
         if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
       }
       gaOtoRunBusy.value = false;
+      clearPageBusy();
     }
     async function loadGaOtoResult(round) {
       // 管理台一对一结果（改名避开用户端同名函数：同名函数声明后者覆盖前者，
@@ -7540,6 +7620,7 @@ createApp({
     }
     async function markSignin(r, state) {
       if (gaSigninBusy.value[r.open_id]) return;
+      if (gaSigninBatchBusy.value) { vant.showToast('正在提交，请稍候'); return; }   // 全部清除在途：行内动作禁用（P16）
       const prevState = r.state, prevChecked = r.checked_in;
       gaSigninBusy.value = { ...gaSigninBusy.value, [r.open_id]: true };
       r.state = state; r.checked_in = isAttendancePresent(state);   // 乐观更新
@@ -7556,6 +7637,7 @@ createApp({
     }
     async function toggleSignin(r) {
       if (gaSigninBusy.value[r.open_id]) return;
+      if (gaSigninBatchBusy.value) { vant.showToast('正在提交，请稍候'); return; }   // 全部清除在途：行内动作禁用（P16）
       const name = r.real_name || r.nickname || '（没有昵称）';
       const wasChecked = !!r.checked_in;
       // 两态（D13 收口）：未签到 → 确认后写「按时」；已签到 → 确认后清空回未签到。
@@ -7575,6 +7657,7 @@ createApp({
     }
     async function onToggleSigninFlag(val) {
       if (gaSigninFlagBusy.value || !gaDetailId.value) return;
+      if (gaSigninBatchBusy.value) { vant.showToast('正在提交，请稍候'); return; }   // 全部清除在途：开关不动（P16）
       // 误触防护：关闭是「闸门静默失效」方向（未签到者可填志愿），关前必经确认；
       // 开启方向是正常现场操作且误开后后果可逆，不拦。取消时开关受控于 gaSigninFlagOn，原地不动。
       if (!val) {
@@ -7604,7 +7687,7 @@ createApp({
       gaClearConfirmInput.value = '';
       gaClearConfirmShow.value = true;
     }
-    function cancelClearAllSignins() { gaClearConfirmShow.value = false; }
+    function cancelClearAllSignins() { if (gaSigninBatchBusy.value) return; gaClearConfirmShow.value = false; }
     async function doClearAllSignins() {
       if (!gaClearConfirmOk.value || gaSigninBatchBusy.value) return;   // 输入的活动编号不符时按钮本就 disabled，这里是双保险
       gaSigninBatchBusy.value = true;
@@ -7629,6 +7712,7 @@ createApp({
       showClaim, claimName, claimPhone, claiming, submitClaim, backToLogin, requestBackToLogin,
       isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
+      pageBusy, pageBusyText,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
       accountStatusLabel, toggleAccountStatus,
       activities, loadingActivities, currentActivity, actionLoading, activityDetailFrom,
@@ -7648,13 +7732,13 @@ createApp({
       onPhotoMouseDown, onPhotoMouseMove, onPhotoMouseUp, onPhotoMouseLeave,
       canPraiseCard, cardPraised, canPraiseDetail, praiseLeft, praiseBusy, togglePraise,
       praiseReady, praiseReceivedWeek,
-      openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage,
+      openLikeDialog, openLikeDialogForUser, onLikeDialogBeforeClose, doLike, likeMessage, likeSubmitting,
       showLikeDialog, likeDialogTitle, likeTarget, likeType,
       showFeedbackDialog, feedbackReason, feedbackText, feedbackTarget,
-      openFeedbackDialog, onFeedbackBeforeClose, doFeedback,
-      showReportDialog, reportReason, reportReasonText, reportTarget, openReportDialog, onReportBeforeClose, doReport,
+      openFeedbackDialog, onFeedbackBeforeClose, doFeedback, feedbackSubmitting,
+      showReportDialog, reportReason, reportReasonText, reportTarget, openReportDialog, onReportBeforeClose, doReport, reportSubmitting,
       reportedMessages, loadingReported, reportedCount, openReportedMessages, loadReportedMessages, handleReported,
-      showSuggestionDialog, suggestionType, suggestionText, openSuggestionDialog, onSuggestionBeforeClose,
+      showSuggestionDialog, suggestionType, suggestionText, openSuggestionDialog, onSuggestionBeforeClose, suggestionSubmitting,
       likesData, loadingLikes, loadMyLikesCount, notifications,
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe,
       myActivitiesList, loadingMyActivities, openMyActivities,
@@ -7662,7 +7746,7 @@ createApp({
       onetooneResult, onetooneResultLoading,
       onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
       goOnetooneResult, switchOnetooneRound,
-      openOnetooneMsg, onOnetooneMsgBeforeClose,
+      openOnetooneMsg, onOnetooneMsgBeforeClose, onetooneMsgSubmitting,
       profileData, openProfileDetail, loadingProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,

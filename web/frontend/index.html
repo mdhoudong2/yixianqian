@@ -6257,7 +6257,7 @@ createApp({
         backToLogin(); isHandlingPopState=false; return;
       }
       // 管理台「输入活动编号确认」类弹层（清空分组结果/清空签到/清空一对一结果）：
-      // 确认级输入，关闭=作废输入符合直觉 → 豁免，不做未保存拦截（见 docs/文案对照表.md 豁免清单）。
+      // 确认级输入，关闭=作废输入符合直觉 → 豁免，不做未保存拦截。
       if(gaConfirmShow.value){
         // 清空执行中：返回吞掉并停留（防请求在途时关层暴露底层操作）
         if(gaConfirmBusy.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); vant.showToast('正在提交，请稍候'); return; }

@@ -1,25 +1,28 @@
 # 一线牵
 
-面向教会青年的婚恋交友平台 —— 飞书机器人 + H5 双端，数据存于飞书多维表格（Bitable）。
+面向教会青年的婚恋交友平台 —— 飞书机器人 + H5 双端，业务数据存于飞书多维表格（Bitable）。
 
 > 生产环境：<https://app.nantou.love> ｜ 机器人：飞书搜索「一线牵」
 
-## 功能特性
+## 功能概述
+
+按模块划分；具体机制、数值与文案以代码为准。
 
 **飞书机器人（bot/）**
-- 注册表单引导、人工审核通过后自动开通 H5
-- 匿名喜欢 / 相互喜欢揭晓（自动互发对方飞书名片）
-- 爱心机制：初始 3 颗，邀请好友注册 +1（上限 30）
-- 活动报名与通知：实名通知喜欢 TA 的人、匿名通知 TA 喜欢的人
-- 分组匹配：按活动设置男女比例收集志愿，生成分组结果并推送
-- 主菜单卡片（卡片1）交互，消息中心通知汇总
+- 注册与审核：表单引导、人工审核、H5 开通
+- 牵线通知：喜欢 / 相互喜欢
+- 活动：报名与活动通知
+- 匹配：分组匹配与一对一匹配（一对一为「女生坐镇、男生上门」）
+- 积分奖励
+- 主菜单卡片与消息通知汇总
 
 **H5 网页（web/）**
-- 左右滑动卡片浏览异性资料、点心表达心意
-- 消息中心：谁喜欢了我 / 相互喜欢
-- 活动列表与报名、分组志愿提交与结果查看
-- 个人资料查看与修改
-- 引流页 `public.html`（匿名浏览 + 注册转化埋点）
+- 牵线：浏览与表达心意
+- 消息：喜欢 / 相互喜欢与通知汇总
+- 活动：报名、签到、志愿与结果
+- 我的：资料查看与修改
+- 公开引流页 `public.html`
+- 管理台（管理员功能，按权限开放）
 
 ## 架构
 
@@ -30,13 +33,13 @@
                                 ▼                     ▼
                            多维表格 Bitable ◀──────────┘
                                ▲
-                    运行时共享 JSON（通知等，SHARED_DATA_DIR）
+                    运行时共享数据（通知等，SHARED_DATA_DIR）
 ```
 
-- **数据层**：全部业务数据存飞书多维表格，无自建数据库
-- **bot ↔ H5 通信**：通过共享运行时 JSON（`SHARED_DATA_DIR`，机器人写、H5 读）
-- **H5 性能**：后端本地快照缓存 + 15s 定时刷新（gunicorn `post_fork` 预热），避免每次请求直连飞书 API
-- **AI 能力**：匹配推荐评分、图像识别（ModelScope）、联网检索（Tavily）等工具位于 `scripts/dev/tools/`
+- **数据层**：业务数据存飞书多维表格；积分账本为共享目录下的 SQLite（见 `lib/points_db.py`）
+- **bot ↔ H5 通信**：通过共享运行时数据目录（`SHARED_DATA_DIR`，机器人写、H5 读）
+- **H5 读取**：本地快照缓存＋定时刷新（策略见 `web/backend/app.py` 与 `docs/读取一致性.md`）
+- **外围工具**：图像识别、联网检索、飞书 API 调用等游离工具位于 `scripts/dev/tools/`（以目录为准）
 
 ## 技术栈
 
@@ -45,15 +48,15 @@
 | 机器人 | Python 3.12 · lark-oapi（WS 长连接） |
 | H5 后端 | Flask · gunicorn · Pillow · itsdangerous |
 | H5 前端 | Vue 3（CDN）· Vant 移动端组件 |
-| 数据 | 飞书多维表格 Bitable |
-| AI | DeepSeek · ModelScope Vision · Tavily |
+| 数据 | 飞书多维表格 Bitable（积分账本 SQLite） |
+| 工具 | ModelScope Vision · Tavily（见 `scripts/dev/tools/`） |
 
 ## 快速开始（本地开发）
 
 ```bash
 git clone https://github.com/mdhoudong2/yixianqian && cd yixianqian
 
-# 1. 配置密钥
+# 1. 配置密钥（两处 local_config.py 的 SHARED_DATA_DIR 需一致，默认 <仓库根>/data/）
 cp bot/local_config.example.py bot/local_config.py
 cp web/backend/local_config.example.py web/backend/local_config.py
 
@@ -61,25 +64,33 @@ cp web/backend/local_config.example.py web/backend/local_config.py
 python3 -m venv bot/venv && bot/venv/bin/pip install -r bot/requirements.txt
 cd bot && ./venv/bin/python yixianqian_bot_ws.py
 
-# 3. H5 后端（端口 8091）
+# 3. H5 后端（默认 127.0.0.1:8091，可用 BIND 覆盖，见 gunicorn.conf.py）
 python3 -m venv web/backend/venv && web/backend/venv/bin/pip install -r web/backend/requirements.txt
 cd web/backend && ./venv/bin/gunicorn -c gunicorn.conf.py app:app
 ```
 
 ## 文档
 
-- [部署与协作](docs/DEPLOY.md) —— 生产部署、发布流程、服务器操作
-- [文案对照表](docs/文案对照表.md) —— 机器人全部用户消息文案
-- [scripts/dev 说明](scripts/dev/README.md) —— 一次性脚本用法
+- [部署与协作](docs/DEPLOY.md) —— 环境与部署、发布流程、服务器操作
+- [跨进程读取一致性](docs/读取一致性.md) —— H5 快照与跨进程读取规则
+- [scripts/dev 说明](scripts/dev/README.md) —— 一次性脚本的运行方式与生产保护
 
 ## 仓库结构
 
 ```
 bot/         飞书机器人（WS 长连接）
 web/backend  Flask H5 后端      web/frontend  静态 H5 页面
-lib/         bot 与 H5 共享代码（飞书客户端/多维表格 DAO/JSON 存储）
-scripts/ops  守护/运维脚本      scripts/dev   一次性/排查脚本（勿用于生产）
-deploy/      systemd 服务模板   docs/         文档
-data/        运行时 JSON（gitignore，生产实际路径 /opt/yixianqian/data）
-.github/     GitHub Actions 语法检查（每次 push 到 main 自动执行）
+lib/         bot 与 H5 共享代码（飞书客户端 / 多维表格 DAO / 存储 / 共享业务逻辑）
+scripts/ops  守护/运维脚本      scripts/dev   一次性/排查脚本（勿用于生产，见其 README）
+deploy/      systemd 服务模板与 nginx 配置
+docs/        文档                tests/        pytest 单测
+data/        运行时 JSON 与积分账本（gitignore；生产实际路径见部署文档）
+.github/     GitHub Actions CI：语法/模板绑定检查 + ruff + pytest（触发条件见 workflow）
 ```
+
+## 文档约定
+
+本仓库文档只描述**稳定内容**——结构、路径、架构、原则与流程；不收录易变细节：
+
+- 数值、端点/接口、文案、脚本清单、字段等易变信息，一律以**代码为唯一权威**（如快照刷新间隔见 `web/backend/app.py` 的 `_SNAPSHOT_INTERVALS`；脚本清单以 `scripts/` 目录为准）。
+- 功能、文案、数值的变更**无需同步文档**；仅当结构或流程本身变化（目录布局、部署方式、跨进程一致性规则等）才更新文档。

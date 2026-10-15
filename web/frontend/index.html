@@ -6971,7 +6971,7 @@ createApp({
     });
     const gaOtoRunSummary = computed(() => {
       const pv = gaOtoRunPreview.value, k = gaOtoRunK.value;
-      if (!pv || !k || !pv.male_count || !pv.female_count) return '';
+      if (!pv || !k || !pv.male_count || !pv.female_count || k > pv.male_count) return '';
       const E = pv.female_count * k;
       const base = Math.floor(E / pv.male_count), rem = E % pv.male_count;
       return '女生每人 ' + k + ' 场 · 共 ' + E + ' 场；男生每人 ' + base + (rem ? '~' + (base + 1) : '') + ' 场';

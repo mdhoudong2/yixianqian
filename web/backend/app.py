@@ -7451,7 +7451,7 @@ def admin_activity_mode():
 
 # ========== 管理员现场签到（R3） ==========
 # 零 schema 变更：复用报名表既有「签到状态」（按时/迟到/未到；空=未签到）与环境
-# 新开关「签到功能开启」。UI 只有两态（已到→按时 / 未到→未到，D13）；「已到」判定
+# 新开关「签到功能开启」。UI 只有两态（未签到→按时 / 已签到→清空取消，D13）；「已到」判定
 # = 值 ∈ {按时, 迟到}（历史遗留的迟到也算到，来了就是来了）。名册 fresh 直读报名表
 # （现场场景必须最新值），不走快照。读失败 fail-closed：名录类回 500 明报，不静默
 # 吞成空名单。
@@ -7540,11 +7540,11 @@ def admin_activity_signin_write():
     """单笔 {activity_id, open_id, state}、批次补空 {activity_id, all_pending: true}
     或全部清除 {activity_id, clear_all: true}。
 
-    UI 只有两态：已到→「按时」、未到→「未到」；显式拒绝「迟到」（D13；历史值仍按
-    已到判定）。直接对报名记录盲写（同活动/人只有一条；多条 → 明确报错，照 bot
-    签到指令的处理），不需要锁。批次只补空值，不覆盖已标记的（旧 UI 的入口，
-    保留兼容旧客户端与既有测试；新 UI 不再调用）。全部清除把该活动所有已报名
-    记录的「签到状态」清空回「未签到」。
+    UI 只有两态：未签到→「按时」、已签到→清空（取消签到，state=""）；显式拒绝
+    「迟到」（D13；历史值仍按已到判定）。直接对报名记录盲写（同活动/人只有一条；
+    多条 → 明确报错，照 bot 签到指令的处理），不需要锁。批次只补空值，不覆盖
+    已标记的（旧 UI 的入口，保留兼容旧客户端与既有测试；新 UI 不再调用）。
+    全部清除把该活动所有已报名记录的「签到状态」清空回「未签到」。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7606,8 +7606,8 @@ def admin_activity_signin_write():
     state = data.get("state")
     if not isinstance(target, str) or not target.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if state not in ("按时", "未到"):
-        return jsonify({"error": "state 只能是「按时」或「未到」"}), 400
+    if state not in ("按时", "未到", ""):
+        return jsonify({"error": "state 只能为「按时」「未到」或空（取消签到）"}), 400
     records = _signin_signup_records(act_id, target.strip())
     if records is None:
         return jsonify({"error": "签到信息查询失败，请重试",

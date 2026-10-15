@@ -107,6 +107,7 @@ def configure_grouping_lib(lock_dir):
             "signup_attendance": F_SIGNUP_ATTENDANCE,
             "gender": F_GENDER,
             "user_id": F_USER_ID,
+            "real_name": F_REAL_NAME,
         },
         lock_dir=lock_dir,
     )
@@ -147,6 +148,7 @@ def configure_onetoone_lib(lock_dir):
             "signup_status": F_SIGNUP_STATUS,
             "gender": F_GENDER,
             "user_id": F_USER_ID,
+            "real_name": F_REAL_NAME,
             "self_hobbies": F_SELF_HOBBIES,
             "self_sports": F_SELF_SPORTS,
             "self_traits": F_SELF_TRAITS,
@@ -396,12 +398,13 @@ _snapshot_version = {}  # key -> int 版本号：每次成功交换 +1，供卡�
 _next_due = {}  # key -> 下次刷新到期时间（分表调度）
 
 # 分表刷新间隔（秒）：users 变化最频繁最重要；活动/观察员/分组低频
+# activities 表小，缩短轮询到 30s：bot 端切模式/其它进程的写入 ≤30s 内被 H5 快照吸收
 _SNAPSHOT_INTERVALS = {
     "users": 60,
     "likes": 20,
     "messages": 20,
     "signups": 45,
-    "activities": 180,
+    "activities": 30,
     "observers": 300,
     "group_selections": 300,
     "group_results": 300,
@@ -545,16 +548,6 @@ def refresh_snapshot():
     for key in _SNAPSHOT_FETCHERS:
         refresh_snapshot_table(key)
 
-def _group_collecting():
-    """是否有活动正在「收集中」分组或一对一志愿（对应表仅在此时高频刷新）"""
-    for a in _snapshot.get("activities", []):
-        fields = a.get("fields", {})
-        if bitable.get_select_value(fields, F_ACTIVITY_GROUP_STATUS) == "收集中":
-            return True
-        if bitable.get_select_value(fields, F_ACTIVITY_ONETOONE_STATUS) == "收集中":
-            return True
-    return False
-
 _IMAGE_WARM_DUE = [0.0]
 
 def _snapshot_loop():
@@ -564,9 +557,6 @@ def _snapshot_loop():
             now = time.time()
             for key in _SNAPSHOT_FETCHERS:
                 interval = _SNAPSHOT_INTERVALS.get(key, 60)
-                # 分组/一对一表仅在任一模式「收集中」才高频；否则低频
-                if key.startswith(("group_", "onetoone_")) and not _group_collecting():
-                    interval = 600
                 if now >= _next_due.get(key, 0):
                     refresh_snapshot_table(key)
                     _next_due[key] = time.time() + interval
@@ -2940,6 +2930,14 @@ def _norm_phone(v):
 def _norm_name(v):
     """归一化姓名：去除所有空白字符。"""
     return re.sub(r"\s+", "", str(v or ""))
+
+def _display_real_name(fields):
+    """users 记录 → 显示用真名：「姓名」去空白后非空则用它，否则空串。
+
+    现场作业面统一「真名＋编号」的读取端合约：空白/缺失一律返回空串，
+    由调用方回退既有来源名（落库名/昵称）——不把空白当真名。
+    """
+    return (bitable.get_field_text(fields, F_REAL_NAME) or "").strip()
 
 def _claim_auto_signup(open_id, user_fields):
     """认领时若资料已审核（单身）且注册表单选了「微信缴费=我已缴费」，立即报名
@@ -5845,6 +5843,7 @@ def group_candidates(activity_id):
                 candidates.append({
                     "openid": s_openid,
                     "nickname": bitable.get_field_text(uf, F_NICKNAME),
+                    "real_name": _display_real_name(uf),
                     "photo": photo,
                     "user_id": bitable.get_field_text(uf, F_USER_ID),
                     "baptismal_name": bitable.get_field_text(uf, F_BAPTISMAL_NAME),
@@ -5855,9 +5854,9 @@ def group_candidates(activity_id):
                     "hobbies": "、".join(bitable.get_multi_select_value(uf, F_SELF_HOBBIES))
                 })
     app.logger.warning(
-        "[group_candidates] open_id=%s activity=%s text_act=%s group_status=%s "
+        "[group_candidates] open_id=%s activity=%s text_act=%s "
         "my_gender=%s target=%s signups=%d candidates=%d",
-        open_id, activity_id, text_act_id, group_status,
+        open_id, activity_id, text_act_id,
         my_gender, target_gender, len(signups), len(candidates))
     return jsonify({"candidates": candidates})
 
@@ -6013,13 +6012,8 @@ def group_result(activity_id):
 
     # 轮次：默认展示最新一轮（round 最大）。旧无轮次记录(空)视为第1轮。
     def _round_of(f):
-        rv = bitable.get_select_value(f, F_GR_ROUND)
-        if rv:
-            try:
-                return int(rv)
-            except ValueError:
-                return 0
-        return 1  # 无轮次的老数据视为第1轮
+        s = bitable.get_field_text(f, F_GR_ROUND)
+        return int(s) if s.isdigit() and int(s) >= 1 else 1
     available_rounds = sorted({_round_of(r.get("fields", {})) for r in results})
     if not available_rounds:
         available_rounds = [1]
@@ -6034,16 +6028,18 @@ def group_result(activity_id):
         req_round = latest_round
     round_results = [r for r in results if _round_of(r.get("fields", {})) == req_round]
 
-    # 一次性把 users 快照映射为 open_id -> 用户ID（避免对每个成员逐条查库）
+    # 一次性把 users 快照映射为 open_id -> 用户ID/真名/昵称（避免对每个成员逐条查库）
     users_snap = _snap("users")
     if not users_snap:
         users_snap = bitable.get_all_users()
-    uid_by_oid = {}
+    uid_by_oid, real_by_oid, nick_by_oid = {}, {}, {}
     for u in users_snap:
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
         if oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
+            nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
 
     # 找到我的组号
     my_group = None
@@ -6053,7 +6049,10 @@ def group_result(activity_id):
         group_no = int(bitable.get_field_number(fields, F_GR_GROUP_NO, 0))
         oid = bitable.get_field_text(fields, F_GR_USER_OID)
         member = {
-            "nickname": bitable.get_field_text(fields, F_GR_USER_NAME),
+            # 现场作业面统一真名：真名 > 落库名（结果表）> 快照昵称，空则前端兜底
+            "nickname": (real_by_oid.get(oid)
+                         or bitable.get_field_text(fields, F_GR_USER_NAME)
+                         or nick_by_oid.get(oid, "")),
             "gender": bitable.get_select_value(fields, F_GR_USER_GENDER),
             "openid": oid,
             "user_id": uid_by_oid.get(oid, "")
@@ -6073,7 +6072,7 @@ def group_result(activity_id):
     })
 
 # ========== 管理员：分组管理台（H5） ==========
-# 对应 bot 的 5 条管理员分组指令（开始填志愿 / 执行分组 / 分组状态 / 查看未提交 /
+# 对应 bot 的管理员分组指令（执行分组 / 分组状态 / 查看未提交 / 清空分组结果 /
 # 分组功能开关），外加活动总览与「执行影响面预览」两个新能力。
 # - 写操作复用 lib/grouping 的实现与跨进程活动锁（与 bot 进程互斥）；
 # - 读端点全部 fresh=True 实时读飞书并回填快照（docs/读取一致性.md 规则一：
@@ -6289,7 +6288,7 @@ def _create_onetoone_job(job_id, activity_id, round_no, operator):
                        {"activity_id": activity_id, "round": round_no}, operator)
 
 
-def _run_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack):
+def _run_grouping_job(job_id, activity_id, round_no, activity_record, m_per, f_per, lock_stack):
     """job 线程主体：执行 lib.execute_round，并负责释放请求线程抢到的活动锁。
 
     锁跨线程释放是刻意的（请求线程抢锁快速回 409，job 线程持锁跑长任务）：
@@ -6304,6 +6303,7 @@ def _run_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack
         res = lib_grouping.execute_round(
             activity_id, round_no, client=_grouping_client, activity=activity_record,
             find_user_by_openid=_grouping_find_user_by_openid,
+            males_per_group=m_per, females_per_group=f_per,
             treat_search_failure_as_empty=False)
     except Exception as e:  # noqa: BLE001 — job 边界必须兜住异常并落盘，不能无声死掉
         err = e
@@ -6332,17 +6332,17 @@ def _run_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack
     refresh_snapshot_table_async("group_results")
 
 
-def _start_grouping_job(job_id, activity_id, round_no, activity_record, lock_stack):
+def _start_grouping_job(job_id, activity_id, round_no, activity_record, m_per, f_per, lock_stack):
     threading.Thread(
         target=_run_grouping_job, name=f"grouping-job-{job_id}", daemon=True,
-        args=(job_id, activity_id, round_no, activity_record, lock_stack)).start()
+        args=(job_id, activity_id, round_no, activity_record, m_per, f_per, lock_stack)).start()
 
 
-def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
-    """一对一 job 线程主体：执行 lib.onetoone.execute（锚定轮次）。
+def _run_onetoone_job(job_id, activity_id, round_no, activity_record, female_chats):
+    """一对一 job 线程主体：执行 lib.onetoone.execute（锚定轮次 + 女生场次）。
 
     活动锁由 lib.execute 自己在 job 线程内获取/释放（带有上限的 flock 等待），
-    请求线程**不**抢锁：start_collection/execute 都自持锁，若请求线程先抢再让
+    请求线程**不**抢锁：execute 自持锁，若请求线程先抢再让
     job 线程进 lib 会撞上同一把不可重入的线程锁（同进程死锁）。
     锁预算传 H5 的 5s：被别的任务占着时快速失败成 BUSY 结果，而不是让遮罩空等。
     """
@@ -6355,7 +6355,7 @@ def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
         res = lib_onetoone.execute(
             activity_id, round_no, client=_grouping_client, activity=activity_record,
             find_user_by_openid=_grouping_find_user_by_openid,
-            lock_timeout=GROUPING_API_LOCK_TIMEOUT)
+            lock_timeout=GROUPING_API_LOCK_TIMEOUT, female_chats=female_chats)
     except Exception as e:  # noqa: BLE001 — job 边界必须兜住异常并落盘，不能无声死掉
         err = e
     if err is not None:
@@ -6378,10 +6378,10 @@ def _run_onetoone_job(job_id, activity_id, round_no, activity_record):
     refresh_snapshot_table_async("onetoone_results")
 
 
-def _start_onetoone_job(job_id, activity_id, round_no, activity_record):
+def _start_onetoone_job(job_id, activity_id, round_no, activity_record, female_chats):
     threading.Thread(
         target=_run_onetoone_job, name=f"onetoone-job-{job_id}", daemon=True,
-        args=(job_id, activity_id, round_no, activity_record)).start()
+        args=(job_id, activity_id, round_no, activity_record, female_chats)).start()
 
 
 def _active_job_for(activity_id):
@@ -6409,9 +6409,10 @@ def admin_group_activities():
 
     # 按活动集合的实际模式/状态做「联集」判断，只 fresh 读列表行真正会显示的子表。
     # 行渲染（index.html gaRowSub）：一对一(非未开始)行显示 onetoone_submitted_count；
-    # 其余行按分组状态——未开始不用计数、已完成用轮次、收集中/已截止用 submitted_count。
-    # 轮次（has_results/latest_round/available_rounds）对收集中的活动也要正确
-    # （A-0011 收集中却有历史轮次，审计必修 2）→ 非「未开始」一律读结果表。
+    # 其余行按分组状态——未开始不用计数、已完成用轮次。
+    # 状态值域现为「未开始（空）/已完成」；收集中/已截止 是历史遗留值，前端容忍
+    # 显示（后端与 bot 已不再写这两个值，只读不写）——遗留行保守读轮次+计数两表，
+    # 与旧版行为一致（A-0011 收集中却有历史轮次，审计必修 2）。
     # 冲突行只有纠偏提示，但冲突属罕见历史态，按任务口径保守读两模式全表。
     # 一对一结果表不读：列表行不渲染一对一轮次（详情端点才给），读了纯是白付延迟。
     # 未被任何行用到的表不读，回应字段仍在，值走空集合（schema 不变）。
@@ -6432,9 +6433,9 @@ def admin_group_activities():
                or lib_grouping.STATUS_NOT_STARTED)
         if gst == lib_grouping.STATUS_NOT_STARTED:
             continue
-        need_rounds = True                      # 已完成/收集中/已截止都可能已有历史轮次
+        need_rounds = True                      # 已完成/遗留值都可能已有历史轮次
         if gst != lib_grouping.STATUS_DONE:
-            need_selections = True
+            need_selections = True              # 遗留 收集中/已截止 行仍渲染已提交计数
 
     selections = _snap_fresh("group_selections") if need_selections else []
     results = _snap_fresh("group_results") if need_rounds else []
@@ -6627,6 +6628,7 @@ def admin_group_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
 
     # 已填写名单（加法字段）：顺序与去重集合一致，前端一次载入即可切换两个名单
@@ -6638,6 +6640,7 @@ def admin_group_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
     return jsonify({
         "activity_id": act_id,
@@ -6653,8 +6656,9 @@ def admin_group_unsubmitted():
 def admin_group_preview():
     """执行影响面预览（RFC R8 红线：零写入，绝不碰「分组状态」）。
 
-    lib.preview_round 是与 execute_round 完全独立的只读路径；这里只补 400 校验与
-    活动解析。前端「开始填志愿」的确认框用 historical_results_to_clear 显示真实笔数。
+    lib.preview_round 是与 execute_round 完全独立的只读路径；这里只补 400 校验、
+    活动解析与「round 缺省=最新轮次+1」的推演（由 lib.latest_round 统一口径，
+    与 run 端点一致）。前端确认层用 historical_results_to_clear 显示已有笔数。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -6668,12 +6672,20 @@ def admin_group_preview():
     round_no = data.get("round")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+    if round_no is not None and (not isinstance(round_no, int)
+                                 or isinstance(round_no, bool) or round_no < 1):
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
     if not act:
         return jsonify({"error": "活动不存在"}), 404
+
+    if round_no is None:
+        latest = lib_grouping.latest_round(_grouping_client, act_id)
+        if latest is None:
+            return jsonify({"error": "读取历史分组结果失败，无法确定默认轮次",
+                            "code": "SEARCH_FAILED"}), 500
+        round_no = latest + 1
 
     res = lib_grouping.preview_round(
         act_id, round_no, client=_grouping_client, activity=act,
@@ -6687,14 +6699,59 @@ def admin_group_preview():
     return jsonify(res)
 
 
-@app.route("/api/admin/group/start", methods=["POST"])
-def admin_group_start():
-    """开始填志愿：开放志愿收集；clear_results=True（默认）时清空全部历史结果。
+@app.route("/api/admin/group/reset", methods=["POST"])
+def admin_group_reset():
+    """清空分组结果：清空该活动全部轮次结果并把分组状态重置为未开始。
 
-    `clear_results=False` 是「开启新一轮」——保留该活动全部历史轮次结果，只开放
-    收集，供已分过组的活动接着跑第 N+1 轮（算法确定性，重跑旧轮次无意义）。
-    前端必须已走过 preview 确认（DESIGN 5.3.3）；这里只保证「写操作与预览一致地
-    走 lib + 活动锁」。
+    lib.reset_group_results 自持活动锁（锁预算 5s 快速失败 → 409）且 fail-closed：
+    结果表读失败/删除不足/状态清空写失败都如实回错误码，绝不吞成成功。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(5, 60, "group_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+
+    act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
+    if not act:
+        return jsonify({"error": "活动不存在"}), 404
+
+    res = lib_grouping.reset_group_results(
+        act_id, client=_grouping_client, activity=act,
+        lock_timeout=GROUPING_API_LOCK_TIMEOUT)
+    res_code = res.get("code")
+    if res_code == "BUSY":
+        return jsonify({"error": "另一场分组正在执行中，请稍候",
+                        "busy_activity_id": act_id}), 409
+    if res_code != "OK":
+        # 删除不完整/状态清空失败时数据可能已部分变化：刷新快照让管理台看到真实状态
+        if res_code in ("DELETE_INCOMPLETE", "STATUS_FAILED"):
+            refresh_snapshot_table_async("activities")
+            refresh_snapshot_table_async("group_results")
+        return jsonify({"error": "清空分组结果失败，请稍后重试", "code": res_code}), 500
+
+    refresh_snapshot_table_async("activities")
+    refresh_snapshot_table_async("group_results")
+    return jsonify({
+        "ok": True,
+        "activity_id": act_id,
+        "cleared_results": res["cleared_results"],
+    })
+
+
+@app.route("/api/admin/group/run", methods=["POST"])
+def admin_group_run():
+    """执行分组：抢到锁后立即回 202 + job_id，前端轮询 /job（RFC 4.6）。
+
+    入参 {activity_id, males_per_group≥1, females_per_group≥1, round?}；round 缺省
+    = 最新已有轮次 + 1（lib.latest_round，无结果则第1轮）。每组人数是执行入参，
+    随 job 传给 lib.execute_round，不再从活动栏位读。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -6707,76 +6764,27 @@ def admin_group_start():
     activity_id = data.get("activity_id")
     m_per = data.get("males_per_group")
     f_per = data.get("females_per_group")
-    clear_results = data.get("clear_results", True)
+    round_no = data.get("round")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
     if (not isinstance(m_per, int) or isinstance(m_per, bool) or m_per < 1
             or not isinstance(f_per, int) or isinstance(f_per, bool) or f_per < 1):
         return jsonify({"error": "每组人数必须是大于0的整数"}), 400
-    if not isinstance(clear_results, bool):
+    if round_no is not None and (not isinstance(round_no, int)
+                                 or isinstance(round_no, bool) or round_no < 1):
+        # 轮次不设上限（字段已转文本）；与一对一 run 同口径：只要求 ≥1 的整数
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
     if not act:
         return jsonify({"error": "活动不存在"}), 404
 
-    try:
-        with lib_grouping.grouping_lock(act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
-            res = lib_grouping.start_group(
-                act_id, m_per, f_per, client=_grouping_client, activity=act,
-                treat_search_failure_as_empty=False, clear_results=clear_results)
-    except lib_grouping.GroupingBusy:
-        return jsonify({"error": "另一场分组正在执行中，请稍候",
-                        "busy_activity_id": act_id}), 409
-
-    if res.get("code") == "EXCLUSIVE_MODE":
-        # 动作层互斥：对面一对一开着/没收尾 → 拒绝，不自动动对面模式
-        return jsonify({"error": "该活动的一对一模式仍在开启或未收尾，请先关闭一对一模式",
-                        "code": "EXCLUSIVE_MODE"}), 409
-    if res.get("code") != "OK":
-        # SEARCH_FAILED：lib 先写「收集中」再查历史结果，查失败时状态已开、结果未删。
-        # 如实回错误并刷新状态快照，让管理员看到真实状态后重试；不吞成成功。
-        refresh_snapshot_table_async("activities")
-        return jsonify({
-            "error": "读取历史分组结果失败，历史结果未清除；分组状态已置为「收集中」，请稍后重试",
-            "code": res.get("code")}), 500
-
-    refresh_snapshot_table_async("activities")
-    refresh_snapshot_table_async("group_results")
-    return jsonify({
-        "ok": True,
-        "activity_id": act_id,
-        "name": res["activity_name"],
-        "group_status": lib_grouping.STATUS_COLLECTING,
-        "males_per_group": m_per,
-        "females_per_group": f_per,
-        "cleared_results": res["cleared_results"],
-    })
-
-
-@app.route("/api/admin/group/run", methods=["POST"])
-def admin_group_run():
-    """执行分组：抢到锁后立即回 202 + job_id，前端轮询 /job（RFC 4.6）。"""
-    open_id, err, code = _require_admin()
-    if err:
-        return err, code
-    rl = _rate_limit(5, 60, "group_admin")
-    if rl:
-        return rl
-
-    data = request.get_json(silent=True) or {}
-    activity_id = data.get("activity_id")
-    round_no = data.get("round")
-    if not isinstance(activity_id, str) or not activity_id.strip():
-        return jsonify({"error": "请求体不合法"}), 400
-    if (not isinstance(round_no, int) or isinstance(round_no, bool)
-            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
-        # 轮次上限 10 与一对一 run 对齐（bot 端保持原行为，Phase 1 parity 网钉死）
-        return jsonify({"error": "请求体不合法"}), 400
-
-    act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
-    if not act:
-        return jsonify({"error": "活动不存在"}), 404
+    if round_no is None:
+        latest = lib_grouping.latest_round(_grouping_client, act_id)
+        if latest is None:
+            return jsonify({"error": "读取历史分组结果失败，无法确定默认轮次",
+                            "code": "SEARCH_FAILED"}), 500
+        round_no = latest + 1
 
     # 排队层幂等（RFC 4.6/6.3）：同 (活动, 轮次) 已有本进程 pending/running 的 job
     # → 409 + 既有 job_id，前端直接接上去轮询；与 lib 内的数据层幂等互补，两层都要有。
@@ -6809,7 +6817,7 @@ def admin_group_run():
                         "job_id": existing, "activity_id": act_id, "round": round_no}), 409
 
     try:
-        _start_grouping_job(job_id, act_id, round_no, act, lock_stack)
+        _start_grouping_job(job_id, act_id, round_no, act, m_per, f_per, lock_stack)
     except Exception:  # noqa: BLE001
         _update_grouping_job(job_id, lambda j: j.update(
             state="failed", finished_at=int(time.time()), progress="", error="任务线程启动失败"))
@@ -6888,8 +6896,25 @@ def admin_group_result():
     if not act:
         return jsonify({"error": "活动不存在"}), 404
 
-    return jsonify(lib_grouping.fetch_result(
-        act_id, round_no, client=_grouping_client, activity=act))
+    res = lib_grouping.fetch_result(act_id, round_no, client=_grouping_client, activity=act)
+    # 现场作业面统一「真名＋编号」：lib 的 display_name 是落库名（缺时退 oid），
+    # 这里用 users 快照补真名与用户ID，不逐人打飞书
+    users_snap = _snap("users")
+    if not users_snap:
+        users_snap = bitable.get_all_users()
+    uid_by_oid, real_by_oid = {}, {}
+    for u in users_snap:
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid:
+            uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
+    for grp in res.get("groups", []):
+        for m in grp.get("members", []):
+            m["user_id"] = uid_by_oid.get(m["open_id"], "")
+            m["real_name"] = real_by_oid.get(m["open_id"], "")
+            m["display_name"] = m["real_name"] or m["display_name"]
+    return jsonify(res)
 
 
 @app.route("/api/admin/group/flag", methods=["POST"])
@@ -6929,15 +6954,10 @@ def admin_group_flag():
     if res_code != "OK":
         # 写失败/查询失败如实回错误，绝不回 {"ok": true}（静默写失败已修）
         return jsonify({"error": "分组开关写入失败，请稍后重试", "code": res_code}), 500
-    refresh_snapshot_table_async("activities")
-    resp = {"ok": True, "activity_id": act_id, "name": name, "group_flag": target}
-    if not enabled:
-        # 关 flag 只是关「我的分组」入口，不改状态：分组仍在收集中时用户照常能提交志愿，
-        # 提醒管理员别把它当停用（加法字段，不改变行为）。
-        gs = bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_GROUP_STATUS)
-        if gs in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
-            resp["warning"] = f"分组状态仍为「{gs}」，用户仍可提交志愿；关闭的只是入口"
-    return jsonify(resp)
+    # 开关写入成功即同步刷新快照（coalesce=0 写后必抓）：用户端/管理台 reopening 立即可见；
+    # 同步耗时=一次 activities 拉取（量级 <1s，可接受）；fetcher 返回 None 由 refresh 内部处理，不影响回包
+    refresh_snapshot_table("activities")
+    return jsonify({"ok": True, "activity_id": act_id, "name": name, "group_flag": target})
 
 
 # ========== 管理员一对一管理台 ==========
@@ -7046,6 +7066,7 @@ def admin_onetoone_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
 
     submitted_items = []
@@ -7056,6 +7077,7 @@ def admin_onetoone_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
     return jsonify({
         "activity_id": act_id,
@@ -7097,18 +7119,23 @@ def admin_onetoone_result():
         return miss
 
     res = lib_onetoone.fetch_result(act_id, round_no, client=_grouping_client, activity=act)
-    uid_by_oid = {}
+    # 现场作业面统一「真名＋编号」：真名从 users 快照取（不逐人打飞书），
+    # 缺则回退 lib 原值（结果表落库名）
+    uid_by_oid, real_by_oid = {}, {}
     for u in _snap_live("users"):
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
         if oid and oid not in uid_by_oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
 
     ordered = res["people"]
     for person in ordered:
         person["user_id"] = uid_by_oid.get(person["open_id"], "")
+        person["nickname"] = real_by_oid.get(person["open_id"]) or person["nickname"]
         for target in person["partners"]:
             target["user_id"] = uid_by_oid.get(target["open_id"], "")
+            target["nickname"] = real_by_oid.get(target["open_id"]) or target["nickname"]
     ordered.sort(key=lambda p: (p["user_id"] or "~", p["open_id"]))
     return jsonify({
         "activity_id": act_id,
@@ -7126,9 +7153,9 @@ def admin_onetoone_result():
 @app.route("/api/admin/onetoone/preview", methods=["POST"])
 def admin_onetoone_preview():
     """执行影响面预览（红线：零写入）——lib.onetoone.preview 是与 execute 完全
-    独立的只读路径；前端「开始一对一」确认层用 existing_results 显示将清除的笔数，
-    「开启新一轮」用 rounds_preserved/results_preserved 显示保留量，执行确认用
-    round 查该轮是否已跑过（existing_round_results）。round 省略默认第 1 轮。"""
+    独立的只读路径；前端确认层用 existing_results / rounds_preserved 显示历史量，
+    执行确认用 round 查该轮是否已跑过（existing_round_results）。round 缺省 =
+    最新已有轮次 + 1（lib.latest_round 统一口径，与 run 端点一致）。"""
     open_id, err, code = _require_admin()
     if err:
         return err, code
@@ -7138,29 +7165,37 @@ def admin_onetoone_preview():
 
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
-    round_no = data.get("round", 1)
+    round_no = data.get("round")
+    female_chats = data.get("female_chats")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if not isinstance(round_no, int) or isinstance(round_no, bool) or round_no < 1:
+    if round_no is not None and (not isinstance(round_no, int)
+                                 or isinstance(round_no, bool) or round_no < 1):
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
     if miss:
         return miss
 
+    if round_no is None:
+        latest = lib_onetoone.latest_round(_grouping_client, act_id)
+        if latest is None:
+            return jsonify({"error": "读取历史一对一结果失败，无法确定默认轮次",
+                            "code": "SEARCH_FAILED"}), 500
+        round_no = latest + 1
+
     res = lib_onetoone.preview(act_id, round_no, client=_grouping_client, activity=act,
-                               find_user_by_openid=_grouping_find_user_by_openid)
+                               find_user_by_openid=_grouping_find_user_by_openid,
+                               female_chats=female_chats)
     return jsonify(res)
 
 
-@app.route("/api/admin/onetoone/start", methods=["POST"])
-def admin_onetoone_start():
-    """开始一对一：开放收集；clear_results=True（默认）时清空该活动全部历史结果。
+@app.route("/api/admin/onetoone/reset", methods=["POST"])
+def admin_onetoone_reset():
+    """清空一对一结果：清空该活动全部轮次结果并把一对一状态重置为未开始。
 
-    `clear_results=False` 是「开启新一轮」——保留该活动全部历史轮次结果，只开放
-    收集，供已匹配过的活动接着跑第 N+1 轮（算法确定性，重跑旧轮次无意义）。
-    lib.start_collection 自持活动锁（锁预算用 H5 的 5s：抢不到立刻 409，不占
-    gunicorn 线程池）；EXCLUSIVE_MODE = 分组模式还开着/没收尾 → 拒绝，不自动动分组。
+    lib.reset_onetoone_results 自持活动锁（锁预算 5s 快速失败 → 409）且 fail-closed：
+    结果表读失败/删除不足/状态清空写失败都如实回错误码，绝不吞成成功。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7171,38 +7206,32 @@ def admin_onetoone_start():
 
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
-    clear_results = data.get("clear_results", True)
     if not isinstance(activity_id, str) or not activity_id.strip():
-        return jsonify({"error": "请求体不合法"}), 400
-    if not isinstance(clear_results, bool):
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
     if miss:
         return miss
 
-    res = lib_onetoone.start_collection(
+    res = lib_onetoone.reset_onetoone_results(
         act_id, client=_grouping_client, activity=act,
-        lock_timeout=GROUPING_API_LOCK_TIMEOUT, clear_results=clear_results)
+        lock_timeout=GROUPING_API_LOCK_TIMEOUT)
     res_code = res.get("code")
     if res_code == "BUSY":
         return jsonify({"error": "另一场分组/一对一正在执行中，请稍候",
                         "busy_activity_id": act_id}), 409
-    if res_code == "EXCLUSIVE_MODE":
-        return jsonify({"error": "该活动的分组模式仍在开启或未收尾，请先把模式切换为一对一",
-                        "code": "EXCLUSIVE_MODE"}), 409
     if res_code != "OK":
-        # 状态已写入/结果可能残留：如实回错误并刷新快照，让管理员看到真实状态后重试
-        refresh_snapshot_table_async("activities")
-        return jsonify({"error": "开始一对一失败，请稍后重试", "code": res_code}), 500
+        # 删除不完整/状态清空失败时数据可能已部分变化：刷新快照让管理台看到真实状态
+        if res_code in ("DELETE_INCOMPLETE", "STATUS_FAILED"):
+            refresh_snapshot_table_async("activities")
+            refresh_snapshot_table_async("onetoone_results")
+        return jsonify({"error": "清空一对一结果失败，请稍后重试", "code": res_code}), 500
 
     refresh_snapshot_table_async("activities")
     refresh_snapshot_table_async("onetoone_results")
     return jsonify({
         "ok": True,
         "activity_id": act_id,
-        "name": res["activity_name"],
-        "onetoone_status": "收集中",
         "cleared_results": res["cleared_results"],
     })
 
@@ -7211,11 +7240,12 @@ def admin_onetoone_start():
 def admin_onetoone_run():
     """执行一对一轮次：入列 job 后立即回 202 + job_id，前端轮询 /job（长耗时作业）。
 
-    与分组 run 的差别：活动锁由 job 线程里的 lib.execute 自持（lib 在锁内跑完整条
-    状态机：幂等检查→截止→读志愿→算法→写结果→已完成）。请求线程**不**抢锁——
-    start_collection/execute 都自持锁，请求线程先抢会让 job 线程撞上同一把不可重入
-    的进程内锁而死锁。排队层幂等（同 (活动, 轮次) 已有活跃 job → 409 + 既有
-    job_id）仍由本端点负责，双提交不会双双入列。round 省略默认第 1 轮（兼容旧前端）。
+    入参 {activity_id, female_chats≥1, round?}；round 缺省 = 最新已有轮次 + 1
+    （lib.latest_round，无结果则第1轮）。与分组 run 的差别：活动锁由 job 线程里的
+    lib.execute 自持（lib 在锁内跑完整条状态机：幂等检查→读志愿→算法→写结果→
+    已完成）。请求线程**不**抢锁——execute 自持锁，请求线程先抢会让 job 线程撞上
+    同一把不可重入的进程内锁而死锁。排队层幂等（同 (活动, 轮次) 已有活跃 job →
+    409 + 既有 job_id）仍由本端点负责，双提交不会双双入列。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7226,16 +7256,28 @@ def admin_onetoone_run():
 
     data = request.get_json(silent=True) or {}
     activity_id = data.get("activity_id")
-    round_no = data.get("round", 1)
+    round_no = data.get("round")
+    female_chats = data.get("female_chats")
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
-    if (not isinstance(round_no, int) or isinstance(round_no, bool)
-            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
+    if round_no is not None and (not isinstance(round_no, int)
+                                 or isinstance(round_no, bool) or round_no < 1):
+        # 轮次不设上限（字段已转文本）
         return jsonify({"error": "请求体不合法"}), 400
+    if (not isinstance(female_chats, int) or isinstance(female_chats, bool)
+            or female_chats < 1):
+        return jsonify({"error": "请求体不合法（缺少女生场次）"}), 400
 
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
     if miss:
         return miss
+
+    if round_no is None:
+        latest = lib_onetoone.latest_round(_grouping_client, act_id)
+        if latest is None:
+            return jsonify({"error": "读取历史一对一结果失败，无法确定默认轮次",
+                            "code": "SEARCH_FAILED"}), 500
+        round_no = latest + 1
 
     for jid, job in _read_onetoone_jobs().items():
         if (job.get("activity_id") == act_id and _job_int(job.get("round")) == round_no
@@ -7254,7 +7296,7 @@ def admin_onetoone_run():
                         "job_id": existing, "activity_id": act_id, "round": round_no}), 409
 
     try:
-        _start_onetoone_job(job_id, act_id, round_no, act)
+        _start_onetoone_job(job_id, act_id, round_no, act, female_chats)
     except Exception:  # noqa: BLE001
         _update_onetoone_job(job_id, lambda j: j.update(
             state="failed", finished_at=int(time.time()), progress="", error="任务线程启动失败"))
@@ -7341,26 +7383,21 @@ def admin_onetoone_flag():
                         "busy_activity_id": act_id}), 409
     if res_code != "OK":
         return jsonify({"error": "开关设置失败，请稍后重试", "code": res_code}), 500
-    refresh_snapshot_table_async("activities")
-    resp = {"ok": True, "activity_id": act_id, "name": name,
-            "onetoone_flag": res["onetoone_flag"]}
-    if not enabled:
-        # 同分组开关：关入口不等于停用，状态仍收集中时用户照常能提交志愿。
-        os_ = bitable.get_field_text(af, F_ACTIVITY_ONETOONE_STATUS)
-        if os_ in (lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED):
-            resp["warning"] = f"一对一状态仍为「{os_}」，用户仍可提交志愿；关闭的只是入口"
-    return jsonify(resp)
+    # 开关写入成功即同步刷新快照（coalesce=0 写后必抓）：用户端/管理台 reopening 立即可见；
+    # 同步耗时=一次 activities 拉取（量级 <1s，可接受）；fetcher 返回 None 由 refresh 内部处理，不影响回包
+    refresh_snapshot_table("activities")
+    return jsonify({"ok": True, "activity_id": act_id, "name": name,
+                    "onetoone_flag": res["onetoone_flag"]})
 
 
 @app.route("/api/admin/activity/mode", methods=["POST"])
 def admin_activity_mode():
     """模式切换（互斥写入器）：一次 PUT 同时写「分组功能开启」「一对一功能开启」。
 
-    拒绝规则（与前端模式卡一致）：将被关闭的那一侧若状态 ∈ {收集中, 已截止}，
-    或该活动有活跃 job → 409 拒绝并提示先收尾；已收尾的 flag=「是」**不拦**——
-    切换是一次原子双栏位写（同一 PUT 关旧入口、开新入口），与 bot 开关同一语义；
-    正在收集/已截止的一侧仍按状态拦（不能关掉真正在跑的模式，冲突态纠偏同理）。
-    切换本身只改入口 flag，不删任何数据。
+    拒绝规则：该活动有活跃 job → 409 拒绝并提示等任务结束；其余一律放行——
+    切换是一次双栏位写（同一 PUT 关旧入口、开新入口），与 bot 开关同一语义；
+    只改入口 flag，不删任何数据、不看状态（志愿收集阶段已废除；收集中/已截止
+    属历史遗留值，不再触发拦截）。
     """
     open_id, err, code = _require_admin()
     if err:
@@ -7380,30 +7417,10 @@ def admin_activity_mode():
     act, act_id, miss = _onetoone_or_404(activity_id.strip())
     if miss:
         return miss
-    af = act.get("fields", {})
     active = _active_job_for(act_id)
     if active:
         return jsonify({"error": "该活动有任务正在执行，请等它结束后再切换模式",
                         "code": "MODE_SWITCH_BLOCKED", "active_job": active}), 409
-
-    # 关闭侧「仍在跑」判定：状态∈{收集中,已截止} 必拦——用户端 select 只认状态不看
-    # flag，通道其实还开着，放行切换等于绕过互斥（2026-10-12 审计必修 1）。
-    # 已收尾的 flag=「是」不再拦：切换本身就是一次原子双栏位写（set_mode 同一 PUT
-    # 关闭旧入口、开启新入口），与 bot「开启一对一功能」同一套语义（该路径本就不拦
-    # flag，见 lib.onetoone.set_onetoone_flag）；此前拦 flag 造成「完成分组后无法切
-    # 一对一、控制台又无手动关 flag 入口」的死锁（2026-10-13 修）。
-    def _closing_blocked(status_field):
-        return bitable.get_field_text(af, status_field) in (
-            lib_grouping.STATUS_COLLECTING, lib_grouping.STATUS_CLOSED)
-
-    closing = []
-    if mode != lib_grouping.MODE_GROUP and _closing_blocked(F_ACTIVITY_GROUP_STATUS):
-        closing.append("分组")
-    if mode != lib_grouping.MODE_ONETOONE and _closing_blocked(F_ACTIVITY_ONETOONE_STATUS):
-        closing.append("一对一")
-    if closing:
-        return jsonify({"error": "「%s」仍在收集中/已截止，请先收尾再切换模式" % "、".join(closing),
-                        "code": "MODE_SWITCH_BLOCKED", "blocked_sides": closing}), 409
 
     res = lib_grouping.set_mode(act_id, mode, client=_grouping_client, activity=act)
     res_code = res.get("code")
@@ -7417,7 +7434,9 @@ def admin_activity_mode():
         return jsonify({"error": "模式切换失败，请稍后重试", "code": res_code}), 500
 
     if res.get("changed"):
-        refresh_snapshot_table_async("activities")
+        # 切换成功即同步刷新快照（coalesce=0 写后必抓）：用户端/管理台 reopening 立即可见；
+        # 同步耗时=一次 activities 拉取（量级 <1s，可接受）；fetcher 返回 None 由 refresh 内部处理，不影响回包
+        refresh_snapshot_table("activities")
     return jsonify({
         "ok": True,
         "activity_id": act_id,
@@ -7472,7 +7491,7 @@ def _signin_roster_item(rec):
         uid = bitable.get_field_text(uf, F_USER_ID)
         gender = bitable.get_select_value(uf, F_GENDER)
         # 现场签到要核对身份：姓名从已在手的用户档案上取（零额外查询）
-        real_name = bitable.get_field_text(uf, F_REAL_NAME)
+        real_name = _display_real_name(uf)
         if not nick:
             nick = bitable.get_field_text(uf, F_NICKNAME)
     return {"open_id": oid, "nickname": nick, "user_id": uid, "gender": gender,
@@ -7699,6 +7718,7 @@ def onetoone_candidates(activity_id):
                 candidates.append({
                     "openid": s_openid,
                     "nickname": bitable.get_field_text(uf, F_NICKNAME),
+                    "real_name": _display_real_name(uf),
                     "photo": photo,
                     "user_id": bitable.get_field_text(uf, F_USER_ID),
                     "baptismal_name": bitable.get_field_text(uf, F_BAPTISMAL_NAME),
@@ -7911,16 +7931,17 @@ def onetoone_result(activity_id):
             if bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) == open_id
             and lib_onetoone.round_of(r.get("fields", {})) == req_round]
 
-    # users 快照：open_id -> (用户ID, 昵称, 头像)
+    # users 快照：open_id -> (用户ID, 真名, 昵称, 头像)
     users_snap = _snap("users")
     if not users_snap:
         users_snap = bitable.get_all_users()
-    uid_by_oid, nick_by_oid, photo_by_oid = {}, {}, {}
+    uid_by_oid, real_by_oid, nick_by_oid, photo_by_oid = {}, {}, {}, {}
     for u in users_snap:
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
         if oid and oid not in uid_by_oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
             nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
             photo_by_oid[oid] = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
@@ -7935,7 +7956,10 @@ def onetoone_result(activity_id):
         target_oid = bitable.get_field_text(f, F_OTO_TARGET_OID)
         partners.append({
             "openid": target_oid,
-            "nickname": bitable.get_field_text(f, F_OTO_TARGET_NAME) or nick_by_oid.get(target_oid, ""),
+            # 现场作业面统一真名：真名 > 结果表落库名 > 快照昵称
+            "nickname": (real_by_oid.get(target_oid)
+                         or bitable.get_field_text(f, F_OTO_TARGET_NAME)
+                         or nick_by_oid.get(target_oid, "")),
             "photo": photo_by_oid.get(target_oid, ""),
             "user_id": uid_by_oid.get(target_oid, ""),
             "rank": int(bitable.get_field_number(f, F_OTO_RANK, 0)),
@@ -8648,13 +8672,16 @@ def activity_signups(activity_id):
         photo = ""
         user_id = ""
         gender = ""
+        real_name = ""
         if u:
             uf = u.get("fields", {})
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
             photo = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
             user_id = bitable.get_field_text(uf, F_USER_ID)
             gender = bitable.get_select_value(uf, F_GENDER)
-        result.append({"openid": s_openid, "nickname": nick, "user_id": user_id, "photo": photo, "gender": gender})
+            real_name = _display_real_name(uf)
+        result.append({"openid": s_openid, "nickname": nick, "user_id": user_id,
+                       "real_name": real_name, "photo": photo, "gender": gender})
     return jsonify({"signups": result})
 
 @app.route("/api/users/<openid>/public", methods=["GET"])

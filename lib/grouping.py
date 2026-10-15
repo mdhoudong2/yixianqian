@@ -201,7 +201,7 @@ _REQUIRED_FIELDS = (
     "gr_user_gender", "gr_round",
     "signup_activity_id", "signup_status", "signup_openid", "signup_nickname",
     "signup_attendance",
-    "gender", "user_id",
+    "gender", "user_id", "real_name",
 )
 _cfg = {"tables": {}, "fields": {}}
 
@@ -232,15 +232,12 @@ def _require_configured():
             + "）。表 ID 与栏位名必须由调用端注入——沉默的默认值等于写进错误的 base。")
 
 
-# 分组状态（写进「分组状态」单选栏位的取值）
-STATUS_COLLECTING = "收集中"
-STATUS_CLOSED = "已截止"
+# 分组状态（写进「分组状态」单选栏位的取值）：
+# 状态模型只有「未开始（空值）/已完成」——执行成功单笔写「已完成」；清空结果把
+# 栏位写空（不写「未开始」选项，schema 未必含该选项）。
 STATUS_DONE = "已完成"
 STATUS_NOT_STARTED = "未开始"
 SIGNUP_STATUS_SIGNED = "已报名"
-# 「轮次」是单选栏位，飞书侧只配了 1-10。写入更大的值会整批失败并触发回滚，
-# 所以只在 preview 里事前挡住；执行路径刻意不拦——bot 端拦了就改了既有行为。
-MAX_ROUND = 10
 
 # ---------------------------------------------------------------- 分组/一对一互斥
 
@@ -292,23 +289,11 @@ def derive_mode(activity):
     return MODE_NONE
 
 
-def counterpart_start_active(activity, *, flag_field, status_field):
-    """「开始」动作的对面模式检查：对面 flag=「是」或状态 ∈ {收集中, 已截止}。
-
-    栏位名由调用方注入（lib.onetoone 用自己的 configure 里那份）：假表/旧表缺该
-    栏位时 get_field_text 读到空串 → 不触发，保证 parity 桩表的行为逐字不变。
-    """
-    af = (activity or {}).get("fields", {})
-    if get_field_text(af, flag_field) == "是":
-        return True
-    return get_field_text(af, status_field) in (STATUS_COLLECTING, STATUS_CLOSED)
-
-
 def counterpart_execute_active(activity, *, flag_field):
     """「执行」动作的对面模式检查：对面 flag=「是」才拦。
 
-    执行不拦「收集中」状态：开始方没开 flag 时，执行方（如历史遗留流程）应当被
-    动作层放行，不然 flag 层不管的路径会被状态层意外锁死。
+    执行不拦状态（对面状态为 空/已完成/历史遗留值都不拦）：flag 层是唯一权威，
+    状态层不再参与动作互斥判定（志愿收集阶段已废除）。
     """
     af = (activity or {}).get("fields", {})
     return get_field_text(af, flag_field) == "是"
@@ -318,6 +303,8 @@ def set_mode(activity_id, mode, *, client, activity=None):
     """模式互斥写入器：一次 PUT 同时写「分组功能开启」「一对一功能开启」两个栏位。
 
     mode="group" → (是, 否)；"onetoone" → (否, 是)；"none" → (否, 否)。
+    mode != none（开启任一侧功能）时，同笔合写「签到功能默认打开」
+    （signin_default_payload：空→是；已是 是/否 不动；栏位未注入不写）。
 
     整段（幂等判断 + 写）持 grouping_lock(activity_id)：飞书单条记录 update
     **不是**整笔事务（并发双栏位 PUT 会栏位级交错，实验见 docs/读取一致性.md），
@@ -325,11 +312,11 @@ def set_mode(activity_id, mode, *, client, activity=None):
     `yixianqian_grouping_<活动>.lock`，两进程的 flag 写入互斥、不存在栏位级交错。
     抢锁撞上执行作业（分钟级持锁）快速失败回 BUSY，不长时间等待。
 
-    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
-    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
-    必回 0 行。`activity=None` 时在锁内按 activity_id 查一次——该路径仅供桩表/测试
-    使用、真表不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
-    （检查 update_record 返回值，不报成功）。
+    `activity` 由调用端在锁外解析好（网络读不压在锁里），产品调用端一律显式传入：
+    真实 base 的「活动ID」是自动编号字段，按字符串过滤必回 0 行。`activity=None`
+    时在锁内按 activity_id 查一次——该路径仅供桩表/测试使用、真表不可用（只会得到
+    NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED（检查 update_record
+    返回值，不报成功）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -358,6 +345,9 @@ def set_mode(activity_id, mode, *, client, activity=None):
                 return dict(base, code="OK", changed=False)
 
             payload = {f["group_flag"]: target_group, f["onetoone_flag"]: target_onetoone}
+            if mode != MODE_NONE:
+                # 签到功能默认打开（自「开始收集」迁移而来）：开启任一侧功能时同笔补「是」
+                payload.update(signin_default_payload(af))
             if not client.update_record(_cfg["tables"]["activity_table_id"],
                                         activity.get("record_id"), payload):
                 return dict(base, code="WRITE_FAILED", changed=False)
@@ -387,6 +377,21 @@ def signin_enabled(activity_fields):
     if "signin_flag" not in f:
         return False
     return get_field_text(activity_fields or {}, f["signin_flag"]) == "是"
+
+
+def signin_default_payload(activity_fields):
+    """「签到功能默认打开」的追加写入（可能为空 dict）。
+
+    飞书单选栏位没有 API 级默认值：开启分组/一对一功能时把「签到功能开启」和
+    flag 写进**同一笔** update——当前值为空才补「是」；已是 是/否 一律不动
+    （管理员手动改过「否」的活动，重开功能不该被重新打开）；栏位名未注入
+    （旧进程/未迁移配置）时返回空 dict，写入序列与迁移前逐字相同。
+    """
+    f = _cfg["fields"]
+    name = f.get("signin_flag")
+    if not name or get_field_text(activity_fields or {}, name):
+        return {}
+    return {name: "是"}
 
 
 def attendance_map(activity_id, *, client):
@@ -765,10 +770,11 @@ def _collect_selections(client, activity_id):
 
 
 def collect_participants(activity_id, *, client, find_user_by_openid):
-    """取该活动的报名者：[{open_id, nickname, gender, user_id}]。
+    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name}]。
 
     逐人查用户表取性别是串行 API 的耗时瓶颈（大活动尤其明显），用线程池并发查，
     显著降低延迟。性别来源由调用端决定（bot 走 queries 版，H5 走快照版）。
+    real_name = 用户表「姓名」去空白（现场活动显示名：非空优先于昵称，由渲染层决定）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -789,12 +795,15 @@ def collect_participants(activity_id, *, client, find_user_by_openid):
         oid, nickname = row
         gender = ""
         uid = ""
+        real_name = ""
         user_recs = find_user_by_openid(oid)
         if user_recs:
             uf = user_recs[0].get("fields", {})
             gender = get_field_text(uf, f["gender"])
             uid = get_field_text(uf, f["user_id"])
-        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid}
+            real_name = get_field_text(uf, f["real_name"]).strip()
+        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid,
+                "real_name": real_name}
 
     users = []
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="signup-gender") as pool:
@@ -844,6 +853,7 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
         unsubmitted.append({
             "open_id": oid, "user_id": user_id,
             "gender": s["gender"], "nickname": s["nickname"],
+            "real_name": s.get("real_name", ""),
         })
 
     return {
@@ -858,9 +868,8 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
 def preview_round(activity_id, round_no, *, client, activity, find_user_by_openid):
     """执行前的影响面预览——**一个栏位都不写**。
 
-    绝不碰「分组状态」：执行路径一进门就把活动改成「已截止」，preview 若沿用同
-    一条路径，管理员只是「看一眼」就把活动截止掉，用户立刻不能提交志愿。
-    所以这里是独立的一条纯读路径，与 execute_round 没有共用写入代码。
+    独立于 execute_round 的纯读路径：管理员只是「看一眼」，绝不能产生任何副作用。
+    每组人数取活动栏位当前值（执行入参以 run 端为准，这里只作参考与事前拦截）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -884,14 +893,15 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
 
     blockers = []
     if m_per < 1 or f_per < 1:
-        blockers.append(f"每组男女人数必须大于0（当前：{m_per}男{f_per}女），请先设置再截止")
+        blockers.append(f"每组男女人数必须大于0（当前：{m_per}男{f_per}女）")
     if m_per > 0 and f_per > 0 and (n_males < m_per or n_females < f_per):
         blockers.append(f"人数不足：当前 {n_males}男{n_females}女，"
                         f"每组需要 {m_per}男{f_per}女（至少 {m_per}男{f_per}女）")
     if this_round:
         blockers.append(f"第{round_no}轮已生成分组结果，请勿重复执行")
-    if not 1 <= round_no <= MAX_ROUND:
-        blockers.append(f"第{round_no}轮超出单选字段上限（轮次字段只支持 1-{MAX_ROUND}）")
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or round_no < 1):
+        blockers.append(f"轮次必须是 ≥1 的整数，当前 {round_no}")
 
     return {
         "activity_id": activity_id,
@@ -909,7 +919,7 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
         "existing_round_results": len(this_round),
         "historical_results_to_clear": len(all_results),
         "historical_rounds_to_clear": existing_rounds,
-        # 加法字段：clear_results=False（开启新一轮）时保留的轮次与结果条数。
+        # 加法字段：执行本轮不清历史时保留的轮次与结果条数。
         # 旧字段语义不动——它们始终回答「会删掉什么」，这两个回答「会留下什么」。
         "rounds_preserved": existing_rounds,
         "results_preserved": len(all_results),
@@ -973,89 +983,101 @@ def fetch_result(activity_id, round_no, *, client, activity):
 
 # ---------------------------------------------------------------- 写接口
 
-def start_group(activity_id, males_per_group, females_per_group, *, client, activity,
-                treat_search_failure_as_empty=True, clear_results=True):
-    """开放志愿收集；默认同时清空该活动全部轮次的历史分组结果。
+# 清空结果（reset_*）的默认抢锁预算（秒）：与 bot 既有执行指令同口径（分钟级作业
+# 会持锁）；H5 端点显式传自己的快速失败预算（5s → 409），不占请求线程池。
+RESET_LOCK_TIMEOUT = 180
 
-    `activity` 由调用端在锁外先解析好——H5 从快照拿 record_id，bot 直接用
-    find_activity_by_id，两者都别把一次网络读压在锁里。
 
-    **调用方必须已持有 grouping_lock(activity_id)。**
+def latest_round(client, activity_id):
+    """该活动分组结果的最新轮次（int）；没有任何结果时回 0；读失败回 None。
 
-    `clear_results`：
-    - True（默认，bot「开始填志愿」与 H5「重新开放填志愿」走这条）：开放收集
-      + 清空全部历史结果，供「重跑既有轮次」；`cleared_results` 是真实清除笔数。
-    - False（H5「开启新一轮」）：只写「分组状态=收集中」与每组人数，
-      group_result_table **不读也不删**（连 search 都不发，也不会有 SEARCH_FAILED），
-      历史轮次全部保留，`cleared_results` 恒为 0。算法是确定性的，直接重跑旧轮次
-      毫无意义——保留历史 + 重开收集才能跑出第 N+1 轮。
+    轮次默认值 =「最新已有轮次 + 1」的唯一推演入口：bot 执行指令与 H5
+    run/preview 端点共用，避免各算各的。空/非数字轮次行忽略（结果表轮次为文本，
+    空值只会出现在迁移前遗留行，与 execute_round 的幂等口径一致）。
 
-    `treat_search_failure_as_empty`：清历史时读失败把「读不到」当成「没有历史
-    结果」（bot 的老行为），还是直接中止。只在 clear_results=True 时有意义。
+    读失败（raw client 回 None）与「没有结果」必须严格区分：调用端拿到 None
+    必须明报失败，绝不能拿 0 当「没跑过」——那等于用一次限流换掉一份既有结果。
     """
     _require_configured()
+    rows = client.search_records(_cfg["tables"]["group_result_table"], {
+        "conjunction": "and",
+        "conditions": [{"field_name": _cfg["fields"]["gr_activity_id"], "operator": "is",
+                        "value": [activity_id]}]})
+    if rows is None:
+        return None
+    rounds = [int(rv) for rv in
+              (get_field_text(r.get("fields", {}), _cfg["fields"]["gr_round"]) for r in rows)
+              if rv.strip().isdigit()]
+    return max(rounds) if rounds else 0
+
+
+def reset_group_results(activity_id, *, client, activity, lock_timeout=None):
+    """清空该活动全部分组结果，并把「分组状态」清空回未开始（写空字串=不写「未开始」选项）。
+
+    整体持 grouping_lock(activity_id)（**自持锁**，调用方不得再持同一把锁——
+    锁不可重入）。
+
+    fail-closed（原 start_group「清结果」能力的收编，不弱化）：结果表读失败 →
+    RESULTS_SEARCH_FAILED；删除数不足 → DELETE_INCOMPLETE；状态栏位清空写失败 →
+    STATUS_FAILED（结果已删，如实报告，不吞成成功）。报成功会让管理员以为可以
+    重跑，实际被残留结果卡住（重跑同轮次会被 ALREADY_DONE 拦）。
+
+    只清该侧结果与状态：不碰一对一结果/状态，不碰报名与志愿记录。
+    成功回传 cleared_results。
+    """
+    if lock_timeout is None:
+        lock_timeout = RESET_LOCK_TIMEOUT
+    _require_configured()
     f = _cfg["fields"]
+    t = _cfg["tables"]
     af = activity.get("fields", {})
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
-
-    # 动作层互斥（设计 §2.3）：对面一对一开着或没收尾时拒绝开始，不自动动对面数据。
-    # 假表缺一对一栏位 → 读到空串 → 不触发（parity 写序列逐字不变）。
-    if counterpart_start_active(activity, flag_field=f["onetoone_flag"],
-                                status_field=f["onetoone_status"]):
-        return {"code": EXCLUSIVE_MODE, "blocked_by": MODE_ONETOONE,
-                "activity_id": activity_id, "activity_name": activity_name}
-
-    client.update_record(_cfg["tables"]["activity_table_id"], record_id, {
-        f["group_status"]: STATUS_COLLECTING,
-        f["male_per_group"]: males_per_group,
-        f["female_per_group"]: females_per_group,
-    })
-
-    if not clear_results:
-        return {
-            "code": "OK",
-            "activity_id": activity_id,
-            "activity_name": activity_name,
-            "males_per_group": males_per_group,
-            "females_per_group": females_per_group,
-            "cleared_results": 0,
-        }
-
-    # 重新开放志愿收集：清除该活动历史分组结果，否则「执行分组」的幂等保护会拦截重跑同一轮次
-    old_results = client.search_records(_cfg["tables"]["group_result_table"], {
-        "conjunction": "and",
-        "conditions": [{"field_name": f["gr_activity_id"], "operator": "is", "value": [activity_id]}],
-    })
-    if old_results is None and not treat_search_failure_as_empty:
-        return {"code": "SEARCH_FAILED", "activity_id": activity_id,
-                "activity_name": activity_name}
-    if old_results:
-        client.batch_delete_records(_cfg["tables"]["group_result_table"],
-                                    [r["record_id"] for r in old_results])
-        log(f"重新开放志愿收集，已清除 {len(old_results)} 条历史分组结果: {activity_name}")
-
-    return {
-        "code": "OK",
-        "activity_id": activity_id,
-        "activity_name": activity_name,
-        "males_per_group": males_per_group,
-        "females_per_group": females_per_group,
-        "cleared_results": len(old_results or []),
-    }
+    base = {"activity_id": activity_id, "activity_name": activity_name}
+    try:
+        with grouping_lock(activity_id, timeout=lock_timeout):
+            old_results = client.search_records(t["group_result_table"], {
+                "conjunction": "and",
+                "conditions": [{"field_name": f["gr_activity_id"], "operator": "is",
+                                "value": [activity_id]}],
+            })
+            if old_results is None:
+                return dict(base, code="RESULTS_SEARCH_FAILED")
+            deleted = 0
+            if old_results:
+                deleted = client.batch_delete_records(
+                    t["group_result_table"], [r["record_id"] for r in old_results])
+                if deleted < len(old_results):
+                    return dict(base, code="DELETE_INCOMPLETE",
+                                deleted=deleted, total=len(old_results))
+                log(f"已清空 {deleted} 条历史分组结果: {activity_name}")
+            if not client.update_record(t["activity_table_id"], record_id,
+                                        {f["group_status"]: ""}):
+                return dict(base, code="STATUS_FAILED", cleared_results=deleted)
+            log(f"管理员清空分组结果: {activity_name}")
+            return dict(base, code="OK", cleared_results=deleted)
+    except GroupingBusy:
+        return dict(base, code="BUSY")
 
 
 def execute_round(activity_id, round_no, *, client, activity, find_user_by_openid,
-                  treat_search_failure_as_empty=True):
+                  males_per_group, females_per_group, treat_search_failure_as_empty=True):
     """幂等检查 + 跑算法 + 写结果。
 
-    **调用方必须已持有 grouping_lock(activity_id)。** 锁刻意留在外层：bot 的
-    handle_admin_stop_group 在临界区里有两个 return，把锁挪进来就得重排那两个
-    分支——重排就是重排控制流，文案不变也保不住。
+    `males_per_group` / `females_per_group`：每组男/女人数，执行入参（≥1 整数），
+    **不再从活动栏位读取**；lib 内做防御性校验，非法回 GROUP_SIZE_INVALID、零副作用。
+    执行成功用**单笔** update 写「分组状态=已完成」并把每组人数同笔带上（管理台显示
+    用），不再是「仅状态」的另一笔。
 
-    `treat_search_failure_as_empty` 同 start_group：幂等检查读不到飞书时，
-    bot 当空表继续（老行为），H5 宁可中止——把「读不到」当成「没跑过」去重跑，
-    等于用一次限流换掉一份既有结果。
+    失败一律零状态变更：大小写失败、签到读失败、算法异常等全部不写活动表
+    （不再有「恢复收集中」的恢复写，也不再有前置「已截止」写）。
+
+    **调用方必须已持有 grouping_lock(activity_id)。** 锁刻意留在外层：bot 的执行
+    指令与 H5 的 job 线程都在锁内调用（含「轮次缺省=最新+1」的推导）。
+
+    `treat_search_failure_as_empty`：幂等检查读不到飞书时，bot 当空表继续
+    （老行为），H5 宁可中止——把「读不到」当成「没跑过」去重跑，等于用一次限流
+    换掉一份既有结果。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -1063,12 +1085,21 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     af = activity.get("fields", {})
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
-    m_per = int(get_field_number(af, f["male_per_group"], 3))
-    f_per = int(get_field_number(af, f["female_per_group"], 3))
     # 后续所有读写都用活动记录自己的 ID，不退回入参：入参可能是用户随手敲的别名
     rec_activity_id = get_field_text(af, f["activity_id"]) or ""
     base = {"activity_id": activity_id, "round": round_no, "activity_name": activity_name,
-            "males_per_group": m_per, "females_per_group": f_per}
+            "males_per_group": males_per_group, "females_per_group": females_per_group}
+
+    # 轮次收口：轮次字段是文本、不设上限，只挡非「≥1 整数」
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or round_no < 1):
+        return dict(base, code="ROUND_OUT_OF_RANGE")
+    # 每组人数收口（防御性；bot/H5 已在入口校验）：非 ≥1 整数一律拒绝、零副作用
+    if (not isinstance(males_per_group, int) or isinstance(males_per_group, bool)
+            or males_per_group < 1
+            or not isinstance(females_per_group, int) or isinstance(females_per_group, bool)
+            or females_per_group < 1):
+        return dict(base, code="GROUP_SIZE_INVALID")
 
     # 动作层互斥：执行分组时对面一对一 flag 为「是」→ 拒绝。假表无该栏位 → 不触发。
     if counterpart_execute_active(activity, flag_field=f["onetoone_flag"]):
@@ -1088,19 +1119,14 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     if existing_results:
         return dict(base, code="ALREADY_DONE")
 
-    # 更新状态为已截止
-    client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_CLOSED})
-
     participants, selections, skipped = _collect_selections(client, rec_activity_id)
 
     # 现场签到执行池过滤（设计 §3.3/§3.4）：只挡提交挡不住「早提交志愿、活动当天
-    # 没到」；执行时必须以「已到」为准再过滤一次。读失败 fail-closed：恢复「收集中」
-    # 并明报，绝不带着「读不到」把全部人放进来。
+    # 没到」；执行时必须以「已到」为准再过滤一次。读失败 fail-closed 零写入：绝不
+    # 带着「读不到」把全部人放进来。
     if signin_enabled(af):
         attendance = attendance_map(rec_activity_id, client=client)
         if attendance is None:
-            client.update_record(t["activity_table_id"], record_id,
-                                 {f["group_status"]: STATUS_COLLECTING})
             return dict(base, code="SIGNIN_QUERY_FAILED")
         participants = [p for p in participants
                         if is_checked_in(attendance.get(p["id"]))]
@@ -1108,27 +1134,27 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     n_males = sum(1 for p in participants if p["gender"] == "male")
     n_females = sum(1 for p in participants if p["gender"] == "female")
 
-    if n_males < m_per or n_females < f_per:
-        # 人数不足，恢复状态为收集中
-        client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_COLLECTING})
-        return dict(base, code="NOT_ENOUGH_PEOPLE", males=n_males, females=n_females, skipped=skipped)
+    if n_males < males_per_group or n_females < females_per_group:
+        return dict(base, code="NOT_ENOUGH_PEOPLE", males=n_males, females=n_females,
+                    skipped=skipped)
 
     # 运行算法
     try:
-        groups = run_grouping_algorithm(participants, selections, m_per, f_per)
+        groups = run_grouping_algorithm(participants, selections,
+                                        males_per_group, females_per_group)
     except Exception as e:
-        client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_COLLECTING})
         return dict(base, code="ALGORITHM_ERROR", error=str(e))
 
     if not groups:
-        client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_COLLECTING})
         return dict(base, code="EMPTY_GROUPS")
 
     # 保存结果（用户自查 H5 查询），不再逐人群发通知（现场活动）。
     # 批量写入分组结果，避免逐条 create_record 在大活动下（数百条）拖到好几分钟。
     signups = collect_participants(rec_activity_id, client=client,
                                    find_user_by_openid=find_user_by_openid)
-    oid_to_nickname = {p["open_id"]: p["nickname"] for p in signups}
+    # 现场活动统一显示「真名（缺省昵称）」：姓名去空白非空才用，否则回退报名昵称
+    oid_to_name = {p["open_id"]: p["real_name"] or p["nickname"] for p in signups}
+    oid_to_user_id = {p["open_id"]: p["user_id"] for p in signups}
     result_records = []
     for g in groups:
         all_members = _group_members(g)
@@ -1137,13 +1163,14 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
                 f["gr_activity_id"]: rec_activity_id,
                 f["gr_group_no"]: g["group_id"],
                 f["gr_user_oid"]: oid,
-                f["gr_user_name"]: oid_to_nickname.get(oid, ""),
+                f["gr_user_name"]: oid_to_name.get(oid, ""),
                 f["gr_user_gender"]: gender,
                 f["gr_round"]: str(round_no),
             })
     created = client.batch_create_records(t["group_result_table"], result_records)
     if created < len(result_records):
-        # 写入不完整：回滚已写入的部分结果 + 恢复状态，允许重试（避免「0 条结果却显示已完成」）
+        # 写入不完整：回滚已写入的部分结果，允许重试（避免「0 条结果却显示已完成」）；
+        # 状态一个栏位都不写（失败一律零状态变更）。
         partial = client.search_records(t["group_result_table"], {
             "conjunction": "and",
             "conditions": [
@@ -1153,18 +1180,23 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
         })
         if partial:
             client.batch_delete_records(t["group_result_table"], [p["record_id"] for p in partial])
-        client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_COLLECTING})
         return dict(base, code="PARTIAL_WRITE", created=created, total=len(result_records))
 
-    # 更新状态为已完成
-    client.update_record(t["activity_table_id"], record_id, {f["group_status"]: STATUS_DONE})
+    # 成功：单笔 update 写「已完成」+ 每组人数（同笔带上以維持管理台显示）
+    if not client.update_record(t["activity_table_id"], record_id, {
+            f["group_status"]: STATUS_DONE,
+            f["male_per_group"]: males_per_group,
+            f["female_per_group"]: females_per_group}):
+        return dict(base, code="DONE_STATUS_FAILED", group_count=len(groups),
+                    participant_count=len(participants))
 
     log(f"第{round_no}轮分组完成: {activity_name}, {len(groups)}组, {len(participants)}人")
     return dict(base, code="OK", group_count=len(groups), participant_count=len(participants),
                 groups=[{"group_id": g["group_id"],
                          "members": [{"open_id": oid, "gender": gender,
-                                      # 昵称为空（或不在报名名单里）时退回 open_id，与 fetch_result 同口径
-                                      "display_name": oid_to_nickname.get(oid) or oid}
+                                      # 真名为空（或不在报名名单里）时退回 open_id，与 fetch_result 同口径
+                                      "display_name": oid_to_name.get(oid) or oid,
+                                      "user_id": oid_to_user_id.get(oid, "")}
                                      for oid, gender in _group_members(g)]}
                         for g in groups])
 
@@ -1188,6 +1220,10 @@ def set_group_flag(activity_id, enabled, *, client, activity=None):
     「一对一功能开启=否」合进同一笔 update——一个 payload 里同时给出两栏的明确值；
     但这一笔本身**不构成事务边界**（见上），保证来自锁串行化。
 
+    **开启时合写「签到功能默认打开」**：同笔合并 signin_default_payload(af)
+    （空→是；已是 是/否 不动；栏位未注入不写），与 set_mode 开启路同一语义；
+    关闭方向不补默认（关闭不该动签到开关）。
+
     判别刻意用 schema 级的 field_exists，而不是活动记录里读到的现值：与 set_mode
     并发时，「读现值→决定合写」的读-改-写窗口正是竞态来源（空值活动还会因
     search_records 省略空值 key 而漏判）；schema 级判别与现值、快照新鲜度都无关。
@@ -1197,11 +1233,11 @@ def set_group_flag(activity_id, enabled, *, client, activity=None):
     「可用」处理 → 合写：迁移后的真表上合写永远安全，宁可多写一个明确值，也不在
     探测抖动时漏合写。
 
-    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
-    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
-    必回 0 行。`activity=None` 时在锁内按 activity_id 查一次——该路径仅供桩表/测试
-    使用、真表不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
-    （检查 update_record 返回值，不报成功）。
+    `activity` 由调用端在锁外解析好（网络读不压在锁里），产品调用端一律显式传入：
+    真实 base 的「活动ID」是自动编号字段，按字符串过滤必回 0 行。`activity=None`
+    时在锁内按 activity_id 查一次——该路径仅供桩表/测试使用、真表不可用（只会得到
+    NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED（检查 update_record
+    返回值，不报成功）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -1224,6 +1260,9 @@ def set_group_flag(activity_id, enabled, *, client, activity=None):
             af = activity.get("fields", {})
             activity_name = get_field_text(af, f["activity_name"])
             payload = {f["group_flag"]: flag}
+            if enabled:
+                # 签到功能默认打开（自「开始收集」迁移而来）：开启方向同笔补「是」
+                payload.update(signin_default_payload(af))
             probe = getattr(client, "field_exists", None)
             has_counterpart = bool(probe and probe(_cfg["tables"]["activity_table_id"],
                                                    f["onetoone_flag"]))

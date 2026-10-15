@@ -80,7 +80,23 @@ def find_user_by_id_or_name(keyword):
         if items:
             return items
     # 再按昵称查
-    return find_user_by_nickname(keyword)
+    items = find_user_by_nickname(keyword)
+    if items:
+        return items
+    # 昵称没命中时，再按「姓名」兜底（去空白比对）；既有昵称命中行为不变
+    return find_user_by_real_name(keyword)
+
+
+def find_user_by_real_name(name):
+    """按「姓名」查用户：去掉全部空白后精确比对（姓名存得较随意时也不会误伤）。
+    仅在昵称查找为空时被 find_user_by_id_or_name 调用，用于现场活动的姓名找人。"""
+    target = re.sub(r"\s+", "", str(name or ""))
+    if not target:
+        return []
+    return search_records(USER_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [{"field_name": FIELD_REAL_NAME, "operator": "is", "value": [target]}]
+    })
 
 
 

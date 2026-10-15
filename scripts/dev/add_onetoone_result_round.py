@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""一次性脚本：给一对一结果表加「轮次」单选字段(1..10)，并把既有空轮次行回填为「1」。
+"""一次性脚本：给一对一结果表加「轮次」文本字段（不设上限），并把既有空轮次行回填为「1」。
 
 多轮一对一上线后，「执行一对一」的幂等按 (活动, 轮次) 判断；迁移前写入的结果行
 没有轮次值——若不回填，第 1 轮会被认为「没跑过」，重跑会重复写结果。回填 = 把空
@@ -17,8 +17,8 @@
   python scripts/dev/add_onetoone_result_round.py check    # 检查缺不缺字段、多少行要回填（默认）
   python scripts/dev/add_onetoone_result_round.py apply    # 真的加 + 回填（幂等，重复跑安全）
 
-安全防护：字段已存在但缺选项时，若该字段已有非空值 → 拒绝补齐选项（name-only 的
-options 覆写 PUT 会清空该字段所有既有值，审计已实证）——必须人工处理。
+安全防护：字段已存在时不再改 schema；若发现仍是存量单选字段，提示先运行
+convert_round_to_text.py 转文本（本脚本不代做）。
 
 生产默认拦截（_prod_guard）；只允许 YIXIANQIAN_ENV=test 执行。
 """
@@ -47,7 +47,6 @@ APP_SECRET = getattr(_cfg, "FEISHU_APP_SECRET", None) or getattr(_cfg, "APP_SECR
 BASE_TOKEN = _cfg.BASE_TOKEN
 TABLE_ID = getattr(_cfg, "ONETOONE_RESULT_TABLE", None) or getattr(_c, "ONETOONE_RESULT_TABLE", "")
 FIELD_NAME = _c.FIELD_OTO_ROUND
-OPTIONS = [str(i) for i in range(1, 11)]
 
 BASE_URL = "https://open.feishu.cn/open-apis"
 BATCH = 100  # 每次 batch_update 的行数（远低于接口上限，稳）
@@ -84,42 +83,12 @@ def list_fields(token):
 
 def create_field(token):
     url = f"{BASE_URL}/bitable/v1/apps/{BASE_TOKEN}/tables/{TABLE_ID}/fields"
-    data = {"field_name": FIELD_NAME, "type": 3,
-            "property": {"options": [{"name": o} for o in OPTIONS]}}
+    data = {"field_name": FIELD_NAME, "type": 1}  # 文本：不限轮次
     result = requests.post(url, headers=_headers(token), json=data).json()
     if result.get("code") == 0:
-        print(f"✅ 已添加字段：{FIELD_NAME}（单选：{'/'.join(OPTIONS)}）")
+        print(f"✅ 已添加字段：{FIELD_NAME}（文本，不设上限）")
         return True
     print(f"❌ 添加字段失败：{result.get('code')} {result.get('msg')}")
-    return False
-
-
-def options_overwrite_allowed(total, empty_count):
-    """字段缺选项时的硬防护：该字段已有非空值 → 禁止覆盖选项。
-
-    飞书 PUT fields 的 options 不带 id 等于「整组替换」；审计用 scratch 字段实证：
-    name-only 的 PUT 会清空该字段所有既有值。补齐分支只在整字段零值时才安全，
-    有值一律拒绝，要求人工在飞书表格里处理。
-    """
-    return total - empty_count == 0
-
-
-def update_field_options(token, field, missing):
-    """字段已存在但缺选项时补齐（保留既有选项与颜色）。"""
-    keep = []
-    for o in (field.get("property") or {}).get("options") or []:
-        item = {"name": o.get("name")}
-        if o.get("color"):
-            item["color"] = o["color"]
-        keep.append(item)
-    keep.extend({"name": m} for m in missing)
-    url = f"{BASE_URL}/bitable/v1/apps/{BASE_TOKEN}/tables/{TABLE_ID}/fields/{field.get('field_id')}"
-    data = {"field_name": FIELD_NAME, "type": 3, "property": {"options": keep}}
-    result = requests.put(url, headers=_headers(token), json=data).json()
-    if result.get("code") == 0:
-        print(f"✅ 已补齐字段选项：{FIELD_NAME} -> {[i['name'] for i in keep]}")
-        return True
-    print(f"❌ 补齐选项失败：{result.get('code')} {result.get('msg')}")
     return False
 
 
@@ -191,14 +160,14 @@ def main():
 
     field = next((f for f in fields if f.get("field_name") == FIELD_NAME), None)
     if field is None:
-        print(f"⬜ 缺字段：{FIELD_NAME}（单选：{'/'.join(OPTIONS)}）")
+        print(f"⬜ 缺字段：{FIELD_NAME}（文本，不设上限）")
+    elif field.get("type") == 1:
+        print(f"✅ 字段已存在（文本）：{FIELD_NAME}")
+    elif field.get("type") == 3:
+        print("⚠ 字段仍是单选：不限轮次方案需文本字段，请先运行 "
+              "scripts/dev/convert_round_to_text.py apply 转换")
     else:
-        opts = [o.get("name") for o in (field.get("property") or {}).get("options") or []]
-        missing = [o for o in OPTIONS if o not in opts]
-        if missing:
-            print(f"⚠ 字段已存在但缺选项：{missing}（现有：{opts}）")
-        else:
-            print(f"✅ 字段已存在，选项齐全：{FIELD_NAME}")
+        print(f"❌ 字段类型异常（type={field.get('type')}），请人工检查")
 
     total, empty_ids = scan(token)
     print(f"结果表共 {total} 行；空轮次（待回填为「1」）{len(empty_ids)} 行")
@@ -208,19 +177,12 @@ def main():
         return
 
     # ---- apply ----
+    if field is not None and field.get("type") not in (1, 3):
+        print("⛔ 字段类型异常，拒绝写入；请人工处理后重跑。")
+        sys.exit(1)
     if field is None:
         if not create_field(token):
             sys.exit(1)
-    else:
-        opts = [o.get("name") for o in (field.get("property") or {}).get("options") or []]
-        missing = [o for o in OPTIONS if o not in opts]
-        if missing:
-            if not options_overwrite_allowed(total, len(empty_ids)):
-                print(f"⛔ 字段「{FIELD_NAME}」已有 {total - len(empty_ids)} 行非空值；"
-                      f"覆盖选项会清空该字段所有既有值，拒绝补齐。请人工在飞书表格里补选项。")
-                sys.exit(1)
-            if not update_field_options(token, field, missing):
-                sys.exit(1)
 
     if empty_ids:
         updated = backfill(token, empty_ids)

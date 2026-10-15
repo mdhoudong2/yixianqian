@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 import os, sys
 _D = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _D)
@@ -17,9 +16,10 @@ guard(os.path.basename(__file__))
   观察 Bot 是否卡顿、日志是否正常。
 
 用法：
-    ./venv/bin/python simulate_admin_cmd.py            # 只模拟「开始填志愿 A-0005 4 4」
-    ./venv/bin/python simulate_admin_cmd.py start       # 同上显式指定
-    ./venv/bin/python simulate_admin_cmd.py start stop  # 完整流程演示（会真实改写 A-0005 状态，慎用）
+    ./venv/bin/python simulate_admin_cmd.py               # 只模拟「分组状态 A-0005」（只读）
+    ./venv/bin/python simulate_admin_cmd.py status        # 同上显式指定
+    ./venv/bin/python simulate_admin_cmd.py status stop   # 追加「执行分组 A-0005 4 4」（会真实改写 A-0005 结果，慎用）
+    ./venv/bin/python simulate_admin_cmd.py status reset  # 追加「清空分组结果 A-0005」（破坏性，慎用）
 """
 import sys
 import time
@@ -38,19 +38,23 @@ def run_async(task_name, handler, keyword):
 
 
 def main():
-    steps = [a for a in sys.argv[1:]] or ["start"]
+    steps = [a for a in sys.argv[1:]] or ["status"]
     log(f"[simulate] 模拟开始，admin={ADMIN_FAKE_OID}，步骤={steps}")
 
     # 关键观察点：后台任务执行器是否让主线程立即返回（非阻塞, 秒回）
     for step in steps:
-        if step == "start":
+        if step == "status":
             t0 = time.time()
-            run_async("开始填志愿", bot.handle_admin_start_group, "A-0005 4 4")
-            log(f"[simulate] 开始填志愿 dispatch 耗时 {time.time()-t0:.2f}s（应极短，说明未阻塞）")
+            run_async("分组状态", bot.handle_admin_group_status, "A-0005")
+            log(f"[simulate] 分组状态 dispatch 耗时 {time.time()-t0:.2f}s（应极短，说明未阻塞）")
         elif step == "stop":
             t0 = time.time()
-            run_async("执行分组", bot.handle_admin_stop_group, "A-0005")
+            run_async("执行分组", bot.handle_admin_stop_group, "A-0005 4 4")
             log(f"[simulate] 执行分组 dispatch 耗时 {time.time()-t0:.2f}s")
+        elif step == "reset":
+            t0 = time.time()
+            run_async("清空分组结果", bot.handle_admin_reset_group, "A-0005")
+            log(f"[simulate] 清空分组结果 dispatch 耗时 {time.time()-t0:.2f}s")
         else:
             log(f"[simulate] 未知步骤: {step}")
 

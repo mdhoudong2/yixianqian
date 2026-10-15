@@ -154,7 +154,8 @@ def test_start_collection_keep_history_when_clear_results_false(configured):
     assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 2, "历史轮次结果保留"
     writes = fake.writes()
     assert [c[0] for c in writes] == ["update"], "只写状态，不删结果"
-    assert writes[0][3] == {"一对一状态": "收集中"}
+    # 「签到功能开启」是「签到默认打开」刻意追加的同笔栏目（空值→是，见 signin_default_payload）
+    assert writes[0][3] == {"一对一状态": "收集中", "签到功能开启": "是"}
     assert not [c for c in fake.calls if c[0] == "search" and c[1] == ONETOONE_RESULT_TABLE], \
         "开启新一轮不该读结果表（保留历史，零搜索失败面）"
 

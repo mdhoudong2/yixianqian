@@ -18,10 +18,12 @@ from constants import (
     FIELD_MM_STATUS,
     FIELD_MM_USER_NAME,
     FIELD_NICKNAME,
+    FIELD_REAL_NAME,
     FIELD_SIGNUP_ACTIVITY_ID,
     FIELD_SIGNUP_ATTENDANCE,
     FIELD_SIGNUP_OPENID,
     FIELD_SIGNUP_STATUS,
+    FIELD_USER_ID,
     FIELD_WISH_ACTIVITY_ID,
     FIELD_WISH_HANDLED_AT,
     FIELD_WISH_OPERATOR,
@@ -78,6 +80,14 @@ def _open_id_of(record):
 
 def _nick_of(record):
     return get_field_text(record.get("fields", {}), FIELD_NICKNAME)
+
+
+def _real_name_with_uid(record):
+    """现场活动统一展示「真名（用户ID）」：真名=姓名去空白缺省昵称；无编号时只名字。"""
+    fields = record.get("fields", {})
+    name = get_field_text(fields, FIELD_REAL_NAME).strip() or _nick_of(record)
+    uid = get_field_text(fields, FIELD_USER_ID)
+    return f"{name}（{uid}）" if uid else name
 
 
 def _balance_line(open_id):
@@ -223,9 +233,10 @@ def handle_admin_attendance(text):
     if err:
         return err
     open_id = _open_id_of(record)
+    # 现场活动统一展示「真名（用户ID）」：真名=姓名去空白缺省昵称；取不到编号只名字
+    display = _real_name_with_uid(record)
     if not open_id:
-        return f"「{keyword}」还没绑定飞书账号"
-    nick = _nick_of(record)
+        return f"「{display}」还没绑定飞书账号"
 
     signups = search_records(SIGNUP_TABLE_ID, {
         "conjunction": "and",
@@ -235,9 +246,9 @@ def handle_admin_attendance(text):
             {"field_name": FIELD_SIGNUP_OPENID, "operator": "is", "value": [open_id]},
         ]})
     if not signups:
-        return f"「{nick}」没有报名 {activity_id}，先确认活动ID和人。"
+        return f"「{display}」没有报名 {activity_id}，先确认活动ID和人。"
     if len(signups) > 1:
-        return f"「{nick}」在 {activity_id} 有 {len(signups)} 条报名记录，请先在表格里核对。"
+        return f"「{display}」在 {activity_id} 有 {len(signups)} 条报名记录，请先在表格里核对。"
 
     rec = signups[0]
     signup_status = get_field_text(rec.get("fields", {}), FIELD_SIGNUP_STATUS)
@@ -246,11 +257,11 @@ def handle_admin_attendance(text):
         return "写入失败，请稍后重试。"
 
     name = get_field_text(activity.get("fields", {}), FIELD_ACTIVITY_NAME)
-    log(f"管理员签到: {nick} {activity_id} -> {state} by 管理员")
+    log(f"管理员签到: {display} {activity_id} -> {state} by 管理员")
     warning = ""
     if state == "未到" and signup_status == "已报名":
         warning = "\n⚠️ 该用户未到场，其优先报名名额不退穗（需求：未到场不退）。"
-    return f"已记录「{nick}」在「{name}」的考勤：{state}{warning}"
+    return f"已记录「{display}」在「{name}」的考勤：{state}{warning}"
 
 
 # ---------------------------------------------------------------- 心愿

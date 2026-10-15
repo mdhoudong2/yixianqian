@@ -15,7 +15,10 @@
 
 - 活动设置：handle_admin_start_group("A-0011 4 4")（分组状态=收集中/
   4男4女/清历史结果）+ handle_admin_toggle_group_flag("A-0011 开")
-  （分组功能开启=是）。不执行分组，不动活动其它状态。
+  （分组功能开启=是）。不执行分组，不动活动其它状态。start 成功后把
+  A-0011 全部「已报名」报名记录的签到状态批量置「按时」：模拟全员现场
+  到场（签到默认开启后的执行池口径）——空签到状态会被执行池按「已到」
+  过滤清空。
 
 用法（在 /opt/yixianqian-test 仓库根，必须显式 YIXIANQIAN_ENV=dev）：
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_grouping.py plan    # 只打印计划，不写
@@ -399,6 +402,33 @@ def _write_selections(plan):
     return created, updated
 
 
+def _mark_signups_attendance_present():
+    """A-0011 全部「已报名」报名记录 → 签到状态「按时」（模拟全员现场到场）。
+
+    签到功能默认开启后，执行池按「已到」（按时/迟到）过滤：测试服报名签到
+    状态为空会把执行池清空。空或旧值一律覆盖为「按时」，因为 seed 语义是
+    「全员到场」；失败如实中止。
+    """
+    signups = _must(bitable.search_records(C.SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": C.FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+             "value": [_ACTIVITY_ID]},
+            {"field_name": C.FIELD_SIGNUP_STATUS, "operator": "is",
+             "value": [_SIGNUP_SIGNED]},
+        ],
+    }), "报名表(A-0011 已报名)")
+    updates = [{"record_id": r.get("record_id"),
+                "fields": {C.FIELD_SIGNUP_ATTENDANCE: "按时"}}
+               for r in signups if r.get("record_id")]
+    if not updates:
+        _fail("A-0011 没有「已报名」报名记录，无法置「按时」（中止）")
+    updated = bitable.batch_update_records(C.SIGNUP_TABLE_ID, updates)
+    if updated != len(updates):
+        _fail(f"签到状态批量更新失败：{updated}/{len(updates)} 条（中止）")
+    print(f"  签到状态：{updated} 条「已报名」→ 按时（模拟全员现场到场）")
+
+
 def _apply_activity_settings():
     from commands import handle_admin_toggle_group_flag
     from grouping import handle_admin_start_group
@@ -407,6 +437,9 @@ def _apply_activity_settings():
     print(f"  handle_admin_start_group -> {reply1.splitlines()[0]}")
     if "志愿填写已开始" not in reply1:
         _fail(f"开始填志愿失败：{reply1}（写入可能未生效，已读回验证会如实报告）")
+    # start 已同笔写入「签到功能开启=是」（默认打开）；把全部「已报名」置
+    # 「按时」模拟全员现场到场，避免后续执行/预览池被签到闸门清空。
+    _mark_signups_attendance_present()
     reply2 = handle_admin_toggle_group_flag(f"{_ACTIVITY_ID} 开")
     print(f"  handle_admin_toggle_group_flag -> {reply2.splitlines()[0]}")
     if "已开启" not in reply2:

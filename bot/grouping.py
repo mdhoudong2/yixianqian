@@ -74,6 +74,7 @@ def configure_grouping_lib(lock_dir):
             "signup_attendance": FIELD_SIGNUP_ATTENDANCE,
             "gender": FIELD_GENDER,
             "user_id": "用户ID",
+            "real_name": FIELD_REAL_NAME,
         },
         lock_dir=lock_dir,
     )
@@ -128,7 +129,8 @@ def build_group_select_card(activity_id, activity_name, participants, user_gende
     ]
 
     if use_select:
-        options = [{"text": {"tag": "plain_text", "content": _option_label(p["nickname"], p.get("user_id", ""), dup_nick)},
+        # 现场活动统一显示「真名（缺省昵称）＋编号」：永远带编号，避免选错人
+        options = [{"text": {"tag": "plain_text", "content": _option_label((p.get("real_name") or "").strip() or p["nickname"], p.get("user_id", ""), True)},
                     "value": p["open_id"]} for p in opp_participants]
         for i in range(7):
             sel = {
@@ -453,7 +455,10 @@ def _render_grouping_result(res, round_no):
              f"共{res['group_count']}组，参与{res['participant_count']}人，"
              f"每组{res['males_per_group']}男{res['females_per_group']}女。", ""]
     for g in res["groups"]:
-        names = "、".join(m["display_name"] for m in g["members"])
+        # 现场活动统一「名字（U-xxxx）」：名字=真名缺省昵称；编号缺失时只名字
+        names = "、".join(
+            f"{m['display_name']}（{m['user_id']}）" if m.get("user_id") else m["display_name"]
+            for m in g["members"])
         lines.append(f"第{g['group_id']}组：{names}")
     lines.append("")
     lines.append("用户可自查 H5 查看自己的分组结果。")
@@ -541,5 +546,6 @@ def handle_admin_unsubmitted(keyword):
         return f"活动「{act_name}」所有报名者均已提交志愿。"
     lines = [f"「{act_name}」未提交志愿（{len(unsubmitted)}人）："]
     for u in unsubmitted:
-        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u['nickname']}")
+        # 名字=真名缺省昵称（现场活动统一口径；uid/性别格式不变）
+        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}")
     return "\n".join(lines)

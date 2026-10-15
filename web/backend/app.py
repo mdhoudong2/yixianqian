@@ -107,6 +107,7 @@ def configure_grouping_lib(lock_dir):
             "signup_attendance": F_SIGNUP_ATTENDANCE,
             "gender": F_GENDER,
             "user_id": F_USER_ID,
+            "real_name": F_REAL_NAME,
         },
         lock_dir=lock_dir,
     )
@@ -147,6 +148,7 @@ def configure_onetoone_lib(lock_dir):
             "signup_status": F_SIGNUP_STATUS,
             "gender": F_GENDER,
             "user_id": F_USER_ID,
+            "real_name": F_REAL_NAME,
             "self_hobbies": F_SELF_HOBBIES,
             "self_sports": F_SELF_SPORTS,
             "self_traits": F_SELF_TRAITS,
@@ -2940,6 +2942,14 @@ def _norm_phone(v):
 def _norm_name(v):
     """归一化姓名：去除所有空白字符。"""
     return re.sub(r"\s+", "", str(v or ""))
+
+def _display_real_name(fields):
+    """users 记录 → 显示用真名：「姓名」去空白后非空则用它，否则空串。
+
+    现场作业面统一「真名＋编号」的读取端合约：空白/缺失一律返回空串，
+    由调用方回退既有来源名（落库名/昵称）——不把空白当真名。
+    """
+    return (bitable.get_field_text(fields, F_REAL_NAME) or "").strip()
 
 def _claim_auto_signup(open_id, user_fields):
     """认领时若资料已审核（单身）且注册表单选了「微信缴费=我已缴费」，立即报名
@@ -5845,6 +5855,7 @@ def group_candidates(activity_id):
                 candidates.append({
                     "openid": s_openid,
                     "nickname": bitable.get_field_text(uf, F_NICKNAME),
+                    "real_name": _display_real_name(uf),
                     "photo": photo,
                     "user_id": bitable.get_field_text(uf, F_USER_ID),
                     "baptismal_name": bitable.get_field_text(uf, F_BAPTISMAL_NAME),
@@ -6034,16 +6045,18 @@ def group_result(activity_id):
         req_round = latest_round
     round_results = [r for r in results if _round_of(r.get("fields", {})) == req_round]
 
-    # 一次性把 users 快照映射为 open_id -> 用户ID（避免对每个成员逐条查库）
+    # 一次性把 users 快照映射为 open_id -> 用户ID/真名/昵称（避免对每个成员逐条查库）
     users_snap = _snap("users")
     if not users_snap:
         users_snap = bitable.get_all_users()
-    uid_by_oid = {}
+    uid_by_oid, real_by_oid, nick_by_oid = {}, {}, {}
     for u in users_snap:
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
         if oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
+            nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
 
     # 找到我的组号
     my_group = None
@@ -6053,7 +6066,10 @@ def group_result(activity_id):
         group_no = int(bitable.get_field_number(fields, F_GR_GROUP_NO, 0))
         oid = bitable.get_field_text(fields, F_GR_USER_OID)
         member = {
-            "nickname": bitable.get_field_text(fields, F_GR_USER_NAME),
+            # 现场作业面统一真名：真名 > 落库名（结果表）> 快照昵称，空则前端兜底
+            "nickname": (real_by_oid.get(oid)
+                         or bitable.get_field_text(fields, F_GR_USER_NAME)
+                         or nick_by_oid.get(oid, "")),
             "gender": bitable.get_select_value(fields, F_GR_USER_GENDER),
             "openid": oid,
             "user_id": uid_by_oid.get(oid, "")
@@ -6627,6 +6643,7 @@ def admin_group_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
 
     # 已填写名单（加法字段）：顺序与去重集合一致，前端一次载入即可切换两个名单
@@ -6638,6 +6655,7 @@ def admin_group_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
     return jsonify({
         "activity_id": act_id,
@@ -6888,8 +6906,25 @@ def admin_group_result():
     if not act:
         return jsonify({"error": "活动不存在"}), 404
 
-    return jsonify(lib_grouping.fetch_result(
-        act_id, round_no, client=_grouping_client, activity=act))
+    res = lib_grouping.fetch_result(act_id, round_no, client=_grouping_client, activity=act)
+    # 现场作业面统一「真名＋编号」：lib 的 display_name 是落库名（缺时退 oid），
+    # 这里用 users 快照补真名与用户ID，不逐人打飞书
+    users_snap = _snap("users")
+    if not users_snap:
+        users_snap = bitable.get_all_users()
+    uid_by_oid, real_by_oid = {}, {}
+    for u in users_snap:
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid:
+            uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
+    for grp in res.get("groups", []):
+        for m in grp.get("members", []):
+            m["user_id"] = uid_by_oid.get(m["open_id"], "")
+            m["real_name"] = real_by_oid.get(m["open_id"], "")
+            m["display_name"] = m["real_name"] or m["display_name"]
+    return jsonify(res)
 
 
 @app.route("/api/admin/group/flag", methods=["POST"])
@@ -7046,6 +7081,7 @@ def admin_onetoone_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
 
     submitted_items = []
@@ -7056,6 +7092,7 @@ def admin_onetoone_unsubmitted():
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
+            "real_name": _display_real_name(uf),
         })
     return jsonify({
         "activity_id": act_id,
@@ -7097,18 +7134,23 @@ def admin_onetoone_result():
         return miss
 
     res = lib_onetoone.fetch_result(act_id, round_no, client=_grouping_client, activity=act)
-    uid_by_oid = {}
+    # 现场作业面统一「真名＋编号」：真名从 users 快照取（不逐人打飞书），
+    # 缺则回退 lib 原值（结果表落库名）
+    uid_by_oid, real_by_oid = {}, {}
     for u in _snap_live("users"):
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
         if oid and oid not in uid_by_oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
 
     ordered = res["people"]
     for person in ordered:
         person["user_id"] = uid_by_oid.get(person["open_id"], "")
+        person["nickname"] = real_by_oid.get(person["open_id"]) or person["nickname"]
         for target in person["partners"]:
             target["user_id"] = uid_by_oid.get(target["open_id"], "")
+            target["nickname"] = real_by_oid.get(target["open_id"]) or target["nickname"]
     ordered.sort(key=lambda p: (p["user_id"] or "~", p["open_id"]))
     return jsonify({
         "activity_id": act_id,
@@ -7478,7 +7520,7 @@ def _signin_roster_item(rec):
         uid = bitable.get_field_text(uf, F_USER_ID)
         gender = bitable.get_select_value(uf, F_GENDER)
         # 现场签到要核对身份：姓名从已在手的用户档案上取（零额外查询）
-        real_name = bitable.get_field_text(uf, F_REAL_NAME)
+        real_name = _display_real_name(uf)
         if not nick:
             nick = bitable.get_field_text(uf, F_NICKNAME)
     return {"open_id": oid, "nickname": nick, "user_id": uid, "gender": gender,
@@ -7705,6 +7747,7 @@ def onetoone_candidates(activity_id):
                 candidates.append({
                     "openid": s_openid,
                     "nickname": bitable.get_field_text(uf, F_NICKNAME),
+                    "real_name": _display_real_name(uf),
                     "photo": photo,
                     "user_id": bitable.get_field_text(uf, F_USER_ID),
                     "baptismal_name": bitable.get_field_text(uf, F_BAPTISMAL_NAME),
@@ -7917,16 +7960,17 @@ def onetoone_result(activity_id):
             if bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) == open_id
             and lib_onetoone.round_of(r.get("fields", {})) == req_round]
 
-    # users 快照：open_id -> (用户ID, 昵称, 头像)
+    # users 快照：open_id -> (用户ID, 真名, 昵称, 头像)
     users_snap = _snap("users")
     if not users_snap:
         users_snap = bitable.get_all_users()
-    uid_by_oid, nick_by_oid, photo_by_oid = {}, {}, {}
+    uid_by_oid, real_by_oid, nick_by_oid, photo_by_oid = {}, {}, {}, {}
     for u in users_snap:
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
         if oid and oid not in uid_by_oid:
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
             nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
             photo_by_oid[oid] = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
@@ -7941,7 +7985,10 @@ def onetoone_result(activity_id):
         target_oid = bitable.get_field_text(f, F_OTO_TARGET_OID)
         partners.append({
             "openid": target_oid,
-            "nickname": bitable.get_field_text(f, F_OTO_TARGET_NAME) or nick_by_oid.get(target_oid, ""),
+            # 现场作业面统一真名：真名 > 结果表落库名 > 快照昵称
+            "nickname": (real_by_oid.get(target_oid)
+                         or bitable.get_field_text(f, F_OTO_TARGET_NAME)
+                         or nick_by_oid.get(target_oid, "")),
             "photo": photo_by_oid.get(target_oid, ""),
             "user_id": uid_by_oid.get(target_oid, ""),
             "rank": int(bitable.get_field_number(f, F_OTO_RANK, 0)),
@@ -8654,13 +8701,16 @@ def activity_signups(activity_id):
         photo = ""
         user_id = ""
         gender = ""
+        real_name = ""
         if u:
             uf = u.get("fields", {})
             tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
             photo = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
             user_id = bitable.get_field_text(uf, F_USER_ID)
             gender = bitable.get_select_value(uf, F_GENDER)
-        result.append({"openid": s_openid, "nickname": nick, "user_id": user_id, "photo": photo, "gender": gender})
+            real_name = _display_real_name(uf)
+        result.append({"openid": s_openid, "nickname": nick, "user_id": user_id,
+                       "real_name": real_name, "photo": photo, "gender": gender})
     return jsonify({"signups": result})
 
 @app.route("/api/users/<openid>/public", methods=["GET"])

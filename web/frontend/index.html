@@ -278,6 +278,8 @@
   .signup-sheet-avatar { width: 44px; height: 44px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; flex-shrink: 0; }
   .signup-sheet-avatar img { width: 100%; height: 100%; object-fit: cover; }
   .signup-sheet-name { font-size: 16px; color: #323233; }
+  .signup-sheet-main { flex: 1; min-width: 0; }
+  .signup-sheet-sub { font-size: 12px; color: #646566; margin-top: 3px; }
   /* 他人资料页 */
   .user-detail-card { padding: 12px; }
   .ud-photo { width: 120px; height: 120px; border-radius: 50%; margin: 20px auto; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 48px; overflow: hidden; cursor: pointer; }
@@ -624,7 +626,7 @@
   .van-theme-dark .ga-card { background: #222226; }
   .van-theme-dark .ga-title, .van-theme-dark .ga-card-title, .van-theme-dark .ga-row-name,
   .van-theme-dark .ga-start-head, .van-theme-dark .ga-confirm-row b { color: #f5f5f5; }
-  .van-theme-dark .ga-row-sub, .van-theme-dark .ga-row-id, .van-theme-dark .ga-form-label,
+  .van-theme-dark .ga-row-sub, .van-theme-dark .ga-row-id, .van-theme-dark .signup-sheet-sub, .van-theme-dark .ga-form-label,
   .van-theme-dark .ga-stat-label, .van-theme-dark .ga-step-label, .van-theme-dark .ga-confirm-row { color: #c8c9cc; }
   .van-theme-dark .ga-row, .van-theme-dark .ga-form-row { border-color: #3a3a3e; }
   .van-theme-dark .ga-step-line { background: #3a3a3e; }
@@ -1435,7 +1437,7 @@
             </div>
             <template v-if="gaRosterTab===0">
               <div v-if="gaRosterList.length" class="candidate-search-box">
-                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+                <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
               <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
               <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
@@ -1443,7 +1445,7 @@
                 <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
-                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
                     <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
@@ -1455,7 +1457,7 @@
             </template>
             <template v-else>
               <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
-                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+                <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
               <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
               <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
@@ -1463,7 +1465,7 @@
                 <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
-                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
                     <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
@@ -1490,7 +1492,7 @@
             </div>
             <template v-if="gaRosterTab===0">
               <div v-if="gaRosterList.length" class="candidate-search-box">
-                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+                <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
               <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
               <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
@@ -1498,7 +1500,7 @@
                 <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
-                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
                     <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
@@ -1510,7 +1512,7 @@
             </template>
             <template v-else>
               <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
-                <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+                <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
               <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
               <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
@@ -1518,7 +1520,7 @@
                 <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
-                    <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+                    <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
                     <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
@@ -1545,7 +1547,7 @@
               <div v-for="(g, gi) in gaGroups" :key="gi" class="ga-group-card">
                 <div class="ga-card-title" style="margin-bottom:6px;">第 {{ g.group_id }} 组 <span class="ga-row-sub" style="margin:0;">{{ (g.members||[]).length }} 人</span></div>
                 <div class="ga-group-members">
-                  <span v-for="m in g.members" :key="m.open_id" class="ga-member-chip">{{ m.gender==='男性' ? '👨' : (m.gender==='女性' ? '👩' : '👤') }} {{ m.display_name }}</span>
+                  <span v-for="m in g.members" :key="m.open_id" class="ga-member-chip">{{ m.gender==='男性' ? '👨' : (m.gender==='女性' ? '👩' : '👤') }} {{ m.display_name }}{{ m.user_id ? ' · ' + m.user_id : '' }}</span>
                 </div>
               </div>
             </template>
@@ -1610,7 +1612,7 @@
       </div>
       <template v-if="gaRosterTab===0">
         <div v-if="gaRosterList.length" class="candidate-search-box">
-          <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+          <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
         </div>
         <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
         <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
@@ -1618,7 +1620,7 @@
           <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
             <div class="ga-row-main">
-              <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+              <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
               <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
             </div>
             <van-icon name="arrow" color="#c8c9cc"></van-icon>
@@ -1630,7 +1632,7 @@
       </template>
       <template v-else>
         <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
-          <input v-model="gaRosterQuery" placeholder="搜昵称或用户ID" class="candidate-search-input" />
+          <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
         </div>
         <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
         <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
@@ -1638,7 +1640,7 @@
           <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
             <div class="ga-row-main">
-              <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
+              <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
               <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
             </div>
             <van-icon name="arrow" color="#c8c9cc"></van-icon>
@@ -1692,8 +1694,8 @@
         <div v-for="r in gaSigninVisible" :key="r.open_id" class="ga-row ga-signin-row">
           <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
           <div class="ga-row-main">
-            <div class="ga-row-name">{{ r.nickname || '（没有昵称）' }}</div>
-            <div class="ga-row-sub">{{ r.real_name || '-' }} · {{ r.user_id || '-' }} · {{ r.gender || '-' }} · {{ gaSigninStateText(r.state) }}</div>
+            <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
+            <div class="ga-row-sub">{{ r.user_id || '-' }}{{ r.real_name ? ' · ' + r.nickname : '' }}</div>
           </div>
           <div class="ga-signin-actions">
             <van-button size="mini" :color="r.checked_in ? '#0a8548' : '#ee0a24'" :loading="!!gaSigninBusy[r.open_id]" @click="toggleSignin(r)">{{ gaSigninStateText(r.state) }}</van-button>
@@ -2197,7 +2199,7 @@
       <div ref="choiceListRef">
         <div v-for="(c, i) in selectedChoices" :key="c.openid" class="choice-item">
           <span class="choice-rank">第{{i+1}}志愿</span>
-          <span class="choice-name">{{ c.nickname }}</span>
+          <span class="choice-name">{{ c.real_name || c.nickname }}{{ c.user_id ? ' · ' + c.user_id : '' }}</span>
           <van-icon name="cross" color="#c8c9cc" size="18" @click="removeChoice(i)" />
         </div>
       </div>
@@ -2229,7 +2231,7 @@
           <template v-else>{{ c.user_id || '👤' }}</template>
         </div>
         <div class="group-candidate-info">
-          <div class="group-candidate-name">{{ c.nickname }}</div>
+          <div class="group-candidate-name">{{ c.real_name || c.nickname }}</div>
           <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
         </div>
         <div v-if="isSelected(c.openid)" class="choice-badge">{{selectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
@@ -2314,7 +2316,7 @@
       <div>
         <div v-for="(c, i) in onetooneSelectedChoices" :key="c.openid" class="choice-item">
           <span class="choice-rank">第{{i+1}}志愿</span>
-          <span class="choice-name">{{ c.nickname }}</span>
+          <span class="choice-name">{{ c.real_name || c.nickname }}{{ c.user_id ? ' · ' + c.user_id : '' }}</span>
           <van-icon name="cross" color="#c8c9cc" size="18" @click="removeOnetooneChoice(i)" />
         </div>
       </div>
@@ -2345,7 +2347,7 @@
           <template v-else>{{ c.user_id || '👤' }}</template>
         </div>
         <div class="group-candidate-info">
-          <div class="group-candidate-name">{{ c.nickname }}</div>
+          <div class="group-candidate-name">{{ c.real_name || c.nickname }}</div>
           <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
         </div>
         <div v-if="isOnetooneSelected(c.openid)" class="choice-badge">{{onetooneSelectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
@@ -2461,7 +2463,10 @@
         <img v-if="s.photo" :src="s.photo" alt="" @error="retryImg($event, 2, ()=>{s.photo=''})" loading="lazy" decoding="async">
         <template v-else>{{ s.gender==='男性' ? '👨' : '👩' }}</template>
       </div>
-      <div class="signup-sheet-name">{{ s.nickname }}</div>
+      <div class="signup-sheet-main">
+        <div class="signup-sheet-name">{{ s.real_name || s.nickname }}</div>
+        <div class="signup-sheet-sub">{{ s.user_id || '-' }}</div>
+      </div>
     </div>
   </div>
 </van-popup>
@@ -6592,13 +6597,17 @@ createApp({
     const gaRosterFiltered = computed(() => {
       const q = gaRosterQuery.value.trim().toLowerCase();
       if (!q) return gaRosterList.value;
-      return gaRosterList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q) || String(r.user_id || '').toLowerCase().includes(q));
+      return gaRosterList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q)
+        || String(r.real_name || '').toLowerCase().includes(q)
+        || String(r.user_id || '').toLowerCase().includes(q));
     });
     const gaRosterVisible = computed(() => gaRosterFiltered.value.slice(0, gaRosterShown.value));
     const gaSubmittedFiltered = computed(() => {
       const q = gaRosterQuery.value.trim().toLowerCase();
       if (!q) return gaRosterSubmittedList.value;
-      return gaRosterSubmittedList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q) || String(r.user_id || '').toLowerCase().includes(q));
+      return gaRosterSubmittedList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q)
+        || String(r.real_name || '').toLowerCase().includes(q)
+        || String(r.user_id || '').toLowerCase().includes(q));
     });
     const gaSubmittedVisible = computed(() => gaSubmittedFiltered.value.slice(0, gaRosterShown.value));
     const gaStartExpected = computed(() => {

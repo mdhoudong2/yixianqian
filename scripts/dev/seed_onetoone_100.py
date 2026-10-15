@@ -257,7 +257,12 @@ def _create_activity():
 
 
 def _enroll(act_id, users):
-    """100 人报名（按 open_id 防重）。"""
+    """100 人报名（按 open_id 防重），同笔写入「签到状态=按时」。
+
+    模拟全员现场到场（签到默认开启后的执行池口径）：签到功能默认打开后，
+    执行池按「已到」（按时/迟到）过滤，测试服报名签到状态为空会把执行池
+    清空；本 seed 不测签到闸门本身，故统一置「按时」。
+    """
     ok = 0
     for u in users:
         exist = bitable.search_records(C.SIGNUP_TABLE_ID, [
@@ -270,12 +275,41 @@ def _enroll(act_id, users):
             C.FIELD_SIGNUP_OPENID: u["oid"],
             C.FIELD_SIGNUP_NICKNAME: u["nickname"],
             C.FIELD_SIGNUP_STATUS: "已报名",
+            # 模拟全员现场到场（签到默认开启后的执行池口径）
+            C.FIELD_SIGNUP_ATTENDANCE: "按时",
         })
         if not rec:
             _fail(f"报名失败：{u['oid']}（中止）")
         ok += 1
     print(f"  报名：新增 {ok} 条（已报名跳过 {len(users) - ok}）")
     return ok
+
+
+def _mark_signups_attendance_present(act_id):
+    """该活动全部「已报名」报名记录 → 签到状态「按时」（模拟全员现场到场）。
+
+    与 seed_test_onetoone/seed_test_grouping 的 helper 同款语义：空或旧值一律
+    盲覆盖为「按时」；查询失败/部分失败 fail-closed 中止。`_enroll` 对已存在
+    报名直接跳过、不补签到，重跑/中断遗留会把执行池清空，本步兜底拉回。
+    """
+    signups = _must(bitable.search_records(C.SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": C.FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+             "value": [act_id]},
+            {"field_name": C.FIELD_SIGNUP_STATUS, "operator": "is",
+             "value": ["已报名"]},
+        ],
+    }), f"报名表({act_id} 的已报名记录)")
+    updates = [{"record_id": r.get("record_id"),
+                "fields": {C.FIELD_SIGNUP_ATTENDANCE: "按时"}}
+               for r in signups if r.get("record_id")]
+    if not updates:
+        _fail(f"{act_id} 没有「已报名」报名记录，无法置「按时」（中止）")
+    updated = bitable.batch_update_records(C.SIGNUP_TABLE_ID, updates)
+    if updated != len(updates):
+        _fail(f"签到状态批量更新失败：{updated}/{len(updates)} 条（中止）")
+    print(f"  签到状态：{updated} 条「已报名」→ 按时（模拟全员现场到场）")
 
 
 def _seed_choices(act_id, males, females):
@@ -457,6 +491,8 @@ def _cmd_run():
     print(f"  活动ID={act_id}")
     print("[3/6] 报名：")
     _enroll(act_id, users)
+    print("[3.5/6] 签到状态：")
+    _mark_signups_attendance_present(act_id)
     print("[4/6] 预填志愿：")
     _seed_choices(act_id, males, females)
     print("[5/6] 执行匹配：")

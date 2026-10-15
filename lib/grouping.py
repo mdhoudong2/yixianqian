@@ -201,7 +201,7 @@ _REQUIRED_FIELDS = (
     "gr_user_gender", "gr_round",
     "signup_activity_id", "signup_status", "signup_openid", "signup_nickname",
     "signup_attendance",
-    "gender", "user_id",
+    "gender", "user_id", "real_name",
 )
 _cfg = {"tables": {}, "fields": {}}
 
@@ -387,6 +387,21 @@ def signin_enabled(activity_fields):
     if "signin_flag" not in f:
         return False
     return get_field_text(activity_fields or {}, f["signin_flag"]) == "是"
+
+
+def signin_default_payload(activity_fields):
+    """「签到功能默认打开」的追加写入（可能为空 dict）。
+
+    飞书单选栏位没有 API 级默认值：开始收集/开始一对一时把「签到功能开启」和
+    状态写进**同一笔** update——当前值为空才补「是」；已是 是/否 一律不动
+    （管理员手动改过「否」的活动，重开收集不该被重新打开）；栏位名未注入
+    （旧进程/未迁移配置）时返回空 dict，写入序列与迁移前逐字相同。
+    """
+    f = _cfg["fields"]
+    name = f.get("signin_flag")
+    if not name or get_field_text(activity_fields or {}, name):
+        return {}
+    return {name: "是"}
 
 
 def attendance_map(activity_id, *, client):
@@ -765,10 +780,11 @@ def _collect_selections(client, activity_id):
 
 
 def collect_participants(activity_id, *, client, find_user_by_openid):
-    """取该活动的报名者：[{open_id, nickname, gender, user_id}]。
+    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name}]。
 
     逐人查用户表取性别是串行 API 的耗时瓶颈（大活动尤其明显），用线程池并发查，
     显著降低延迟。性别来源由调用端决定（bot 走 queries 版，H5 走快照版）。
+    real_name = 用户表「姓名」去空白（现场活动显示名：非空优先于昵称，由渲染层决定）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -789,12 +805,15 @@ def collect_participants(activity_id, *, client, find_user_by_openid):
         oid, nickname = row
         gender = ""
         uid = ""
+        real_name = ""
         user_recs = find_user_by_openid(oid)
         if user_recs:
             uf = user_recs[0].get("fields", {})
             gender = get_field_text(uf, f["gender"])
             uid = get_field_text(uf, f["user_id"])
-        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid}
+            real_name = get_field_text(uf, f["real_name"]).strip()
+        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid,
+                "real_name": real_name}
 
     users = []
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="signup-gender") as pool:
@@ -844,6 +863,7 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
         unsubmitted.append({
             "open_id": oid, "user_id": user_id,
             "gender": s["gender"], "nickname": s["nickname"],
+            "real_name": s.get("real_name", ""),
         })
 
     return {
@@ -1006,11 +1026,15 @@ def start_group(activity_id, males_per_group, females_per_group, *, client, acti
         return {"code": EXCLUSIVE_MODE, "blocked_by": MODE_ONETOONE,
                 "activity_id": activity_id, "activity_name": activity_name}
 
-    client.update_record(_cfg["tables"]["activity_table_id"], record_id, {
+    # 签到功能默认打开：单选栏位没有 API 级默认值，趁写状态这一笔顺带补「是」
+    # （当前值已存在则不动；栏位名未注入则写空 dict，见 signin_default_payload）
+    payload = {
         f["group_status"]: STATUS_COLLECTING,
         f["male_per_group"]: males_per_group,
         f["female_per_group"]: females_per_group,
-    })
+    }
+    payload.update(signin_default_payload(af))
+    client.update_record(_cfg["tables"]["activity_table_id"], record_id, payload)
 
     if not clear_results:
         return {
@@ -1128,7 +1152,9 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     # 批量写入分组结果，避免逐条 create_record 在大活动下（数百条）拖到好几分钟。
     signups = collect_participants(rec_activity_id, client=client,
                                    find_user_by_openid=find_user_by_openid)
-    oid_to_nickname = {p["open_id"]: p["nickname"] for p in signups}
+    # 现场活动统一显示「真名（缺省昵称）」：姓名去空白非空才用，否则回退报名昵称
+    oid_to_name = {p["open_id"]: p["real_name"] or p["nickname"] for p in signups}
+    oid_to_user_id = {p["open_id"]: p["user_id"] for p in signups}
     result_records = []
     for g in groups:
         all_members = _group_members(g)
@@ -1137,7 +1163,7 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
                 f["gr_activity_id"]: rec_activity_id,
                 f["gr_group_no"]: g["group_id"],
                 f["gr_user_oid"]: oid,
-                f["gr_user_name"]: oid_to_nickname.get(oid, ""),
+                f["gr_user_name"]: oid_to_name.get(oid, ""),
                 f["gr_user_gender"]: gender,
                 f["gr_round"]: str(round_no),
             })
@@ -1163,8 +1189,9 @@ def execute_round(activity_id, round_no, *, client, activity, find_user_by_openi
     return dict(base, code="OK", group_count=len(groups), participant_count=len(participants),
                 groups=[{"group_id": g["group_id"],
                          "members": [{"open_id": oid, "gender": gender,
-                                      # 昵称为空（或不在报名名单里）时退回 open_id，与 fetch_result 同口径
-                                      "display_name": oid_to_nickname.get(oid) or oid}
+                                      # 真名为空（或不在报名名单里）时退回 open_id，与 fetch_result 同口径
+                                      "display_name": oid_to_name.get(oid) or oid,
+                                      "user_id": oid_to_user_id.get(oid, "")}
                                      for oid, gender in _group_members(g)]}
                         for g in groups])
 

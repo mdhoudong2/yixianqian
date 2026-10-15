@@ -36,7 +36,7 @@ _REQUIRED_FIELDS = (
     "oto_choices", "oto_rank", "oto_user_oid", "oto_user_name", "oto_user_gender",
     "oto_target_oid", "oto_target_name", "oto_round",
     "signup_activity_id", "signup_openid", "signup_nickname", "signup_status",
-    "gender", "user_id",
+    "gender", "user_id", "real_name",
     "self_hobbies", "self_sports", "self_traits", "education", "mbti", "city", "church",
 )
 _cfg = {"tables": {}, "fields": {}}
@@ -389,11 +389,12 @@ def build_profiles(open_ids, *, find_user_by_openid):
 # ---------------------------------------------------------------- 内部读取
 
 def build_participants(activity_id, *, client, find_user_by_openid):
-    """取该活动的报名者：[{open_id, nickname, gender, user_id}]。
+    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name}]。
 
     读取失败（raw client 返回 None）按空表处理：这些数据只用于名单展示/候选校验，
     飞书抖一下不该让整条指令失败——与迁移前 bot 经 lib.grouping.collect_participants
     的兜底口径一致。性别/用户ID 走调用方注入的 find_user_by_openid。
+    real_name = 用户表「姓名」去空白（现场活动显示名：非空优先于昵称，由渲染层决定）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -416,12 +417,15 @@ def build_participants(activity_id, *, client, find_user_by_openid):
         oid, nickname = row
         gender = ""
         uid = ""
+        real_name = ""
         user_recs = find_user_by_openid(oid)
         if user_recs:
             uf = user_recs[0].get("fields", {})
             gender = get_field_text(uf, f["gender"])
             uid = get_field_text(uf, f["user_id"])
-        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid}
+            real_name = get_field_text(uf, f["real_name"]).strip()
+        return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid,
+                "real_name": real_name}
 
     users = []
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="onetoone-signup") as pool:
@@ -561,6 +565,7 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
         unsubmitted.append({
             "open_id": oid, "user_id": user_id,
             "gender": s["gender"], "nickname": s["nickname"],
+            "real_name": s.get("real_name", ""),
         })
 
     return {
@@ -836,8 +841,11 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None, clear_
         return dict(base, code="EXCLUSIVE_MODE", blocked_by="group")
     try:
         with grouping_lock(activity_id, timeout=lock_timeout):
-            if not client.update_record(t["activity_table_id"], record_id,
-                                        {f["onetoone_status"]: "收集中"}):
+            # 签到功能默认打开：单选栏位没有 API 级默认值，趁写状态这一笔顺带补「是」
+            # （当前值已存在则不动；栏位名未注入则写空 dict，见 lib.grouping.signin_default_payload）
+            payload = {f["onetoone_status"]: "收集中"}
+            payload.update(lib_grouping.signin_default_payload(af))
+            if not client.update_record(t["activity_table_id"], record_id, payload):
                 return dict(base, code="STATUS_FAILED")
 
             if not clear_results:
@@ -1013,8 +1021,8 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
                                              {f["onetoone_status"]: "收集中"}))
         return dict(base, code="ALGORITHM_ERROR", error=str(e), restored=restored)
 
-    # 报名信息：open_id -> 昵称（复用上面已读的报名表）
-    oid_to_nickname = {s["open_id"]: s["nickname"] for s in signups}
+    # 报名信息：open_id -> 显示名（现场活动统一「真名（缺省昵称）」，姓名去空白非空才用）
+    oid_to_name = {s["open_id"]: (s["real_name"] or s["nickname"]) for s in signups}
     result_records = []
     for p in participants:
         pid = p["id"]
@@ -1023,10 +1031,10 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
                 f["oto_activity_id"]: rec_activity_id,
                 f["oto_rank"]: rank,
                 f["oto_user_oid"]: pid,
-                f["oto_user_name"]: oid_to_nickname.get(pid, ""),
+                f["oto_user_name"]: oid_to_name.get(pid, ""),
                 f["oto_user_gender"]: "男性" if p["gender"] == "male" else "女性",
                 f["oto_target_oid"]: target_oid,
-                f["oto_target_name"]: oid_to_nickname.get(target_oid, ""),
+                f["oto_target_name"]: oid_to_name.get(target_oid, ""),
                 f["oto_round"]: str(round_no),
             })
 

@@ -221,7 +221,8 @@ CASES = [
                                       _res("ou_f1", 2, "2")]}),
     Case("start/成功无历史", "start", "A-0002 3 3"),
 
-    # ---- 执行分组（13）----
+    # ---- 执行分组（11；「执行成功/执行成功第二轮/幂等查询读失败」因组员名
+    #      追加编号刻意分歧，移到文件末尾「本次功能（现场显示名）：刻意分歧」一节）----
     Case("stop/格式错误", "stop", ""),
     Case("stop/轮次非数字", "stop", "A-0002 第三轮"),
     Case("stop/轮次为零", "stop", "A-0002 0"),
@@ -232,10 +233,6 @@ CASES = [
     Case("stop/幂等拦截", "stop", "A-0002 2",
          tables={**_default_tables(),
                  GROUP_RESULT_TABLE: [_res("ou_m1", 1, "2")]}),
-    Case("stop/执行成功", "stop", "A-0002"),
-    Case("stop/执行成功第二轮", "stop", "A-0002 2",
-         tables={**_default_tables(),
-                 GROUP_RESULT_TABLE: [_res("ou_m1", 1, "1")]}),
     Case("stop/人数不足", "stop", "A-0002",
          tables={**_default_tables(),
                  GROUP_SELECT_TABLE: [_sel("ou_m1", "男性"), _sel("ou_f1", "女性")]}),
@@ -246,8 +243,6 @@ CASES = [
          algorithm=_raise(ValueError("炸了"))),
     Case("stop/算法返回空", "stop", "A-0002", algorithm=_empty_groups),
     Case("stop/写入不完整", "stop", "A-0002", fail_create_after=3),
-    Case("stop/幂等查询读失败", "stop", "A-0002",
-         search_fails={GROUP_RESULT_TABLE}),
 
     # ---- 分组状态（3）----
     Case("status/格式错误", "status", "   "),
@@ -358,6 +353,60 @@ def _build(case):
     return FakeBitable(case.tables, case.fail_create_after, case.search_fails)
 
 
+# ---------------------------------------------------------------- 签到默认（刻意新增）
+
+SIGNIN_FIELD = "签到功能开启"
+
+# 「开始填志愿」成功案例本次刻意新增的副作用：同笔 update 里多写「签到功能开启=是」
+# （飞书单选栏位没有 API 级默认值，见 lib.grouping.signin_default_payload）。
+# 除该栏位外其余副作用必须逐字相同；「多写的就是它」由
+# test_start_signin_default_adds_exactly_one_field_write 专门钉死。
+_SIGNIN_DEFAULT_CASES = {"start/成功有历史", "start/成功无历史"}
+
+
+def _strip_signin(writes):
+    """剔除「签到默认打开」追加的那一栏，供白名单化的副作用比对。"""
+    out = []
+    for c in writes:
+        if c[0] == "update" and c[1] == ACTIVITY_TABLE_ID and SIGNIN_FIELD in c[3]:
+            out.append((c[0], c[1], c[2], {k: v for k, v in c[3].items() if k != SIGNIN_FIELD}))
+        else:
+            out.append(c)
+    return out
+
+
+def _tables_without_signin(tables):
+    """表快照去掉活动表的「签到功能开启」（与 _strip_signin 配对）。"""
+    return {key: [{"record_id": r["record_id"],
+                   "fields": {k: v for k, v in r["fields"].items() if k != SIGNIN_FIELD}}
+                  for r in rows]
+            for key, rows in tables.items()}
+
+
+def test_start_signin_default_adds_exactly_one_field_write(monkey_and_lockdir):
+    """「签到默认打开」：start 成功案例唯一多出的副作用 = 同笔 update 里的「签到功能开启=是」。
+
+    飞书单选栏位不支持默认值：开始填志愿时把「是」和状态写进同一笔 update；
+    管理员之后手动改「否」仍是后写者胜。旧路没有这个写入——刻意的行为变化。
+    """
+    case = Case("start/成功无历史", "start", "A-0002 3 3")
+    old, new = _build(case), _build(case)
+    _patch_golden(monkey_and_lockdir, old, case)
+    _run_golden(case)
+    _patch_new(monkey_and_lockdir, new, case)
+    _run_new(case)
+
+    old_updates = [c[3] for c in old.writes() if c[0] == "update"]
+    new_updates = [c[3] for c in new.writes() if c[0] == "update"]
+    assert len(old_updates) == len(new_updates) == 1
+    added = {k: v for k, v in new_updates[0].items() if k not in old_updates[0]}
+    assert added == {SIGNIN_FIELD: "是"}, "多写的必须且只能是「签到功能开启=是」"
+    assert new_updates[0]["分组状态"] == "收集中", "签到默认必须与状态在同一笔 update 里"
+    assert {k: v for k, v in new_updates[0].items() if k != SIGNIN_FIELD} == old_updates[0]
+    assert _find_act(new, ACT)["fields"][SIGNIN_FIELD] == "是"
+    assert SIGNIN_FIELD not in _find_act(old, ACT)["fields"]
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_bot_text_is_identical_to_frozen_impl(monkey_and_lockdir, case):
     """新旧两条路的回传字符串必须逐字相同——这是本次的红线。"""
@@ -373,13 +422,24 @@ def test_bot_text_is_identical_to_frozen_impl(monkey_and_lockdir, case):
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_side_effects_are_identical(monkey_and_lockdir, case):
-    """文字相同还不够：写进飞书的每一条也要相同，否则表已经被改了话才算对。"""
+    """文字相同还不够：写进飞书的每一条也要相同，否则表已经被改了话才算对。
+
+    start 成功案例是唯一白名单：「签到默认打开」刻意多写「签到功能开启=是」
+    （旧路没有这个逻辑）——剔除该栏位后其余写入与表内容必须逐条全等；
+    「多写的就是签到默认」由 test_start_signin_default_adds_exactly_one_field_write
+    另行钉死。
+    """
     old, new = _build(case), _build(case)
     _patch_golden(monkey_and_lockdir, old, case)
     _run_golden(case)
     _patch_new(monkey_and_lockdir, new, case)
     _run_new(case)
 
+    if case.name in _SIGNIN_DEFAULT_CASES:
+        assert _strip_signin(new.writes()) == old.writes(), (
+            f"副作用漂移（剔除签到默认后仍不等）\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
+        assert _tables_without_signin(new.tables) == old.tables
+        return
     assert new.writes() == old.writes(), (
         f"副作用漂移\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
     assert new.tables == old.tables
@@ -392,7 +452,9 @@ def test_dirty_duplicate_row_counts_add_up_intentional_fix(monkey_and_lockdir):
     去重 open_id 报（2 人已交 → 1 人未交），3+1 超过报名总数 3，自相矛盾。
     本次修正后两处都走去重口径：已提交 2 + 未提交 1 == 报名 3。
 
-    本用例是唯一一处「新旧回传文字刻意不同」的案例，其余 CASES 必须保持逐字全绿。
+    本用例之外，「执行分组成功」两案例（组员名追加编号）与「开始填志愿」两案例
+    （签到默认写入）也在本文件单独列为刻意分歧，见对应専用测试；其余 CASES
+    必须保持逐字全绿。
     """
     tables = {
         ACTIVITY_TABLE_ID: [_act()],
@@ -426,3 +488,53 @@ def test_dirty_duplicate_row_counts_add_up_intentional_fix(monkey_and_lockdir):
     submitted = int(re.search(r"已提交选择：(\d+)人", new_status).group(1))
     unsubmitted = int(re.search(r"未提交志愿（(\d+)人）", new_unsub).group(1))
     assert submitted + unsubmitted == 3, "已提交（去重）+ 未提交 == 报名总数"
+
+
+# ================================================================
+# 本次功能（现场显示名）：刻意分歧（旧路行为 ≠ 新路行为）
+# ----------------------------------------------------------------
+# 「执行分组」成功回复的组员名改为「名字（U-xxxx）」：名字 = 姓名去空白缺省昵称
+# （lib.grouping.execute_round 的 oid_to_name），缺编号时只名字。stub 用户没有
+# 「姓名」→ 名字本身与旧路相同，唯一变化是追加「（编号）」。两个成功案例移出
+# CASES，旧/新双断言钉死文案变换与副作用不变。
+# ================================================================
+
+_STOP_SUCCESS_CASES = (
+    ("stop/执行成功", "A-0002", None),
+    ("stop/执行成功第二轮", "A-0002 2",
+     {**_default_tables(), GROUP_RESULT_TABLE: [_res("ou_m1", 1, "1")]}),
+    # bot 侧把幂等查询的读失败当空表继续（treat_search_failure_as_empty=True），
+    # 这个案例实际走成功路径并渲染组员名单，因此同样列入本分歧。
+    ("stop/幂等查询读失败", "A-0002", None),
+)
+
+
+def test_admin_stop_success_appends_uid_intentional_change(monkey_and_lockdir):
+    """执行分组成功：组员名统一追加「（U-xxxx）」——剥掉编号后缀后与旧路逐字相同。
+
+    编号是抽查对象：只断「（U-」模式的话，实现把编号写死成任意值（如 U-0000）
+    也能过（reviewer 突变 P13）。这里把编号集合与「人↔编号」配对都写死：
+    stub USERS 里本案例组员 ou_m1/ou_m2/ou_f1/ou_f2/ou_f3 → U-0001..U-0005。
+    """
+    for name, keyword, tables in _STOP_SUCCESS_CASES:
+        case = Case(name, "stop", keyword, tables=tables)
+        if name == "stop/幂等查询读失败":
+            case.search_fails = {GROUP_RESULT_TABLE}
+        old, new = _build(case), _build(case)
+        _patch_golden(monkey_and_lockdir, old, case)
+        old_text = _run_golden(case)
+        _patch_new(monkey_and_lockdir, new, case)
+        new_text = _run_new(case)
+
+        assert "（U-" not in old_text, "旧路组员名不带编号"
+        assert "（U-" in new_text, "新路组员名必须带编号"
+        assert re.sub(r"（U-\d+）", "", new_text) == old_text, (
+            f"{name} 除编号后缀外文案漂移\n--- 旧 ---\n{old_text!r}\n--- 新 ---\n{new_text!r}")
+        assert set(re.findall(r"（U-\d+）", new_text)) == {
+            "（U-0001）", "（U-0002）", "（U-0003）", "（U-0004）", "（U-0005）"}, (
+            f"{name} 编号集合不符（写死/缺失/串号都会被抓）\n--- 新 ---\n{new_text!r}")
+        assert "小北（U-0001）、阿北（U-0002）、阿南（U-0003）、小西（U-0004）、小东（U-0005）" in new_text, (
+            f"{name} 组员与人编号配对不符\n--- 新 ---\n{new_text!r}")
+        # 落库内容不变：stub 无「姓名」→ 用户昵称栏仍写昵称
+        assert new.writes() == old.writes(), f"{name} 副作用漂移"
+        assert new.tables == old.tables

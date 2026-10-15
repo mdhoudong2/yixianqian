@@ -234,14 +234,19 @@ def test_start_group_clears_all_historical_results(configured):
 
 
 def test_start_group_writes_config_fields(configured):
-    """T10：活动表只写那三个栏位——多写一个就可能顺手盖掉别人正在改的东西。"""
+    """T10：活动表只写那三个栏位 + 签到默认——多写一个就可能顺手盖掉别人正在改的东西。
+
+    「签到功能开启」是本次「签到默认打开」刻意追加的同笔栏目（空值→是），
+    单独由 test_realname_lib.py 的矩阵与 parity 的専用用例覆盖。
+    """
     fake = FakeBitable(_tables())
 
     lib_grouping.start_group(ACT, 4, 5, client=fake, activity=_activity(fake))
 
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
-    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 4, "每组女生数": 5}
+    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 4, "每组女生数": 5,
+                             "签到功能开启": "是"}
     assert _activity(fake)["fields"]["分组状态"] == "收集中"
 
 
@@ -269,7 +274,8 @@ def test_start_group_keeps_history_when_clear_results_false(configured):
         "保留模式不得读结果表（省一次全表读，也不进 SEARCH_FAILED）"
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
-    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 3, "每组女生数": 3}
+    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 3, "每组女生数": 3,
+                             "签到功能开启": "是"}
 
 
 def test_start_group_clear_results_true_matches_default(configured):

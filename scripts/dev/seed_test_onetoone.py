@@ -8,6 +8,10 @@ handle_admin_start_onetoone → handle_admin_stop_onetoone("A-0011 <女生场次
 「女生坐镇、男生上门」均衡分配（每女恰好 K 场、男配额 base~base+1、双向一致），
 最后读回结果表逐条验证均衡不变量。
 
+start 成功后把 A-0011 全部「已报名」报名记录的签到状态批量置「按时」：
+模拟全员现场到场（签到默认开启后的执行池口径）——签到功能默认开启后，
+执行池按「已到」（按时/迟到）过滤，空签到状态会把执行池清空。
+
 端到端要覆盖的核心断言：
 - 结果行数 = 2 × 女生数 × K（男名单 + 女名单各一份）；
 - 每个女生恰好 K 位不同男性来访、排名 1..K 无重复；
@@ -327,6 +331,33 @@ def _seed_selections(p):
     return created, updated
 
 
+def _mark_signups_attendance_present():
+    """A-0011 全部「已报名」报名记录 → 签到状态「按时」（模拟全员现场到场）。
+
+    签到功能默认开启后，执行池按「已到」（按时/迟到）过滤：测试服报名签到
+    状态为空会把执行池清空。空或旧值一律覆盖为「按时」，因为 seed 语义是
+    「全员到场」；失败如实中止。
+    """
+    signups = _must(bitable.search_records(C.SIGNUP_TABLE_ID, {
+        "conjunction": "and",
+        "conditions": [
+            {"field_name": C.FIELD_SIGNUP_ACTIVITY_ID, "operator": "is",
+             "value": [_ACTIVITY_ID]},
+            {"field_name": C.FIELD_SIGNUP_STATUS, "operator": "is",
+             "value": ["已报名"]},
+        ],
+    }), "报名表(A-0011 已报名)")
+    updates = [{"record_id": r.get("record_id"),
+                "fields": {C.FIELD_SIGNUP_ATTENDANCE: "按时"}}
+               for r in signups if r.get("record_id")]
+    if not updates:
+        _fail("A-0011 没有「已报名」报名记录，无法置「按时」（中止）")
+    updated = bitable.batch_update_records(C.SIGNUP_TABLE_ID, updates)
+    if updated != len(updates):
+        _fail(f"签到状态批量更新失败：{updated}/{len(updates)} 条（中止）")
+    print(f"  签到状态：{updated} 条「已报名」→ 按时（模拟全员现场到场）")
+
+
 def _apply_activity_settings():
     from commands import handle_admin_toggle_onetoone_flag
     from onetoone import handle_admin_start_onetoone
@@ -335,6 +366,9 @@ def _apply_activity_settings():
     print(f"  handle_admin_start_onetoone -> {reply1.splitlines()[0]}")
     if "志愿填写已开始" not in reply1:
         _fail(f"开始一对一失败：{reply1}")
+    # start 已同笔写入「签到功能开启=是」（默认打开）；先把 A-0011 全部
+    # 「已报名」置「按时」模拟全员现场到场，否则执行时会被签到闸门清空。
+    _mark_signups_attendance_present()
     reply2 = handle_admin_toggle_onetoone_flag(f"{_ACTIVITY_ID} 开")
     print(f"  handle_admin_toggle_onetoone_flag -> {reply2.splitlines()[0]}")
     if "已开启" not in reply2:

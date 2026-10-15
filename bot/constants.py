@@ -59,6 +59,9 @@ MATCH_TABLE_ID = _cfg_get("MATCH_TABLE_ID", getattr(_cfg, "MATCH_TABLE_ID", "tbl
 PRAISE_TABLE_ID = _cfg_get("PRAISE_TABLE_ID", getattr(_cfg, "PRAISE_TABLE_ID", ""))
 
 FIELD_NICKNAME = "昵称"
+# 用户表真实姓名（与 web/backend/config.py 的 F_REAL_NAME 同值）。现场活动统一
+# 显示「姓名（缺省昵称）＋编号」；其余场景（他人资料页/留言/点赞等）保持昵称。
+FIELD_REAL_NAME = "姓名"
 FIELD_FEISHU_ID = "飞书用户ID"
 FIELD_USER_ID = "用户ID"
 # 电话字段（type=13），读出来是 [{"number": ...}]，要用 bitable.get_phone_value 取。

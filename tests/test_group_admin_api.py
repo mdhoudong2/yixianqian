@@ -861,7 +861,10 @@ def test_result_endpoint_serves_history_rounds_isomorphic_with_job(api):
     assert set(g) == {"group_id", "members"}
     assert g["group_id"] == 1
     assert [m["open_id"] for m in g["members"]] == ["ou_m0", "ou_f0"], "男先女后"
-    assert all(set(m) == {"open_id", "gender", "display_name"} for m in g["members"])
+    # 2026-10-15 真名改造（BRIEF 3）：member 增补 real_name/user_id 供「真名＋编号」；
+    # 无 users 快照来源时 real_name/user_id 为空串（本用例不装 users 快照）
+    assert all(set(m) == {"open_id", "gender", "display_name", "real_name", "user_id"}
+               for m in g["members"])
     assert g["members"][0]["display_name"] == "ou_m0", "结果表昵称为空 → 退回 open_id"
 
     b1 = api.get("/api/admin/group/result?activity_id=" + ACT + "&round=1").get_json()

@@ -455,6 +455,61 @@ def _build(case):
     return FakeBitable(case.tables, case.fail_create_after, case.search_fails)
 
 
+# ---------------------------------------------------------------- 签到默认（刻意新增）
+
+SIGNIN_FIELD = "签到功能开启"
+
+# 「开始一对一」成功案例本次刻意新增的副作用：状态那笔 update 里多写
+# 「签到功能开启=是」（飞书单选栏位没有 API 级默认值，见
+# lib.grouping.signin_default_payload，start_collection 与 start_group 同一口径）。
+# 除该栏位外其余副作用必须逐字相同；「多写的就是它」由
+# test_start_signin_default_adds_exactly_one_field_write 专门钉死。
+_SIGNIN_DEFAULT_CASES = {"start/成功无历史", "start/成功有历史"}
+
+
+def _strip_signin(writes):
+    """剔除「签到默认打开」追加的那一栏，供白名单化的副作用比对。"""
+    out = []
+    for c in writes:
+        if c[0] == "update" and c[1] == ACTIVITY_TABLE_ID and SIGNIN_FIELD in c[3]:
+            out.append((c[0], c[1], c[2], {k: v for k, v in c[3].items() if k != SIGNIN_FIELD}))
+        else:
+            out.append(c)
+    return out
+
+
+def _tables_without_signin(tables):
+    """表快照去掉活动表的「签到功能开启」（与 _strip_signin 配对）。"""
+    return {key: [{"record_id": r["record_id"],
+                   "fields": {k: v for k, v in r["fields"].items() if k != SIGNIN_FIELD}}
+                  for r in rows]
+            for key, rows in tables.items()}
+
+
+def test_start_signin_default_adds_exactly_one_field_write(configured):
+    """「签到默认打开」：start 成功案例唯一多出的副作用 = 状态同笔的「签到功能开启=是」。
+
+    飞书单选栏位不支持默认值：开始一对一收志愿时把「是」和状态写进同一笔 update；
+    管理员之后手动改「否」仍是后写者胜。旧路没有这个写入——刻意的行为变化。
+    """
+    case = Case("start/成功无历史", "start", ACT)
+    old, new = _build(case), _build(case)
+    _patch_golden(configured, old, case)
+    _run_golden(case)
+    _patch_new(configured, new, case)
+    _run_new(case)
+
+    old_updates = [c[3] for c in old.writes() if c[0] == "update"]
+    new_updates = [c[3] for c in new.writes() if c[0] == "update"]
+    assert len(old_updates) == len(new_updates) == 1
+    added = {k: v for k, v in new_updates[0].items() if k not in old_updates[0]}
+    assert added == {SIGNIN_FIELD: "是"}, "多写的必须且只能是「签到功能开启=是」"
+    assert new_updates[0]["一对一状态"] == "收集中", "签到默认必须与状态在同一笔 update 里"
+    assert {k: v for k, v in new_updates[0].items() if k != SIGNIN_FIELD} == old_updates[0]
+    assert _find_act(new, ACT)["fields"][SIGNIN_FIELD] == "是"
+    assert SIGNIN_FIELD not in _find_act(old, ACT)["fields"]
+
+
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_bot_text_is_identical_to_frozen_impl(configured, case):
     """新旧两条路的回传字符串必须逐字相同——这是本次的红线。"""
@@ -470,13 +525,24 @@ def test_bot_text_is_identical_to_frozen_impl(configured, case):
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
 def test_side_effects_are_identical(configured, case):
-    """文字相同还不够：写进飞书的每一条也要相同，否则表已经被改了话才算对。"""
+    """文字相同还不够：写进飞书的每一条也要相同，否则表已经被改了话才算对。
+
+    start 成功案例是唯一白名单：「签到默认打开」刻意多写「签到功能开启=是」
+    （旧路没有这个逻辑）——剔除该栏位后其余写入与表内容必须逐条全等；
+    「多写的就是签到默认」由 test_start_signin_default_adds_exactly_one_field_write
+    另行钉死。onetoone 的回覆文字本案例无任何名字变动（真名链路只影响结果落库）。
+    """
     old, new = _build(case), _build(case)
     _patch_golden(configured, old, case)
     _run_golden(case)
     _patch_new(configured, new, case)
     _run_new(case)
 
+    if case.name in _SIGNIN_DEFAULT_CASES:
+        assert _strip_signin(new.writes()) == old.writes(), (
+            f"副作用漂移（剔除签到默认后仍不等）\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
+        assert _tables_without_signin(new.tables) == old.tables
+        return
     assert new.writes() == old.writes(), (
         f"副作用漂移\n--- 旧 ---\n{old.writes()}\n--- 新 ---\n{new.writes()}")
     assert new.tables == old.tables

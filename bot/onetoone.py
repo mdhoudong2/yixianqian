@@ -64,6 +64,7 @@ def configure_onetoone_lib(lock_dir):
             "signup_status": FIELD_SIGNUP_STATUS,
             "gender": FIELD_GENDER,
             "user_id": FIELD_USER_ID,
+            "real_name": FIELD_REAL_NAME,
             "self_hobbies": FIELD_SELF_HOBBIES,
             "self_sports": FIELD_SELF_SPORTS,
             "self_traits": FIELD_SELF_TRAITS,
@@ -128,7 +129,8 @@ def build_onetoone_select_card(activity_id, activity_name, participants, user_ge
     ]
 
     if use_select:
-        options = [{"text": {"tag": "plain_text", "content": _option_label(p["nickname"], p.get("user_id", ""), dup_nick)},
+        # 现场活动统一显示「真名（缺省昵称）＋编号」：永远带编号，避免选错人
+        options = [{"text": {"tag": "plain_text", "content": _option_label((p.get("real_name") or "").strip() or p["nickname"], p.get("user_id", ""), True)},
                     "value": p["open_id"]} for p in opp_participants]
         for i in range(7):
             sel = {
@@ -531,5 +533,6 @@ def handle_admin_unsubmitted_onetoone(keyword):
         return f"活动「{res['name']}」所有报名者均已提交志愿。"
     lines = [f"「{res['name']}」未提交志愿（{res['total']}人）："]
     for u in res["unsubmitted"]:
-        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u['nickname']}")
+        # 名字=真名缺省昵称（现场活动统一口径；uid/性别格式不变）
+        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}")
     return "\n".join(lines)

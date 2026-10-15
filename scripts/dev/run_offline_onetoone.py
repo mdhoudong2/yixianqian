@@ -106,14 +106,26 @@ def _read_selections(ctx, activity_id):
 
 
 def _label(display, oid):
-    nick, uid = display.get(oid, ("", ""))
-    if nick and uid:
-        return f"{nick}（{uid}）"
-    if nick:
-        return nick
+    # display 里存的是（真名缺省昵称, 编号）；渲染为「真名（U-xxxx）」，缺编号时只真名
+    name, uid = display.get(oid, ("", ""))
+    if name and uid:
+        return f"{name}（{uid}）"
+    if name:
+        return name
     if uid:
         return uid
     return oid[:10] + "…"
+
+
+def _display_name(ctx, oid, cache, fallback):
+    """真名=用户表「姓名」去空白（空则回退报名昵称）；find_user_by_openid 只读、本趟缓存。"""
+    if oid not in cache:
+        name = ""
+        for rec in ctx["find_user_by_openid"](oid):
+            name = ctx["get_field_text"](rec.get("fields", {}), ctx["C"].FIELD_REAL_NAME)
+            break
+        cache[oid] = name.strip()
+    return cache[oid] or fallback
 
 
 def _sort_oids(oids, display):
@@ -146,10 +158,11 @@ def main():
     activity_name = ctx["get_field_text"](af, C.FIELD_ACTIVITY_NAME) or ""
     print(f"活动：{activity_name}（{activity_id}）")
 
-    # 报名 → 参与者 + 展示名（男女/昵称/编号都现场读）
+    # 报名 → 参与者 + 展示名（真名缺省昵称/编号都现场读；只读、姓名有缓存）
     signups = ctx["bot_onetoone"].get_activity_signups(activity_id)
     participants = []
     display = {}
+    real_name_cache = {}
     males = []
     females = []
     no_gender = []
@@ -165,7 +178,8 @@ def main():
         else:
             no_gender.append(s)
             continue
-        display[oid] = (s.get("nickname") or "", s.get("user_id") or "")
+        display[oid] = (_display_name(ctx, oid, real_name_cache, s.get("nickname") or ""),
+                        s.get("user_id") or "")
 
     M = len(males)
     F = len(females)

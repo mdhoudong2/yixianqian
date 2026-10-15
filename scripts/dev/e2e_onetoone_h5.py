@@ -7,14 +7,16 @@ local_config（bot 用 ASSISTANT_APP_ID，H5 用 FEISHU_APP_ID + MESSAGE_TABLE_I
 同进程混用会读到错误凭证。匹配本身已由 seed_test_onetoone.py + 单测覆盖，这里只验
 H5 6 个路由 + 留言→已聊推导：
 
-- GET  /api/activities/<id>/onetoone/candidates（收集中：异性列表、排除自己）
+- GET  /api/activities/<id>/onetoone/candidates（异性列表、排除自己；志愿随时可改、不看状态）
 - POST /api/activities/<id>/onetoone/select（提交 7 志愿）
 - GET  /api/activities/<id>/onetoone/status（状态 + 我的选择）
 - GET  /api/activities/<id>/onetoone/result（已完成：必聊名单 + chatted 由留言推导）
 - GET  /api/activities/mine/onetoone / .../flag（入口显隐）
 - POST /api/messages → 再次读 result 验证对方变「已聊」
 
-状态编排直接改活动表「一对一状态」字段（收集中→已完成），不清结果表（结果由 seed 造好）。
+状态编排直接改活动表「一对一状态」字段：状态模型为「空/已完成」，整段运行期间置
+「已完成」（结果端点要求；candidates/select/status 志愿随时可改、不看状态），
+不清结果表（结果由 seed 造好）。
 **收尾自清理**（审核修复）：本脚本创建的测试留言逐条删掉；活动「一对一状态」改回原值。
 否则残留的 `E2E一对一已聊测试…` 留言会污染 chatted 推导、残留状态会改变验收现场。
 断言全部数据无关（不硬编码人数），只验证路由语义：候选=全量异性且不含自己、志愿回读一致、
@@ -125,9 +127,9 @@ def main():
     try:
         h5_mod.refresh_snapshot()
 
-        # ---------- Phase 1: 收集中（candidates / select / status） ----------
-        print("\n[1] 收集中：candidates / select / status")
-        set_status("收集中")
+        # ---------- Phase 1: 已完成（candidates / select / status；志愿随时可改，不看状态） ----------
+        print("\n[1] 已完成：candidates / select / status")
+        set_status("已完成")
 
         set_session(male_oid)
         r = get(f"/api/activities/{ACT}/onetoone/candidates")
@@ -158,9 +160,8 @@ def main():
                     _fail(f"status.my_choices 与提交不一致：{st.get('my_choices')} vs {choices}")
                 print(f"  select {len(choices)} 志愿 + status 复核通过（my_choices={len(st.get('my_choices', []))}）")
 
-        # ---------- Phase 2: 已完成（result / mine / flag） ----------
+        # ---------- Phase 2: 已完成（result / mine / flag；状态已在 Phase 1 置好） ----------
         print("\n[2] 已完成：result / mine/onetoone / flag")
-        set_status("已完成")
 
         r = get(f"/api/activities/{ACT}/onetoone/result")
         partners = []

@@ -16,10 +16,12 @@ from lib import grouping as lib_grouping
 from lib import onetoone as lib_onetoone
 from lib.onetoone import (  # noqa: F401 — re-export 兼容旧入口，勿删
     ONETOONE_UNSELECTED_SCORE,
+    WEIGHT_OFFLINE_PRIORITY,
     WEIGHT_ONETOONE_MATCH,
     WEIGHT_ONETOONE_MY_PRIORITY,
     WEIGHT_ONETOONE_THEIR_PRIORITY,
     profile_of,
+    run_offline_onetoone_matching,
     run_onetoone_matching,
 )
 
@@ -62,6 +64,7 @@ def configure_onetoone_lib(lock_dir):
             "signup_status": FIELD_SIGNUP_STATUS,
             "gender": FIELD_GENDER,
             "user_id": FIELD_USER_ID,
+            "real_name": FIELD_REAL_NAME,
             "self_hobbies": FIELD_SELF_HOBBIES,
             "self_sports": FIELD_SELF_SPORTS,
             "self_traits": FIELD_SELF_TRAITS,
@@ -126,7 +129,8 @@ def build_onetoone_select_card(activity_id, activity_name, participants, user_ge
     ]
 
     if use_select:
-        options = [{"text": {"tag": "plain_text", "content": _option_label(p["nickname"], p.get("user_id", ""), dup_nick)},
+        # 现场活动统一显示「真名（缺省昵称）＋编号」：永远带编号，避免选错人
+        options = [{"text": {"tag": "plain_text", "content": _option_label((p.get("real_name") or "").strip() or p["nickname"], p.get("user_id", ""), True)},
                     "value": p["open_id"]} for p in opp_participants]
         for i in range(7):
             sel = {
@@ -209,11 +213,13 @@ def handle_onetoone_command(sender_id):
         activity = find_activity_by_id(aid)
         if activity:
             af = activity.get("fields", {})
-            if get_field_text(af, FIELD_ACT_ONETOONE_STATUS) == "收集中":
+            # 与 H5「我的一对一」入口同口径：只看「一对一功能开启」，
+            # 志愿收集状态已废除
+            if get_field_text(af, FIELD_ACT_ONETOONE_FLAG) == "是":
                 collecting_activities.append(activity)
 
     if not collecting_activities:
-        return "当前没有正在进行一对一选择的活动。\n一对一选择由管理员在活动前开启，请关注通知。"
+        return "当前没有已开启一对一功能的活动。\n一对一功能由管理员开启，请关注通知。"
 
     activity = collecting_activities[0]
     af = activity.get("fields", {})
@@ -237,7 +243,7 @@ def handle_onetoone_command(sender_id):
     send_card_message(sender_id, card)
 
     if len(collecting_activities) > 1:
-        return f"你报名了多个正在进行一对一的活动，当前显示「{activity_name}」。如需其他活动请联系管理员。"
+        return f"你报名了多个已开启一对一功能的活动，当前显示「{activity_name}」。如需其他活动请联系管理员。"
     return ""
 
 
@@ -245,12 +251,11 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     """处理一对一选择提交"""
     activity_id = action_value.get("activity_id", "")
 
+    # 验证活动存在（志愿随时可改：不再按状态拦截提交；签到闸门在下方 fail-closed 保留）
     activity = find_activity_by_id(activity_id)
     if not activity:
         return {"toast": {"type": "error", "content": "活动不存在"}}
     af = activity.get("fields", {})
-    if get_field_text(af, FIELD_ACT_ONETOONE_STATUS) != "收集中":
-        return {"toast": {"type": "warning", "content": "一对一选择已截止"}}
 
     signups = search_records(SIGNUP_TABLE_ID, {
         "conjunction": "and",
@@ -343,103 +348,85 @@ def handle_onetoone_submit(operator_open_id, action_value, form_value):
     return {"toast": {"type": "success", "content": msg}}
 
 
-def _render_start_result(res):
-    """把 start_collection 的结构化结果拼成给管理员看的中文。"""
-    code = res["code"]
-    if code == "EXCLUSIVE_MODE":
-        # 动作层互斥（设计 §2.3）：对面分组开着或没收尾 → 让管理员先关对面。
-        return ("无法开始一对一：该活动的分组模式正在使用中。\n"
-                "为避免两边混着跑，请先在 H5「活动管理」把模式切换为「一对一」"
-                "（或等分组收尾）后再试。")
-    if code == "OK":
-        return (f"一对一志愿填写已开始：{res['activity_name']}\n"
-                f"已开放，未发送群发通知。\n"
-                f"请让用户在 H5 页面自查并提交志愿（现场活动）。")
-    if code == "BUSY":
-        return "当前已有一对一任务在执行中，请稍候再试。"
-    if code == "STATUS_FAILED":
-        return f"一对一志愿填写开始失败：活动「{res['activity_name']}」状态写入失败，请稍后重试。"
-    if code == "RESULTS_SEARCH_FAILED":
-        return (f"一对一志愿填写开始失败：活动「{res['activity_name']}」状态已写入「收集中」，"
-                f"但读取历史结果失败，历史结果可能残留；请稍后重试「开始一对一」清理后再执行。")
-    if code == "DELETE_INCOMPLETE":
-        return (f"一对一志愿填写开始失败：活动「{res['activity_name']}」历史结果清理不完整"
-                f"（成功删除 {res['deleted']}/{res['total']} 条），请稍后重试「开始一对一」清理残留。")
-    return f"一对一志愿填写开始失败（{code}）"
-
-
-def handle_admin_start_onetoone(keyword):
-    """管理员：开始一对一 格式: 开始一对一 A-0002"""
+def handle_admin_reset_onetoone(keyword):
+    """管理员：清空一对一结果 格式: 清空一对一结果 A-0002（该活动全部轮次）"""
     activity_id = keyword.strip()
     if not activity_id:
-        return "格式：开始一对一 活动ID\n例如：开始一对一 A-0002"
+        return "格式：清空一对一结果 活动ID\n例如：清空一对一结果 A-0002"
+
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    res = lib_onetoone.start_collection(activity_id, client=bitable, activity=activity)
-    return _render_start_result(res)
+    res = lib_onetoone.reset_onetoone_results(activity_id, client=bitable, activity=activity)
+    code = res.get("code")
+    if code == "BUSY":
+        return "当前已有一对一任务在执行中，请稍候再试。"
+    if code == "RESULTS_SEARCH_FAILED":
+        return "清空失败：读取历史一对一结果失败，未做任何删除，请稍后重试。"
+    if code == "DELETE_INCOMPLETE":
+        return (f"清空失败：一对一结果删除不完整（成功删除 {res['deleted']}/{res['total']} 条），"
+                f"请稍后重试。")
+    if code == "STATUS_FAILED":
+        return (f"清空失败：活动「{res.get('activity_name') or activity_id}」状态清空写入失败"
+                f"（已删除 {res.get('cleared_results', 0)} 条结果），请稍后重试。")
+    if code != "OK":
+        return f"清空一对一结果失败（{code}），请稍后重试。"
+    log(f"管理员清空一对一结果: {res['activity_name']} {res['cleared_results']} 条")
+    return (f"已清空活动「{res['activity_name']}」的历史一对一结果 {res['cleared_results']} 条，"
+            f"一对一状态已重置为未开始。")
 
 
 def _render_execute_result(res, activity_id):
     """把 execute 的结构化结果拼成给管理员看的中文。
 
-    文案归渲染层：lib 只给数据。改这里的字必须同步更新 tests/test_onetoone_parity.py
-    的「刻意分歧」断言——其余等价性案例会直接红。
+    文案归渲染层：lib 只给数据。失败一律零状态变更，文案不再出现「恢复收集中」
+    之类的状态话术；清理残留的指引统一为「清空一对一结果」。
     """
     code = res["code"]
     if code == "ROUND_OUT_OF_RANGE":
-        return (f"轮次超出范围：一对一结果只支持第 1-{res.get('max_round', 10)} 轮，"
-                f"当前请求第 {res['round']} 轮（本次未写入任何数据）。")
+        return "轮次必须是不小于 1 的整数（本次未写入任何数据）。"
     if code == "EXCLUSIVE_MODE":
         return (f"无法执行一对一：活动「{res['activity_name']}」的分组模式已开启。\n"
                 f"请先在 H5「活动管理」把模式切换为「一对一」再执行。")
+    if code == "FEMALE_CHATS_REQUIRED":
+        return ("请指定女生场次（每个女生聊几场）。\n"
+                "格式：执行一对一 活动ID 女生场次 [轮次]\n"
+                "例如：执行一对一 A-0002 15")
+    if code == "FEMALE_CHATS_INVALID":
+        if "error" in res:
+            # 锁内算法拒绝（如女生场次 > 男生人数），零写入
+            return f"女生场次不合法：{res['error']}（本次未写入任何数据，请调整后重试）"
+        # 进门校验（女生场次非正整数），零写入
+        return (f"女生场次必须是 ≥1 的整数，当前 {res.get('female_chats')}。\n"
+                "格式：执行一对一 活动ID 女生场次 [轮次]")
     if code == "ALREADY_DONE":
         return (f"活动「{res['activity_name']}」第{res['round']}轮已生成过一对一结果，请勿重复执行。"
-                f"如需重新匹配，请先发送「开始一对一 {activity_id}」重新开放，再执行。")
+                f"如需重新匹配，请先发送「清空一对一结果 {activity_id}」清除已有结果，再执行。")
     if code == "BUSY":
         return "当前已有一对一任务在执行中，请稍候再试。"
     if code == "SEARCH_FAILED":
         return "查询历史结果失败，无法确认是否已执行过，已中止（本次未写入任何数据），请稍后重试。"
-    if code == "CLOSE_FAILED":
-        return "活动状态写入失败（无法切换为「已截止」），已中止匹配，请稍后重试。"
     if code == "SELECTIONS_SEARCH_FAILED":
-        if res.get("restored"):
-            return "读取一对一志愿失败，已中止匹配，状态已恢复为「收集中」，请稍后重试。"
-        return ("读取一对一志愿失败，已中止匹配；且状态恢复为「收集中」失败"
-                "（当前可能仍为「已截止」），请让管理员检查。")
+        return "读取一对一志愿失败，已中止匹配，本次未写入任何数据，请稍后重试。"
+    if code == "SIGNIN_QUERY_FAILED":
+        return "签到名单读取失败，无法确定现场到场名单，已中止匹配，本次未写入任何数据，请稍后重试。"
     if code == "NO_PARTICIPANTS":
-        if res.get("restored", True):
-            return "没有已提交志愿的参与者，状态已恢复为「收集中」。"
-        return ("没有已提交志愿的参与者；且状态恢复为「收集中」失败"
-                "（当前可能仍为「已截止」），请让管理员检查。")
+        return "没有已报名且性别有效的参与者，本次未写入任何数据。"
     if code == "ALGORITHM_ERROR":
-        if res.get("restored", True):
-            return f"一对一匹配出错：{res['error']}，状态已恢复为「收集中」"
-        return (f"一对一匹配出错：{res['error']}；且状态恢复为「收集中」失败"
-                f"（当前可能仍为「已截止」），请让管理员检查。")
+        return f"一对一匹配出错：{res['error']}，本次未写入任何数据。"
     if code == "PARTIAL_WRITE":
-        if res.get("restored", True):
-            return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚，"
-                    f"状态恢复为「收集中」，请稍后重试。")
-        return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚；"
-                f"但状态恢复为「收集中」失败（当前可能仍为「已截止」），请让管理员检查。")
+        return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚本轮已写入部分，"
+                f"状态未变，请稍后重试。")
     if code == "PARTIAL_WRITE_VERIFY_FAILED":
-        if res.get("restored", True):
-            return (f"结果写入不完整（成功 {res['created']}/{res['total']}）且回滚校验失败，"
-                    f"可能残留结果；状态已恢复收集中，请先『开始一对一』清理残留后再执行")
         return (f"结果写入不完整（成功 {res['created']}/{res['total']}）且回滚校验失败，"
-                f"可能残留结果；状态恢复「收集中」失败（当前可能仍为「已截止」），请让管理员检查。")
+                f"可能残留结果；请先发送「清空一对一结果 {activity_id}」清理残留后再执行。")
     if code == "PARTIAL_WRITE_INCOMPLETE":
-        if res.get("restored", True):
-            return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），回滚不完整"
-                    f"（残留 {res['residual']} 条结果），状态已恢复为「收集中」，"
-                    f"请先发送「开始一对一」清理残留后再执行。")
         return (f"一对一结果写入失败（成功 {res['created']}/{res['total']} 条），回滚不完整"
-                f"（残留 {res['residual']} 条结果）；且状态恢复为「收集中」失败"
-                f"（当前可能仍为「已截止」），请让管理员检查。")
+                f"（残留 {res['residual']} 条结果），请先发送「清空一对一结果 {activity_id}」"
+                f"清理残留后再执行。")
     if code == "DONE_STATUS_FAILED":
-        return "结果已生成，但状态写入失败（当前状态：已截止），请稍后重试或让管理员检查"
+        return "结果已生成，但状态写入失败（未标记为「已完成」），用户可能看不到结果；请稍后重试或让管理员检查。"
 
     # 走到这里就是 OK
     return (f"🎉 活动「{res['activity_name']}」第{res['round']}轮 一对一匹配完成：\n"
@@ -448,26 +435,43 @@ def _render_execute_result(res, activity_id):
 
 
 def handle_admin_stop_onetoone(keyword):
-    """管理员：执行一对一匹配 格式: 执行一对一 A-0002 [轮次]（轮次可选，默认第1轮）"""
+    """管理员：执行一对一（女生坐镇均衡分配） 格式: 执行一对一 活动ID 女生场次 [轮次]
+
+    轮次缺省 = 最新已有轮次 + 1（由 lib_onetoone.latest_round 推演；无结果则第1轮）。
+    """
     parts = keyword.split()
-    if not parts:
-        return "格式：执行一对一 活动ID [轮次]\n例如：执行一对一 A-0002 或 执行一对一 A-0002 2"
+    if len(parts) < 2:
+        return ("格式：执行一对一 活动ID 女生场次 [轮次]\n"
+                "例如：执行一对一 A-0002 15 或 执行一对一 A-0002 15 2")
     activity_id = parts[0]
-    round_no = 1
-    if len(parts) >= 2:
+    try:
+        female_chats = int(parts[1])
+        if female_chats < 1:
+            return "女生场次必须为大于0的整数"
+    except ValueError:
+        return f"女生场次必须为数字，当前：{parts[1]}"
+    round_no = None
+    if len(parts) >= 3:
         try:
-            round_no = int(parts[1])
+            round_no = int(parts[2])
             if round_no < 1:
                 return "轮次必须为大于0的整数"
         except ValueError:
-            return f"轮次必须为数字，当前：{parts[1]}"
+            return f"轮次必须为数字，当前：{parts[2]}"
 
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
 
+    if round_no is None:
+        latest = lib_onetoone.latest_round(bitable, activity_id)
+        if latest is None:
+            return "查询历史一对一结果失败，无法确定默认轮次，请稍后重试或显式指定轮次。"
+        round_no = latest + 1
+
     res = lib_onetoone.execute(activity_id, round_no, client=bitable, activity=activity,
-                               find_user_by_openid=find_user_by_openid)
+                               find_user_by_openid=find_user_by_openid,
+                               female_chats=female_chats)
     return _render_execute_result(res, activity_id)
 
 
@@ -507,5 +511,6 @@ def handle_admin_unsubmitted_onetoone(keyword):
         return f"活动「{res['name']}」所有报名者均已提交志愿。"
     lines = [f"「{res['name']}」未提交志愿（{res['total']}人）："]
     for u in res["unsubmitted"]:
-        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u['nickname']}")
+        # 名字=真名缺省昵称（现场活动统一口径；uid/性别格式不变）
+        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}")
     return "\n".join(lines)

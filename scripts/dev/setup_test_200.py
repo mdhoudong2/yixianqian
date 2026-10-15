@@ -220,7 +220,7 @@ def plan_summary():
     print(f"活动: {ACTIVITY_ID}，每组 {M_PER}男{F_PER}女 = {M_PER + F_PER}人/组")
     print(f"满编组数: {min((3 + FAKE_MALE_NUM) // M_PER, (4 + FAKE_FEMALE_NUM) // F_PER)} 组")
     print()
-    print("真实流程（不预填）的 7 个真号将在「开始填志愿」~「执行分组」间由机器人真实操作提交志愿。")
+    print("真实流程（不预填）的 7 个真号将在「执行分组」前由机器人真实操作提交志愿（志愿随时可填，收集阶段已废除）。")
     print("=" * 60)
 
 
@@ -360,7 +360,7 @@ def main():
     prefill_fake_selections(fake_users)
 
     print("\n全部完成！下一步请在飞书真实操作：")
-    print("  1) 管理员发：开始填志愿 A-0005 4 4")
+    print("  1) 志愿随时可填（收集阶段已废除），无需任何开始指令")
     print("  2) 7 个真号发「分组」提交志愿")
     print("  3) 管理员发：执行分组 A-0005")
     print("  4) 用 check_group_result.py 校验结果")

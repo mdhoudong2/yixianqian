@@ -23,6 +23,9 @@ jobs:
       - name: 内联 JS 重名函数检查（后声明静默覆盖同名实现，零依赖）
         run: python3 scripts/dev/check_duplicate_functions.py
 
+      - name: 模板绑定曝光检查（setup return 漏放绑定会静默失效，零依赖）
+        run: python3 scripts/dev/check_template_bindings.py
+
   lint:
     runs-on: ubuntu-latest
     steps:

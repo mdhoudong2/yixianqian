@@ -1119,7 +1119,7 @@ def snap_signups_by_openid(open_id):
 def snap_active_signups_by_openid(open_id):
     """我的有效报名记录：过滤「已取消」+ 按活动去重（同一活动多笔保留最后一条）。
 
-    去向「我的活动 / 我的分组 / 我的一对一」入口的活动列表：不过滤已取消会显示已取消的报名，
+    去向「我的活动 / 我的分组」入口的活动列表：不过滤已取消会显示已取消的报名，
     不去重会给出多张同活动卡片（admin 的 A-0011 出现过 4 条已取消记录 → 4 张重复卡）。
     记录顺序即快照/飞书返回顺序，同一活动重复报名时后一条（较新）覆盖前一条。
     """
@@ -8478,7 +8478,7 @@ def my_liked_list():
 
 @app.route("/api/activities/mine", methods=["GET"])
 def my_activities():
-    """我报名的活动列表（过滤已取消 + 按活动去重，与 my_groups / my_onetoone 同口径）"""
+    """我报名的活动列表（过滤已取消 + 按活动去重，与 my_groups 同口径）"""
     open_id = require_login()
     if not open_id:
         return jsonify({"error": "未登录"}), 401
@@ -8573,73 +8573,6 @@ def my_groups_flag():
         if bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_GROUP_FLAG) == "是":
             return jsonify({"has_group_activity": True})
     return jsonify({"has_group_activity": False})
-
-@app.route("/api/activities/mine/onetoone", methods=["GET"])
-def my_onetoone():
-    """我报名的、已开启一对一功能的活动列表（用于「我的一对一」页面）"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-
-    # 过滤已取消 + 按活动去重（否则 A-0011 那 4 条已取消记录会出 4 张重复卡片）
-    signups = snap_active_signups_by_openid(open_id)
-
-    my_selections = snap_onetoone_selections_by_selector(open_id)
-    selection_by_act = {}
-    for sel in my_selections:
-        s_fields = sel.get("fields", {})
-        aid = bitable.get_field_text(s_fields, F_OTO_ACTIVITY_ID)
-        if aid:
-            selection_by_act[aid] = s_fields
-
-    # 每个活动的一对一状态由 bot 进程写入，本列表按它过滤 → 一次性实时读全表，
-    # 再逐个匹配（与 my_groups 同构，消 N+1 并对齐决定性读取口径）
-    acts_fresh = _snap_fresh("activities")
-
-    result = []
-    for s in signups:
-        fields = s.get("fields", {})
-        act_id = bitable.get_field_text(fields, F_SIGNUP_ACTIVITY_ID)
-        act = _match_activity(acts_fresh, act_id)
-        if not act:
-            continue
-        onetoone_status = bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
-        if onetoone_status in ("", "未开始"):
-            continue
-        act_data = format_activity(act)
-        s_fields = selection_by_act.get(act_id)
-        my_count = 0
-        if s_fields:
-            my_count = sum(1 for cf in F_OTO_CHOICES if bitable.get_field_text(s_fields, cf))
-        act_data["my_choice_count"] = my_count
-        # 现场签到三态（本人视角）：卡片标注 + 未到时停用操作钮（设计 §3.6）
-        act_data["signin_enabled"] = lib_grouping.signin_enabled(act.get("fields", {}))
-        act_data["my_attendance"] = bitable.get_field_text(fields, F_SIGNUP_ATTENDANCE)
-        result.append(act_data)
-    return jsonify({"activities": result})
-
-@app.route("/api/activities/mine/onetoone/flag", methods=["GET"])
-def my_onetoone_flag():
-    """我报名过的活动中，是否存在「一对一功能开启=是」的活动（控制「我的」页是否显示一对一入口）"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-
-    signups = snap_active_signups_by_openid(open_id)
-    for s in signups:
-        act_id = bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID)
-        act = snap_find_activity(act_id)
-        if not act:
-            continue
-        if bitable.get_select_value(act.get("fields", {}), F_ACTIVITY_ONETOONE_FLAG) == "是":
-            return jsonify({"has_onetoone_activity": True})
-    return jsonify({"has_onetoone_activity": False})
 
 # ========== 活动报名名单 / 他人资料 / 通知 ==========
 

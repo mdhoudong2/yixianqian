@@ -504,12 +504,11 @@ def test_my_groups_carries_my_attendance(api, monkeypatch):
     assert len(items) == 1
     assert items[0]["signin_enabled"] is True and items[0]["my_attendance"] == "未到"
 
-    # 一对一列表同口径
+    # 一对一列表已下线（2026-10-15）：同口径改验「我的活动」
     act_oto = _act_oto()
     api.install(activity=act_oto, signups=[signup])
     monkeypatch.setattr(app, "snap_active_signups_by_openid", lambda oid: [signup])
-    monkeypatch.setattr(app, "snap_onetoone_selections_by_selector", lambda oid: [])
-    r2 = c.get("/api/activities/mine/onetoone")
+    r2 = c.get("/api/activities/mine")
     items2 = r2.get_json()["activities"]
     assert len(items2) == 1
     assert items2[0]["signin_enabled"] is True and items2[0]["my_attendance"] == "未到"

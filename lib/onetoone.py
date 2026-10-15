@@ -1080,7 +1080,7 @@ def _resolve_activity(activity_id, activity, client):
 
 
 def set_onetoone_flag(activity_id, enabled, *, client, activity=None):
-    """开启/关闭活动的「一对一功能开启」开关（控制 H5「我的一对一」入口）。
+    """开启/关闭活动的「一对一功能开启」开关（控制 H5「我的活动」/活动页的志愿与结果入口）。
 
     - 开启：走 lib.grouping.set_mode(activity_id, "onetoone")——整体持活动锁后一次
       PUT 同时写「一对一=是 + 分组=否」两个栏位（互斥写入器），与 bot

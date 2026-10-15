@@ -213,7 +213,7 @@ def handle_onetoone_command(sender_id):
         activity = find_activity_by_id(aid)
         if activity:
             af = activity.get("fields", {})
-            # 与 H5「我的一对一」入口同口径：只看「一对一功能开启」，
+            # 与 H5 活动页/活动卡入口同口径：只看「一对一功能开启」，
             # 志愿收集状态已废除
             if get_field_text(af, FIELD_ACT_ONETOONE_FLAG) == "是":
                 collecting_activities.append(activity)
@@ -431,7 +431,7 @@ def _render_execute_result(res, activity_id):
     # 走到这里就是 OK
     return (f"🎉 活动「{res['activity_name']}」第{res['round']}轮 一对一匹配完成：\n"
             f"参与 {res['participant_count']} 人，共生成 {res['total_pairs']} 条必聊关系。\n"
-            f"用户可自查 H5「我的一对一」查看名单。")
+            f"用户可在「我的活动」或活动页查看名单。")
 
 
 def handle_admin_stop_onetoone(keyword):

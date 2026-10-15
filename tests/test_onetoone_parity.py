@@ -830,7 +830,7 @@ def test_admin_stop_success_text_and_writes_carry_round(configured):
     new_fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
                    "参与 4 人，共生成 8 条必聊关系。\n"
-                   "用户可自查 H5「我的一对一」查看名单。")
+                   "用户可在「我的活动」或活动页查看名单。")
     new_created = [c for c in new_fake.writes() if c[0] == "batch_create"][0]
     assert new_created[2] and all(r.get("轮次") == "1" for r in new_created[2])
 
@@ -851,7 +851,7 @@ def test_admin_stop_success_without_pairs_text_has_round(configured):
     _, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
                    "参与 2 人，共生成 0 条必聊关系。\n"
-                   "用户可自查 H5「我的一对一」查看名单。")
+                   "用户可在「我的活动」或活动页查看名单。")
 
 
 def test_admin_stop_partial_write_writes_carry_round(configured):
@@ -887,7 +887,7 @@ def test_admin_stop_round2_runs_and_keeps_round1(configured):
     fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第2轮 一对一匹配完成：\n"
                    "参与 4 人，共生成 8 条必聊关系。\n"
-                   "用户可自查 H5「我的一对一」查看名单。")
+                   "用户可在「我的活动」或活动页查看名单。")
     rows = fake.tables[ONETOONE_RESULT_TABLE]
     r1 = [r for r in rows if r["fields"].get("轮次") == "1"]
     r2 = [r for r in rows if r["fields"].get("轮次") == "2"]
@@ -921,7 +921,7 @@ def test_admin_stop_large_round_is_accepted_and_runs(configured):
     fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第51轮 一对一匹配完成：\n"
                    "参与 4 人，共生成 8 条必聊关系。\n"
-                   "用户可自查 H5「我的一对一」查看名单。")
+                   "用户可在「我的活动」或活动页查看名单。")
     created = [c for c in fake.writes() if c[0] == "batch_create"]
     assert created and all(r.get("轮次") == "51" for r in created[0][2]), \
         "第51轮写入行必须带「轮次=51」"
@@ -983,7 +983,7 @@ def test_admin_stop_participant_source_is_all_signups(configured):
     fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
                    "参与 4 人，共生成 8 条必聊关系。\n"
-                   "用户可自查 H5「我的一对一」查看名单。")
+                   "用户可在「我的活动」或活动页查看名单。")
     assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 8, "未提交志愿的报名者也参与配对"
 
 
@@ -1000,7 +1000,7 @@ def test_admin_stop_gender_comes_from_signup_not_selection(configured):
     fake, new = _new_run(configured, case)
     assert new == ("🎉 活动「关系自洽」第1轮 一对一匹配完成：\n"
                    "参与 4 人，共生成 8 条必聊关系。\n"
-                   "用户可自查 H5「我的一对一」查看名单。")
+                   "用户可在「我的活动」或活动页查看名单。")
     assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 8
 
 

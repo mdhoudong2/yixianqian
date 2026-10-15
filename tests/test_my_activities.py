@@ -1,6 +1,6 @@
 """GET /api/activities/mine：我的活动列表必须过滤「已取消」+ 按活动去重（N1 回归）。
 
-同族端点 my_groups / my_onetoone 用 snap_active_signups_by_openid（过滤已取消 +
+同族端点 my_groups 用 snap_active_signups_by_openid（过滤已取消 +
 按活动去重），my_activities 原先漏用不过滤的 snap_signups_by_openid：
 取消报名后活动仍留在「我的活动」，且与活动详情页的 my_signup=false 矛盾。
 

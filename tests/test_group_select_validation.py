@@ -1,11 +1,17 @@
-"""分组志愿提交校验（审计 G1 回归）：与 onetoone/select 同口径的 400 且零写入。
+"""分组志愿提交校验（审计 G1 回归）：非法输入 400 且零写入。
 
 旧实现只查「至少一个 / 最多 7 个」，自己 / 未报名 / 重复 / 非字符串全放行
 （``{"choices":[123]}`` 还会 500）；这里把每个非法输入钉成 400 + 零写入，
 合法输入 → 200 + 恰一行。
+
+2026-10-15：原一对一选择三端点（candidates/select/status）已随 onetoone_select
+死页删除，其等价用例迁入本文件（统一志愿语义由分组端点承载）：
+1..7 合法提交、me=None 不 500、并发双击锁内查重、快照未命中回退实时 update、
+活动状态决定性读取走 fresh；签到闸门相关迁入 tests/test_signin_gate.py。
 """
 import os
 import sys
+import threading
 
 import pytest
 
@@ -35,8 +41,14 @@ USERS = {
     "ou_m2": _user("ou_m2", "U-0002", "男性", "阿北"),
     "ou_f1": _user("ou_f1", "U-0003", "女性", "阿南"),
     "ou_f2": _user("ou_f2", "U-0004", "女性", "小西"),
+    "ou_f3": _user("ou_f3", "U-0005", "女性", "小东"),
+    "ou_f4": _user("ou_f4", "U-0006", "女性", "小南"),
+    "ou_f5": _user("ou_f5", "U-0007", "女性", "小中"),
+    "ou_f6": _user("ou_f6", "U-0008", "女性", "小六"),
+    "ou_f7": _user("ou_f7", "U-0009", "女性", "小七"),
     "ou_f9": _user("ou_f9", "U-0011", "女性", "未报名"),
 }
+FEMME_SEVEN = ["ou_f1", "ou_f2", "ou_f3", "ou_f4", "ou_f5", "ou_f6", "ou_f7"]
 
 
 def _act():
@@ -53,7 +65,7 @@ def _signup(oid):
 
 
 class Api:
-    """最小脚手架：假表 + 快照桩 + 会话；只桩存取，校验逻辑跑真实现。"""
+    """最小脚手架：假表 + 快照桩（stale/live 分离）+ 会话；只桩存取，校验逻辑跑真实现。"""
 
     def __init__(self, monkeypatch):
         self.monkeypatch = monkeypatch
@@ -64,6 +76,7 @@ class Api:
         self.refresh_calls = []
         self.snapshot = {"activities": [], "signups": [], "group_selections": [],
                          "users": [], "observers": []}
+        self.live = {}   # fresh 读覆盖（未命中回退 snapshot）
         monkeypatch.setattr(app, "_snap_live", lambda key: list(self.snapshot.get(key, [])))
         monkeypatch.setattr(app, "_snap", lambda key: list(self.snapshot.get(key, [])))
         monkeypatch.setattr(app, "_snap_fresh", self._fresh)
@@ -80,10 +93,12 @@ class Api:
 
     def _fresh(self, key):
         self.fresh_calls.append(key)
+        if key in self.live:
+            return list(self.live[key])
         return list(self.snapshot.get(key, []))
 
     def install(self):
-        signups = [_signup(ME), _signup("ou_m2"), _signup("ou_f1"), _signup("ou_f2")]
+        signups = [_signup(oid) for oid in [ME, "ou_m2"] + FEMME_SEVEN]
         self.fake = FakeBitable({
             app.bitable.ACTIVITY_TABLE_ID: [_act()],
             app.bitable.SIGNUP_TABLE_ID: signups,
@@ -96,6 +111,9 @@ class Api:
         self.snapshot["signups"] = list(signups)
         self.snapshot["group_selections"] = []
         return self.fake
+
+    def get(self, path):
+        return self.client.get(path)
 
     def post(self, choices):
         return self.client.post(
@@ -131,11 +149,104 @@ def test_group_select_invalid_is_400_with_zero_writes(api, choices, err):
     assert api.fake.writes() == [], "非法志愿必须零写入"
 
 
-def test_group_select_valid_writes_one_row(api):
-    r = api.post(["ou_f1"])
+@pytest.mark.parametrize("n", [1, 7], ids=["1个", "7个"])
+def test_group_select_accepts_one_to_seven_and_writes_one_row(api, n):
+    """迁移自原一对一 select：合法 1/7 个 → 200 且恰写一行（统一志愿表）。"""
+    r = api.post(FEMME_SEVEN[:n])
     assert r.status_code == 200, r.get_json()
     creates = [c for c in api.fake.writes() if c[0] == "create"]
     assert len(creates) == 1
     assert len(api.fake.tables[GS_TBL]) == 1
     assert api.fake.tables[GS_TBL][0]["fields"]["选择人open_id"] == ME
     assert api.fake.tables[GS_TBL][0]["fields"]["第1志愿"] == "ou_f1"
+
+
+def test_group_select_me_none_is_not_500(api, monkeypatch):
+    """迁移自原一对一 select：me=None 必须被门禁拦住，不能 500。"""
+    monkeypatch.setattr(app, "snap_self_user", lambda: None)
+    r = api.post(["ou_f1"])
+    assert r.status_code == 404, "me=None 必须被门禁/防护拦住，不能 500"
+    assert r.get_json()["error"] == "用户不存在"
+
+
+def test_group_select_concurrent_double_click_creates_once(api):
+    """迁移自原一对一 select：两个线程同时提交 → 锁内查重，create 恰 1 次、表内 1 行。
+
+    （把查重挪出锁外时，两次查空会各 create 一次，本用例出现 2 行即红。）
+    """
+    api.fake.search_sleep = {GS_TBL: 0.3}
+    codes = []
+
+    def worker():
+        c = app.app.test_client()
+        c.set_cookie("yxq_session", app.create_session(ME))
+        r = c.post(f"/api/activities/{ACT}/group/select",
+                   json={"choices": ["ou_f1"]},
+                   headers={"X-Requested-With": "XMLHttpRequest"})
+        codes.append(r.status_code)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert codes == [200, 200]
+    creates = [c for c in api.fake.writes() if c[0] == "create"]
+    updates = [c for c in api.fake.writes() if c[0] == "update"]
+    assert len(creates) == 1, "并发双击只应 create 一次"
+    assert len(updates) == 1, "后到的一次应命中已有记录走 update"
+    assert len(api.fake.tables[GS_TBL]) == 1, "表内只该有 1 行"
+
+
+def test_group_select_snapshot_miss_falls_back_to_live_update(api):
+    """迁移自原一对一 select：快照无记录、live 有 → 走 update 而不是 create（实时兜底）。"""
+    existing = {"record_id": "rec_gs_me", "fields": {"活动ID": ACT, "选择人open_id": ME,
+                                                     "选择人性别": "男性"}}
+    api.fake.tables[GS_TBL].append(existing)
+    r = api.post(FEMME_SEVEN[:2])
+    assert r.status_code == 200, r.get_json()
+    assert not [c for c in api.fake.writes() if c[0] == "create"]
+    updates = [c for c in api.fake.writes() if c[0] == "update"]
+    assert len(updates) == 1 and updates[0][2] == existing["record_id"]
+
+
+# ---------------------------------------------------------------- fresh 读取（迁移自原一对一端点）
+
+def _live_stale_acts(status_live, status_stale="未开始"):
+    live = _act()
+    live["fields"]["分组状态"] = status_live
+    stale = _act()
+    stale["fields"]["分组状态"] = status_stale
+    return live, stale
+
+
+def test_group_candidates_uses_live_status(api):
+    live, stale = _live_stale_acts("收集中")
+    api.snapshot["activities"] = [stale]
+    api.live["activities"] = [live]
+    api.fresh_calls.clear()
+    r = api.get(f"/api/activities/{ACT}/group/candidates")
+    assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
+    assert "activities" in api.fresh_calls
+
+
+def test_group_select_uses_live_status(api):
+    live, stale = _live_stale_acts("收集中")
+    api.snapshot["activities"] = [stale]
+    api.live["activities"] = [live]
+    api.fresh_calls.clear()
+    r = api.post(["ou_f1"])
+    assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
+    assert "activities" in api.fresh_calls
+
+
+def test_group_status_uses_live_status(api):
+    live, stale = _live_stale_acts("收集中")
+    api.snapshot["activities"] = [stale]
+    api.live["activities"] = [live]
+    api.fresh_calls.clear()
+    r = api.get(f"/api/activities/{ACT}/group/status")
+    assert r.status_code == 200
+    assert r.get_json()["group_status"] == "收集中"
+    assert "activities" in api.fresh_calls

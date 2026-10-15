@@ -5914,7 +5914,8 @@ def group_select(activity_id):
     my_name = bitable.get_field_text(me_fields, F_NICKNAME)
     my_gender = bitable.get_select_value(me_fields, F_GENDER)
 
-    # 与一对一 select 同一份校验：1..7、无重复、每个志愿都必须∈本活动
+    # 提交校验：1..7、无重复、每个志愿都必须∈本活动。
+    # （原与一对一 select 共用同一份校验；该端点已下线，口径统一在 group/select。）
     # 「已报名 + 已到（签到开启时）+ 异性」候选集（审计 G1：旧实现全放行且零校验）。
     if len(set(choices)) != len(choices):
         return jsonify({"error": "不能重复选择同一人"}), 400
@@ -7660,81 +7661,15 @@ def admin_activity_signin_flag():
 
 
 # ========== 一对一接口 ==========
+# 用户端志愿选择已统一下线（2026-10-15）：入口统一走分组端点（group/candidates|select|status，
+# 志愿表同为 GROUP_SELECT_TABLE，语义完全一致）。此处保留一对一结果端（必聊名单）与共用候选校验。
 
-@app.route("/api/activities/<activity_id>/onetoone/candidates", methods=["GET"])
-def onetoone_candidates(activity_id):
-    """获取一对一可选的异性列表"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-
-    # 一对一状态由 bot 进程写入，判定依赖它 → 实时读
-    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
-    if not act_record:
-        return jsonify({"error": "活动不存在"}), 404
-    # 志愿随时可改（2026-10-13）：候选列表不再要求「收集中」；签到闸门保留。
-
-    signup = bitable.get_user_signup(text_act_id, open_id)
-    if not signup:
-        return jsonify({"error": "你未报名此活动"}), 403
-
-    # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
-    af = act_record.get("fields", {})
-    attendance = None
-    if lib_grouping.signin_enabled(af):
-        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
-        if attendance is None:
-            return jsonify({"error": "签到信息查询失败，请重试",
-                            "code": "SIGNIN_QUERY_FAILED"}), 503
-        if not lib_grouping.is_checked_in(attendance.get(open_id)):
-            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
-                            "code": "SIGNIN_REQUIRED"}), 403
-
-    signups = bitable.get_signups(text_act_id)
-    me = snap_self_user()
-    if not me:
-        return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
-    my_gender = bitable.get_select_value(me.get("fields", {}), F_GENDER)
-    target_gender = "女性" if my_gender == "男性" else "男性"
-
-    candidates = []
-    for s in signups:
-        fields = s.get("fields", {})
-        s_openid = bitable.get_field_text(fields, F_SIGNUP_OPENID)
-        if s_openid == open_id:
-            continue
-        if attendance is not None and not lib_grouping.is_checked_in(attendance.get(s_openid)):
-            continue  # 候选池只留已到异性（与提交闸门同一口径）
-        u = snap_find_user_by_openid(s_openid)
-        if u:
-            u_gender = bitable.get_select_value(u.get("fields", {}), F_GENDER)
-            if u_gender == target_gender:
-                uf = u.get("fields", {})
-                tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
-                photo = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
-                candidates.append({
-                    "openid": s_openid,
-                    "nickname": bitable.get_field_text(uf, F_NICKNAME),
-                    "real_name": _display_real_name(uf),
-                    "photo": photo,
-                    "user_id": bitable.get_field_text(uf, F_USER_ID),
-                    "baptismal_name": bitable.get_field_text(uf, F_BAPTISMAL_NAME),
-                    "birthday": format_birthday(uf),
-                    "education": bitable.get_select_value(uf, F_EDUCATION),
-                    "native_place": bitable.get_field_text(uf, F_NATIVE_PLACE),
-                    "city": bitable.get_field_text(uf, F_CITY),
-                    "hobbies": "、".join(bitable.get_multi_select_value(uf, F_SELF_HOBBIES))
-                })
-    return jsonify({"candidates": candidates})
 
 def _activity_candidate_oids(act_id, open_id, my_gender, attendance=None):
-    """本活动「异性＋已报名」候选 open_id 集合（与 candidates 端点同口径）。
+    """本活动「异性＋已报名」候选 open_id 集合（与 group/candidates 端点同口径）。
 
-    attendance 非 None（签到开启且查询成功）时只留已到者，与 candidates 的池过滤
-    和提交闸门同一口径。分组与一对一两个 select 共用这一份校验。
+    attendance 非 None（签到开启且查询成功）时只留已到者，与 group/candidates 的池过滤
+    和提交闸门同一口径；分组 select 提交校验用它。
     """
     target_gender = "女性" if my_gender == "男性" else "男性"
     candidates = set()
@@ -7749,129 +7684,6 @@ def _activity_candidate_oids(act_id, open_id, my_gender, attendance=None):
             candidates.add(s_openid)
     return candidates
 
-
-@app.route("/api/activities/<activity_id>/onetoone/select", methods=["POST"])
-def onetoone_select(activity_id):
-    """提交一对一志愿选择（锁内查重 + 状态复核；写前校验 1-7 志愿与候选集）"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = active_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-
-    data = request.get_json() or {}
-    choices = data.get("choices", [])
-
-    if not choices or not isinstance(choices, list):
-        return jsonify({"error": "请至少选择一个志愿"}), 400
-    if len(choices) > 7:
-        return jsonify({"error": "最多选择7个志愿"}), 400
-    if not all(isinstance(c, str) and c for c in choices):
-        return jsonify({"error": "志愿格式不合法"}), 400
-
-    # 活动状态由 bot 进程写入，判定依赖它 → 实时读
-    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
-    if not act_record:
-        return jsonify({"error": "活动不存在"}), 404
-    # 志愿随时可改（2026-10-13）：不再要求「收集中」；签到闸门保留。
-
-    signup = snap_signup(text_act_id, open_id) or bitable.get_user_signup(text_act_id, open_id)
-    if not signup:
-        return jsonify({"error": "你未报名此活动"}), 403
-
-    # 现场签到闸门（条件开启）：本人须已到；查询失败 fail-closed。
-    af = act_record.get("fields", {})
-    attendance = None
-    if lib_grouping.signin_enabled(af):
-        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
-        if attendance is None:
-            return jsonify({"error": "签到信息查询失败，请重试",
-                            "code": "SIGNIN_QUERY_FAILED"}), 503
-        if not lib_grouping.is_checked_in(attendance.get(open_id)):
-            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
-                            "code": "SIGNIN_REQUIRED"}), 403
-
-    me = snap_self_user()
-    if not me:
-        return jsonify({"error": "用户不存在，请确认已完善资料"}), 404
-    me_fields = me.get("fields", {})
-    my_name = bitable.get_field_text(me_fields, F_NICKNAME)
-    my_gender = bitable.get_select_value(me_fields, F_GENDER)
-
-    # 与 bot 统一为 1..7：无重复 + 每个志愿都必须是本活动已报名的异性（错误具体到第N个）
-    if len(set(choices)) != len(choices):
-        return jsonify({"error": "不能重复选择同一人"}), 400
-    candidates = _activity_candidate_oids(text_act_id, open_id, my_gender, attendance=attendance)
-    for i, c in enumerate(choices):
-        if c not in candidates:
-            return jsonify({"error": f"第{i+1}个志愿不在可选列表中（须为本活动已报名的异性）"}), 400
-
-    fields = {
-        F_OTO_ACTIVITY_ID: text_act_id,
-        F_OTO_SELECTOR_OID: open_id,
-        F_OTO_SELECTOR_NAME: my_name,
-        F_OTO_SELECTOR_GENDER: my_gender,
-    }
-    for i in range(len(F_OTO_CHOICES)):
-        fields[F_OTO_CHOICES[i]] = ""
-    for i, choice_oid in enumerate(choices):
-        if i < len(F_OTO_CHOICES):
-            fields[F_OTO_CHOICES[i]] = choice_oid
-
-    # 跨进程活动锁（与 bot/分组共用同一批 flock）：提交互斥 + 锁内查重，
-    # 防双击/双端并发各插一行；锁外查空的双击修复与分组端「审查必修 7」同款。
-    try:
-        with lib_grouping.grouping_lock(text_act_id, timeout=GROUPING_API_LOCK_TIMEOUT):
-            # 志愿随时可改：原「拿到锁后重查状态」随状态闸门一并移除（编辑不再与收集窗口绑定）
-            # 快照优先、未命中回退实时（live）——与旧实现同一读取路径，只换了执行时机
-            existing = (snap_onetoone_selection(text_act_id, open_id)
-                        or bitable.get_user_onetoone_selection(text_act_id, open_id))
-            if existing:
-                ok = bitable.update_record(ONETOONE_SELECT_TABLE, existing["record_id"], fields)
-            else:
-                ok = bitable.create_record(ONETOONE_SELECT_TABLE, fields)
-    except lib_grouping.GroupingBusy:
-        return jsonify({"error": "当前有其他一对一操作正在进行，请稍后重试"}), 409
-    if not ok:
-        return jsonify({"error": "提交失败，请稍后重试"}), 500
-
-    # 志愿表已统一（一對一与分组同表）：两个快照键都刷，避免另一侧读到旧缓存
-    refresh_snapshot_table_async("onetoone_selections")
-    refresh_snapshot_table_async("group_selections")
-    return jsonify({"ok": True, "message": "志愿提交成功"})
-
-@app.route("/api/activities/<activity_id>/onetoone/status", methods=["GET"])
-def onetoone_status(activity_id):
-    """查询一对一状态和我的选择"""
-    open_id = require_login()
-    if not open_id:
-        return jsonify({"error": "未登录"}), 401
-    gate = account_gate(open_id)
-    if gate:
-        return jsonify(gate[0]), gate[1]
-
-    # 一对一状态由 bot 进程写入，判定依赖它 → 实时读
-    act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
-    if not act_record:
-        return jsonify({"error": "活动不存在"}), 404
-
-    onetoone_status = bitable.get_select_value(act_record.get("fields", {}), F_ACTIVITY_ONETOONE_STATUS)
-
-    my_selection = snap_onetoone_selection(text_act_id, open_id)
-    my_choices = []
-    if my_selection:
-        s_fields = my_selection.get("fields", {})
-        for choice_field in F_OTO_CHOICES:
-            val = bitable.get_field_text(s_fields, choice_field)
-            if val:
-                my_choices.append(val)
-
-    return jsonify({
-        "onetoone_status": onetoone_status,
-        "my_selected": bool(my_selection),
-        "my_choices": my_choices
-    })
 
 def _chatted_targets(msgs, open_id):
     """「已聊」推导：[open_id 本人发出的、状态≠已删除的留言] 的目标 open_id 集合。

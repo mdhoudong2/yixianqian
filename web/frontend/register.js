@@ -46,10 +46,25 @@ const app = createApp({
   mounted(){
     this.log("页面挂载, UA含飞书=" + this.isInFeishu());
     this.initInviter();
+    // 表单未提交就离开：原生提示（注册页是独立单页，无 SPA 守卫；仅在已进入表单态且有内容时拦）
+    window.addEventListener("beforeunload", (e)=>{
+      if(this.hasUnsavedDraft()){ e.preventDefault(); e.returnValue = ""; }
+    });
     this.bootLogin();
   },
   methods: {
     log(m){ const t=new Date().toLocaleTimeString(); this.dbg.push(t+" "+m); console.log("[reg]",m); },
+    // 草稿判定：进入表单后填过任意字段（邀请人预填不算）或加过照片
+    hasUnsavedDraft(){
+      if(this.stage !== "form" || this.submitting) return false;
+      if(this.photos.length) return true;
+      return Object.keys(this.form).some(k => {
+        if(k === "邀请人ID") return false;
+        const v = this.form[k];
+        if(Array.isArray(v)) return v.length > 0;
+        return v !== undefined && v !== null && String(v).trim() !== "";
+      });
+    },
     isInFeishu(){ return /lark|feishu/i.test(navigator.userAgent); },
     async api(url, opt={}){
       const headers = Object.assign({ "X-Requested-With": "XMLHttpRequest" }, opt.headers || {});

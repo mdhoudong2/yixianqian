@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""测试服「一对一」H5 API 端到端测试（只允许在 /opt/yixianqian-test 执行，H5 venv）。
+"""测试服「志愿选择（统一分组端点）+ 一对一结果」H5 API 端到端测试（只允许在 /opt/yixianqian-test 执行，H5 venv）。
 
 只依赖 H5 侧模块（app / config / bitable），不 import bot 模块——bot 与 H5 各有一份
 local_config（bot 用 ASSISTANT_APP_ID，H5 用 FEISHU_APP_ID + MESSAGE_TABLE_ID 等），
 同进程混用会读到错误凭证。匹配本身已由 seed_test_onetoone.py + 单测覆盖，这里只验
-H5 4 个路由 + 留言→已聊推导：
+H5 路由 + 留言→已聊推导：
 
-- GET  /api/activities/<id>/onetoone/candidates（异性列表、排除自己；志愿随时可改、不看状态）
-- POST /api/activities/<id>/onetoone/select（提交 7 志愿）
-- GET  /api/activities/<id>/onetoone/status（状态 + 我的选择）
-- GET  /api/activities/<id>/onetoone/result（已完成：必聊名单 + chatted 由留言推导）
+- GET  /api/activities/<id>/group/candidates（异性列表、排除自己；志愿随时可改、不看状态）
+- POST /api/activities/<id>/group/select（提交 7 志愿；统一志愿表）
+- GET  /api/activities/<id>/group/status（状态 + 我的选择）
+- GET  /api/activities/<id>/onetoone/result（已完成：必聊名单 + chatted 由留言推导；结果端点保留一对一）
 - POST /api/messages → 再次读 result 验证对方变「已聊」
 
+2026-10-15：用户端一对一选择页/端点已删，入口统一走分组端点（志愿表同为
+GROUP_SELECT_TABLE，语义一致）；本脚本随之改为 candidates/select/status 走 /group/*。
 状态编排直接改活动表「一对一状态」字段：状态模型为「空/已完成」，整段运行期间置
-「已完成」（结果端点要求；candidates/select/status 志愿随时可改、不看状态），
+「已完成」（仅结果端点要求；candidates/select/status 志愿随时可改、不看状态），
 不清结果表（结果由 seed 造好）。
 **收尾自清理**（审核修复）：本脚本创建的测试留言逐条删掉；活动「一对一状态」改回原值。
 否则残留的 `E2E一对一已聊测试…` 留言会污染 chatted 推导、残留状态会改变验收现场。
@@ -77,7 +79,7 @@ def _find_participant(gender_ch):
 
 
 def _count_opposite_signups(me_oid, opposite_gender):
-    """报名里（排除自己）异性人数——与 candidates 路由同口径，用于断言候选数量。"""
+    """报名里（排除自己）异性人数——与 group/candidates 路由同口径，用于断言候选数量。"""
     signups = bitable.get_signups(ACT)
     n = 0
     for s in signups:
@@ -126,12 +128,12 @@ def main():
     try:
         h5_mod.refresh_snapshot()
 
-        # ---------- Phase 1: 已完成（candidates / select / status；志愿随时可改，不看状态） ----------
-        print("\n[1] 已完成：candidates / select / status")
+        # ---------- Phase 1: 已完成（group candidates / select / status；志愿随时可改，不看状态） ----------
+        print("\n[1] 已完成：group candidates / select / status")
         set_status("已完成")
 
         set_session(male_oid)
-        r = get(f"/api/activities/{ACT}/onetoone/candidates")
+        r = get(f"/api/activities/{ACT}/group/candidates")
         if r.status_code != 200:
             _fail(f"candidates HTTP {r.status_code}: {r.get_json()}")
         else:
@@ -146,12 +148,13 @@ def main():
             print(f"  candidates: {len(cand)} 位异性、排除自己（异性报名 {expected}）")
 
             choices = [c["openid"] for c in cand[:7]]
-            r2 = post(f"/api/activities/{ACT}/onetoone/select", {"choices": choices})
+            r2 = post(f"/api/activities/{ACT}/group/select", {"choices": choices})
             if r2.status_code != 200:
                 _fail(f"select HTTP {r2.status_code}: {r2.get_json()}")
             else:
+                h5_mod.refresh_snapshot_table("group_selections")
                 h5_mod.refresh_snapshot_table("onetoone_selections")
-                r3 = get(f"/api/activities/{ACT}/onetoone/status")
+                r3 = get(f"/api/activities/{ACT}/group/status")
                 st = r3.get_json()
                 if not st.get("my_selected"):
                     _fail("status.my_selected 应为 true")
@@ -160,8 +163,7 @@ def main():
                 print(f"  select {len(choices)} 志愿 + status 复核通过（my_choices={len(st.get('my_choices', []))}）")
 
         # ---------- Phase 2: 已完成（result；状态已在 Phase 1 置好） ----------
-        print("\n[2] 已完成：result")
-
+        print("\n[2] 已完成：onetoone result")
         r = get(f"/api/activities/{ACT}/onetoone/result")
         partners = []
         if r.status_code != 200:

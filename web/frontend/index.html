@@ -210,6 +210,37 @@
   .choice-handle { cursor: grab; color: #c8c9cc; font-size: 18px; flex-shrink: 0; }
   .choice-rank { color: #ff6b81; font-size: 13px; font-weight: 600; flex-shrink: 0; }
   .choice-name { flex: 1; color: #323233; font-size: 14px; }
+  .choice-badge-check { border-radius: 12px; width: auto; min-width: 24px; padding: 0 7px; }
+  /* 志愿选择重设计：已选 chips + 底部固定操作栏 */
+  .gs-page { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+  .gs-notice { display: flex; align-items: flex-start; gap: 8px; background: #fff7e6; color: #ed6a0c; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; margin-bottom: 10px; }
+  .gs-notice .van-icon { flex-shrink: 0; margin-top: 2px; cursor: pointer; font-size: 16px; }
+  .gs-search-sticky { position: sticky; top: 54px; z-index: 9; }
+  .gs-fixed-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: #fff; border-top: 1px solid #f2f3f5; }
+  .gs-chips-bar { display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 8px 12px 0; }
+  .gs-chip { display: inline-flex; align-items: center; flex-shrink: 0; background: #fff0f3; border-radius: 16px; padding-left: 10px; font-size: 13px; color: #323233; }
+  .gs-chip-seq { color: #ff6b81; font-weight: 600; margin-right: 4px; }
+  /* × 命中区 44×44（透明 padding）：负外边距保持 chips 紧凑外观 */
+  .gs-chip-x { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; color: #c8c9cc; font-size: 16px; cursor: pointer; margin: -8px -6px -8px 0; }
+  .gs-bottom-bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .gs-bottom-left { flex: 1; min-width: 0; }
+  .gs-count-text { font-size: 13px; color: #646566; }
+  .gs-reorder-link { font-size: 13px; color: #ff6b81; cursor: pointer; margin-top: 2px; }
+  .gs-submit-btn { flex-shrink: 0; min-width: 132px; }
+  /* 调整次序托盘 */
+  .gs-tray-body { display: flex; flex-direction: column; max-height: 60vh; }
+  .gs-tray-head { padding: 16px 16px 8px; text-align: center; flex-shrink: 0; }
+  .gs-tray-title { font-size: 16px; font-weight: 600; color: #323233; }
+  .gs-tray-desc { font-size: 12px; color: #969799; margin-top: 4px; }
+  .gs-tray-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 16px; }
+  .gs-tray-row { height: 56px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #f2f3f5; }
+  .gs-tray-row:last-child { border-bottom: none; }
+  .gs-tray-name { flex: 1; font-size: 15px; color: #323233; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gs-tray-btn { width: 40px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #646566; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .gs-tray-btn.disabled { color: #dcdee0; pointer-events: none; }
+  .gs-tray-x { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: #c8c9cc; font-size: 20px; cursor: pointer; }
+  .gs-tray-actions { display: flex; gap: 12px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); flex-shrink: 0; }
+  .modal-action.disabled { opacity: .5; pointer-events: none; }
   .group-result-header { text-align: center; padding: 20px; }
   .group-number { font-size: 48px; color: #ff6b81; font-weight: bold; }
   /* 分组结果-轮次切换 */
@@ -605,6 +636,20 @@
   .van-theme-dark .msg-input { color: #f5f5f5; }
   .van-theme-dark .candidate-search-input { background: #1a1a1c; border-color: #3a3a3e; }
   .van-theme-dark .msg-input::placeholder, .van-theme-dark .candidate-search-input::placeholder { color: #a0a0a4; }
+  .van-theme-dark .gs-fixed-bottom { background: #222226; border-color: #3a3a3e; }
+  .van-theme-dark .gs-search-sticky { background: #1a1a1c; }
+  .van-theme-dark .gs-chip { background: #3a2a2e; color: #f5f5f5; }
+  .van-theme-dark .gs-chip-x { color: #a0a0a4; }
+  .van-theme-dark .gs-count-text { color: #c8c9cc; }
+  .van-theme-dark .gs-notice { background: #2b2413; color: #e8c97a; }
+  .van-theme-dark .gs-notice .van-icon { color: #e8c97a; }
+  .van-theme-dark .gs-tray { background: #222226; }
+  .van-theme-dark .gs-tray-title, .van-theme-dark .gs-tray-name { color: #f5f5f5; }
+  .van-theme-dark .gs-tray-row { border-color: #3a3a3e; }
+  .van-theme-dark .gs-tray-btn { color: #c8c9cc; }
+  .van-theme-dark .gs-tray-btn.disabled { color: #55555a; }
+  .van-theme-dark .gs-tray-x { color: #a0a0a4; }
+  .van-theme-dark .modal-action.disabled { color: #6e6f73; }
   .van-theme-dark .edit-tip { background: #2b2413; color: #e8c97a; }
   .van-theme-dark .like-realname-warn { background: #2b2413; color: #f0a25c; }
   /* 选中态：暗色覆盖不能吞掉 active 的粉色反馈 */
@@ -722,7 +767,7 @@
       <van-button type="primary" color="#ff6b81" block :loading="claiming" @click="submitClaim">认领并进入</van-button>
       <div style="text-align:center;margin-top:10px;font-size:12px;">
         <span style="color:#6b7280;">还没填过注册表？</span>
-        <span style="color:#ff6b81;margin-left:6px;" @click="backToLogin">返回</span>
+        <span style="color:#ff6b81;margin-left:6px;" @click="requestBackToLogin">返回</span>
       </div>
     </div>
     <div style="font-size:11.5px;color:#9a6a12;line-height:1.6;margin-top:8px;text-align:center;">姓名和手机号需与注册时一致。资料已审核通过的，认领后直接进入并自动报名活动；尚未审核的会先进入人工审核。</div>
@@ -2171,44 +2216,52 @@
     </template>
   </div>
 </div>
-<!-- ========== 分组选择 ========== -->
+<!-- ========== 选择志愿 ========== -->
 <div v-else-if="page==='group_select'" key="group_select">
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
-  <div class="page">
-    <div class="selected-list" v-if="selectedChoices.length">
-      <h4>已选志愿（点击 ✕ 移除）</h4>
-      <div ref="choiceListRef">
-        <div v-for="(c, i) in selectedChoices" :key="c.openid" class="choice-item">
-          <span class="choice-rank">第{{i+1}}志愿</span>
-          <span class="choice-name">{{ c.real_name || c.nickname }}{{ c.user_id ? ' · ' + c.user_id : '' }}</span>
-          <van-icon name="cross" color="#c8c9cc" size="18" @click="removeChoice(i)" />
-        </div>
+  <div class="page gs-page">
+    <div v-if="gsPrefillNotice" class="gs-notice">
+      <div style="flex:1;">
+        <div>已载入你上次提交的志愿，修改后记得点提交</div>
+        <div v-if="gsUnlistedCount">有 {{ gsUnlistedCount }} 位已选对象不在当前名单，提交前请确认</div>
       </div>
+      <van-icon name="cross" @click="dismissGsNotice"></van-icon>
     </div>
-    <div class="section-title">可选{{ myGender==='男性' ? '女生' : '男生' }}（点击添加到志愿）</div>
-    <div style="padding: 16px 0 8px;">
-      <van-button type="primary" color="#ff6b81" block :disabled="!selectedChoices.length" :loading="actionLoading" @click="submitChoices">
-        提交志愿（{{selectedChoices.length}}个）
-      </van-button>
+    <div v-if="!loadingCandidates && candidates.length" class="candidate-search-box gs-search-sticky">
+      <input v-model="candidateQuery" placeholder="搜索 昵称/用户ID/圣名" class="candidate-search-input">
     </div>
     <div v-if="loadingCandidates" style="text-align:center; padding:30px;">
-      <van-loading size="24px">加载中...</van-loading>
+      <van-loading size="24px">正在加载可选名单…</van-loading>
     </div>
-    <div v-else-if="!candidates.length" style="text-align:center; padding:40px 20px;">
-      <van-empty :description="candidatesError || '暂无可选人员'" />
-      <van-button v-if="candidatesError" type="primary" color="#ff6b81" size="small" @click="goGroupSelect(currentActivityId)" style="margin-top:12px;">重试</van-button>
+    <div v-else-if="gsSigninBlocked" style="text-align:center; padding:60px 20px;">
+      <div style="font-size:44px; margin-bottom:12px;">🔒</div>
+      <div style="font-size:16px; color:#323233; margin-bottom:20px;">需要现场签到后才能填志愿</div>
+      <van-button type="primary" color="#ff6b81" size="small" @click="handleBack">返回</van-button>
     </div>
-    <div v-else>
-      <!-- 搜索框（原生 input，替代 van-search，避免组件在飞书 webview 渲染异常） -->
-      <div class="candidate-search-box">
-        <input v-model="candidateQuery" placeholder="搜索 昵称/用户ID/圣名" class="candidate-search-input" />
+    <div v-else-if="candidatesError" style="text-align:center; padding:60px 20px;">
+      <div style="font-size:44px; margin-bottom:12px;">😵</div>
+      <div style="font-size:16px; color:#323233; margin-bottom:20px;">名单没有加载出来</div>
+      <van-button type="primary" color="#ff6b81" size="small" @click="reloadGroupCandidates">重新加载</van-button>
+    </div>
+    <div v-else-if="!candidates.length" style="text-align:center; padding:60px 20px;">
+      <div style="font-size:44px; margin-bottom:12px;">🌸</div>
+      <div style="font-size:16px; color:#323233;">暂时还没有可选的 TA</div>
+      <div style="font-size:13px; color:#969799; margin-top:8px;">对方报名（或现场签到）后就会出现在这里</div>
+    </div>
+    <template v-else>
+      <div class="section-title">可选{{ myGender==='男性' ? '女生' : '男生' }}（点击添加到志愿）</div>
+      <div v-if="!visibleCandidates.length" style="text-align:center; padding:40px 20px;">
+        <div style="font-size:15px; color:#969799;">没有找到匹配的人</div>
+        <van-button plain type="primary" color="#ff6b81" size="small" style="margin-top:12px;" @click="candidateQuery=''">清空搜索</van-button>
       </div>
-      <div v-for="c in visibleCandidates" :key="c.openid"
+      <div v-else v-for="c in visibleCandidates" :key="c.openid"
         class="group-candidate"
         :class="{selected: isSelected(c.openid)}"
-        @click="toggleChoice(c)">
+        @touchstart="gsRowTouchStart"
+        @touchend="gsRowTouchEnd($event, c)"
+        @click="gsRowClick(c)">
         <div class="signup-sheet-avatar" style="margin-right:12px;">
           <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
           <template v-else>{{ c.user_id || '👤' }}</template>
@@ -2217,11 +2270,48 @@
           <div class="group-candidate-name">{{ c.real_name || c.nickname }}</div>
           <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
         </div>
-        <div v-if="isSelected(c.openid)" class="choice-badge">{{selectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
+        <span v-if="isSelected(c.openid)" class="choice-badge choice-badge-check">✓{{ selectedChoices.findIndex(x=>x.openid===c.openid)+1 }}</span>
         <van-icon v-else name="plus" color="#dcdee0" size="22"></van-icon>
       </div>
+    </template>
+  </div>
+  <!-- 已选 chips 横滑条 + 底部固定操作栏 -->
+  <div class="gs-fixed-bottom">
+    <div v-if="selectedChoices.length" class="gs-chips-bar">
+      <span v-for="(c, i) in selectedChoices" :key="c.openid" class="gs-chip">
+        <span class="gs-chip-seq">{{ i+1 }}</span>{{ gsDisplayName(c) }}<span class="gs-chip-x" @click="removeChoiceToast(i)">×</span>
+      </span>
+    </div>
+    <div class="gs-bottom-bar">
+      <div class="gs-bottom-left">
+        <div class="gs-count-text">{{ gsCountText }}</div>
+        <div v-if="selectedChoices.length>=2" class="gs-reorder-link" @click="showGsTray=true">调整次序</div>
+      </div>
+      <van-button class="gs-submit-btn" type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
     </div>
   </div>
+  <!-- 调整次序托盘 -->
+  <van-popup v-model:show="showGsTray" position="bottom" round class="gs-tray" :style="{maxHeight:'60vh'}">
+    <div class="gs-tray-body">
+      <div class="gs-tray-head">
+        <div class="gs-tray-title">已选志愿（{{ selectedChoices.length }}/7）</div>
+        <div class="gs-tray-desc">从上到下 = 志愿顺序</div>
+      </div>
+      <div class="gs-tray-list">
+        <div v-for="(c, i) in selectedChoices" :key="c.openid" class="gs-tray-row">
+          <span class="choice-badge">{{ i+1 }}</span>
+          <span class="gs-tray-name">{{ gsDisplayName(c) }}</span>
+          <span class="gs-tray-btn" :class="{disabled: i===0}" @click="moveChoice(i, -1)">↑</span>
+          <span class="gs-tray-btn" :class="{disabled: i===selectedChoices.length-1}" @click="moveChoice(i, 1)">↓</span>
+          <span class="gs-tray-x" @click="removeChoiceToast(i)">×</span>
+        </div>
+      </div>
+      <div class="gs-tray-actions">
+        <van-button block plain type="primary" color="#ff6b81" @click="showGsTray=false">继续挑选</van-button>
+        <van-button block type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
+      </div>
+    </div>
+  </van-popup>
 </div>
 <!-- ========== 分组结果 ========== -->
 <div v-else-if="page==='group_result'" key="group_result">
@@ -2252,57 +2342,6 @@
         </div>
       </div>
     </template>
-  </div>
-</div>
-<!-- ========== 一对一选择 ========== -->
-<div v-else-if="page==='onetoone_select'" key="onetoone_select">
-  <div class="back-nav" @click="handleBack">
-    <van-icon name="arrow-left"></van-icon> 返回
-  </div>
-  <div class="page">
-    <div class="selected-list" v-if="onetooneSelectedChoices.length">
-      <h4>已选志愿（点击 ✕ 移除）</h4>
-      <div>
-        <div v-for="(c, i) in onetooneSelectedChoices" :key="c.openid" class="choice-item">
-          <span class="choice-rank">第{{i+1}}志愿</span>
-          <span class="choice-name">{{ c.real_name || c.nickname }}{{ c.user_id ? ' · ' + c.user_id : '' }}</span>
-          <van-icon name="cross" color="#c8c9cc" size="18" @click="removeOnetooneChoice(i)" />
-        </div>
-      </div>
-    </div>
-    <div class="section-title">可选{{ myGender==='男性' ? '女生' : '男生' }}（点击添加到志愿）</div>
-    <div style="padding: 16px 0 8px;">
-      <van-button type="primary" color="#ff6b81" block :disabled="!onetooneSelectedChoices.length" :loading="actionLoading" @click="submitOnetooneChoices">
-        提交志愿（{{onetooneSelectedChoices.length}}个）
-      </van-button>
-    </div>
-    <div v-if="onetooneLoadingCandidates" style="text-align:center; padding:30px;">
-      <van-loading size="24px">加载中...</van-loading>
-    </div>
-    <div v-else-if="!onetooneCandidates.length" style="text-align:center; padding:40px 20px;">
-      <van-empty :description="onetooneCandidatesError || '暂无可选人员'"></van-empty>
-      <van-button v-if="onetooneCandidatesError" type="primary" color="#ff6b81" size="small" @click="goOnetooneSelect(currentActivityId)" style="margin-top:12px;">重试</van-button>
-    </div>
-    <div v-else>
-      <div class="candidate-search-box">
-        <input v-model="onetooneCandidateQuery" placeholder="搜索 昵称/用户ID/圣名" class="candidate-search-input" />
-      </div>
-      <div v-for="c in visibleOnetooneCandidates" :key="c.openid"
-        class="group-candidate"
-        :class="{selected: isOnetooneSelected(c.openid)}"
-        @click="toggleOnetooneChoice(c)">
-        <div class="signup-sheet-avatar" style="margin-right:12px;">
-          <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
-          <template v-else>{{ c.user_id || '👤' }}</template>
-        </div>
-        <div class="group-candidate-info">
-          <div class="group-candidate-name">{{ c.real_name || c.nickname }}</div>
-          <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
-        </div>
-        <div v-if="isOnetooneSelected(c.openid)" class="choice-badge">{{onetooneSelectedChoices.findIndex(x=>x.openid===c.openid)+1}}</div>
-        <van-icon v-else name="plus" color="#dcdee0" size="22"></van-icon>
-      </div>
-    </div>
   </div>
 </div>
 <!-- ========== 一对一结果 ========== -->
@@ -2430,17 +2469,17 @@
     <div style="margin-top:10px; font-size:13px; color:#969799;" @click="showPayDialog=false">取消</div>
   </div>
 </van-popup>
-<!-- 修改资料未保存提示 -->
+<!-- 未保存离开提示（守卫注册表全站共用：profile_edit / group_select / 各可编辑浮层） -->
 <div v-if="showUnsavedConfirm" style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:9998; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; padding:24px; box-sizing:border-box;">
   <div class="modal-card" style="max-width:320px;">
     <div style="padding:22px 16px 14px; text-align:center;">
       <div class="modal-title">提示</div>
-      <div class="modal-body">资料已修改，是否保存？</div>
+      <div class="modal-body">{{ unsavedConfirmBody }}</div>
     </div>
     <div class="modal-divider">
-      <div class="modal-action modal-action-primary" @click="saveAndLeaveProfileEdit">保存</div>
-      <div class="modal-action modal-divider" @click="discardProfileEdit">不保存</div>
-      <div class="modal-action modal-action-muted modal-divider" @click="cancelProfileEditLeave">取消</div>
+      <div v-if="unsavedConfirmCanSave" class="modal-action modal-action-primary" :class="{disabled: leaveConfirmBusy}" @click="saveAndLeaveConfirm">保存并返回</div>
+      <div class="modal-action modal-divider" :class="{disabled: leaveConfirmBusy}" @click="discardLeaveConfirm">放弃修改</div>
+      <div class="modal-action modal-action-muted modal-divider" :class="{disabled: leaveConfirmBusy}" @click="cancelLeaveConfirm">继续编辑</div>
     </div>
   </div>
 </div>
@@ -2481,6 +2520,7 @@
 <!-- 送爱心弹窗 -->
 <van-dialog v-model:show="showLikeDialog" :title="likeDialogTitle" show-cancel-button
   confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :close-on-popstate="false"
   :before-close="onLikeDialogBeforeClose">
   <div class="like-dialog-body">
     <div class="like-notes">
@@ -2508,6 +2548,7 @@
 <!-- 反馈弹窗 -->
 <van-dialog v-model:show="showFeedbackDialog" title="反馈该用户" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :close-on-popstate="false"
   :before-close="onFeedbackBeforeClose">
   <div class="like-dialog-body">
     <van-radio-group v-model="feedbackReason" class="feedback-radio-group" style="padding-bottom: 8px;">
@@ -2523,6 +2564,7 @@
 <!-- 一对一留言快捷弹窗 -->
 <van-dialog v-model:show="showOnetooneMsg" :title="onetooneMsgTarget ? '留言给 ' + onetooneMsgTarget.nickname : '留言'" show-cancel-button
   confirm-button-text="发送" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :close-on-popstate="false"
   :before-close="onOnetooneMsgBeforeClose">
   <div class="like-dialog-body">
     <div class="like-notes">
@@ -2535,6 +2577,7 @@
 <!-- 举报留言弹窗 -->
 <van-dialog v-model:show="showReportDialog" title="举报留言" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ee0a24"
+  :close-on-popstate="false"
   :before-close="onReportBeforeClose">
   <div class="like-dialog-body">
     <van-radio-group v-model="reportReason" class="feedback-radio-group" style="padding-bottom: 8px;">
@@ -2550,6 +2593,7 @@
 <!-- 意见反馈弹窗 -->
 <van-dialog v-model:show="showSuggestionDialog" title="意见反馈" show-cancel-button
   confirm-button-text="提交" cancel-button-text="取消" confirm-button-color="#ff6b81"
+  :close-on-popstate="false"
   :before-close="onSuggestionBeforeClose">
   <div class="like-dialog-body">
     <van-radio-group v-model="suggestionType" class="feedback-radio-group" style="padding-bottom: 8px;">
@@ -2619,10 +2663,10 @@
 </van-dialog>
 <!-- ========== 麦穗兑换面板 ========== -->
 <!-- 未选条目时是列表，选中后同一层内切到参数表单：避免再套一层弹层，返回手势只需处理一层 -->
-<van-popup v-model:show="showRedeemPanel" position="bottom" round>
+<van-popup v-model:show="showRedeemPanel" position="bottom" round :close-on-click-overlay="false" @click-overlay="requestCloseRedeemPanel">
   <div class="redeem-panel">
     <div class="picker-header">
-      <span @click="closeRedeemPanel">取消</span>
+      <span @click="requestCloseRedeemPanel">取消</span>
       <span style="font-weight:600;">{{ redeemItem ? redeemItem.label : '兑换麦穗' }}</span>
       <span style="color:#ff6b81;">{{ pointsBalance }} 穗</span>
     </div>
@@ -2772,9 +2816,9 @@
   </div>
 </van-dialog>
 <!-- ========== 分组管理台：执行分组弹层（每组男女数入参） ========== -->
-<van-popup v-model:show="gaRunPopupShow" position="bottom" round :close-on-click-overlay="!gaRunBusy">
+<van-popup v-model:show="gaRunPopupShow" position="bottom" round :close-on-click-overlay="false" @click-overlay="requestCloseGaRunPopup">
   <div class="ga-start-popup">
-    <div class="ga-start-head">执行第 {{ gaNextRound }} 轮分组 <van-icon name="cross" color="#c8c9cc" @click="closeGaRunPopup()"></van-icon></div>
+    <div class="ga-start-head">执行第 {{ gaNextRound }} 轮分组 <van-icon name="cross" color="#c8c9cc" @click="requestCloseGaRunPopup()"></van-icon></div>
     <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
     <div class="ga-form-row">
       <div class="ga-form-label">每组男生数</div>
@@ -2847,9 +2891,9 @@
   </div>
 </van-dialog>
 <!-- ========== 一对一管理台：执行一对一确认层（输入女生场次 K） ========== -->
-<van-popup v-model:show="gaOtoRunShow" position="bottom" round :close-on-click-overlay="!gaOtoRunBusy">
+<van-popup v-model:show="gaOtoRunShow" position="bottom" round :close-on-click-overlay="false" @click-overlay="requestCloseOtoRun">
   <div class="ga-start-popup">
-    <div class="ga-start-head">执行第 {{ gaOtoNextRound }} 轮一对一 <van-icon name="cross" color="#c8c9cc" @click="closeOtoRun()"></van-icon></div>
+    <div class="ga-start-head">执行第 {{ gaOtoNextRound }} 轮一对一 <van-icon name="cross" color="#c8c9cc" @click="requestCloseOtoRun()"></van-icon></div>
     <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
     <div class="ga-confirm-box">
       <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaOtoRunPreview ? (gaOtoRunPreview.male_count + ' 男 · ' + gaOtoRunPreview.female_count + ' 女') : '…' }}</b></div>
@@ -2885,7 +2929,7 @@
   <div class="ga-run-mask-tip">请不要离开这个页面</div>
 </div>
 <!-- 筛选弹层 -->
-<van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;">
+<van-popup v-model:show="showFilter" position="bottom" round style="max-height:85vh;" :close-on-click-overlay="false" @click-overlay="requestCloseFilter">
   <div style="padding:16px 16px 24px; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
       <div class="filter-title">筛选</div>
@@ -2951,7 +2995,7 @@
       </div>
     </div>
     <div style="display:flex; gap:12px; margin-top:16px;">
-      <van-button block plain type="primary" color="#ff6b81" @click="showFilter=false">取消</van-button>
+      <van-button block plain type="primary" color="#ff6b81" @click="requestCloseFilter">取消</van-button>
       <van-button block type="primary" color="#ff6b81" @click="applyFilter">应用筛选</van-button>
     </div>
   </div>
@@ -3048,21 +3092,40 @@ createApp({
     // —— 返回拦截（飞书手势/物理返回）——
     let isHandlingPopState = false;
     let ignoreNextPop = false;
+    // 守卫收尾的历史条目消费队列：overlay/未保存弹窗关闭时「一层一条」串行 back()，
+    // 每次 back 的 popstate 用计数抑制。同 tick 连关两层（放弃/保存并返回）时按队列
+    // 逐条消费，不等 history.state 的异步更新，避免 overlay 条目残留→返回重进/震荡。
+    let pendingPopConsume = 0;
+    let popConsumeBusy = false;
+    let consumeIgnorePop = 0;
+    function popConsumeStep(){
+      if(popConsumeBusy || pendingPopConsume <= 0) return;
+      if(!history.state || !history.state.overlay){ pendingPopConsume = 0; return; }  // 已回到底层页面条目：停手，绝不越吃
+      pendingPopConsume--;
+      popConsumeBusy = true;
+      consumeIgnorePop++;
+      try { history.back(); } catch(e){ consumeIgnorePop--; popConsumeBusy = false; }
+    }
+    function requestPopConsume(){
+      pendingPopConsume++;
+      popConsumeStep();
+    }
     function pushHistory(state){
       if(isHandlingPopState) return;
       try{ history.pushState(state, '', location.pathname + '#' + (state.page || state.overlay || 'h5')); }catch(e){}
     }
     function handleBack(){
-      // 修改资料有未保存改动：弹保存提醒
-      if(page.value === 'profile_edit' && isProfileEditDirty()){
-        pendingProfileEditLeave = () => { history.back(); };
-        showUnsavedConfirm.value = true;
+      // 次序托盘/未保存弹窗打开：返回只关浮层、停留（不触发离开拦截）
+      if(showGsTray.value){
+        history.back();
         return;
       }
       if(showUnsavedConfirm.value){
-        cancelProfileEditLeave();
+        if(!leaveConfirmBusy.value) cancelLeaveConfirm();
         return;
       }
+      // 未保存离开拦截（守卫注册表）：dirty → 弹窗；提交中 → 提示并停留
+      if(guardLeave(() => { history.back(); })) return;
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
       if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showReportDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value || showRedeemPanel.value || showPointsRules.value || showRedemptions.value){
         history.back();
@@ -3104,7 +3167,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster','checkin'];
+    const subPages = ['activity_detail','group_select','group_result','onetoone_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster','checkin'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -3551,14 +3614,15 @@ createApp({
       // 进心愿步骤先把「前 50 个可选的人」铺出来，用户不搜也能直接点
       if (it.item === 'wish') { wishQuery.value = ''; wishTargets.value = []; wishSearchLastQ = null; loadWishTargets(); }
     }
-    // 传 it 时用于「确认后直接兑换」（real_like），不传则取当前表单里的条目
+    // 传 it 时用于「确认后直接兑换」（real_like），不传则取当前表单里的条目；返回 true=兑换成功
     async function submitRedeem(it) {
       const target = it || redeemItem.value;
-      if (!target) return;
-      if (redeemNeedsActivity.value && !redeemActivityId.value) { vant.showToast('请先选择活动'); return; }
-      if (target.item === 'wish' && !redeemTarget.value) { vant.showToast('请选择心愿对象'); return; }
-      if (target.item === 'matchmaker' && !redeemCondition.value.trim()) { vant.showToast('请填写牵线条件'); return; }
+      if (!target) return false;
+      if (redeemNeedsActivity.value && !redeemActivityId.value) { vant.showToast('请先选择活动'); return false; }
+      if (target.item === 'wish' && !redeemTarget.value) { vant.showToast('请选择心愿对象'); return false; }
+      if (target.item === 'matchmaker' && !redeemCondition.value.trim()) { vant.showToast('请填写牵线条件'); return false; }
       redeemSubmitting.value = true;
+      let ok = false;
       try {
         const body = { item: target.item, request_key: newRequestKey() };
         if (redeemNeedsActivity.value) body.activity_record_id = redeemActivityId.value;
@@ -3568,10 +3632,17 @@ createApp({
         vant.showToast(data.message || '兑换成功');
         if (typeof data.balance === 'number') pointsBalance.value = data.balance;
         closeRedeemPanel();
+        ok = true;
         redemptionsLoaded.value = false; // 兑换记录多了一条，下次打开重新拉
         await loadPoints(true); // 余额和明细都要跟着变
       } catch(e) { vant.showToast(e.message); }
       redeemSubmitting.value = false;
+      return ok;
+    }
+    // 兑换面板「取消」/返回：有未提交内容 → 先走通用离开拦截
+    function requestCloseRedeemPanel(){
+      if(guardOverlay('redeemPanel', () => closeRedeemPanel())) return;
+      closeRedeemPanel();
     }
 
     async function loadInviteInfo(force) {
@@ -3632,7 +3703,10 @@ createApp({
     // 修改资料
     const editableFields = ref([]);
     const showUnsavedConfirm = ref(false);
-    let pendingProfileEditLeave = null;
+    let pendingLeaveCb = null;             // 被拦截的离开动作（弹窗确认后执行）
+    const pendingGuard = ref(null);        // 触发弹窗的守卫项（页面级/浮层级），三钮分派按它走
+                                           // （必须是 ref：unsavedConfirmBody/CanSave 按它做响应式求值，普通 let 会被 computed 永久缓存）
+    const leaveConfirmBusy = ref(false);   // 「保存并返回」执行中：弹窗三钮禁用防重入
     let profileEditSnapshot = '';
     function _editFingerprint(){
       const cur = {};
@@ -3647,6 +3721,260 @@ createApp({
     function isProfileEditDirty(){
       if(page.value !== 'profile_edit') return false;
       try { return _editFingerprint() !== profileEditSnapshot; } catch(e){ return false; }
+    }
+    const unsavedConfirmBody = computed(() => (pendingGuard.value && pendingGuard.value.body)
+      || (page.value === 'group_select' ? '志愿还没提交，离开后本次修改不会保存。' : '资料已修改，是否保存？'));
+    const unsavedConfirmCanSave = computed(() => !!(pendingGuard.value && pendingGuard.value.saveAndLeave));
+    // —— 未保存离开拦截（守卫注册表：页面级 leaveGuards + 浮层级 overlayGuards，共用同一弹窗与历史挂载）——
+    // 每项约定：dirty() 判脏（与进页/进浮层 baseline 快照比对）；discard(cb) 放弃修改并归位快照、执行原离开；
+    // saveAndLeave(cb) 执行既有保存/发送/提交，成功→标净→closeUnsavedConfirm()→执行原离开，失败→留在原地（不清 dirty）；
+    // 未提供 saveAndLeave 的场景（确认级输入、筛选草稿等）弹窗只显示「放弃修改/继续编辑」两钮。
+    function closeUnsavedConfirm(){
+      showUnsavedConfirm.value = false;
+      pendingLeaveCb = null;
+      pendingGuard.value = null;
+    }
+    // 卡片留言输入（cards 页）：切卡/切 tab/顶部与系统返回/应用筛选前拦截未发送草稿；
+    // 页面级（leaveGuards.cards）与浮层级（switchCard 等）共用同一守卫项。
+    const cardsMsgGuard = {
+      dirty: () => page.value === 'cards' && !!msgText.value.trim(),
+      body: '留言还没发送，离开后内容不会保存。',
+      discard: (cb) => { msgText.value = ''; replyTarget.value = null; if(cb) cb(); },
+      saveAndLeave: async (cb) => {
+        closeUnsavedConfirm();
+        const ok = await sendMessage();
+        if(!ok) return false;
+        if(cb) cb();
+        return true;
+      }
+    };
+    const leaveGuards = {
+      profile_edit: {
+        dirty: () => isProfileEditDirty(),
+        discard: (cb) => {
+          try { profileEditSnapshot = _editFingerprint(); } catch(e){}
+          if(cb) cb(); else page.value = 'profile_detail';
+        },
+        saveAndLeave: async (cb) => {
+          const payload = {};
+          editableFields.value.forEach(f => { payload[f.field] = f.value; });
+          savingProfile.value = true;
+          try {
+            await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
+            vant.showToast('保存成功');
+            try { profileEditSnapshot = _editFingerprint(); } catch(e){}
+            profileLoaded.value = false;
+            try { const d = await api('/api/profile'); profileData.value = d; profileLoaded.value = true; } catch(e){}
+            if(cb){ cb(); } else { page.value = 'profile_detail'; }
+            return true;
+          } catch(e) {
+            vant.showToast(e.message);
+            return false;
+          } finally {
+            savingProfile.value = false;
+          }
+        }
+      },
+      group_select: {
+        dirty: () => isGroupSelectDirty(),
+        busy: () => actionLoading.value,   // 提交执行中：顶部/系统返回 → 提示并停留（P15）
+        discard: (cb) => {
+          gsMarkClean();
+          if(cb) cb(); else leaveGroupSelectByFrom();
+        },
+        saveAndLeave: async (cb) => {
+          const ok = await submitChoices({ viaGuard: true });
+          if(!ok) return false;
+          gsMarkClean();
+          // 先关弹窗（overlay 历史条目由 watch 收尾），再执行原离开
+          showUnsavedConfirm.value = false;
+          if(cb) cb(); else leaveGroupSelectByFrom();
+          return true;
+        }
+      },
+      cards: cardsMsgGuard
+    };
+    // —— 浮层守卫注册表（overlayGuards）——
+    // 拦截点：van-dialog before-close（取消/遮罩）、van-popup @click-overlay/取消钮、popstate 对应分支、页面内关闭函数。
+    let filterBaselineKey = null;            // 筛选面板「已应用」基线（打开/应用/清除时对齐，放弃修改时恢复）
+    let gaRunBaselineKey = '';               // 分组执行弹层「每组人数」进层基线
+    function gaRunKey(){ return JSON.stringify([Number(gaRunM.value), Number(gaRunF.value)]); }
+    function restoreGaRunBaseline(){
+      try {
+        const a = JSON.parse(gaRunBaselineKey);
+        if(Array.isArray(a) && a.length === 2){ gaRunM.value = a[0]; gaRunF.value = a[1]; }
+      } catch(e){}
+    }
+    function restoreFilterBaseline(){
+      try { if(filterBaselineKey !== null) filter.value = JSON.parse(filterBaselineKey); } catch(e){}
+    }
+    const overlayGuards = {
+      cardsMsg: cardsMsgGuard,
+      likeDialog: {
+        dirty: () => !!likeMessage.value.trim(),
+        body: '留言还没发送，离开后内容不会保存。',
+        discard: (cb) => { likeMessage.value = ''; if(cb) cb(); else showLikeDialog.value = false; },
+        saveAndLeave: async (cb) => {
+          closeUnsavedConfirm();
+          const ok = await trySubmitLike();
+          if(!ok) return false;
+          likeMessage.value = '';
+          if(cb) cb(); else showLikeDialog.value = false;
+          return true;
+        }
+      },
+      onetooneMsg: {
+        dirty: () => !!onetooneMsgText.value.trim(),
+        body: '留言还没发送，离开后内容不会保存。',
+        discard: (cb) => { onetooneMsgText.value = ''; if(cb) cb(); else showOnetooneMsg.value = false; },
+        saveAndLeave: async (cb) => {
+          closeUnsavedConfirm();
+          const ok = await doOnetooneMsg();
+          if(!ok) return false;
+          onetooneMsgText.value = '';
+          if(cb) cb(); else showOnetooneMsg.value = false;
+          return true;
+        }
+      },
+      feedbackDialog: {
+        dirty: () => !!feedbackText.value.trim() || feedbackReason.value !== '已有对象',
+        body: '反馈还没提交，离开后内容不会保存。',
+        discard: (cb) => { feedbackReason.value = '已有对象'; feedbackText.value = ''; if(cb) cb(); else showFeedbackDialog.value = false; },
+        saveAndLeave: async (cb) => {
+          closeUnsavedConfirm();
+          const ok = await doFeedback();
+          if(!ok) return false;
+          feedbackReason.value = '已有对象'; feedbackText.value = '';
+          if(cb) cb(); else showFeedbackDialog.value = false;
+          return true;
+        }
+      },
+      reportDialog: {
+        dirty: () => !!reportReasonText.value.trim() || reportReason.value !== '骚扰/引战',
+        body: '举报还没提交，离开后内容不会保存。',
+        discard: (cb) => { reportReason.value = '骚扰/引战'; reportReasonText.value = ''; if(cb) cb(); else showReportDialog.value = false; },
+        saveAndLeave: async (cb) => {
+          closeUnsavedConfirm();
+          const ok = await doReport();
+          if(!ok) return false;
+          reportReason.value = '骚扰/引战'; reportReasonText.value = '';
+          if(cb) cb(); else showReportDialog.value = false;
+          return true;
+        }
+      },
+      suggestionDialog: {
+        dirty: () => !!suggestionText.value.trim() || suggestionType.value !== '功能建议',
+        body: '反馈内容还没提交，离开后内容不会保存。',
+        discard: (cb) => { suggestionType.value = '功能建议'; suggestionText.value = ''; if(cb) cb(); else showSuggestionDialog.value = false; },
+        saveAndLeave: async (cb) => {
+          closeUnsavedConfirm();
+          const ok = await submitSuggestion();
+          if(!ok) return false;
+          suggestionType.value = '功能建议'; suggestionText.value = '';
+          if(cb) cb(); else showSuggestionDialog.value = false;
+          return true;
+        }
+      },
+      claim: {
+        dirty: () => !!(claimName.value.trim() || claimPhone.value.trim()),
+        body: '认领信息还没提交，离开后需要重新填写。',
+        discard: (cb) => { claimName.value = ''; claimPhone.value = ''; if(cb) cb(); else backToLogin(); },
+        // 认领成功即已进入 App（submitClaim 内已收尾），不再执行原离开动作
+        saveAndLeave: async () => {
+          closeUnsavedConfirm();
+          return await submitClaim();
+        }
+      },
+      redeemPanel: {
+        dirty: () => !!redeemItem.value && (!!redeemCondition.value.trim() || !!wishQuery.value.trim() || !!redeemTarget.value),
+        body: '兑换信息还没提交，离开后需要重新填写。',
+        discard: (cb) => { if(cb) cb(); else closeRedeemPanel(); },
+        saveAndLeave: async (cb) => {
+          closeUnsavedConfirm();
+          const ok = await submitRedeem();
+          if(!ok) return false;
+          if(cb) cb(); else closeRedeemPanel();
+          return true;
+        }
+      },
+      filter: {
+        dirty: () => showFilter.value && filterBaselineKey !== null && JSON.stringify(filter.value) !== filterBaselineKey,
+        body: '筛选条件还没应用，离开后本次修改不会保留。',
+        discard: (cb) => { restoreFilterBaseline(); if(cb) cb(); else showFilter.value = false; }
+        // 筛选为「两钮」场景：无保存语义，要应用的走面板里的「应用筛选」
+      },
+      gaRun: {
+        dirty: () => gaRunPopupShow.value && gaRunKey() !== gaRunBaselineKey,
+        body: '每组人数已修改，离开后本次修改不会保留。',
+        discard: (cb) => { restoreGaRunBaseline(); if(cb) cb(); else gaRunPopupShow.value = false; }
+        // 执行会启动后端任务，不提供「保存并返回」；要执行的走弹层里的「确认执行」
+      },
+      gaOtoRun: {
+        dirty: () => gaOtoRunShow.value && String(gaOtoRunFemaleChats.value || '').trim() !== '',
+        body: '女生场次已填写，离开后输入不会保留。',
+        discard: (cb) => { gaOtoRunFemaleChats.value = ''; if(cb) cb(); else gaOtoRunShow.value = false; }
+        // 同上：执行走弹层里的「确认执行」，弹层关闭不提供保存
+      }
+    };
+    // 页面级统一入口：命中脏守卫 → 挂待执行回调并开弹窗（history 挂载交给 overlay watch），返回 true=已拦截；
+    // busy（提交执行中）→ 提示并停留（P15：防提交中误触返回）。
+    function guardLeave(doLeave){
+      if(showUnsavedConfirm.value) return false;   // 弹窗已开：由调用方走「只关弹窗」分支
+      const g = leaveGuards[page.value];
+      if(!g) return false;
+      if(g.busy && g.busy()){ vant.showToast('正在提交，请稍候'); return true; }
+      if(!g.dirty()) return false;
+      pendingGuard.value = g;
+      pendingLeaveCb = doLeave;
+      showUnsavedConfirm.value = true;
+      return true;
+    }
+    // 浮层版统一入口：命中脏守卫 → 拦截本次关闭/离开（调用方不得继续关闭流程），返回 true=已拦截。
+    function guardOverlay(key, doLeave){
+      if(showUnsavedConfirm.value) return false;   // 弹窗已开：由调用方走「只关弹窗」分支
+      const g = overlayGuards[key];
+      if(!g) return false;
+      if(g.busy && g.busy()){ vant.showToast('正在提交，请稍候'); return true; }
+      if(!g.dirty()) return false;
+      pendingGuard.value = g;
+      pendingLeaveCb = doLeave;
+      showUnsavedConfirm.value = true;
+      return true;
+    }
+    function cancelLeaveConfirm(){
+      showUnsavedConfirm.value = false;
+      pendingLeaveCb = null;
+      pendingGuard.value = null;
+    }
+    function discardLeaveConfirm(){
+      if(leaveConfirmBusy.value) return;
+      const g = pendingGuard.value;
+      const cb = pendingLeaveCb;
+      pendingLeaveCb = null;
+      pendingGuard.value = null;
+      showUnsavedConfirm.value = false;
+      if(g){ g.discard(cb); }
+    }
+    async function saveAndLeaveConfirm(){
+      const g = pendingGuard.value;
+      if(!g || !g.saveAndLeave || leaveConfirmBusy.value) return;
+      const cb = pendingLeaveCb;
+      pendingLeaveCb = null;
+      if(g === leaveGuards.profile_edit){
+        // 资料编辑沿用既有行为：立即关弹窗 + 全屏「保存中」；失败留在本页 toast、不清 dirty
+        showUnsavedConfirm.value = false;
+        await g.saveAndLeave(cb);
+        return;
+      }
+      // 其余守卫：弹窗保持显示、三钮禁用防重入；成功由守卫自行 closeUnsavedConfirm 收尾，失败关弹窗停留（dirty 保留）
+      leaveConfirmBusy.value = true;
+      let ok = false;
+      try {
+        ok = await g.saveAndLeave(cb);
+      } finally {
+        leaveConfirmBusy.value = false;
+        if(ok !== true) showUnsavedConfirm.value = false;
+      }
     }
     const showSelectPopup = ref(false);
     const showMultiPopup = ref(false);
@@ -3669,38 +3997,9 @@ createApp({
         ? [...profileData.value.photos]
         : (profileData.value.photo ? [profileData.value.photo] : []);
       try { profileEditSnapshot = _editFingerprint(); } catch(e){ profileEditSnapshot = ''; }
-      pendingProfileEditLeave = null;
+      pendingLeaveCb = null;
+      pendingGuard.value = null;
       page.value = 'profile_edit';
-    }
-    function cancelProfileEditLeave(){
-      showUnsavedConfirm.value = false;
-      pendingProfileEditLeave = null;
-    }
-    function discardProfileEdit(){
-      showUnsavedConfirm.value = false;
-      const cb = pendingProfileEditLeave;
-      pendingProfileEditLeave = null;
-      try { profileEditSnapshot = _editFingerprint(); } catch(e){}
-      if(cb) cb(); else page.value = 'profile_detail';
-    }
-    async function saveAndLeaveProfileEdit(){
-      const cb = pendingProfileEditLeave;
-      pendingProfileEditLeave = null;
-      showUnsavedConfirm.value = false;
-      const payload = {};
-      editableFields.value.forEach(f => { payload[f.field] = f.value; });
-      savingProfile.value = true;
-      try {
-        await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
-        vant.showToast('保存成功');
-        try { profileEditSnapshot = _editFingerprint(); } catch(e){}
-        profileLoaded.value = false;
-        try { const d = await api('/api/profile'); profileData.value = d; profileLoaded.value = true; } catch(e){}
-        if(cb){ cb(); } else { page.value = 'profile_detail'; }
-      } catch(e) {
-        vant.showToast(e.message);
-      }
-      savingProfile.value = false;
     }
     function pickPhoto() { if (photoInput.value) photoInput.value.click(); }
     function pollFaceResult() {
@@ -3873,31 +4172,32 @@ createApp({
         || (c.user_id||'').toLowerCase().includes(q)
         || (c.baptismal_name||'').toLowerCase().includes(q));
     });
-    const choiceListRef = ref(null);
     const loadingCandidates = ref(false);
-    const candidatesError = ref('');
+    const candidatesError = ref(false);
     const groupResult = ref({});
     const groupResultLoading = ref(false);
     const myGender = computed(() => user.value?.gender || '');
     const groupSelectFrom = ref('my_groups');   // 进入分组选择前的页面，用于返回
     const groupResultFrom = ref('my_groups');   // 进入分组结果前的页面，用于返回
+    // 志愿选择重设计：底部操作栏 / 已选 chips / 调整次序托盘 / 未保存离开拦截
+    const showGsTray = ref(false);
+    const gsSigninBlocked = ref(false);   // 签到被拦（403/503）：整页阻断卡
+    const gsPrefillNotice = ref(false);   // 预填提示条（可关）
+    const gsUnlistedCount = ref(0);       // 历史志愿中不在当前候选池的人数（P9）
+    let gsBaseline = '';                  // 进页预填完成/提交成功/放弃时的快照（dirty 口径）
+    let gsTouchedOids = new Set();        // 加载窗口内用户手动动过的 openid（P10 合并口径）
+    let gsTouchStartY = null;             // 10px 位移防误触：touchstart 位置
+    let gsSuppressClickUntil = 0;         // touchend 后抑制合成 click，防双触发
+    const gsCountText = computed(() => {
+      const n = selectedChoices.value.length;
+      if (n === 0) return '已选 0/7 · 最多选 7 人';
+      if (n === 7) return '已选 7/7 · 已满';
+      return '已选 ' + n + '/7 · 还可选 ' + (7 - n) + ' 人';
+    });
 
     // 一对一
-    const onetooneCandidates = ref([]);
-    const onetooneSelectedChoices = ref([]);
-    const onetooneCandidateQuery = ref('');
-    const visibleOnetooneCandidates = computed(() => {
-      const q = (onetooneCandidateQuery.value||'').trim().toLowerCase();
-      if (!q) return onetooneCandidates.value;
-      return onetooneCandidates.value.filter(c => (c.nickname||'').toLowerCase().includes(q)
-        || (c.user_id||'').toLowerCase().includes(q)
-        || (c.baptismal_name||'').toLowerCase().includes(q));
-    });
-    const onetooneLoadingCandidates = ref(false);
-    const onetooneCandidatesError = ref('');
     const onetooneResult = ref({});
     const onetooneResultLoading = ref(false);
-    const onetooneSelectFrom = ref('my_activities');   // 进入一对一选择前的页面，用于返回
     const onetooneResultFrom = ref('my_activities');   // 进入一对一结果前的页面，用于返回
     const onetooneMsgTarget = ref(null);
     const onetooneMsgText = ref('');
@@ -4043,7 +4343,13 @@ createApp({
           throw new Error('服务器返回了非预期的响应，请稍后重试');
         }
         const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || '请求失败');
+        if (!resp.ok) {
+          // 附带 code/status，供调用方按语义分流（如签到闸门 SIGNIN_REQUIRED/503）
+          const err = new Error(data.error || '请求失败');
+          err.code = data.code || '';
+          err.status = resp.status;
+          throw err;
+        }
         return data;
       } catch(e) {
         clearTimeout(timeout);
@@ -4129,17 +4435,17 @@ createApp({
         return 'error';
       }
     }
-    // 预报名认领：重新取飞书 code，连同 手机号+姓名 提交后端合并到预填记录
+    // 预报名认领：重新取飞书 code，连同 手机号+姓名 提交后端合并到预填记录；返回 true=认领成功
     async function submitClaim() {
       const name = (claimName.value || '').trim();
       const phone = (claimPhone.value || '').replace(/\D/g, '');
-      if (name.replace(/\s+/g, '').length < 2) { vant.showToast('请输入注册时填写的真实姓名'); return; }
-      if (phone.length !== 11 || !phone.startsWith('1')) { vant.showToast('请输入正确的 11 位手机号'); return; }
-      if (!isInFeishu()) { vant.showToast('请在飞书 App 里打开本页面后再认领'); return; }
+      if (name.replace(/\s+/g, '').length < 2) { vant.showToast('请输入注册时填写的真实姓名'); return false; }
+      if (phone.length !== 11 || !phone.startsWith('1')) { vant.showToast('请输入正确的 11 位手机号'); return false; }
+      if (!isInFeishu()) { vant.showToast('请在飞书 App 里打开本页面后再认领'); return false; }
       claiming.value = true;
       try {
         const silent = await getFeishuSilentCode(6000);
-        if (!silent || !silent.code) { vant.showToast('飞书登录凭证获取失败，请点「重新登录」再试'); return; }
+        if (!silent || !silent.code) { vant.showToast('飞书登录凭证获取失败，请点「重新登录」再试'); return false; }
         const data = await api('/api/auth/claim', {
           method: 'POST',
           body: JSON.stringify({ code: silent.code, phone: claimPhone.value, name: claimName.value })
@@ -4156,14 +4462,21 @@ createApp({
           vant.showToast((data.claimed ? '认领成功' : '登录成功') + '；' + data.auto_signed_note);
         }
         else { vant.showToast(data.claimed ? '认领成功' : '登录成功'); }
+        return true;
       } catch (e) {
         vant.showToast(e.message || '认领失败，请重试');
+        return false;
       } finally {
         claiming.value = false;
       }
     }
     function backToLogin() {
       showClaim.value = false; claimName.value = ''; claimPhone.value = '';
+    }
+    // 认领面板「返回」：有未提交输入 → 先走通用离开拦截
+    function requestBackToLogin(){
+      if(guardOverlay('claim', () => backToLogin())) return;
+      backToLogin();
     }
     async function doLogin() {
       loggingIn.value = true; loginError.value = false; loginTip.value = ''; showPersonalGuide.value = false; showClaim.value = false;
@@ -4418,7 +4731,10 @@ createApp({
       else arr.push(val);
     }
     async function resetFilter() {
+      // 卡片留言草稿会被随后的切卡/重载清掉：提交筛选动作前先拦截
+      if(guardOverlay('cardsMsg', () => resetFilter())) return;
       filter.value = { gender: '', nickname: '', user_id: '', height_min: '', height_max: '', age_min: '', age_max: '', education: [], income: [], house: [], driving: [] };
+      filterBaselineKey = JSON.stringify(filter.value);
       showFilter.value = false;
       cards.value = [];
       cardIndex.value = 0;
@@ -4426,10 +4742,20 @@ createApp({
     }
 
     async function applyFilter() {
+      // 卡片留言草稿会被随后的切卡/重载清掉：提交筛选动作前先拦截
+      if(guardOverlay('cardsMsg', () => applyFilter())) return;
+      filterBaselineKey = JSON.stringify(filter.value);
       showFilter.value = false;
       cards.value = [];
       cardIndex.value = 0;
       await loadCards(true);
+    }
+    // 筛选面板打开时对齐基线：面板里改的算「未应用」，关闭/返回时拦截
+    watch(showFilter, (v) => { if(v) filterBaselineKey = JSON.stringify(filter.value); });
+    // 筛选面板「取消」/返回：changed 未应用 → 先走通用离开拦截（两钮）
+    function requestCloseFilter(){
+      if(guardOverlay('filter', () => { showFilter.value = false; })) return;
+      showFilter.value = false;
     }
     function preloadImage(url) {
       if (!url) return;
@@ -4631,6 +4957,9 @@ createApp({
       if (total <= 1) return;
       const n = cards.value.length;
       const seq = cardsStart.value + cardIndex.value;  // 当前全序位置
+      const canMove = dir < 0 ? (cardIndex.value < n - 1 || seq < total - 1) : (cardIndex.value > 0 || seq > 0);
+      // 未发送留言草稿：切卡前拦截（放弃修改=清空草稿；保存并返回=发送后继续切卡）
+      if (canMove && guardOverlay('cardsMsg', () => switchCard(dir))) return;
       if (dir < 0) {
         // 下一张
         if (cardIndex.value < n - 1) {
@@ -5182,40 +5511,46 @@ createApp({
       likeDialogTitle.value = '送给「' + u.nickname + '」一颗爱心';
       showLikeDialog.value = true;
     }
-    async function onLikeDialogBeforeClose(action) {
-      if (action === 'confirm') {
-        const msg = likeMessage.value.trim();
-        if (!msg) {
-          vant.showToast('请填写附言');
-          return false;
-        }
-        if ([...msg].length < 10) {
-          vant.showToast('附言需10字以上');
-          return false;
-        }
-        // 实名喜欢二次确认：发出去就收不回来了，必须让用户明确知道这一点。
-        // 匿名不需要——它 3 个月后自动失效，代价是可逆的。
-        if (likeType.value === '实名') {
-          try {
-            await vant.showConfirmDialog({
-              title: '确认使用实名喜欢？',
-              message: 'TA 会收到通知，并且知道是你喜欢TA。\n\n实名喜欢发出后不可撤回，本月名额不会返还。',
-              confirmButtonText: '确认发送',
-              cancelButtonText: '再想想',
-              confirmButtonColor: '#ff6b81'
-            });
-          } catch (e) {
-            return false;  // 用户点了「再想想」，不关弹窗、不发送
-          }
-        }
-        await doLike();
+    // 校验+实名二次确认+发送：确认与「保存并返回」共用，返回 true=已发出
+    async function trySubmitLike(){
+      const msg = likeMessage.value.trim();
+      if (!msg) {
+        vant.showToast('请填写附言');
+        return false;
       }
+      if ([...msg].length < 10) {
+        vant.showToast('附言需10字以上');
+        return false;
+      }
+      // 实名喜欢二次确认：发出去就收不回来了，必须让用户明确知道这一点。
+      // 匿名不需要——它 3 个月后自动失效，代价是可逆的。
+      if (likeType.value === '实名') {
+        try {
+          await vant.showConfirmDialog({
+            title: '确认使用实名喜欢？',
+            message: 'TA 会收到通知，并且知道是你喜欢TA。\n\n实名喜欢发出后不可撤回，本月名额不会返还。',
+            confirmButtonText: '确认发送',
+            cancelButtonText: '再想想',
+            confirmButtonColor: '#ff6b81'
+          });
+        } catch (e) {
+          return false;  // 用户点了「再想想」，不关弹窗、不发送
+        }
+      }
+      return await doLike();
+    }
+    async function onLikeDialogBeforeClose(action) {
+      if (action === 'confirm') return await trySubmitLike();
+      // 取消/点遮罩关闭：有未发送附言 → 先走通用离开拦截
+      if (showUnsavedConfirm.value) return false;   // 通用弹窗已开（叠在本弹窗上）：只允许通过它收尾
+      if (guardOverlay('likeDialog', () => { showLikeDialog.value = false; })) return false;
       return true;
     }
     async function doLike() {
-      if (!likeTarget.value || !likeTarget.value.openid) return;
+      if (!likeTarget.value || !likeTarget.value.openid) return false;
       const target = likeTarget.value;
       actionLoading.value = true;
+      let ok = false;
       try {
         const data = await api('/api/like', {
           method: 'POST',
@@ -5256,8 +5591,10 @@ createApp({
         } else {
           myLikesLoaded.value = false; // 未加载过则标记下次重拉
         }
+        ok = true;
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+      return ok;
     }
 
     // 反馈 - 弹出反馈弹窗
@@ -5269,20 +5606,22 @@ createApp({
       showFeedbackDialog.value = true;
     }
     async function onFeedbackBeforeClose(action) {
-      if (action === 'confirm') {
-        if (feedbackReason.value === '其他' && !feedbackText.value.trim()) {
-          vant.showToast('请补充说明');
-          return false;
-        }
-        await doFeedback();
-      }
+      if (action === 'confirm') return await doFeedback();
+      // 取消/点遮罩关闭：有未提交内容 → 先走通用离开拦截
+      if (showUnsavedConfirm.value) return false;
+      if (guardOverlay('feedbackDialog', () => { showFeedbackDialog.value = false; })) return false;
       return true;
     }
     async function doFeedback() {
-      if (!feedbackTarget.value || !feedbackTarget.value.openid) return;
+      if (!feedbackTarget.value || !feedbackTarget.value.openid) return false;
+      if (feedbackReason.value === '其他' && !feedbackText.value.trim()) {
+        vant.showToast('请补充说明');
+        return false;
+      }
       let reason = feedbackReason.value;
       if (feedbackText.value.trim()) reason = reason + '：' + feedbackText.value.trim();
       actionLoading.value = true;
+      let ok = false;
       try {
         await api('/api/feedback', {
           method: 'POST',
@@ -5290,8 +5629,10 @@ createApp({
         });
         vant.showToast('感谢反馈，已提交管理员');
         showFeedbackDialog.value = false;
+        ok = true;
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+      return ok;
     }
 
     // 举报留言
@@ -5304,21 +5645,25 @@ createApp({
     async function onReportBeforeClose(action) {
       if (action === 'confirm') {
         if (reportSubmitting.value) return false;
-        if (reportReason.value === '其他' && !reportReasonText.value.trim()) {
-          vant.showToast('请填写补充说明');
-          return false;
-        }
         await doReport();
         return false;
       }
+      // 取消/点遮罩关闭：有未提交内容 → 先走通用离开拦截
+      if (showUnsavedConfirm.value) return false;
+      if (guardOverlay('reportDialog', () => { showReportDialog.value = false; })) return false;
       return true;
     }
     async function doReport() {
-      if (!reportTarget.value || !reportTarget.value.id) return;
+      if (!reportTarget.value || !reportTarget.value.id) return false;
+      if (reportReason.value === '其他' && !reportReasonText.value.trim()) {
+        vant.showToast('请填写补充说明');
+        return false;
+      }
       let reason = reportReason.value;
       if (reportReasonText.value.trim()) reason = reason + '：' + reportReasonText.value.trim();
-      if (reportSubmitting.value) return;
+      if (reportSubmitting.value) return false;
       reportSubmitting.value = true;
+      let ok = false;
       try {
         await api('/api/messages/' + reportTarget.value.id + '/report', {
           method: 'POST',
@@ -5328,8 +5673,10 @@ createApp({
         showReportDialog.value = false;
         // 举报后保持可见，待管理员处理（不从列表移除）
         reportTarget.value = null;
+        ok = true;
       } catch(e) { vant.showToast(e.message || '举报失败'); }
       reportSubmitting.value = false;
+      return ok;
     }
     async function loadReportedMessages(force) {
       if (!user.value || !user.value.is_admin) return;
@@ -5416,13 +5763,25 @@ createApp({
       showSuggestionDialog.value = true;
     }
     async function onSuggestionBeforeClose(action) {
-      if (action !== 'confirm') return true;
+      if (action === 'confirm') {
+        if (suggestionSubmitting.value) return false;
+        await submitSuggestion();
+        return false;
+      }
+      // 取消/点遮罩关闭：有未提交内容 → 先走通用离开拦截
+      if (showUnsavedConfirm.value) return false;
+      if (guardOverlay('suggestionDialog', () => { showSuggestionDialog.value = false; })) return false;
+      return true;
+    }
+    // 提交意见反馈：确认与「保存并返回」共用，返回 true=已提交
+    async function submitSuggestion() {
       if (suggestionSubmitting.value) return false;
       if (!suggestionText.value.trim()) {
         vant.showToast('请填写反馈内容');
         return false;
       }
       suggestionSubmitting.value = true;
+      let ok = false;
       try {
         await api('/api/suggestions', {
           method: 'POST',
@@ -5430,9 +5789,10 @@ createApp({
         });
         vant.showToast('感谢反馈，已收到');
         showSuggestionDialog.value = false;
+        ok = true;
       } catch(e) { vant.showToast(e.message); }
       suggestionSubmitting.value = false;
-      return false;
+      return ok;
     }
 
     // 消息
@@ -5592,12 +5952,8 @@ createApp({
         startFaceInvalidOverlay();
         return false;
       }
-      // 修改资料有未保存改动：先弹保存提醒，不切页
-      if(page.value === 'profile_edit' && isProfileEditDirty()){
-        pendingProfileEditLeave = () => { page.value = name; };
-        showUnsavedConfirm.value = true;
-        return false;
-      }
+      // 未保存离开拦截（守卫注册表）：先弹弹窗，不切页；提交执行中 → 提示并停留
+      if(guardLeave(() => { page.value = name; })) return false;
       return true;
     }
     function goIdInvalidNow(){
@@ -5643,53 +5999,150 @@ createApp({
     }
     // 分组
     async function goGroupSelect(activityId) {
-      groupSelectFrom.value = page.value; // 记录来路，用于返回
+      groupSelectFrom.value = page.value; // 记录来路，用于返回（重试 reload 不覆盖来路，P11）
       currentActivityId.value = activityId;
-      page.value = 'group_select'; loadingCandidates.value = true; selectedChoices.value = []; candidatesError.value = '';
+      page.value = 'group_select';
+      selectedChoices.value = [];
+      candidateQuery.value = '';
+      showGsTray.value = false;
+      gsTouchedOids = new Set();
+      gsPrefillNotice.value = false;
+      gsUnlistedCount.value = 0;
+      gsBaseline = '';
+      await loadGroupCandidates(activityId);
+    }
+    async function loadGroupCandidates(activityId) {
+      loadingCandidates.value = true;
+      candidatesError.value = false;
+      gsSigninBlocked.value = false;
+      gsPrefillNotice.value = false;
       try {
         const candData = await api('/api/activities/' + activityId + '/group/candidates');
         candidates.value = candData.candidates || [];
-        // 预填已提交的志愿（修改志愿时回显原选择）
-        try {
-          const statusData = await api('/api/activities/' + activityId + '/group/status');
-          const myChoices = statusData.my_choices || [];
-          const byOid = {};
-          candidates.value.forEach(c => { byOid[c.openid] = c; });
-          selectedChoices.value = myChoices.map(oid => byOid[oid]).filter(Boolean);
-        } catch(e) {}
+        await prefillGroupChoices(activityId);
       } catch(e) {
-        candidatesError.value = '加载失败：' + e.message + '，点击重试';
-        vant.showToast(e.message);
+        candidates.value = [];
+        if (e && (e.code === 'SIGNIN_REQUIRED' || e.code === 'SIGNIN_QUERY_FAILED')) {
+          gsSigninBlocked.value = true;   // 签到被拦：整页阻断卡
+        } else {
+          candidatesError.value = true;   // 加载失败：名单没有加载出来 + 重新加载
+        }
       }
+      gsMarkClean(); // 进页预填完成 → 更新 baseline（dirty 从此起算）
       loadingCandidates.value = false;
     }
-    function isSelected(oid) { return selectedChoices.value.some(c => c.openid === oid); }
-    function toggleChoice(c) {
-      const idx = selectedChoices.value.findIndex(x => x.openid === c.openid);
-      if (idx >= 0) { selectedChoices.value.splice(idx, 1); }
-      else {
-        if (selectedChoices.value.length >= 7) { vant.showToast('最多选择7个志愿'); return; }
-        selectedChoices.value.push(c);
+    function reloadGroupCandidates() {
+      const activityId = currentActivityId.value;
+      if (!activityId) return;
+      loadGroupCandidates(activityId); // 带参 reload：不重走 goGroupSelect，来路（groupSelectFrom）不被覆盖
+    }
+    async function prefillGroupChoices(activityId) {
+      try {
+        const statusData = await api('/api/activities/' + activityId + '/group/status');
+        const myChoices = statusData.my_choices || [];
+        if (!myChoices.length) return;
+        const byOid = {};
+        candidates.value.forEach(c => { byOid[c.openid] = c; });
+        // P10：/status 返回时若用户已动过，不整段覆盖——只并入未被用户动过的项
+        const merged = selectedChoices.value.slice();
+        const chosen = new Set(merged.map(c => c.openid));
+        let mergedCount = 0, unlisted = 0;
+        myChoices.forEach(oid => {
+          if (chosen.has(oid) || gsTouchedOids.has(oid)) return;
+          const cand = byOid[oid];
+          if (cand) { merged.push(cand); chosen.add(oid); mergedCount += 1; }
+          else { unlisted += 1; }   // P9：不在当前候选池的历史志愿不并入（提交会被拦）
+        });
+        selectedChoices.value = merged;
+        gsUnlistedCount.value = unlisted;
+        if (mergedCount || unlisted) gsPrefillNotice.value = true;
+      } catch(e) {
+        // 状态拉取失败：保持现状（不覆盖用户已选），与旧实现口径一致
       }
     }
-    function removeChoice(i) { selectedChoices.value.splice(i, 1); }
-    async function submitChoices() {
+    function isSelected(oid) { return selectedChoices.value.some(c => c.openid === oid); }
+    function gsDisplayName(c) { return (c && (c.real_name || c.nickname)) || ''; }
+    function gsChoiceKey() { return selectedChoices.value.map(c => c.openid).join('|'); }
+    function isGroupSelectDirty() { return page.value === 'group_select' && gsChoiceKey() !== gsBaseline; }
+    function gsMarkClean() { gsBaseline = gsChoiceKey(); }
+    function dismissGsNotice() { gsPrefillNotice.value = false; }
+    function toggleChoice(c) {
+      const idx = selectedChoices.value.findIndex(x => x.openid === c.openid);
+      if (idx >= 0) { removeChoiceToast(idx); return; }
+      if (selectedChoices.value.length >= 7) { vant.showToast('最多 7 个志愿，先移除一个才能再选'); return; }
+      selectedChoices.value.push(c);
+      gsTouchedOids.add(c.openid);
+    }
+    function removeChoiceToast(i) {
+      const c = selectedChoices.value[i];
+      if (!c) return;
+      selectedChoices.value.splice(i, 1);
+      gsTouchedOids.add(c.openid);
+      vant.showToast('已移除 ' + gsDisplayName(c));
+    }
+    function moveChoice(i, delta) {
+      const j = i + delta;
+      if (j < 0 || j >= selectedChoices.value.length) return;
+      const next = selectedChoices.value.slice();
+      const tmp = next[i]; next[i] = next[j]; next[j] = tmp;
+      selectedChoices.value = next;   // 顺序变也算改（dirty 以 openid 序列比对）
+    }
+    // 10px 位移防误触：touchstart/touchend 比较，滚动手势不触发选择
+    function gsRowTouchStart(e) {
+      const t = e.touches && e.touches[0];
+      gsTouchStartY = t ? t.clientY : null;
+    }
+    function gsRowTouchEnd(e, c) {
+      const t = e.changedTouches && e.changedTouches[0];
+      const moved = (gsTouchStartY !== null && t) ? Math.abs(t.clientY - gsTouchStartY) : 0;
+      gsTouchStartY = null;
+      gsSuppressClickUntil = Date.now() + 600;  // 抑制随后的合成 click，防双触发
+      if (moved <= 10 && t) toggleChoice(c);
+    }
+    function gsRowClick(c) {
+      if (Date.now() < gsSuppressClickUntil) return;  // 触摸路径已处理
+      toggleChoice(c);
+    }
+    function gsSubmitErrorMessage(e) {
+      // 可读原因，不拼后端原文
+      if (e && e.code === 'SIGNIN_REQUIRED') return '需要现场签到后才能填志愿，请联系管理员';
+      if (e && e.code === 'SIGNIN_QUERY_FAILED') return '签到信息查询失败，请稍后重试';
+      if (e && typeof e.message === 'string' && e.message.includes('不在可选列表')) return '有志愿不在当前名单，请移除后重试';
+      if (e && e.status === 409) return '当前有其他操作进行中，请稍后重试';
+      return '提交失败，请稍后重试';
+    }
+    async function leaveGroupSelectByFrom() {
+      const from = groupSelectFrom.value;
+      if (from === 'activity_detail') await openActivity(currentActivityId.value);
+      else if (from === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
+      else if (from === 'my_activities') { openMyActivities(); }
+      else openMyGroups();
+    }
+    async function submitChoices(opts) {
+      const viaGuard = !!(opts && opts.viaGuard);
       const activityId = currentActivityId.value;
-      if (!activityId) { vant.showToast('活动信息丢失'); return; }
+      if (!activityId) { vant.showToast('活动信息丢失'); return false; }
+      if (actionLoading.value) return false;
+      showGsTray.value = false;
       actionLoading.value = true;
       try {
         await api('/api/activities/' + activityId + '/group/select', {
           method: 'POST', body: JSON.stringify({ choices: selectedChoices.value.map(c => c.openid) })
         });
+        gsMarkClean();   // 提交成功先标净再跳转（避免自动返回被离开拦截误拦）
+        // 注：守卫路径还有 group_select.saveAndLeave 内的 gsMarkClean 兜底，删掉本行自动化抓不到
+        //（突变 M4「提交成功不 gsMarkClean」盲区）——该场景需靠手测覆盖。
         vant.showToast('志愿提交成功');
         myGroupsLoaded.value = false;
-        // 按原路返回并刷新
-        if (groupSelectFrom.value === 'activity_detail') await openActivity(activityId);
-        else if (groupSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
-        else if (groupSelectFrom.value === 'my_activities') { openMyActivities(); }
-        else openMyGroups();
-      } catch(e) { vant.showToast(e.message); }
-      actionLoading.value = false;
+        if (viaGuard) return true;   // 守卫路径：返回动作交给注册表的回调执行
+        await leaveGroupSelectByFrom();   // 按原路返回并刷新（既有逻辑）
+        return true;
+      } catch(e) {
+        vant.showToast(gsSubmitErrorMessage(e));   // 留在本页、选中保留
+        return false;
+      } finally {
+        actionLoading.value = false;
+      }
     }
     async function loadGroupResult(activityId, round) {
       let url = '/api/activities/' + activityId + '/group/result';
@@ -5710,51 +6163,6 @@ createApp({
       loadGroupResult(currentActivityId.value, round);
     }
     // 一对一
-    async function goOnetooneSelect(activityId) {
-      onetooneSelectFrom.value = page.value; // 记录来路，用于返回
-      currentActivityId.value = activityId;
-      page.value = 'onetoone_select'; onetooneLoadingCandidates.value = true; onetooneSelectedChoices.value = []; onetooneCandidatesError.value = '';
-      try {
-        const candData = await api('/api/activities/' + activityId + '/onetoone/candidates');
-        onetooneCandidates.value = candData.candidates || [];
-        try {
-          const statusData = await api('/api/activities/' + activityId + '/onetoone/status');
-          const myChoices = statusData.my_choices || [];
-          const byOid = {};
-          onetooneCandidates.value.forEach(c => { byOid[c.openid] = c; });
-          onetooneSelectedChoices.value = myChoices.map(oid => byOid[oid]).filter(Boolean);
-        } catch(e) {}
-      } catch(e) {
-        onetooneCandidatesError.value = '加载失败：' + e.message + '，点击重试';
-        vant.showToast(e.message);
-      }
-      onetooneLoadingCandidates.value = false;
-    }
-    function isOnetooneSelected(oid) { return onetooneSelectedChoices.value.some(c => c.openid === oid); }
-    function toggleOnetooneChoice(c) {
-      const idx = onetooneSelectedChoices.value.findIndex(x => x.openid === c.openid);
-      if (idx >= 0) { onetooneSelectedChoices.value.splice(idx, 1); }
-      else {
-        if (onetooneSelectedChoices.value.length >= 7) { vant.showToast('最多选择7个志愿'); return; }
-        onetooneSelectedChoices.value.push(c);
-      }
-    }
-    function removeOnetooneChoice(i) { onetooneSelectedChoices.value.splice(i, 1); }
-    async function submitOnetooneChoices() {
-      const activityId = currentActivityId.value;
-      if (!activityId) { vant.showToast('活动信息丢失'); return; }
-      actionLoading.value = true;
-      try {
-        await api('/api/activities/' + activityId + '/onetoone/select', {
-          method: 'POST', body: JSON.stringify({ choices: onetooneSelectedChoices.value.map(c => c.openid) })
-        });
-        vant.showToast('志愿提交成功');
-        if (onetooneSelectFrom.value === 'activity_detail') await openActivity(activityId);
-        else if (onetooneSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
-        else openMyActivities();
-      } catch(e) { vant.showToast(e.message); }
-      actionLoading.value = false;
-    }
     async function loadOnetooneResult(activityId, round) {
       let url = '/api/activities/' + activityId + '/onetoone/result';
       if (round) url += '?round=' + encodeURIComponent(round);
@@ -5781,14 +6189,18 @@ createApp({
     async function onOnetooneMsgBeforeClose(action) {
       if (action === 'confirm') {
         if (!onetooneMsgText.value.trim()) { vant.showToast('请先输入留言内容'); return false; }
-        await doOnetooneMsg();
+        return await doOnetooneMsg();
       }
+      // 取消/点遮罩关闭：有未发送留言 → 先走通用离开拦截
+      if (showUnsavedConfirm.value) return false;
+      if (guardOverlay('onetooneMsg', () => { showOnetooneMsg.value = false; })) return false;
       return true;
     }
     async function doOnetooneMsg() {
       const t = onetooneMsgTarget.value;
-      if (!t || !t.openid) return;
+      if (!t || !t.openid) return false;
       actionLoading.value = true;
+      let ok = false;
       try {
         await api('/api/messages', {
           method: 'POST',
@@ -5799,20 +6211,42 @@ createApp({
         const arr = onetooneResult.value.partners || [];
         const idx = arr.findIndex(x => x.openid === t.openid);
         if (idx >= 0) arr[idx].chatted = true;
+        ok = true;
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
+      return ok;
     }
 
     // 页面切换加载数据
     // 拦截 popstate：按 浮层 > 子页 优先级关闭
     function handlePopState(e){
+      if(consumeIgnorePop > 0){ consumeIgnorePop--; popConsumeBusy = false; popConsumeStep(); return; }
       if(ignoreNextPop){ ignoreNextPop=false; return; }
       isHandlingPopState = true;
       // 分组管理台：执行中遮罩吞掉返回；其余弹层关掉并停在原页（re-push 防 history 漂移）
       if(gaRunShow.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      // 通用未保存弹窗：返回只关弹窗、停留（不触发离开拦截）
+      if(showUnsavedConfirm.value){
+        if(!leaveConfirmBusy.value) cancelLeaveConfirm();
+        isHandlingPopState=false;
+        return;
+      }
+      // 认领面板（登录页内嵌步骤）：未提交内容 → 拦截；否则返回登录面板
+      if(showClaim.value){
+        if(guardOverlay('claim', () => backToLogin())){ isHandlingPopState=false; pushHistory({overlay:'claim'}); return; }
+        backToLogin(); isHandlingPopState=false; return;
+      }
+      // 管理台「输入活动编号确认」类弹层（清空分组结果/清空签到/清空一对一结果）：
+      // 确认级输入，关闭=作废输入符合直觉 → 豁免，不做未保存拦截（见 docs/文案对照表.md 豁免清单）。
       if(gaConfirmShow.value){ gaConfirmShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
-      if(gaRunPopupShow.value){ closeGaRunPopup(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
-      if(gaOtoRunShow.value){ closeOtoRun(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+      if(gaRunPopupShow.value){
+        if(guardOverlay('gaRun', () => { gaRunPopupShow.value=false; })){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+        closeGaRunPopup(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return;
+      }
+      if(gaOtoRunShow.value){
+        if(guardOverlay('gaOtoRun', () => { gaOtoRunShow.value=false; })){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
+        closeOtoRun(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return;
+      }
       if(gaOtoResetShow.value){ cancelOtoReset(); isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(gaUnknownShow.value){ gaUnknownShow.value=false; isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       if(showPhotoViewer.value){
@@ -5822,28 +6256,56 @@ createApp({
         isHandlingPopState=false;
         return;
       }
-      if(showFilter.value){ showFilter.value=false; isHandlingPopState=false; return; }
-      if(showLikeDialog.value){ showLikeDialog.value=false; isHandlingPopState=false; return; }
-      if(showReportDialog.value){ showReportDialog.value=false; isHandlingPopState=false; return; }
-      if(showFeedbackDialog.value){ showFeedbackDialog.value=false; isHandlingPopState=false; return; }
-      if(showOnetooneMsg.value){ showOnetooneMsg.value=false; isHandlingPopState=false; return; }
-      if(showSuggestionDialog.value){ showSuggestionDialog.value=false; isHandlingPopState=false; return; }
+      if(showFilter.value){
+        if(guardOverlay('filter', () => { showFilter.value=false; })){ isHandlingPopState=false; pushHistory({overlay:'filter'}); return; }
+        showFilter.value=false; isHandlingPopState=false; return;
+      }
+      if(showLikeDialog.value){
+        if(guardOverlay('likeDialog', () => { showLikeDialog.value=false; })){ isHandlingPopState=false; pushHistory({overlay:'likeDialog'}); return; }
+        showLikeDialog.value=false; isHandlingPopState=false; return;
+      }
+      if(showReportDialog.value){
+        if(guardOverlay('reportDialog', () => { showReportDialog.value=false; })){ isHandlingPopState=false; pushHistory({overlay:'reportDialog'}); return; }
+        showReportDialog.value=false; isHandlingPopState=false; return;
+      }
+      if(showFeedbackDialog.value){
+        if(guardOverlay('feedbackDialog', () => { showFeedbackDialog.value=false; })){ isHandlingPopState=false; pushHistory({overlay:'feedbackDialog'}); return; }
+        showFeedbackDialog.value=false; isHandlingPopState=false; return;
+      }
+      if(showOnetooneMsg.value){
+        if(guardOverlay('onetooneMsg', () => { showOnetooneMsg.value=false; })){ isHandlingPopState=false; pushHistory({overlay:'onetooneMsg'}); return; }
+        showOnetooneMsg.value=false; isHandlingPopState=false; return;
+      }
+      if(showSuggestionDialog.value){
+        if(guardOverlay('suggestionDialog', () => { showSuggestionDialog.value=false; })){ isHandlingPopState=false; pushHistory({overlay:'suggestionDialog'}); return; }
+        showSuggestionDialog.value=false; isHandlingPopState=false; return;
+      }
       if(showInviteDialog.value){ showInviteDialog.value=false; isHandlingPopState=false; return; }
       if(showPointsRules.value){ showPointsRules.value=false; isHandlingPopState=false; return; }
       if(showRedemptions.value){ showRedemptions.value=false; isHandlingPopState=false; return; }
-      if(showRedeemPanel.value){ closeRedeemPanel(); isHandlingPopState=false; return; }
+      if(showRedeemPanel.value){
+        if(guardOverlay('redeemPanel', () => closeRedeemPanel())){ isHandlingPopState=false; pushHistory({overlay:'redeemPanel'}); return; }
+        closeRedeemPanel(); isHandlingPopState=false; return;
+      }
       if(showActivityPromo.value){ showActivityPromo.value=false; isHandlingPopState=false; return; }
       if(showUpdateNotes.value){ showUpdateNotes.value=false; isHandlingPopState=false; return; }
       if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
       if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
-      if(showUnsavedConfirm.value){ cancelProfileEditLeave(); isHandlingPopState=false; return; }
-      if(page.value === 'profile_edit' && isProfileEditDirty()){
-        pushHistory({page: 'profile_edit'});
-        pendingProfileEditLeave = () => { history.back(); };
-        showUnsavedConfirm.value = true;
-        isHandlingPopState = false;
+      if(showGsTray.value){ showGsTray.value=false; isHandlingPopState=false; return; }
+      // 未保存离开拦截（守卫注册表）：系统返回已弹走一层 → 先补回，再挂弹窗/提示
+      const leaveGuard = leaveGuards[page.value];
+      if(leaveGuard && ((leaveGuard.busy && leaveGuard.busy()) || leaveGuard.dirty())){
+        isHandlingPopState = false;   // 允许补历史条目 / 弹窗 watch 挂 overlay
+        pushHistory({page: page.value});
+        if(leaveGuard.busy && leaveGuard.busy()){
+          vant.showToast('正在提交，请稍候');   // P15：提交中系统返回 → 提示并停留
+        } else {
+          pendingGuard.value = leaveGuard;
+          pendingLeaveCb = () => { history.back(); };
+          showUnsavedConfirm.value = true;
+        }
         return;
       }
       // 子页回退：优先用 state.page，否则按 parent 映射
@@ -5869,7 +6331,6 @@ createApp({
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
         'group_result': groupResultFrom.value || 'my_groups',
-        'onetoone_select': onetooneSelectFrom.value || 'my_activities',
         'onetoone_result': onetooneResultFrom.value || 'my_activities',
         'user_detail': userDetailFrom.value || 'home',
         'likes': 'cards', 'home': 'cards', 'profile': 'cards'
@@ -5885,6 +6346,7 @@ createApp({
         gaRunPopupShow.value = false; gaOtoRunShow.value = false; gaOtoResetShow.value = false;
         stopGaPolling(false);
       }
+      if (p !== 'group_select') showGsTray.value = false;   // 离开志愿页时清次序托盘
       if (p === 'group_admin') loadGroupAdminList();
       if (p === 'group_detail' && gaDetailId.value) refreshGroupDetail();
       if (p === 'group_roster' && gaDetailId.value) loadGroupRoster(true);
@@ -5918,20 +6380,24 @@ createApp({
     });
     // pushState for overlays
     watch(showPhotoViewer, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'viewer'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='viewer'){ ignoreNextPop=true; history.back(); } });
-    watch(showFilter, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'filter'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='filter'){ ignoreNextPop=true; history.back(); } });
-    watch(showLikeDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'likeDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='likeDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showFeedbackDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'feedbackDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='feedbackDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showReportDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'reportDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='reportDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showSuggestionDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'suggestionDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='suggestionDialog'){ ignoreNextPop=true; history.back(); } });
+    watch(showFilter, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'filter'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='filter' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
+    watch(showLikeDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'likeDialog'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='likeDialog' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
+    watch(showFeedbackDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'feedbackDialog'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='feedbackDialog' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
+    watch(showReportDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'reportDialog'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='reportDialog' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
+    watch(showSuggestionDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'suggestionDialog'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='suggestionDialog' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
+    // onetooneMsg 打开时不单独 push（返回语义沿用页面条目），仅拦截时会补挂 overlay 条目；关闭时按需消费
+    watch(showOnetooneMsg, (v)=>{ if(!v && !isHandlingPopState && history.state && (history.state.overlay==='onetooneMsg' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
     watch(showInviteDialog, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'inviteDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='inviteDialog'){ ignoreNextPop=true; history.back(); } });
-    watch(showRedeemPanel, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'redeemPanel'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='redeemPanel'){ ignoreNextPop=true; history.back(); } });
+    watch(showRedeemPanel, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'redeemPanel'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='redeemPanel' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
     watch(showPointsRules, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'pointsRules'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='pointsRules'){ ignoreNextPop=true; history.back(); } });
     watch(showRedemptions, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'redemptions'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='redemptions'){ ignoreNextPop=true; history.back(); } });
     watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
     watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet' && !(page.value==='user_detail' && userDetailFromSheet.value)){ ignoreNextPop=true; history.back(); } });
-    watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ ignoreNextPop=true; history.back(); } });
+    watch(showGsTray, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'gsTray'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='gsTray'){ ignoreNextPop=true; history.back(); } });
+    watch(showClaim, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'claim'}); else if(!v && !isHandlingPopState && history.state && (history.state.overlay==='claim' || history.state.overlay==='unsavedConfirm')){ requestPopConsume(); } });
+    watch(showUnsavedConfirm, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'unsavedConfirm'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='unsavedConfirm'){ requestPopConsume(); } });
     // 活动引导弹窗：关闭动作（确认/点遮罩/返回键）统一记入本会话，保证「每个会话只弹一次」
     watch(showActivityPromo, (v)=>{
       if(v && !isHandlingPopState){ pushHistory({overlay:'activityPromo'}); }
@@ -6015,11 +6481,11 @@ createApp({
       await loadMessages();
     }
     async function sendMessage() {
-      if (msgSending.value) return;
+      if (msgSending.value) return false;
       const c = currentCard.value;
       const text = msgText.value.trim();
-      if (!text) { vant.showToast('请先输入留言内容'); return; }
-      if (!c || !c.openid) { vant.showToast('卡片信息异常，请左右切换到其他用户后重试'); return; }
+      if (!text) { vant.showToast('请先输入留言内容'); return false; }
+      if (!c || !c.openid) { vant.showToast('卡片信息异常，请左右切换到其他用户后重试'); return false; }
       const parentId = replyTarget.value ? (replyTarget.value.parentId || replyTarget.value.id) : '';
       const replyToId = replyTarget.value ? replyTarget.value.id : '';
       const replyToNickname = replyTarget.value ? replyTarget.value.author_nickname : '';
@@ -6057,6 +6523,7 @@ createApp({
       });
       msgSending.value = true;
       let realId = null;
+      let ok = false;
       try {
         const data = await api('/api/messages', {
           method: 'POST',
@@ -6070,6 +6537,7 @@ createApp({
         // keep msg_count in sync (no reload)
         if (cards.value[cardIndex.value]) cards.value[cardIndex.value].msg_count = messages.value.length;
         vant.showToast('留言成功');
+        ok = true;
         // invalidate myMessages cache so next entry sees new message; also patch if already loaded
         if (myMessagesLoaded.value) {
           // optimistic append to my list if we can guess target info
@@ -6100,6 +6568,7 @@ createApp({
       } finally {
         msgSending.value = false;
       }
+      return ok;
     }
     async function deleteMessage(m) {
       try {
@@ -6227,11 +6696,13 @@ createApp({
       replyTarget.value = null;
       msgText.value = '';
     }
-    // 换卡片时重置留言面板
     watch(cards, () => {
       photoPositions.value = [];
     });
-    watch([cardIndex, () => (currentCard.value && currentCard.value.openid) || null], () => {
+    // 换卡片时重置留言面板：按当前卡片 openid 判定（而非 cardIndex）——
+    // 窗口后台重排（trimCardsWindow/换页重建）会让 index 漂移但人没变，不应误清草稿；
+    // 真换人前的草稿拦截由 cardsMsg 守卫（switchCard/筛选应用）负责，这里清的是已确认离开后的残值。
+    watch(() => (currentCard.value && currentCard.value.openid) || null, () => {
       cardTab.value = 'profile';
       messages.value = [];
       msgLoadedFor = null;
@@ -6716,6 +7187,12 @@ createApp({
       }
     }
     function closeGaRunPopup() { if (!gaRunBusy.value) gaRunPopupShow.value = false; }
+    // 执行弹层「×」/点遮罩关闭：每组人数改过 → 先走通用离开拦截（两钮）
+    function requestCloseGaRunPopup(){
+      if (gaRunBusy.value) return;
+      if (guardOverlay('gaRun', () => { gaRunPopupShow.value = false; })) return;
+      closeGaRunPopup();
+    }
     async function startRunFlow() {
       if (gaRunBusy.value || !gaDetailId.value) return;
       gaRunBusy.value = true;
@@ -6732,6 +7209,7 @@ createApp({
           const d = gaDetail.value;
           gaRunM.value = (d && d.males_per_group > 0) ? d.males_per_group : 3;
           gaRunF.value = (d && d.females_per_group > 0) ? d.females_per_group : 3;
+          gaRunBaselineKey = gaRunKey();   // 进层基线：之后改动即算未提交
           gaRunPopupShow.value = true;
         }
       } catch(e) {
@@ -6822,6 +7300,12 @@ createApp({
       gaOtoRunBusy.value = false;
     }
     function closeOtoRun() { if (!gaOtoRunBusy.value) gaOtoRunShow.value = false; }
+    // 执行弹层「×」/点遮罩关闭：女生场次填过 → 先走通用离开拦截（两钮）
+    function requestCloseOtoRun(){
+      if (gaOtoRunBusy.value) return;
+      if (guardOverlay('gaOtoRun', () => { gaOtoRunShow.value = false; })) return;
+      closeOtoRun();
+    }
     async function confirmOtoRun() {
       if (gaOtoRunBusy.value) return;
       const rd = gaOtoNextRound.value;
@@ -7190,7 +7674,7 @@ createApp({
 
     return {
       page, pageTransition, user, loggingIn, loginError, showPersonalGuide, loginTip,
-      showClaim, claimName, claimPhone, claiming, submitClaim, backToLogin,
+      showClaim, claimName, claimPhone, claiming, submitClaim, backToLogin, requestBackToLogin,
       isDark, toggleTheme,
       loginErrorMessage, retryLogin, subPages, isObserver, availableRoles, switchRole,
       gateMessage, gateTitle, gateIcon, retryGate, syncMe,
@@ -7201,7 +7685,7 @@ createApp({
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
       showSwipeGuide, closeSwipeGuide,
       showActivityPromo, gotoPromoActivity, promoPoster, showUpdateNotes,
-      filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter,
+      filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter, requestCloseFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
       showFaceInvalidDialog, faceInvalidCountdown, goFaceInvalidNow,
       slideDir,
@@ -7223,18 +7707,20 @@ createApp({
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe,
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
-      onetooneCandidates, onetooneSelectedChoices, onetooneCandidateQuery, visibleOnetooneCandidates, onetooneLoadingCandidates, onetooneCandidatesError, onetooneResult, onetooneResultLoading,
-      onetooneSelectFrom, onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
-      goOnetooneSelect, isOnetooneSelected, toggleOnetooneChoice, removeOnetooneChoice, submitOnetooneChoices, goOnetooneResult, switchOnetooneRound,
+      onetooneResult, onetooneResultLoading,
+      onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
+      goOnetooneResult, switchOnetooneRound,
       openOnetooneMsg, onOnetooneMsgBeforeClose,
       profileData, openProfileDetail, loadingProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
-      showUnsavedConfirm, discardProfileEdit, saveAndLeaveProfileEdit, cancelProfileEditLeave,
+      showUnsavedConfirm, unsavedConfirmBody, unsavedConfirmCanSave, leaveConfirmBusy, saveAndLeaveConfirm, discardLeaveConfirm, cancelLeaveConfirm,
       photoInput, uploadingPhoto, uploadProgress, uploadStage, faceChecking, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
-      candidates, selectedChoices, candidateQuery, visibleCandidates, choiceListRef, loadingCandidates, candidatesError, groupResult, groupResultLoading, myGender,
+      candidates, selectedChoices, candidateQuery, visibleCandidates, loadingCandidates, candidatesError, groupResult, groupResultLoading, myGender,
       groupSelectFrom, groupResultFrom,
-      goGroupSelect, isSelected, toggleChoice, removeChoice, submitChoices, goGroupResult, switchGroupRound,
+      showGsTray, gsSigninBlocked, gsPrefillNotice, gsUnlistedCount, gsCountText, gsDisplayName,
+      goGroupSelect, reloadGroupCandidates, dismissGsNotice, isSelected, gsRowTouchStart, gsRowTouchEnd, gsRowClick,
+      toggleChoice, removeChoiceToast, moveChoice, submitChoices, goGroupResult, switchGroupRound,
       onPhotoError, onPhotoLoad, retryImg, photoPositions, recalcPhotoPosition,
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       myMessagesList, loadingMyMessages, openMyMessages, deleteMyMessage, refreshMyMessagesCount,
@@ -7246,7 +7732,7 @@ createApp({
       loadingPoints, pointsLoaded, loadPoints, openPoints, loadPointsBalance,
       pointsRules, pointsRulesLoaded, loadPointsRules, showPointsRules, openPointsRules,
       showRedeemPanel, redeemItem, redeemActivityId, redeemTarget, redeemCondition, redeemSubmitting,
-      redeemNeedsActivity, redeemActivityOptions, redeemPanelItems, matchmakerConditionMax, openRedeemPanel, closeRedeemPanel,
+      redeemNeedsActivity, redeemActivityOptions, redeemPanelItems, matchmakerConditionMax, openRedeemPanel, closeRedeemPanel, requestCloseRedeemPanel,
       pickRedeemItem, submitRedeem, newRequestKey,
       wishQuery, wishTargets, loadingWishTargets, loadWishTargets, pickWishTarget, clearWishTarget,
       showRedemptions, redemptionsList, loadingRedemptions, redemptionsLoaded, openRedemptions,
@@ -7269,10 +7755,10 @@ createApp({
       gaClearConfirmShow, gaClearConfirmInput, gaClearConfirmOk, openClearAllSignins, cancelClearAllSignins, doClearAllSignins,
       gaStatusDisplay, refreshGroupDetail,
       gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
-      gaRunPopupShow, gaRunM, gaRunF, gaRunPopupPreview, gaRunExpected, closeGaRunPopup, confirmGaRun, openGaResetConfirm, doGaReset, gaConfirmBusy,
+      gaRunPopupShow, gaRunM, gaRunF, gaRunPopupPreview, gaRunExpected, closeGaRunPopup, requestCloseGaRunPopup, confirmGaRun, openGaResetConfirm, doGaReset, gaConfirmBusy,
       gaConfirmShow, gaConfirmInput, gaConfirmOk, cancelGaConfirm,
       gaOtoResetShow, gaOtoResetOk, gaOtoResetBusy, gaOtoConfirmInput, openOtoResetConfirm, cancelOtoReset, doOtoReset,
-      gaOtoRunShow, gaOtoRunFemaleChats, gaOtoRunPreview, gaOtoRunK, gaOtoRunSummary, confirmOtoRun, closeOtoRun,
+      gaOtoRunShow, gaOtoRunFemaleChats, gaOtoRunPreview, gaOtoRunK, gaOtoRunSummary, confirmOtoRun, closeOtoRun, requestCloseOtoRun,
       gaOtoRunBusy, startOtoRunFlow, gaOtoPeople, gaOtoOpen, gaOtoResultLoading, gaOtoResultError, loadGaOtoResult, selectGaOtoResultRound, gaOtoToggle,
       gaOtoRounds, gaOtoLatestRound, gaOtoNextRound, gaOtoResultRound, gaOtoLoadedRound, gaOtoResultCount,
       gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaJobKind, gaMaskTitle, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, gaResultLoading, gaResultError, selectGaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge

@@ -1,18 +1,19 @@
 """一对一 H5 API 契约（不联网，桩表驱动；Flask test client + cookie session）。
 
-覆盖四张防回归网（审核修复）：
-1. chatted 作者过滤：纯函数单测 + /result 端点（别人的留言不得标「已聊」）；
-2. select 校验：0/8/重复/含自己/含同性/未报名者 → 400 且零写入；合法 1/7 个 → 写 1 行；
-3. 锁内查重：并发双击 create 恰 1 次、表内 1 行；快照无记录、live 有 → update 不 create；
-4. 决定性读取 fresh：快照 activities=未开始、live=收集中/已完成 → 各端点以 live 为准。
+2026-10-15：用户端一对一选择三端点（candidates/select/status）已随 onetoone_select
+死页删除——统一志愿语义迁至分组端点，等价用例迁入 tests/test_group_select_validation.py
+与 tests/test_signin_gate.py。本文件保留 result 侧防回归网：
 
-另覆盖 my_groups 过滤已取消 + 按活动去重、me=None 不 500。
+1. chatted 作者过滤：纯函数单测 + /result 端点（别人的留言不得标「已聊」）；
+2. 决定性读取 fresh：快照 activities=未开始、live=已完成 → result 以 live 为准；
+3. fresh 结果读取：bot 刚写入的结果必须立刻可见（不吃 300s 快照）。
+
+另覆盖 my_groups 过滤已取消 + 按活动去重。
 
 桩法比照 tests/test_group_admin_api.py：只桩「存取」，差集/去重/锁/刷新调用全跑真实现。
 """
 import os
 import sys
-import threading
 import time
 
 import pytest
@@ -128,13 +129,6 @@ def _signup(oid, status="已报名", activity_id=ACT):
                        "报名人昵称": USERS.get(oid, {}).get("昵称", "某人"), "状态": status}}
 
 
-def _sel(oid, choices=("ou_f1",), activity_id=ACT):
-    fields = {"活动ID": activity_id, "选择人open_id": oid, "选择人性别": "男性"}
-    for i in range(7):
-        fields[f"第{i+1}志愿"] = choices[i] if i < len(choices) else ""
-    return {"record_id": f"rec_oto_{activity_id}_{oid}", "fields": fields}
-
-
 def _res(oid, target, rank=1, activity_id=ACT):
     return {"record_id": f"rec_res_{activity_id}_{oid}_{target}",
             "fields": {"活动ID": activity_id, "排名": rank, "用户open_id": oid,
@@ -149,10 +143,6 @@ def _msg(author, target, status="正常", content="历史留言"):
 
 def _signups_all():
     return [_signup(o) for o in [ME, "ou_m2"] + FEMME_SEVEN]
-
-
-def _form(*vals):
-    return {f"choice_{i}": v for i, v in enumerate(vals)}
 
 
 # ---------------------------------------------------------------- 测试脚手架
@@ -253,16 +243,6 @@ def api(monkeypatch, tmp_path):
     return a
 
 
-def _me_client():
-    c = app.app.test_client()
-    c.set_cookie("yxq_session", app.create_session(ME))
-    return c
-
-
-def _post_as(c, path, payload):
-    return c.post(path, json=payload, headers={"X-Requested-With": "XMLHttpRequest"})
-
-
 # ================================================================
 # 网 1：chatted 作者过滤
 # ================================================================
@@ -298,91 +278,8 @@ def test_result_chatted_requires_author_endpoint(api):
 
 
 # ================================================================
-# 网 2：select 校驗（400 且零写入）
-# ================================================================
-
-def _valid_choices(n):
-    return FEMME_SEVEN[:n]
-
-
-@pytest.mark.parametrize("choices,err", [
-    ([], "请至少选择一个志愿"),
-    (FEMME_SEVEN + ["ou_f1"], "最多选择7个志愿"),
-    (["ou_f1", "ou_f1"], "不能重复选择同一人"),
-    ([ME], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
-    (["ou_m2"], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
-    (["ou_f9"], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
-], ids=["0个", "8个", "重复", "含自己", "含同性", "含未报名者"])
-def test_select_invalid_is_400_with_zero_writes(api, choices, err):
-    fake = api.install()
-    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": choices})
-    assert r.status_code == 400
-    assert r.get_json()["error"] == err
-    assert fake.writes() == [], "非法志愿必须零写入"
-
-
-@pytest.mark.parametrize("n", [1, 7], ids=["1个", "7个"])
-def test_select_accepts_one_to_seven_and_writes_one_row(api, n):
-    fake = api.install()
-    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(n)})
-    assert r.status_code == 200
-    creates = [c for c in fake.writes() if c[0] == "create"]
-    assert len(creates) == 1
-    assert len(fake.tables[SELECT_TBL]) == 1
-
-
-def test_select_me_none_is_not_500(api):
-    api.install(me=False)
-    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(1)})
-    assert r.status_code == 404, "me=None 必须被门禁/防护拦住，不能 500"
-    assert r.get_json()["error"] == "用户不存在"
-
-
-# ================================================================
-# 网 3：鎖內查重
-# ================================================================
-
-def test_select_concurrent_double_click_creates_once(api):
-    """两个线程同时提交：查重与写入同处活动锁内 → create 恰 1 次、表内 1 行。
-
-    （把查重挪出锁外时，两次查空会各 create 一次，本用例出现 2 行即红。）
-    """
-    fake = api.install(search_sleep={SELECT_TBL: 0.3})
-    codes = []
-
-    def worker():
-        c = _me_client()
-        r = _post_as(c, f"/api/activities/{ACT}/onetoone/select",
-                     {"choices": _valid_choices(1)})
-        codes.append(r.status_code)
-
-    threads = [threading.Thread(target=worker) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=15)
-
-    assert codes == [200, 200]
-    creates = [c for c in fake.writes() if c[0] == "create"]
-    updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(creates) == 1, "并发双击只应 create 一次"
-    assert len(updates) == 1, "后到的一次应命中已有记录走 update"
-    assert len(fake.tables[SELECT_TBL]) == 1, "表内只该有 1 行"
-
-
-def test_select_snapshot_miss_falls_back_to_live_update(api):
-    """快照无记录、live 有 → 走 update 而不是 create（实时兜底）。"""
-    existing = _sel(ME)
-    fake = api.install(selections=[existing], stale_selections=[])
-    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(2)})
-    assert r.status_code == 200
-    assert not [c for c in fake.writes() if c[0] == "create"]
-    updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1 and updates[0][2] == existing["record_id"]
-
-
-# ================================================================
-# 网 4：決定性讀取 fresh
+# 网 2：決定性讀取 fresh（result 端；candidates/select/status 已删、
+#       等价 fresh 用例迁至 tests/test_group_select_validation.py）
 # ================================================================
 
 def _live_vs_stale(status_live, status_stale="未开始"):
@@ -391,31 +288,6 @@ def _live_vs_stale(status_live, status_stale="未开始"):
             "live_activities": [_act(status_live)],
             "signups": _signups_all(),
             "stale_signups": _signups_all()}
-
-
-def test_candidates_uses_live_status(api):
-    api.install(**_live_vs_stale("收集中"))
-    api.fresh_calls.clear()
-    r = api.get(f"/api/activities/{ACT}/onetoone/candidates")
-    assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
-    assert "activities" in api.fresh_calls
-
-
-def test_select_uses_live_status(api):
-    api.install(**_live_vs_stale("收集中"))
-    api.fresh_calls.clear()
-    r = api.post(f"/api/activities/{ACT}/onetoone/select", {"choices": _valid_choices(1)})
-    assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
-    assert "activities" in api.fresh_calls
-
-
-def test_status_uses_live_status(api):
-    api.install(**_live_vs_stale("收集中"))
-    api.fresh_calls.clear()
-    r = api.get(f"/api/activities/{ACT}/onetoone/status")
-    assert r.status_code == 200
-    assert r.get_json()["onetoone_status"] == "收集中"
-    assert "activities" in api.fresh_calls
 
 
 def test_result_uses_live_status(api):

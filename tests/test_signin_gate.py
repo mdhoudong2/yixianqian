@@ -443,23 +443,24 @@ def test_gate_fail_closed_when_attendance_search_fails(api):
     assert r2.get_json()["code"] == "SIGNIN_QUERY_FAILED"
 
 
-def test_onetoone_select_gate_and_pool(api):
-    act = _act_oto()
+def test_group_select_gate_and_pool(api):
+    """迁移自原一对一 select（该端点已删，志愿选择统一走分组）：签到闸门 + 候选池同口径。"""
+    act = _act_group()
     signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时"),
                _signup_att("ou_f1", "未到")]
     api.install(activity=act, signups=signups)
     c = _me_client("ou_m0")
     # 已到目标可提交
-    r = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f0"]},
+    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
                headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 200
     # 未到目标不在候选池
-    r2 = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f1"]},
+    r2 = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f1"]},
                 headers={"X-Requested-With": "XMLHttpRequest"})
     assert r2.status_code == 400 and "可选列表" in r2.get_json()["error"]
     # 本人未签到 → 403
     c1 = _me_client("ou_f1")
-    r3 = c1.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_m0"]},
+    r3 = c1.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_m0"]},
                  headers={"X-Requested-With": "XMLHttpRequest"})
     assert r3.status_code == 403 and r3.get_json()["code"] == "SIGNIN_REQUIRED"
 
@@ -600,17 +601,6 @@ def test_group_candidates_allowed_when_not_collecting(api):
     r = c.get("/api/activities/" + ACT + "/group/candidates")
     assert r.status_code == 200, r.get_json()
     assert {x["openid"] for x in r.get_json()["candidates"]} == {"ou_f0"}
-
-
-def test_onetoone_select_allowed_when_not_collecting(api):
-    """志愿随时可改：一对一状态非「收集中」也能提交。"""
-    act = _act_oto(一对一状态="已完成")
-    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
-    api.install(activity=act, signups=signups)
-    c = _me_client("ou_m0")
-    r = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f0"]},
-               headers={"X-Requested-With": "XMLHttpRequest"})
-    assert r.status_code == 200, r.get_json()
 
 
 def test_activities_list_fail_closed_on_attendance_error(api):

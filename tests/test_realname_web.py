@@ -5,7 +5,7 @@
 bot/lib 侧负责，本文件只锁 H5 读取端：存量数据里的姓名立刻生效、改名随快照刷新。
 
 断言面：
-- 用户端分组/一对一候选 dict 带 real_name（纯空白姓名视为无）；
+- 用户端分组候选 dict 带 real_name（纯空白姓名视为无）；
 - 用户端分组结果与必聊名单昵称真名优先，无姓名回退落库名/快照昵称；
 - 管理台分组结果 member 带 real_name+user_id、display_name 真名优先；
 - 管理台一对一结果 person/partner 昵称真名优先（回退原值）；
@@ -162,17 +162,6 @@ def test_group_candidates_include_real_name(group_api):
     assert by_oid["ou_m0"]["user_id"] == "U-0001"
     assert by_oid["ou_m1"]["real_name"] == ""
     assert by_oid["ou_m1"]["nickname"] == "阿北", "既有字段不受影响"
-
-
-def test_onetoone_candidates_include_real_name(oto_api):
-    signups = [_signup("ou_m0", "小北"), _signup("ou_f0", "阿南")]
-    oto_api.install(signups=signups)
-    r = _me_client("ou_f0").get("/api/activities/" + ACT + "/onetoone/candidates")
-    assert r.status_code == 200, r.get_json()
-    by_oid = {x["openid"]: x for x in r.get_json()["candidates"]}
-    assert set(by_oid) == {"ou_m0"}
-    assert by_oid["ou_m0"]["real_name"] == "陈北"
-    assert by_oid["ou_m0"]["user_id"] == "U-0001"
 
 
 # ---------------------------------------------------------------- 用户端结果
@@ -340,7 +329,7 @@ def test_frontend_real_name_bindings_present():
 
     渲染层单测全绿也抓不到前端模板被整批回退（reviewer 突变 P14）。只做 ≥1 次的
     存在性断言（不锁次数/排版），避免误伤后续排版微调：
-    - c.*：用户端分组/一对一候选与已选志愿（含「 · 编号」）；
+    - c.*：用户端分组候选与已选志愿（含「 · 编号」）；
     - r.*：管理台名册（分组×2、一对一×2、签到页×2、现场签到名册）；
     - s.*：报名名单弹层；
     - 「真名为主时仍展示昵称」的签到行副标题；

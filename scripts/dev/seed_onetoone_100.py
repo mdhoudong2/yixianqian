@@ -354,7 +354,7 @@ def _verify(act_id):
 
     # 每个女生 K 场（K 从任意女生名单长度推出，要求全部一致）
     female_counts = {len(v["rows"]) for v in owners.values() if v["gender"] == "女性"}
-    k = (female_counts or {0}).pop() if len(female_counts) == 1 else None
+    k = next(iter(female_counts)) if len(female_counts) == 1 else None
     if k is None or len(female_counts) != 1:
         issues.append(f"女生名单长度不一致：{sorted(female_counts)}")
         k = None
@@ -399,8 +399,9 @@ def _verify(act_id):
         issues.append(f"双向不一致：{bidir_mismatch} 条（男名单含女但女名单缺男）")
 
     ok = not issues
+    male_desc = f"{base}~{base + 1}" if base is not None else "?"
     lines.append(f"[均衡不变量] {'✅ 通过' if ok else '未通过'}："
-                 f"女生 {f} 人×K={k}、男生 {m} 人×{base}~{base + 1}、总行数=2×F×K、双向一致、无自己无同性")
+                 f"女生 {f} 人×K={k}、男生 {m} 人×{male_desc}、总行数=2×F×K、双向一致、无自己无同性")
     for line in lines:
         print("  " + line)
     for issue in issues:

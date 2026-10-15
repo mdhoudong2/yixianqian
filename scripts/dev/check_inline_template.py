@@ -39,10 +39,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TARGETS = (REPO_ROOT / "web" / "frontend" / "index.html",)
 
 # 指纹 = (伪自闭合标签所在行去空白后的原文, 被吞内容描述)；行号漂移不影响匹配。
-# 一对一那处 `<van-empty ... />` 已改显式闭合（2026-10-11 审核修复），基线只剩分组的一处。
-BASELINE = (
-    ("<van-empty :description=\"candidatesError || '暂无可选人员'\" />", "子元素 <van-button>"),
-)
+# 2026-10-15 志愿选择页重设计后已无豁免项：原分组页 `<van-empty ... /> + <van-button>`
+# 那处随重设计一起改为显式闭合，历史基线条目已移除；新出现吞噬一律照常 fail。
+BASELINE = ()
 
 
 class _Frame:

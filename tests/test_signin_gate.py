@@ -443,23 +443,24 @@ def test_gate_fail_closed_when_attendance_search_fails(api):
     assert r2.get_json()["code"] == "SIGNIN_QUERY_FAILED"
 
 
-def test_onetoone_select_gate_and_pool(api):
-    act = _act_oto()
+def test_group_select_gate_and_pool(api):
+    """迁移自原一对一 select（该端点已删，志愿选择统一走分组）：签到闸门 + 候选池同口径。"""
+    act = _act_group()
     signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时"),
                _signup_att("ou_f1", "未到")]
     api.install(activity=act, signups=signups)
     c = _me_client("ou_m0")
     # 已到目标可提交
-    r = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f0"]},
+    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
                headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 200
     # 未到目标不在候选池
-    r2 = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f1"]},
+    r2 = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f1"]},
                 headers={"X-Requested-With": "XMLHttpRequest"})
     assert r2.status_code == 400 and "可选列表" in r2.get_json()["error"]
     # 本人未签到 → 403
     c1 = _me_client("ou_f1")
-    r3 = c1.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_m0"]},
+    r3 = c1.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_m0"]},
                  headers={"X-Requested-With": "XMLHttpRequest"})
     assert r3.status_code == 403 and r3.get_json()["code"] == "SIGNIN_REQUIRED"
 
@@ -602,17 +603,6 @@ def test_group_candidates_allowed_when_not_collecting(api):
     assert {x["openid"] for x in r.get_json()["candidates"]} == {"ou_f0"}
 
 
-def test_onetoone_select_allowed_when_not_collecting(api):
-    """志愿随时可改：一对一状态非「收集中」也能提交。"""
-    act = _act_oto(一对一状态="已完成")
-    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
-    api.install(activity=act, signups=signups)
-    c = _me_client("ou_m0")
-    r = c.post("/api/activities/" + ACT + "/onetoone/select", json={"choices": ["ou_f0"]},
-               headers={"X-Requested-With": "XMLHttpRequest"})
-    assert r.status_code == 200, r.get_json()
-
-
 def test_activities_list_fail_closed_on_attendance_error(api):
     """签到查询失败 → my_attendance 回空串（按未签到处理），列表不报错。"""
     act = _act_group()
@@ -708,6 +698,40 @@ def test_admin_signin_single_write(api):
     r5 = api.post("/api/admin/activity/signin",
                   {"activity_id": ACT, "open_id": "ou_m0", "state": "按时"})
     assert r5.status_code == 400 and "多条" in r5.get_json()["error"]
+
+
+def test_admin_signin_single_clear_and_invalid_states(api):
+    """单笔清空（取消签到）：state="" 合法 → 清空回「未签到」；非法 state 一律 400。
+
+    2026-10-15 两态收口：行内「取消签到」＝空串（清空该人）；「未到」保留兼容旧
+    客户端提交，但不再是 UI 入口（存量「未到」显示归入未签到）。批次/全部清除
+    端点行为不动（另有专项用例）。
+    """
+    api.install(activity=_act_group(),
+                signups=[_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "未到")])
+    # 清空：200，写入空串
+    r = api.post("/api/admin/activity/signin",
+                 {"activity_id": ACT, "open_id": "ou_m0", "state": ""})
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()["state"] == ""
+    row = [x for x in api.fake.tables[SIGNUP_TABLE_ID]
+           if x["fields"]["报名人open_id"] == "ou_m0"][0]
+    assert row["fields"][ATT] == ""
+    # 名册回读：回「未签到」（checked_in=False）
+    body = api.get(_admin_signin_url()).get_json()
+    by_oid = {x["open_id"]: x for x in body["roster"]}
+    assert by_oid["ou_m0"]["state"] == "" and by_oid["ou_m0"]["checked_in"] is False
+
+    # 非法 state 一律 400（None/0/False/迟到/别的），错误文案锁定
+    for bad in (None, 0, False, "迟到", "别的"):
+        rb = api.post("/api/admin/activity/signin",
+                      {"activity_id": ACT, "open_id": "ou_f0", "state": bad})
+        assert rb.status_code == 400, (bad, rb.get_json())
+        assert rb.get_json()["error"] == "state 只能为「按时」「未到」或空（取消签到）"
+    # 被拒时零写入：ou_f0 仍是「未到」
+    row_f0 = [x for x in api.fake.tables[SIGNUP_TABLE_ID]
+              if x["fields"]["报名人open_id"] == "ou_f0"][0]
+    assert row_f0["fields"][ATT] == "未到"
 
 
 def test_admin_signin_single_write_failure_500(api, monkeypatch):

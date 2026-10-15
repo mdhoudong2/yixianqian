@@ -1086,7 +1086,6 @@
     <div class="section-title">活动</div>
     <van-cell-group class="profile-cells" style="border-radius:12px; overflow:hidden;">
       <van-cell title="🎟️ 我的活动" is-link @click="openMyActivities"></van-cell>
-      <van-cell v-if="hasOnetooneEntry" title="💞 我的一对一" is-link @click="openMyOnetoone"></van-cell>
     </van-cell-group>
   </div>
   <!-- 账号 -->
@@ -1403,7 +1402,7 @@
         </div>
 
         <div class="ga-card">
-          <div class="ga-row-sub">入口开关已并入上方「模式卡」：切到「一对一」模式即开启「我的一对一」入口。</div>
+          <div class="ga-row-sub">入口开关已并入上方「模式卡」：切到「一对一」模式即开启活动页/活动卡上的志愿与结果入口。</div>
         </div>
         </template>
       </van-tab>
@@ -2253,39 +2252,6 @@
         </div>
       </div>
     </template>
-  </div>
-</div>
-<!-- ========== 我的一对一 ========== -->
-<div v-else-if="page==='my_onetoone'" key="my_onetoone">
-  <div class="back-nav" @click="handleBack">
-    <van-icon name="arrow-left"></van-icon> 返回
-  </div>
-  <div class="page">
-    <div v-if="loadingMyOnetoone && !myOnetooneList.length" style="text-align:center; padding:40px;">
-      <van-loading size="24px">加载中...</van-loading>
-    </div>
-    <van-empty v-else-if="!myOnetooneList.length" description="你报名的活动还没有开启一对一"></van-empty>
-    <div v-else>
-      <div v-for="act in myOnetooneList" :key="act.record_id" class="activity-card">
-        <div class="activity-body">
-          <h3>{{ act.name }}</h3>
-          <div class="activity-meta">
-            <van-tag type="primary" color="#ff6b81">{{ act.onetoone_status }}</van-tag>
-            <van-tag v-if="act.signin_enabled" :type="isAttendancePresent(act.my_attendance) ? 'success' : 'warning'" plain>{{ isAttendancePresent(act.my_attendance) ? '已到' : (act.my_attendance==='未到' ? '未到' : '未签到') }}</van-tag>
-          </div>
-          <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
-        </div>
-        <div class="activity-body" style="padding-top:0;">
-          <van-button v-if="act.group_flag==='是' || act.onetoone_flag==='是'" type="primary" color="#ff6b81" size="small" block :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goGroupSelect(act.record_id)">
-            {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '✏️ 志愿选择' }}
-          </van-button>
-          <div v-if="(act.group_flag==='是' || act.onetoone_flag==='是') && act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:13px; color:#ee0a24; text-align:center; padding:6px 0;">本活动需现场签到后才能填志愿，请联系管理员</div>
-          <van-button v-if="act.onetoone_flag==='是' && act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block @click="goOnetooneResult(act.record_id)">
-            💬 查看我的必聊
-          </van-button>
-        </div>
-      </div>
-    </div>
   </div>
 </div>
 <!-- ========== 一对一选择 ========== -->
@@ -3138,7 +3104,7 @@ createApp({
       return '🚪';
     });
     function retryGate() { window.location.reload(); }
-    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','my_onetoone','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster','checkin'];
+    const subPages = ['activity_detail','group_select','group_result','onetoone_select','onetoone_result','profile_detail','my_likes','my_activities','my_groups','user_detail','mutual','liked_me','points','points_admin','group_admin','group_detail','group_roster','checkin'];
     // 四 Tab 过渡：监听 page 切换实时选动画（需在 subPages 定义后，sync 确保与 Transition 同帧）
     watch(page, (nv, ov) => { if(nv !== ov) pageTransition.value = pickTransition(nv, ov); }, {flush: 'sync'});
 
@@ -3319,7 +3285,7 @@ createApp({
         "【分组帮助】分组指令说明",
       ]},
       { title: "一对一", items: [
-        "【开启一对一功能 活动ID 开/关】控制「我的一对一」入口",
+        "【开启一对一功能 活动ID 开/关】控制活动页/活动卡上的志愿与结果入口",
         "【查看未提交一对一 活动ID】查看未提交志愿的报名者",
         "【执行一对一 活动ID 女生场次 [轮次]】女生坐镇、男生上门均衡匹配（轮次缺省为最新轮次+1）",
         "【清空一对一结果 活动ID】清空该活动全部历史一对一结果",
@@ -3917,9 +3883,6 @@ createApp({
     const groupResultFrom = ref('my_groups');   // 进入分组结果前的页面，用于返回
 
     // 一对一
-    const myOnetooneList = ref([]);
-    const loadingMyOnetoone = ref(false);
-    const hasOnetooneEntry = ref(false); // 是否显示「我的一对一」入口（报名过且该活动开启一对一功能）
     const onetooneCandidates = ref([]);
     const onetooneSelectedChoices = ref([]);
     const onetooneCandidateQuery = ref('');
@@ -3934,8 +3897,8 @@ createApp({
     const onetooneCandidatesError = ref('');
     const onetooneResult = ref({});
     const onetooneResultLoading = ref(false);
-    const onetooneSelectFrom = ref('my_onetoone');   // 进入一对一选择前的页面，用于返回
-    const onetooneResultFrom = ref('my_onetoone');   // 进入一对一结果前的页面，用于返回
+    const onetooneSelectFrom = ref('my_activities');   // 进入一对一选择前的页面，用于返回
+    const onetooneResultFrom = ref('my_activities');   // 进入一对一结果前的页面，用于返回
     const onetooneMsgTarget = ref(null);
     const onetooneMsgText = ref('');
     const showOnetooneMsg = ref(false);
@@ -5724,7 +5687,6 @@ createApp({
         if (groupSelectFrom.value === 'activity_detail') await openActivity(activityId);
         else if (groupSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
         else if (groupSelectFrom.value === 'my_activities') { openMyActivities(); }
-        else if (groupSelectFrom.value === 'my_onetoone') { openMyOnetoone(); }
         else openMyGroups();
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
@@ -5748,18 +5710,6 @@ createApp({
       loadGroupResult(currentActivityId.value, round);
     }
     // 一对一
-    async function openMyOnetoone() {
-      page.value = 'my_onetoone';
-      if (loadingMyOnetoone.value) return;
-      loadingMyOnetoone.value = true;
-      try { const data = await api('/api/activities/mine/onetoone'); myOnetooneList.value = data.activities; }
-      catch(e) { if (!myOnetooneList.value.length) vant.showToast(e.message); }
-      loadingMyOnetoone.value = false;
-    }
-    async function checkOnetooneEntry() {
-      try { const data = await api('/api/activities/mine/onetoone/flag'); hasOnetooneEntry.value = !!data.has_onetoone_activity; }
-      catch(e) { hasOnetooneEntry.value = false; }
-    }
     async function goOnetooneSelect(activityId) {
       onetooneSelectFrom.value = page.value; // 记录来路，用于返回
       currentActivityId.value = activityId;
@@ -5801,8 +5751,7 @@ createApp({
         vant.showToast('志愿提交成功');
         if (onetooneSelectFrom.value === 'activity_detail') await openActivity(activityId);
         else if (onetooneSelectFrom.value === 'home') { activitiesLoaded.value = false; page.value = 'home'; }
-        else if (onetooneSelectFrom.value === 'my_activities') { openMyActivities(); }
-        else openMyOnetoone();
+        else openMyActivities();
       } catch(e) { vant.showToast(e.message); }
       actionLoading.value = false;
     }
@@ -5914,14 +5863,14 @@ createApp({
       }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
-        'my_activities': 'profile', 'my_groups': 'profile', 'my_onetoone': 'profile', 'points': 'profile', 'points_admin': 'profile',
+        'my_activities': 'profile', 'my_groups': 'profile', 'points': 'profile', 'points_admin': 'profile',
         'group_admin': 'profile', 'group_detail': 'group_admin', 'group_roster': 'group_detail', 'checkin': 'group_admin',
         'profile_detail': 'profile', 'profile_edit': 'profile_detail',
         'activity_detail': activityDetailFrom.value || 'home',
         'group_select': groupSelectFrom.value || 'my_groups',
         'group_result': groupResultFrom.value || 'my_groups',
-        'onetoone_select': onetooneSelectFrom.value || 'my_onetoone',
-        'onetoone_result': onetooneResultFrom.value || 'my_onetoone',
+        'onetoone_select': onetooneSelectFrom.value || 'my_activities',
+        'onetoone_result': onetooneResultFrom.value || 'my_activities',
         'user_detail': userDetailFrom.value || 'home',
         'likes': 'cards', 'home': 'cards', 'profile': 'cards'
       };
@@ -5943,7 +5892,7 @@ createApp({
       if (p === 'home') loadActivities();
       if (p === 'cards') { if (old && old !== 'cards') prevPage.value = old; loadCards(); maybeShowActivityPromo(); maybeShowUpdateNotes(); loadPraiseState(); }
       if (p === 'likes') { loadLikes(); loadNotifications(); refreshMyMessagesCount(); refreshReceivedCount(); }
-      if (p === 'profile') { checkGroupEntry(); checkOnetooneEntry(); loadPraiseState(); if (user.value && user.value.is_admin) { refreshReportedCount(); refreshAdminBadge(); } }
+      if (p === 'profile') { checkGroupEntry(); loadPraiseState(); if (user.value && user.value.is_admin) { refreshReportedCount(); refreshAdminBadge(); } }
       // 任何页进入即验身份证/人脸照片，不达标则倒计时跳修改资料
       if(p !== 'profile_edit' && !showIdInvalidDialog.value){
         checkIdValidForPage(p);
@@ -7274,7 +7223,6 @@ createApp({
       myLikesList, loadingMyLikes, myLikesCount, openMyLikes, openMutual, openLikedMe,
       myActivitiesList, loadingMyActivities, openMyActivities,
       myGroupsList, loadingMyGroups, openMyGroups, hasGroupEntry,
-      myOnetooneList, loadingMyOnetoone, openMyOnetoone, hasOnetooneEntry,
       onetooneCandidates, onetooneSelectedChoices, onetooneCandidateQuery, visibleOnetooneCandidates, onetooneLoadingCandidates, onetooneCandidatesError, onetooneResult, onetooneResultLoading,
       onetooneSelectFrom, onetooneResultFrom, onetooneMsgTarget, onetooneMsgText, showOnetooneMsg,
       goOnetooneSelect, isOnetooneSelected, toggleOnetooneChoice, removeOnetooneChoice, submitOnetooneChoices, goOnetooneResult, switchOnetooneRound,

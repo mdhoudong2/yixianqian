@@ -6,7 +6,7 @@
 3. 锁内查重：并发双击 create 恰 1 次、表内 1 行；快照无记录、live 有 → update 不 create；
 4. 决定性读取 fresh：快照 activities=未开始、live=收集中/已完成 → 各端点以 live 为准。
 
-另覆盖 my_onetoone / my_groups 过滤已取消 + 按活动去重、me=None 不 500。
+另覆盖 my_groups 过滤已取消 + 按活动去重、me=None 不 500。
 
 桩法比照 tests/test_group_admin_api.py：只桩「存取」，差集/去重/锁/刷新调用全跑真实现。
 """
@@ -450,39 +450,13 @@ def test_result_reads_fresh_results(api, monkeypatch):
 
 
 # ================================================================
-# my_onetoone / my_groups：过滤已取消 + 按活动去重
+# my_groups：过滤已取消 + 按活动去重
 # ================================================================
 
 def _cancelled_and_active_signups():
     rows = [_signup(ME, status="已取消") for _ in range(4)]
     rows.append(_signup(ME))  # 唯一有效的一条（同活动）
     return rows
-
-
-def test_my_onetoone_filters_cancelled_and_dedupes(api):
-    api.install(
-        activities=[_act("已完成")],
-        live_activities=[_act("已完成")],
-        signups=_cancelled_and_active_signups(),
-        stale_signups=_cancelled_and_active_signups(),
-    )
-    api.fresh_calls.clear()
-    r = api.get("/api/activities/mine/onetoone")
-    acts = r.get_json()["activities"]
-    assert len(acts) == 1, "4 条已取消 + 1 条有效同活动只该出 1 张卡"
-    assert acts[0]["activity_id"] == ACT
-    assert api.fresh_calls.count("activities") == 1, "活动列表一次性 fresh 读（消 N+1）"
-
-
-def test_my_onetoone_flag_ignores_cancelled(api):
-    api.install(
-        activities=[_act("已完成")],
-        live_activities=[_act("已完成")],
-        signups=[_signup(ME, status="已取消")],
-        stale_signups=[_signup(ME, status="已取消")],
-    )
-    r = api.get("/api/activities/mine/onetoone/flag")
-    assert r.get_json()["has_onetoone_activity"] is False
 
 
 def test_my_groups_filters_cancelled_and_dedupes(api):

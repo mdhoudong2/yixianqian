@@ -5,13 +5,12 @@
 只依赖 H5 侧模块（app / config / bitable），不 import bot 模块——bot 与 H5 各有一份
 local_config（bot 用 ASSISTANT_APP_ID，H5 用 FEISHU_APP_ID + MESSAGE_TABLE_ID 等），
 同进程混用会读到错误凭证。匹配本身已由 seed_test_onetoone.py + 单测覆盖，这里只验
-H5 6 个路由 + 留言→已聊推导：
+H5 4 个路由 + 留言→已聊推导：
 
 - GET  /api/activities/<id>/onetoone/candidates（异性列表、排除自己；志愿随时可改、不看状态）
 - POST /api/activities/<id>/onetoone/select（提交 7 志愿）
 - GET  /api/activities/<id>/onetoone/status（状态 + 我的选择）
 - GET  /api/activities/<id>/onetoone/result（已完成：必聊名单 + chatted 由留言推导）
-- GET  /api/activities/mine/onetoone / .../flag（入口显隐）
 - POST /api/messages → 再次读 result 验证对方变「已聊」
 
 状态编排直接改活动表「一对一状态」字段：状态模型为「空/已完成」，整段运行期间置
@@ -160,8 +159,8 @@ def main():
                     _fail(f"status.my_choices 与提交不一致：{st.get('my_choices')} vs {choices}")
                 print(f"  select {len(choices)} 志愿 + status 复核通过（my_choices={len(st.get('my_choices', []))}）")
 
-        # ---------- Phase 2: 已完成（result / mine / flag；状态已在 Phase 1 置好） ----------
-        print("\n[2] 已完成：result / mine/onetoone / flag")
+        # ---------- Phase 2: 已完成（result；状态已在 Phase 1 置好） ----------
+        print("\n[2] 已完成：result")
 
         r = get(f"/api/activities/{ACT}/onetoone/result")
         partners = []
@@ -178,23 +177,6 @@ def main():
                 _fail("result 存在空 openid")
             n_chatted = sum(1 for p in partners if p.get("chatted"))
             print(f"  result: {len(partners)} 位必聊、rank 1..{len(partners)}、初始已聊 {n_chatted} 位")
-
-        r = get("/api/activities/mine/onetoone")
-        if r.status_code != 200:
-            _fail(f"mine/onetoone HTTP {r.status_code}: {r.get_json()}")
-        else:
-            acts = r.get_json().get("activities", [])
-            if not any(a.get("activity_id") == ACT for a in acts):
-                _fail(f"mine/onetoone 应含活动 {ACT}：{acts}")
-            print(f"  mine/onetoone: {len(acts)} 个活动，含本次活动 {ACT}")
-
-        r = get("/api/activities/mine/onetoone/flag")
-        if r.status_code != 200:
-            _fail(f"mine/onetoone/flag HTTP {r.status_code}: {r.get_json()}")
-        elif r.get_json().get("has_onetoone_activity") is not True:
-            _fail(f"mine/onetoone/flag 应为 true：{r.get_json()}")
-        else:
-            print("  mine/onetoone/flag: has_onetoone_activity=true")
 
         # ---------- Phase 3: 留言 → 已聊 ----------
         print("\n[3] 留言 → 已聊")

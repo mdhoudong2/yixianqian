@@ -639,7 +639,7 @@ def handle_admin_toggle_group_flag(keyword):
 
 
 def handle_admin_toggle_onetoone_flag(keyword):
-    """管理员：开启/关闭活动的一对一功能（控制 H5 我的页「我的一对一」入口显示）
+    """管理员：开启/关闭活动的一对一功能（控制 H5 活动页/活动卡上的志愿与结果入口）
     格式: 开启一对一功能 A-xxxx 开/关  或  开启一对一功能 A-xxxx on/off"""
     parts = keyword.split()
     if len(parts) < 2:
@@ -668,7 +668,7 @@ def handle_admin_toggle_onetoone_flag(keyword):
         return f"一对一功能开关设置失败：活动「{activity_name}」状态写入失败，请稍后重试。"
     log(f"管理员设置一对一功能开关: {activity_name}({activity_id}) -> {res['onetoone_flag']}")
     return (f"已{'开启' if res['onetoone_flag'] == '是' else '关闭'}活动「{activity_name}」的一对一功能。\n"
-            f"开启后，报名该活动的用户可在 H5「我的」页看到「我的一对一」入口。"
+            f"开启后，报名该活动的用户可在 H5 活动页/活动卡上看到志愿与结果入口。"
             + ("\n（活动结束后记得关闭，入口即隐藏）" if res["onetoone_flag"] == "是" else ""))
 
 
@@ -677,7 +677,7 @@ def handle_onetoone_help():
     return (
         "一对一相关指令：\n\n"
         "【清空一对一结果 活动ID】\n  清空该活动全部一对一结果并重置状态，如：清空一对一结果 A-0002\n"
-        "【开启一对一功能 活动ID 开/关】\n  控制 H5 我的页是否显示「我的一对一」入口\n"
+        "【开启一对一功能 活动ID 开/关】\n  控制 H5 活动页/活动卡上的志愿与结果入口\n"
         "【查看未提交一对一 活动ID】\n  查看报名但未提交志愿的人员\n"
         "【执行一对一 活动ID 女生场次 [轮次]】\n  女生坐镇、男生上门均衡匹配：女生每人聊 N 场，男生按配额上门（轮次缺省为最新轮次+1）\n"
         "【一对一状态 活动ID】\n  查看一对一进度\n"

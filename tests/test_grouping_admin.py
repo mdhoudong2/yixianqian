@@ -316,19 +316,27 @@ def test_preview_round_reports_preserved_history(configured):
 
 
 def test_round_out_of_range_is_blocked_by_preview(configured):
-    """T11：「轮次」是单选栏位，飞书只配了 1-10。第 11 轮必须在执行前就被挡住，
-    且挡住它的那次调用一个栏位都不能写。
+    """T11：轮次不限（字段已转文本），preview 只挡「非 ≥1 整数」。
 
-    真的写下去会整批失败再触发回滚，管理员看到的是「已截止又收集中」，很难查。
+    0/-1/字符串/None/布尔必须在执行前就被挡住，且挡住它的那次调用一个栏位都不能写；
+    大轮次（50/51/999）必须照常可执行——「上限」语义已随字段转文本废除。
     """
     signups, selections = _balanced(4, 4)
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
-    res = lib_grouping.preview_round(ACT, 11, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    for bad in (0, -1, "2", None, True):
+        res = lib_grouping.preview_round(ACT, bad, client=fake, activity=_activity(fake),
+                                         find_user_by_openid=_find_user)
+        assert res["can_execute"] is False, f"round={bad!r}"
+        assert any("轮次必须是 ≥1 的整数" in b for b in res["blockers"])
+    assert fake.writes() == []
 
-    assert res["can_execute"] is False
-    assert any("超出单选字段上限" in b for b in res["blockers"])
+    # 不限轮次：50/51/999 都是合法轮次，不得出现任何轮次 blocker
+    for rnd in (1, 50, 51, 999):
+        res = lib_grouping.preview_round(ACT, rnd, client=fake, activity=_activity(fake),
+                                         find_user_by_openid=_find_user)
+        assert res["can_execute"] is True, f"round={rnd} 应可执行"
+        assert not any("轮次" in b for b in res["blockers"])
     assert fake.writes() == []
 
 
@@ -497,11 +505,11 @@ def test_preview_blockers_cover_all_four_causes(configured):
     assert res["can_execute"] is False
     assert res["blockers"] == ["第1轮已生成分组结果，请勿重复执行"]
 
-    over = FakeBitable(_tables(signups=signups, selections=selections))
-    res = lib_grouping.preview_round(ACT, 11, client=over, activity=_activity(over),
+    bad_round = FakeBitable(_tables(signups=signups, selections=selections))
+    res = lib_grouping.preview_round(ACT, 0, client=bad_round, activity=_activity(bad_round),
                                      find_user_by_openid=_find_user)
     assert res["can_execute"] is False
-    assert res["blockers"] == ["第11轮超出单选字段上限（轮次字段只支持 1-10）"]
+    assert res["blockers"] == ["轮次必须是 ≥1 的整数，当前 0"]
 
 
 def test_search_failure_is_not_treated_as_empty_when_asked(configured):

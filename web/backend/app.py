@@ -398,12 +398,13 @@ _snapshot_version = {}  # key -> int 版本号：每次成功交换 +1，供卡�
 _next_due = {}  # key -> 下次刷新到期时间（分表调度）
 
 # 分表刷新间隔（秒）：users 变化最频繁最重要；活动/观察员/分组低频
+# activities 表小，缩短轮询到 30s：bot 端切模式/其它进程的写入 ≤30s 内被 H5 快照吸收
 _SNAPSHOT_INTERVALS = {
     "users": 60,
     "likes": 20,
     "messages": 20,
     "signups": 45,
-    "activities": 180,
+    "activities": 30,
     "observers": 300,
     "group_selections": 300,
     "group_results": 300,
@@ -6024,13 +6025,8 @@ def group_result(activity_id):
 
     # 轮次：默认展示最新一轮（round 最大）。旧无轮次记录(空)视为第1轮。
     def _round_of(f):
-        rv = bitable.get_select_value(f, F_GR_ROUND)
-        if rv:
-            try:
-                return int(rv)
-            except ValueError:
-                return 0
-        return 1  # 无轮次的老数据视为第1轮
+        s = bitable.get_field_text(f, F_GR_ROUND)
+        return int(s) if s.isdigit() and int(s) >= 1 else 1
     available_rounds = sorted({_round_of(r.get("fields", {})) for r in results})
     if not available_rounds:
         available_rounds = [1]
@@ -6788,8 +6784,8 @@ def admin_group_run():
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
     if (not isinstance(round_no, int) or isinstance(round_no, bool)
-            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
-        # 轮次上限 10 与一对一 run 对齐（bot 端保持原行为，Phase 1 parity 网钉死）
+            or round_no < 1):
+        # 轮次不设上限（字段已转文本）；与一对一 run 同口径：只要求 ≥1 的整数
         return jsonify({"error": "请求体不合法"}), 400
 
     act, act_id = snap_resolve_activity(activity_id.strip(), fresh=True)
@@ -6964,7 +6960,9 @@ def admin_group_flag():
     if res_code != "OK":
         # 写失败/查询失败如实回错误，绝不回 {"ok": true}（静默写失败已修）
         return jsonify({"error": "分组开关写入失败，请稍后重试", "code": res_code}), 500
-    refresh_snapshot_table_async("activities")
+    # 开关写入成功即同步刷新快照（coalesce=0 写后必抓）：用户端/管理台 reopening 立即可见；
+    # 同步耗时=一次 activities 拉取（量级 <1s，可接受）；fetcher 返回 None 由 refresh 内部处理，不影响回包
+    refresh_snapshot_table("activities")
     resp = {"ok": True, "activity_id": act_id, "name": name, "group_flag": target}
     if not enabled:
         # 关 flag 只是关「我的分组」入口，不改状态：分组仍在收集中时用户照常能提交志愿，
@@ -7275,7 +7273,8 @@ def admin_onetoone_run():
     if not isinstance(activity_id, str) or not activity_id.strip():
         return jsonify({"error": "请求体不合法"}), 400
     if (not isinstance(round_no, int) or isinstance(round_no, bool)
-            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
+            or round_no < 1):
+        # 轮次不设上限（字段已转文本）
         return jsonify({"error": "请求体不合法"}), 400
     if (not isinstance(female_chats, int) or isinstance(female_chats, bool)
             or female_chats < 1):
@@ -7389,7 +7388,9 @@ def admin_onetoone_flag():
                         "busy_activity_id": act_id}), 409
     if res_code != "OK":
         return jsonify({"error": "开关设置失败，请稍后重试", "code": res_code}), 500
-    refresh_snapshot_table_async("activities")
+    # 开关写入成功即同步刷新快照（coalesce=0 写后必抓）：用户端/管理台 reopening 立即可见；
+    # 同步耗时=一次 activities 拉取（量级 <1s，可接受）；fetcher 返回 None 由 refresh 内部处理，不影响回包
+    refresh_snapshot_table("activities")
     resp = {"ok": True, "activity_id": act_id, "name": name,
             "onetoone_flag": res["onetoone_flag"]}
     if not enabled:
@@ -7465,7 +7466,9 @@ def admin_activity_mode():
         return jsonify({"error": "模式切换失败，请稍后重试", "code": res_code}), 500
 
     if res.get("changed"):
-        refresh_snapshot_table_async("activities")
+        # 切换成功即同步刷新快照（coalesce=0 写后必抓）：用户端/管理台 reopening 立即可见；
+        # 同步耗时=一次 activities 拉取（量级 <1s，可接受）；fetcher 返回 None 由 refresh 内部处理，不影响回包
+        refresh_snapshot_table("activities")
     return jsonify({
         "ok": True,
         "activity_id": act_id,

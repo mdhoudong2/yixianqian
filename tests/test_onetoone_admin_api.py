@@ -133,6 +133,9 @@ class Api:
         monkeypatch.setattr(app, "_snap", lambda key: list(self.snapshot.get(key, [])))
         monkeypatch.setattr(app, "_snap_live", lambda key: list(self.snapshot.get(key, [])))
         monkeypatch.setattr(app, "refresh_snapshot_table_async", self.refresh_calls.append)
+        # 模式/开关端点改同步刷新后，同口径记录同步入口（coalesce 默认 0.0=写后必抓）
+        monkeypatch.setattr(app, "refresh_snapshot_table",
+                            lambda key, coalesce=0.0: self.refresh_calls.append(key))
         self.client = app.app.test_client()
         self.client.set_cookie("yxq_session", app.create_session(ADMIN))
         self.client_me = app.app.test_client()
@@ -740,14 +743,29 @@ def test_job_endpoint_validation(api):
     assert api.get("/api/admin/onetoone/job?job_id=nope").status_code == 404
 
 
+def test_run_large_round_accepted_and_written(api):
+    """不限轮次：round=999 照常入列并完成，结果行带「轮次=999」（旧上限 1-50 已废）。"""
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections)
+    r = api.post("/api/admin/onetoone/run",
+                 {"activity_id": ACT, "round": 999, "female_chats": 2})
+    assert r.status_code == 202, "大轮次必须能入列执行"
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done" and job["result"]["code"] == "OK"
+    rows = [row for row in api.fake.tables[RESULT_TBL]
+            if row["fields"].get("轮次") == "999"]
+    assert len(rows) == 8, "2男2女各出 2 条必聊，全部带轮次 999"
+    _wait_refresh_calls(api, {"activities", "onetoone_results"})
+
+
 def test_run_payload_validation_and_missing(api):
     api.install()
     assert api.post("/api/admin/onetoone/run", {"activity_id": ""}).status_code == 400
-    # 轮次上界在 H5 run 收口：>10 直接 400（lib.execute 还有第二道 ROUND_OUT_OF_RANGE）
+    # 轮次不限（字段已转文本）：非 ≥1 整数在 H5 run 收口 → 400（大轮次合法，另有用例）
     assert api.post("/api/admin/onetoone/run",
-                    {"activity_id": ACT, "round": 11}).status_code == 400
+                    {"activity_id": ACT, "round": 0, "female_chats": 2}).status_code == 400
     assert api.post("/api/admin/onetoone/run",
-                    {"activity_id": ACT, "round": 999}).status_code == 400
+                    {"activity_id": ACT, "round": "2", "female_chats": 2}).status_code == 400
     # 女生场次缺省在 H5 run 收口（非法值另测，避免撞 run 端点的 5 次/60s 限流）
     assert api.post("/api/admin/onetoone/run", {"activity_id": ACT}).status_code == 400
     assert api.post("/api/admin/onetoone/run",

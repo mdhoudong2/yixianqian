@@ -95,24 +95,25 @@ def test_execute_writes_round_field_on_every_row(configured):
 
 
 def test_execute_round_out_of_range_is_rejected_with_zero_writes(configured):
-    """轮次越界（0/11/负数/非整数）在写入路径收口：ROUND_OUT_OF_RANGE、零读写。
+    """轮次非法（0/负数/非整数/布尔）在写入路径收口：ROUND_OUT_OF_RANGE、零读写。
 
-    preview 的「上限」blocker 只是提示，bot/H5 都可能绕过；这里钉死 execute 自身
-    的入口防线——越界时连一次表操作（含只读搜索）都不许发，更不能动状态。
+    preview 的 blocker 只是提示，bot/H5 都可能绕过；这里钉死 execute 自身的入口
+    防线——非法时连一次表操作（含只读搜索）都不许发，更不能动状态。轮次不设上限，
+    51/100/999 都是合法值（见下一个用例），不在非法集合里。
     """
-    for bad in (0, 11, -1, 100, "2", 2.0, True, None):
+    for bad in (0, -1, "2", 2.0, True, None):
         fake = FakeBitable(_default_tables())
         res = _execute(fake, bad)
         assert res["code"] == "ROUND_OUT_OF_RANGE", f"round={bad!r}"
         assert res["round"] == bad
-        assert res["max_round"] == 10
+        assert "max_round" not in res, "上限已废除，响应不再带 max_round"
         assert fake.calls == [], f"越界 {bad!r} 不得有任何表操作（含只读搜索）"
         assert _find_act(fake, ACT)["fields"].get("一对一状态") == "收集中"
 
 
-def test_execute_accepts_round_one_and_max(configured):
-    """边界内轮次照常执行：1 与 10 都能写入本轮结果（防收口误伤合法边界）。"""
-    for rnd in (1, 10):
+def test_execute_accepts_any_round_at_least_one(configured):
+    """不限轮次：1 / 51 / 999 都能写入本轮结果（旧上限 1-50 已废，防收口误伤合法值）。"""
+    for rnd in (1, 51, 999):
         fake = FakeBitable(_default_tables())
         res = _execute(fake, rnd)
         assert res["code"] == "OK" and res["round"] == rnd
@@ -195,9 +196,16 @@ def test_preview_reports_round_state_and_preserve_counts(configured):
     assert any("第1轮已生成" in b for b in pv2["blockers"])
     assert pv2["existing_round_results"] == 1
 
-    pv3 = lib_onetoone.preview(ACT, 11, client=fake, activity=_find_act(fake, ACT),
+    # 不限轮次：51 合法可执行；0 被「≥1 整数」blocker 挡住
+    pv3 = lib_onetoone.preview(ACT, 51, client=fake, activity=_find_act(fake, ACT),
                                find_user_by_openid=_find_user, female_chats=2)
-    assert any("上限" in b for b in pv3["blockers"])
+    assert pv3["can_execute"] is True
+    assert not any("轮次" in b for b in pv3["blockers"])
+
+    pv4 = lib_onetoone.preview(ACT, 0, client=fake, activity=_find_act(fake, ACT),
+                               find_user_by_openid=_find_user, female_chats=2)
+    assert pv4["can_execute"] is False
+    assert any("轮次必须是 ≥1 的整数" in b for b in pv4["blockers"])
 
 
 def test_round_of_normalizes_empty_and_legacy_values(configured):

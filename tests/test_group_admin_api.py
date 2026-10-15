@@ -122,6 +122,9 @@ class Api:
         monkeypatch.setattr(app, "_snap_fresh", self._fresh)
         monkeypatch.setattr(app, "_snap", lambda key: list(self.snapshot.get(key, [])))
         monkeypatch.setattr(app, "refresh_snapshot_table_async", self.refresh_calls.append)
+        # 模式/开关端点改同步刷新后，同口径记录同步入口（coalesce 默认 0.0=写后必抓）
+        monkeypatch.setattr(app, "refresh_snapshot_table",
+                            lambda key, coalesce=0.0: self.refresh_calls.append(key))
         self.client = app.app.test_client()
         self.client.set_cookie("yxq_session", app.create_session(ADMIN))
         self.client_me = app.app.test_client()
@@ -402,7 +405,7 @@ def test_a7_activity_lock_busy_returns_409_with_busy_activity(api, monkeypatch, 
 
 # ---------------------------------------------------------------- A8 preview blockers
 
-def test_a8_preview_blockers_cover_all_causes(api):
+def test_a8_preview_blockers_and_unbounded_round(api):
     # 1) 人数不足（1男1女 < 每组2男2女）
     signups, selections = _balanced(1, 1)
     api.install(signups=signups, selections=selections)
@@ -425,12 +428,12 @@ def test_a8_preview_blockers_cover_all_causes(api):
     assert body["can_execute"] is False
     assert any("第2轮已生成分组结果" in b for b in body["blockers"])
 
-    # 4) 轮次超单选字段上限（轮次字段只支持 1-10）
+    # 4) 轮次不限（字段已转文本，旧上限 1-50 已废）：51 不再是拦截项，必须可执行
     api.install(signups=signups, selections=selections)
-    body = api.post("/api/admin/group/preview", {"activity_id": ACT, "round": 11}).get_json()
-    assert body["can_execute"] is False
-    assert any("超出单选字段上限" in b for b in body["blockers"])
-    assert api.fake.writes() == [], "四种拦截路径都必须零写入"
+    body = api.post("/api/admin/group/preview", {"activity_id": ACT, "round": 51}).get_json()
+    assert body["can_execute"] is True
+    assert body["blockers"] == []
+    assert api.fake.writes() == [], "每条路径都必须零写入（preview 是纯读红线）"
 
 
 # ---------------------------------------------------------------- A9 fresh 读取
@@ -546,12 +549,24 @@ def test_activities_list_reads_rounds_for_collecting_activity(api):
     assert item["available_rounds"] == [1, 2]
 
 
-def test_group_run_rejects_round_above_max(api):
-    """审计发现 2：group/run 轮次超上限回 400（对齐一对一；bot 端不动）。"""
+def test_group_run_round_validation_and_unbounded_high_round(api):
+    """不限轮次：0/-1/非整数/布尔回 400 零写入；51/999 这类大轮次合法可执行。"""
     fake = api.install()
-    assert api.post("/api/admin/group/run", {"activity_id": ACT, "round": 11}).status_code == 400
-    assert api.post("/api/admin/group/run", {"activity_id": ACT, "round": 999}).status_code == 400
+    for bad in (0, -1, "2", True):
+        assert api.post("/api/admin/group/run",
+                        {"activity_id": ACT, "round": bad}).status_code == 400, bad
     assert fake.writes() == [], "拒绝的轮次不得产生任何写入"
+
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections)
+    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 999})
+    assert r.status_code == 202, "大轮次必须能入列执行"
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done" and job["result"]["code"] == "OK"
+    rows = api.fake.tables[GROUP_RESULT_TABLE]
+    assert rows and all(row["fields"].get("轮次") == "999" for row in rows), \
+        "第999轮结果必须写入且带轮次"
+    _wait_refresh_calls(api, {"activities", "group_results"})
 
 
 # ---------------------------------------------------------------- A10 flag 幂等

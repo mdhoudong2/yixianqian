@@ -238,9 +238,6 @@ STATUS_CLOSED = "已截止"
 STATUS_DONE = "已完成"
 STATUS_NOT_STARTED = "未开始"
 SIGNUP_STATUS_SIGNED = "已报名"
-# 「轮次」是单选栏位，飞书侧只配了 1-10。写入更大的值会整批失败并触发回滚，
-# 所以只在 preview 里事前挡住；执行路径刻意不拦——bot 端拦了就改了既有行为。
-MAX_ROUND = 10
 
 # ---------------------------------------------------------------- 分组/一对一互斥
 
@@ -910,8 +907,9 @@ def preview_round(activity_id, round_no, *, client, activity, find_user_by_openi
                         f"每组需要 {m_per}男{f_per}女（至少 {m_per}男{f_per}女）")
     if this_round:
         blockers.append(f"第{round_no}轮已生成分组结果，请勿重复执行")
-    if not 1 <= round_no <= MAX_ROUND:
-        blockers.append(f"第{round_no}轮超出单选字段上限（轮次字段只支持 1-{MAX_ROUND}）")
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or round_no < 1):
+        blockers.append(f"轮次必须是 ≥1 的整数，当前 {round_no}")
 
     return {
         "activity_id": activity_id,

@@ -638,8 +638,9 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid, fem
         blockers.append("没有已报名且性别有效的参与者")
     if this_round:
         blockers.append(f"第{round_no}轮已生成一对一结果，请勿重复执行")
-    if not 1 <= round_no <= lib_grouping.MAX_ROUND:
-        blockers.append(f"第{round_no}轮超出单选字段上限（轮次字段只支持 1-{lib_grouping.MAX_ROUND}）")
+    if (not isinstance(round_no, int) or isinstance(round_no, bool)
+            or round_no < 1):
+        blockers.append(f"轮次必须是 ≥1 的整数，当前 {round_no}")
     # 女生场次 K 校验（与 execute 进门同口径）
     if female_chats is None:
         blockers.append("请指定女生场次（每个女生聊几场）")
@@ -881,7 +882,7 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
 
     `round_no`：写入与幂等都锚定「(活动, 轮次)」——同一轮重跑被 ALREADY_DONE
     拦住，换一轮即可产出第 N+1 轮（与 lib.grouping.execute_round 同语义）。
-    `round_no` 必须是 1..MAX_ROUND 的整数，越界直接回 ROUND_OUT_OF_RANGE，
+    `round_no` 必须是不小于 1 的整数，越界直接回 ROUND_OUT_OF_RANGE，
     零写入、零锁等待（preview 的 blockers 只是提示，bot/H5 都不能拿它当门禁）。
 
     `female_chats`：女生坐镇、男生上门的均衡分配里「每个女生聊几场」（K）。
@@ -911,11 +912,11 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
     f = _cfg["fields"]
     activity_name = get_field_text(activity.get("fields", {}), f["activity_name"])
     base = {"activity_id": activity_id, "round": round_no, "activity_name": activity_name}
-    # 写入路径的轮次收口：越界时飞书会为单选字段自动新增超范围选项（污染 schema），
-    # 且状态机会先把活动改成「已截止」。必须在任何读/写/锁之前拒绝。
+    # 写入路径的轮次收口：轮次字段已转文本、不设上限，只挡非「≥1 整数」。
+    # 否则状态机会先把活动改成「已截止」，必须在任何读/写/锁之前拒绝。
     if (not isinstance(round_no, int) or isinstance(round_no, bool)
-            or not 1 <= round_no <= lib_grouping.MAX_ROUND):
-        return dict(base, code="ROUND_OUT_OF_RANGE", max_round=lib_grouping.MAX_ROUND)
+            or round_no < 1):
+        return dict(base, code="ROUND_OUT_OF_RANGE")
     # 女生场次收口（零写入）：缺省 / 非正整数都直接回，别让管理员跑完才发现没配对。
     if female_chats is None:
         return dict(base, code="FEMALE_CHATS_REQUIRED")

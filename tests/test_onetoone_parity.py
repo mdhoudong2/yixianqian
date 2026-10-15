@@ -814,7 +814,8 @@ def test_status_submitted_count_uses_dedupe_intentional_fix(configured):
 # 本次功能（一對一多輪）：刻意分歧（旧路行为 ≠ 新路行为）
 # ----------------------------------------------------------------
 # 「执行一对一」新增可选轮次（默认第 1 轮）、幂等按 (活动, 轮次)（迁移前的空轮次
-# 行 = 第 1 轮）、结果写入带「轮次」栏位；「一对一状态」新增「已生成轮次」行。
+# 行 = 第 1 轮）、结果写入带「轮次」栏位（不设上限：≥1 的整数即可，字段已转文本）；
+# 「一对一状态」新增「已生成轮次」行。
 # 冻结旧实作没有轮次概念，以下路径刻意分歧；未变路径仍在上面的 strict 案例集里
 # 逐字比对（文案 + 写入调用序列）。每条同时钉旧行为与新行为，防止日后有人把多轮
 # 回退成「和旧路一致」还以为是保真。
@@ -939,18 +940,25 @@ def test_admin_stop_argument_validation(configured):
         assert new == expected
 
 
-def test_admin_stop_round_over_max_rejected_with_zero_writes(configured):
-    """轮次 >10：旧路把整串当活动ID；新路在 lib 写入路径收口并明确报错、零写入。"""
-    case = Case("stop/轮次越界", "stop", f"{ACT} 2 11")
+def test_admin_stop_large_round_is_accepted_and_runs(configured):
+    """轮次不设上限（字段已转文本）：第 51 轮照常执行（旧路把整串当活动ID）。
+
+    原「>50 越界拦截」案例随「不限轮次」方案废止——这里反向钉死：大轮次可执行、
+    写入行带「轮次=51」。
+    """
+    case = Case("stop/大轮次", "stop", f"{ACT} 2 51")
+
     _, old = _golden_run(configured, case)
-    assert old == "未找到活动：A-0002 2 11"
+    assert old == "未找到活动：A-0002 2 51"
 
     fake, new = _new_run(configured, case)
-    assert new == ("轮次超出范围：一对一结果只支持第 1-10 轮，"
-                   "当前请求第 11 轮（本次未写入任何数据）。")
-    assert fake.writes() == [], "越界轮次必须零写入"
-    assert fake.tables[ONETOONE_RESULT_TABLE] == [], "结果表不得出现任何本轮行"
-    assert _find_act(fake, ACT)["fields"].get("一对一状态") == "收集中", "状态不得被动"
+    assert new == ("🎉 活动「关系自洽」第51轮 一对一匹配完成：\n"
+                   "参与 4 人，共生成 8 条必聊关系。\n"
+                   "用户可自查 H5「我的一对一」查看名单。")
+    created = [c for c in fake.writes() if c[0] == "batch_create"]
+    assert created and all(r.get("轮次") == "51" for r in created[0][2]), \
+        "第51轮写入行必须带「轮次=51」"
+    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 8
 
 
 def test_admin_status_rounds_line_intentional_addition(configured):

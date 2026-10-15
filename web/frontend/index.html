@@ -6349,7 +6349,9 @@ createApp({
       }
       if(st && st.page && st.page !== page.value){
         page.value = st.page;
-        isHandlingPopState=false; return;
+        // popstate 已消费一条历史：本 tick 屏蔽异步 push watcher，nextTick 再复位（否则 watcher 看到 false 会补条目 → 返回乒乓/死循环）
+        nextTick(() => { isHandlingPopState = false; });
+        return;
       }
       const parentMap = {
         'mutual': 'likes', 'liked_me': 'likes', 'my_likes': 'likes', 'my_messages': 'likes', 'received_messages': 'likes',
@@ -6364,7 +6366,8 @@ createApp({
         'likes': 'cards', 'home': 'cards', 'profile': 'cards'
       };
       if(parentMap[page.value]){ page.value = parentMap[page.value]; }
-      isHandlingPopState=false;
+      // 同上：返回消费了一层历史，不再补 push
+      nextTick(() => { isHandlingPopState = false; });
     }
     watch(page, (p, old) => {
       syncMe(); // 静默对账爱心余额（机器人延迟扣/退，切页时收敛显示）

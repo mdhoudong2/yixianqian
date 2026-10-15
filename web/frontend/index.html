@@ -2477,9 +2477,8 @@
       <div class="modal-body">{{ unsavedConfirmBody }}</div>
     </div>
     <div class="modal-divider">
-      <div v-if="unsavedConfirmCanSave" class="modal-action modal-action-primary" :class="{disabled: leaveConfirmBusy}" @click="saveAndLeaveConfirm">保存并返回</div>
-      <div class="modal-action modal-divider" :class="{disabled: leaveConfirmBusy}" @click="discardLeaveConfirm">放弃修改</div>
-      <div class="modal-action modal-action-muted modal-divider" :class="{disabled: leaveConfirmBusy}" @click="cancelLeaveConfirm">继续编辑</div>
+      <div class="modal-action modal-divider" @click="discardLeaveConfirm">放弃</div>
+      <div class="modal-action modal-action-muted modal-divider" @click="cancelLeaveConfirm">继续编辑</div>
     </div>
   </div>
 </div>
@@ -3093,7 +3092,7 @@ createApp({
     let isHandlingPopState = false;
     let ignoreNextPop = false;
     // 守卫收尾的历史条目消费队列：overlay/未保存弹窗关闭时「一层一条」串行 back()，
-    // 每次 back 的 popstate 用计数抑制。同 tick 连关两层（放弃/保存并返回）时按队列
+    // 每次 back 的 popstate 用计数抑制。同 tick 连关两层（弹窗 + 其下被拦浮层）时按队列
     // 逐条消费，不等 history.state 的异步更新，避免 overlay 条目残留→返回重进/震荡。
     let pendingPopConsume = 0;
     let popConsumeBusy = false;
@@ -3121,7 +3120,7 @@ createApp({
         return;
       }
       if(showUnsavedConfirm.value){
-        if(!leaveConfirmBusy.value) cancelLeaveConfirm();
+        cancelLeaveConfirm();
         return;
       }
       // 未保存离开拦截（守卫注册表）：dirty → 弹窗；提交中 → 提示并停留
@@ -3704,9 +3703,8 @@ createApp({
     const editableFields = ref([]);
     const showUnsavedConfirm = ref(false);
     let pendingLeaveCb = null;             // 被拦截的离开动作（弹窗确认后执行）
-    const pendingGuard = ref(null);        // 触发弹窗的守卫项（页面级/浮层级），三钮分派按它走
-                                           // （必须是 ref：unsavedConfirmBody/CanSave 按它做响应式求值，普通 let 会被 computed 永久缓存）
-    const leaveConfirmBusy = ref(false);   // 「保存并返回」执行中：弹窗三钮禁用防重入
+    const pendingGuard = ref(null);        // 触发弹窗的守卫项（页面级/浮层级），两钮分派按它走
+                                           // （必须是 ref：unsavedConfirmBody 按它做响应式求值，普通 let 会被 computed 永久缓存）
     let profileEditSnapshot = '';
     function _editFingerprint(){
       const cur = {};
@@ -3724,29 +3722,17 @@ createApp({
     }
     const unsavedConfirmBody = computed(() => (pendingGuard.value && pendingGuard.value.body)
       || (page.value === 'group_select' ? '志愿还没提交，离开后本次修改不会保存。' : '资料已修改，是否保存？'));
-    const unsavedConfirmCanSave = computed(() => !!(pendingGuard.value && pendingGuard.value.saveAndLeave));
     // —— 未保存离开拦截（守卫注册表：页面级 leaveGuards + 浮层级 overlayGuards，共用同一弹窗与历史挂载）——
-    // 每项约定：dirty() 判脏（与进页/进浮层 baseline 快照比对）；discard(cb) 放弃修改并归位快照、执行原离开；
-    // saveAndLeave(cb) 执行既有保存/发送/提交，成功→标净→closeUnsavedConfirm()→执行原离开，失败→留在原地（不清 dirty）；
-    // 未提供 saveAndLeave 的场景（确认级输入、筛选草稿等）弹窗只显示「放弃修改/继续编辑」两钮。
-    function closeUnsavedConfirm(){
-      showUnsavedConfirm.value = false;
-      pendingLeaveCb = null;
-      pendingGuard.value = null;
-    }
+    // 每项约定：dirty() 判脏（与进页/进浮层 baseline 快照比对）；discard(cb) 放弃本次修改并归位快照、执行原离开；
+    // 弹窗恒为「放弃/继续编辑」两钮，不提供代保存/代发送：sent 型浮层（like/留言/反馈/举报/认领/兑换）离开动作不触发对外发送，
+    // 页面级（资料编辑/志愿选择）也不提供保存快捷——保存/提交走页面自身的「保存 / 提交志愿」钮。
     // 卡片留言输入（cards 页）：切卡/切 tab/顶部与系统返回/应用筛选前拦截未发送草稿；
     // 页面级（leaveGuards.cards）与浮层级（switchCard 等）共用同一守卫项。
     const cardsMsgGuard = {
       dirty: () => page.value === 'cards' && !!msgText.value.trim(),
       body: '留言还没发送，离开后内容不会保存。',
-      discard: (cb) => { msgText.value = ''; replyTarget.value = null; if(cb) cb(); },
-      saveAndLeave: async (cb) => {
-        closeUnsavedConfirm();
-        const ok = await sendMessage();
-        if(!ok) return false;
-        if(cb) cb();
-        return true;
-      }
+      discard: (cb) => { msgText.value = ''; replyTarget.value = null; if(cb) cb(); }
+      // sent 型场景不代发送：发送只走留言面板自身的发送钮
     };
     const leaveGuards = {
       profile_edit: {
@@ -3754,25 +3740,6 @@ createApp({
         discard: (cb) => {
           try { profileEditSnapshot = _editFingerprint(); } catch(e){}
           if(cb) cb(); else page.value = 'profile_detail';
-        },
-        saveAndLeave: async (cb) => {
-          const payload = {};
-          editableFields.value.forEach(f => { payload[f.field] = f.value; });
-          savingProfile.value = true;
-          try {
-            await api('/api/profile', { method: 'PUT', body: JSON.stringify(payload) });
-            vant.showToast('保存成功');
-            try { profileEditSnapshot = _editFingerprint(); } catch(e){}
-            profileLoaded.value = false;
-            try { const d = await api('/api/profile'); profileData.value = d; profileLoaded.value = true; } catch(e){}
-            if(cb){ cb(); } else { page.value = 'profile_detail'; }
-            return true;
-          } catch(e) {
-            vant.showToast(e.message);
-            return false;
-          } finally {
-            savingProfile.value = false;
-          }
         }
       },
       group_select: {
@@ -3781,22 +3748,13 @@ createApp({
         discard: (cb) => {
           gsMarkClean();
           if(cb) cb(); else leaveGroupSelectByFrom();
-        },
-        saveAndLeave: async (cb) => {
-          const ok = await submitChoices({ viaGuard: true });
-          if(!ok) return false;
-          gsMarkClean();
-          // 先关弹窗（overlay 历史条目由 watch 收尾），再执行原离开
-          showUnsavedConfirm.value = false;
-          if(cb) cb(); else leaveGroupSelectByFrom();
-          return true;
         }
       },
       cards: cardsMsgGuard
     };
     // —— 浮层守卫注册表（overlayGuards）——
     // 拦截点：van-dialog before-close（取消/遮罩）、van-popup @click-overlay/取消钮、popstate 对应分支、页面内关闭函数。
-    let filterBaselineKey = null;            // 筛选面板「已应用」基线（打开/应用/清除时对齐，放弃修改时恢复）
+    let filterBaselineKey = null;            // 筛选面板「已应用」基线（打开/应用/清除时对齐，放弃时恢复）
     let gaRunBaselineKey = '';               // 分组执行弹层「每组人数」进层基线
     function gaRunKey(){ return JSON.stringify([Number(gaRunM.value), Number(gaRunF.value)]); }
     function restoreGaRunBaseline(){
@@ -3813,89 +3771,37 @@ createApp({
       likeDialog: {
         dirty: () => !!likeMessage.value.trim(),
         body: '留言还没发送，离开后内容不会保存。',
-        discard: (cb) => { likeMessage.value = ''; if(cb) cb(); else showLikeDialog.value = false; },
-        saveAndLeave: async (cb) => {
-          closeUnsavedConfirm();
-          const ok = await trySubmitLike();
-          if(!ok) return false;
-          likeMessage.value = '';
-          if(cb) cb(); else showLikeDialog.value = false;
-          return true;
-        }
+        discard: (cb) => { likeMessage.value = ''; if(cb) cb(); else showLikeDialog.value = false; }
       },
       onetooneMsg: {
         dirty: () => !!onetooneMsgText.value.trim(),
         body: '留言还没发送，离开后内容不会保存。',
-        discard: (cb) => { onetooneMsgText.value = ''; if(cb) cb(); else showOnetooneMsg.value = false; },
-        saveAndLeave: async (cb) => {
-          closeUnsavedConfirm();
-          const ok = await doOnetooneMsg();
-          if(!ok) return false;
-          onetooneMsgText.value = '';
-          if(cb) cb(); else showOnetooneMsg.value = false;
-          return true;
-        }
+        discard: (cb) => { onetooneMsgText.value = ''; if(cb) cb(); else showOnetooneMsg.value = false; }
       },
       feedbackDialog: {
         dirty: () => !!feedbackText.value.trim() || feedbackReason.value !== '已有对象',
         body: '反馈还没提交，离开后内容不会保存。',
-        discard: (cb) => { feedbackReason.value = '已有对象'; feedbackText.value = ''; if(cb) cb(); else showFeedbackDialog.value = false; },
-        saveAndLeave: async (cb) => {
-          closeUnsavedConfirm();
-          const ok = await doFeedback();
-          if(!ok) return false;
-          feedbackReason.value = '已有对象'; feedbackText.value = '';
-          if(cb) cb(); else showFeedbackDialog.value = false;
-          return true;
-        }
+        discard: (cb) => { feedbackReason.value = '已有对象'; feedbackText.value = ''; if(cb) cb(); else showFeedbackDialog.value = false; }
       },
       reportDialog: {
         dirty: () => !!reportReasonText.value.trim() || reportReason.value !== '骚扰/引战',
         body: '举报还没提交，离开后内容不会保存。',
-        discard: (cb) => { reportReason.value = '骚扰/引战'; reportReasonText.value = ''; if(cb) cb(); else showReportDialog.value = false; },
-        saveAndLeave: async (cb) => {
-          closeUnsavedConfirm();
-          const ok = await doReport();
-          if(!ok) return false;
-          reportReason.value = '骚扰/引战'; reportReasonText.value = '';
-          if(cb) cb(); else showReportDialog.value = false;
-          return true;
-        }
+        discard: (cb) => { reportReason.value = '骚扰/引战'; reportReasonText.value = ''; if(cb) cb(); else showReportDialog.value = false; }
       },
       suggestionDialog: {
         dirty: () => !!suggestionText.value.trim() || suggestionType.value !== '功能建议',
         body: '反馈内容还没提交，离开后内容不会保存。',
-        discard: (cb) => { suggestionType.value = '功能建议'; suggestionText.value = ''; if(cb) cb(); else showSuggestionDialog.value = false; },
-        saveAndLeave: async (cb) => {
-          closeUnsavedConfirm();
-          const ok = await submitSuggestion();
-          if(!ok) return false;
-          suggestionType.value = '功能建议'; suggestionText.value = '';
-          if(cb) cb(); else showSuggestionDialog.value = false;
-          return true;
-        }
+        discard: (cb) => { suggestionType.value = '功能建议'; suggestionText.value = ''; if(cb) cb(); else showSuggestionDialog.value = false; }
       },
       claim: {
         dirty: () => !!(claimName.value.trim() || claimPhone.value.trim()),
         body: '认领信息还没提交，离开后需要重新填写。',
-        discard: (cb) => { claimName.value = ''; claimPhone.value = ''; if(cb) cb(); else backToLogin(); },
-        // 认领成功即已进入 App（submitClaim 内已收尾），不再执行原离开动作
-        saveAndLeave: async () => {
-          closeUnsavedConfirm();
-          return await submitClaim();
-        }
+        discard: (cb) => { claimName.value = ''; claimPhone.value = ''; if(cb) cb(); else backToLogin(); }
       },
       redeemPanel: {
         dirty: () => !!redeemItem.value && (!!redeemCondition.value.trim() || !!wishQuery.value.trim() || !!redeemTarget.value),
         body: '兑换信息还没提交，离开后需要重新填写。',
-        discard: (cb) => { if(cb) cb(); else closeRedeemPanel(); },
-        saveAndLeave: async (cb) => {
-          closeUnsavedConfirm();
-          const ok = await submitRedeem();
-          if(!ok) return false;
-          if(cb) cb(); else closeRedeemPanel();
-          return true;
-        }
+        discard: (cb) => { if(cb) cb(); else closeRedeemPanel(); }
       },
       filter: {
         dirty: () => showFilter.value && filterBaselineKey !== null && JSON.stringify(filter.value) !== filterBaselineKey,
@@ -3907,7 +3813,7 @@ createApp({
         dirty: () => gaRunPopupShow.value && gaRunKey() !== gaRunBaselineKey,
         body: '每组人数已修改，离开后本次修改不会保留。',
         discard: (cb) => { restoreGaRunBaseline(); if(cb) cb(); else gaRunPopupShow.value = false; }
-        // 执行会启动后端任务，不提供「保存并返回」；要执行的走弹层里的「确认执行」
+        // 执行会启动后端任务，弹窗不代执行；要执行的走弹层里的「确认执行」
       },
       gaOtoRun: {
         dirty: () => gaOtoRunShow.value && String(gaOtoRunFemaleChats.value || '').trim() !== '',
@@ -3947,34 +3853,12 @@ createApp({
       pendingGuard.value = null;
     }
     function discardLeaveConfirm(){
-      if(leaveConfirmBusy.value) return;
       const g = pendingGuard.value;
       const cb = pendingLeaveCb;
       pendingLeaveCb = null;
       pendingGuard.value = null;
       showUnsavedConfirm.value = false;
       if(g){ g.discard(cb); }
-    }
-    async function saveAndLeaveConfirm(){
-      const g = pendingGuard.value;
-      if(!g || !g.saveAndLeave || leaveConfirmBusy.value) return;
-      const cb = pendingLeaveCb;
-      pendingLeaveCb = null;
-      if(g === leaveGuards.profile_edit){
-        // 资料编辑沿用既有行为：立即关弹窗 + 全屏「保存中」；失败留在本页 toast、不清 dirty
-        showUnsavedConfirm.value = false;
-        await g.saveAndLeave(cb);
-        return;
-      }
-      // 其余守卫：弹窗保持显示、三钮禁用防重入；成功由守卫自行 closeUnsavedConfirm 收尾，失败关弹窗停留（dirty 保留）
-      leaveConfirmBusy.value = true;
-      let ok = false;
-      try {
-        ok = await g.saveAndLeave(cb);
-      } finally {
-        leaveConfirmBusy.value = false;
-        if(ok !== true) showUnsavedConfirm.value = false;
-      }
     }
     const showSelectPopup = ref(false);
     const showMultiPopup = ref(false);
@@ -4958,7 +4842,7 @@ createApp({
       const n = cards.value.length;
       const seq = cardsStart.value + cardIndex.value;  // 当前全序位置
       const canMove = dir < 0 ? (cardIndex.value < n - 1 || seq < total - 1) : (cardIndex.value > 0 || seq > 0);
-      // 未发送留言草稿：切卡前拦截（放弃修改=清空草稿；保存并返回=发送后继续切卡）
+      // 未发送留言草稿：切卡前拦截（放弃=清空草稿后继续切卡；发送只走留言面板自身的发送钮）
       if (canMove && guardOverlay('cardsMsg', () => switchCard(dir))) return;
       if (dir < 0) {
         // 下一张
@@ -5511,7 +5395,7 @@ createApp({
       likeDialogTitle.value = '送给「' + u.nickname + '」一颗爱心';
       showLikeDialog.value = true;
     }
-    // 校验+实名二次确认+发送：确认与「保存并返回」共用，返回 true=已发出
+    // 校验+实名二次确认+发送：只由弹窗确认钮调用，返回 true=已发出
     async function trySubmitLike(){
       const msg = likeMessage.value.trim();
       if (!msg) {
@@ -5773,7 +5657,7 @@ createApp({
       if (guardOverlay('suggestionDialog', () => { showSuggestionDialog.value = false; })) return false;
       return true;
     }
-    // 提交意见反馈：确认与「保存并返回」共用，返回 true=已提交
+    // 提交意见反馈：只由弹窗确认钮调用，返回 true=已提交
     async function submitSuggestion() {
       if (suggestionSubmitting.value) return false;
       if (!suggestionText.value.trim()) {
@@ -6118,8 +6002,7 @@ createApp({
       else if (from === 'my_activities') { openMyActivities(); }
       else openMyGroups();
     }
-    async function submitChoices(opts) {
-      const viaGuard = !!(opts && opts.viaGuard);
+    async function submitChoices() {
       const activityId = currentActivityId.value;
       if (!activityId) { vant.showToast('活动信息丢失'); return false; }
       if (actionLoading.value) return false;
@@ -6130,11 +6013,9 @@ createApp({
           method: 'POST', body: JSON.stringify({ choices: selectedChoices.value.map(c => c.openid) })
         });
         gsMarkClean();   // 提交成功先标净再跳转（避免自动返回被离开拦截误拦）
-        // 注：守卫路径还有 group_select.saveAndLeave 内的 gsMarkClean 兜底，删掉本行自动化抓不到
-        //（突变 M4「提交成功不 gsMarkClean」盲区）——该场景需靠手测覆盖。
+        // 注：删掉本行自动化抓不到（突变 M4「提交成功不 gsMarkClean」盲区）——该场景需靠手测覆盖。
         vant.showToast('志愿提交成功');
         myGroupsLoaded.value = false;
-        if (viaGuard) return true;   // 守卫路径：返回动作交给注册表的回调执行
         await leaveGroupSelectByFrom();   // 按原路返回并刷新（既有逻辑）
         return true;
       } catch(e) {
@@ -6227,7 +6108,7 @@ createApp({
       if(gaRunShow.value){ isHandlingPopState=false; pushHistory({page:'group_detail'}); return; }
       // 通用未保存弹窗：返回只关弹窗、停留（不触发离开拦截）
       if(showUnsavedConfirm.value){
-        if(!leaveConfirmBusy.value) cancelLeaveConfirm();
+        cancelLeaveConfirm();
         isHandlingPopState=false;
         return;
       }
@@ -7714,7 +7595,7 @@ createApp({
       profileData, openProfileDetail, loadingProfileDetail,
       editableFields, showSelectPopup, showMultiPopup, pickerField, savingProfile,
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
-      showUnsavedConfirm, unsavedConfirmBody, unsavedConfirmCanSave, leaveConfirmBusy, saveAndLeaveConfirm, discardLeaveConfirm, cancelLeaveConfirm,
+      showUnsavedConfirm, unsavedConfirmBody, discardLeaveConfirm, cancelLeaveConfirm,
       photoInput, uploadingPhoto, uploadProgress, uploadStage, faceChecking, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
       candidates, selectedChoices, candidateQuery, visibleCandidates, loadingCandidates, candidatesError, groupResult, groupResultLoading, myGender,
       groupSelectFrom, groupResultFrom,

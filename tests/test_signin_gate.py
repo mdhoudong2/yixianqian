@@ -265,6 +265,44 @@ def test_onetoone_pool_fail_closed_on_search_failure(configured):
     assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
 
 
+def test_onetoone_preview_pool_filtered_when_signin_on(configured):
+    """预览与 execute 同口径：签到开启时人数/场次预估只按「已到」算。"""
+    activity = _act_oto()
+    signups = [
+        _signup_att("ou_m0", "按时"), _signup_att("ou_m1", "未到"),
+        _signup_att("ou_f0", "迟到"), _signup_att("ou_f1", "迟到"),
+    ]
+    selections = [_sel_oto("ou_m0", "男性", ("ou_f0",)),
+                  _sel_oto("ou_m1", "男性", ("ou_f0",)),
+                  _sel_oto("ou_f0", "女性", ("ou_m0",)),
+                  _sel_oto("ou_f1", "女性", ("ou_m0",))]
+    fake = FakeBitable(_oto_tables(activity, signups, selections))
+
+    res = lib_onetoone.preview(ACT, 1, client=fake, activity=activity,
+                               find_user_by_openid=_find_user, female_chats=1)
+    assert res["can_execute"] is True, res["blockers"]
+    assert res["participant_count"] == 3, "只留已到的 1 男 2 女"
+    assert res["male_count"] == 1
+    assert res["female_count"] == 2
+    assert res["total_pairs_expected"] == 2 * 2 * 1
+
+
+def test_onetoone_preview_signin_read_failure_blocks(configured):
+    """签到名单读失败 → 预览 fail-closed；管理员按预览执行会被 SIGNIN_QUERY_FAILED 拦截。"""
+    activity = _act_oto()
+    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
+    selections = [_sel_oto("ou_m0", "男性", ("ou_f0",)),
+                  _sel_oto("ou_f0", "女性", ("ou_m0",))]
+    fake = FakeBitable(_oto_tables(activity, signups, selections),
+                       search_fails={SIGNUP_TABLE_ID})
+
+    res = lib_onetoone.preview(ACT, 1, client=fake, activity=activity,
+                               find_user_by_openid=_find_user, female_chats=1)
+    assert res["can_execute"] is False
+    # build_participants 读失败吞成空表，会同时有「没有已报名…」blocker；只断言签到这条。
+    assert any("签到名单读取失败" in b for b in res["blockers"])
+
+
 # ---------------------------------------------------------------- H5 API 脚手架
 
 @pytest.fixture

@@ -604,6 +604,18 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid, fem
     participants = [{"id": s["open_id"],
                      "gender": "male" if s["gender"] == "男性" else "female"}
                     for s in signups if s["gender"] in ("男性", "女性")]
+
+    # 与 execute 同一把「现场签到执行池」闸刀：签到开启时预览人数/场次也必须按
+    # 「已到」算，否则管理员按预览的男生数选 K，执行时会被 FEMALE_CHATS_INVALID 拦下。
+    signin_blocker = None
+    if lib_grouping.signin_enabled(af):
+        attendance = lib_grouping.attendance_map(rec_activity_id, client=client)
+        if attendance is None:
+            signin_blocker = "签到名单读取失败，执行会被拦截（SIGNIN_QUERY_FAILED），请稍后重试"
+        else:
+            participants = [p for p in participants
+                            if lib_grouping.is_checked_in(attendance.get(p["id"]))]
+
     male_count = sum(1 for p in participants if p["gender"] == "male")
     female_count = sum(1 for p in participants if p["gender"] == "female")
 
@@ -615,6 +627,8 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid, fem
     this_round = [r for r in existing if round_of(r.get("fields", {})) == round_no]
 
     blockers = []
+    if signin_blocker:
+        blockers.append(signin_blocker)
     if not participants:
         blockers.append("没有已报名且性别有效的参与者")
     if this_round:

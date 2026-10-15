@@ -550,9 +550,12 @@
   /* 现场签到筛选两级：一级（性别）沿用粉实底略强；二级（状态）描边略弱 */
   .ga-roster-tab.ga-signin-sub { font-weight: 500; }
   .ga-roster-tab.ga-signin-sub.active { background: #fff0f3; color: #ff6b81; box-shadow: inset 0 0 0 1px #ff6b81; }
-  /* 行内签到钮：44px 命中区（视觉保持 small；padding-box 30px + 上下各 7px = 44px），失败/加载态由 busy map 控制 */
+  /* 行内签到钮=按状态着色（未签到红底白字 / 已签到绿底白字，颜色表达当前状态，点击语义见确认弹窗）；
+     44px 命中区（视觉保持 small；padding-box 30px + 上下各 7px = 44px），失败/加载态由 busy map 控制 */
   .ga-signin-btn { position: relative; }
   .ga-signin-btn::after { content: ''; position: absolute; inset: -7px -6px; }
+  .ga-signin-btn.ga-signin-btn-out { background: #ee0a24; border-color: #ee0a24; color: #fff; }
+  .ga-signin-btn.ga-signin-btn-in { background: #0a8548; border-color: #0a8548; color: #fff; }
   .ga-avatar { width: 40px; height: 40px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
   .ga-group-card { background: #f7f8fa; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
   .ga-group-members { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -691,6 +694,8 @@
   .van-theme-dark .ga-roster-tab { background: #2c2c30; color: #c8c9cc; }
   .van-theme-dark .ga-roster-tab.active { background: #ff6b81; color: #fff; }
   .van-theme-dark .ga-roster-tab.ga-signin-sub.active { background: rgba(255,107,129,0.14); color: #ff8e9b; box-shadow: inset 0 0 0 1px #ff8e9b; }
+  .van-theme-dark .ga-signin-btn.ga-signin-btn-out { background: #d63a4a; border-color: #d63a4a; }
+  .van-theme-dark .ga-signin-btn.ga-signin-btn-in { background: #0e9151; border-color: #0e9151; }
   .van-theme-dark .ga-avatar { background: rgba(255,107,129,0.14); }
   .van-theme-dark .ga-group-card { background: #2c2c30; }
   .van-theme-dark .ga-member-chip { background: #222226; color: #f5f5f5; }
@@ -1700,14 +1705,6 @@
   <div class="ga-title-name">{{ gaCheckinName || '活动' }}<span class="ga-row-id">{{ gaDetailId }}</span></div>
 
   <div class="ga-card" style="margin-top:12px;">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-      <div class="ga-card-title" style="margin:0;">现场签到</div>
-      <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" :disabled="gaSigninBatchBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
-    </div>
-    <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
-    <van-button size="small" plain type="primary" color="#ff6b81" style="margin-top:10px;" :loading="gaSigninLoading" @click="loadSigninRoster(true)">重新载入名册</van-button>
-  </div>
-  <div class="ga-card">
     <div v-if="gaSigninLoading" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
     <div v-else-if="gaSigninError" class="ga-empty">
       <van-empty image="error" description="签到名册没载出来，检查一下网络"></van-empty>
@@ -1715,13 +1712,14 @@
     </div>
     <template v-else>
       <div class="ga-roster-tabs">
-        <div class="ga-roster-tab" :class="{active: gaSigninGender==='all'}" @click="gaSigninGender='all'">全部</div>
-        <div class="ga-roster-tab" :class="{active: gaSigninGender==='male'}" @click="gaSigninGender='male'">男生</div>
-        <div class="ga-roster-tab" :class="{active: gaSigninGender==='female'}" @click="gaSigninGender='female'">女生</div>
+        <div class="ga-roster-tab" :class="{active: gaSigninGender==='all'}" @click="gaSigninGender='all'">全部 {{ gaSigninGenderCounts.all }}</div>
+        <div class="ga-roster-tab" :class="{active: gaSigninGender==='male'}" @click="gaSigninGender='male'">男生 {{ gaSigninGenderCounts.male }}</div>
+        <div class="ga-roster-tab" :class="{active: gaSigninGender==='female'}" @click="gaSigninGender='female'">女生 {{ gaSigninGenderCounts.female }}</div>
       </div>
       <div class="ga-roster-tabs" style="margin-top:-2px;">
-        <div class="ga-roster-tab ga-signin-sub" :class="{active: gaSigninStatus==='pending'}" @click="gaSigninStatus='pending'">未签到</div>
-        <div class="ga-roster-tab ga-signin-sub" :class="{active: gaSigninStatus==='in'}" @click="gaSigninStatus='in'">已签到</div>
+        <div class="ga-roster-tab ga-signin-sub" :class="{active: gaSigninStatus==='all'}" @click="gaSigninStatus='all'">全部 {{ gaSigninStatusCounts.all }}</div>
+        <div class="ga-roster-tab ga-signin-sub" :class="{active: gaSigninStatus==='pending'}" @click="gaSigninStatus='pending'">未签到 {{ gaSigninStatusCounts.pending }}</div>
+        <div class="ga-roster-tab ga-signin-sub" :class="{active: gaSigninStatus==='in'}" @click="gaSigninStatus='in'">已签到 {{ gaSigninStatusCounts.checked }}</div>
       </div>
       <div v-if="gaSigninList.length" class="candidate-search-box">
         <input v-model="gaSigninQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
@@ -1736,7 +1734,7 @@
             <div class="ga-row-sub">{{ r.user_id || '-' }}{{ r.real_name ? ' · ' + r.nickname : '' }}</div>
           </div>
           <div class="ga-signin-actions">
-            <van-button size="small" class="ga-signin-btn" :plain="r.checked_in" :color="r.checked_in ? '#969799' : '#0a8548'" :loading="!!gaSigninBusy[r.open_id]" :disabled="!!gaSigninBusy[r.open_id] || gaSigninBatchBusy" @click="toggleSignin(r)">{{ r.checked_in ? '取消签到' : '签到' }}</van-button>
+            <van-button size="small" class="ga-signin-btn" :class="r.checked_in ? 'ga-signin-btn-in' : 'ga-signin-btn-out'" :loading="!!gaSigninBusy[r.open_id]" :disabled="!!gaSigninBusy[r.open_id] || gaSigninBatchBusy" @click="toggleSignin(r)">{{ r.checked_in ? '已签到' : '未签到' }}</van-button>
           </div>
         </div>
         <div v-if="gaSigninFiltered.length>gaSigninShown" class="ga-more">
@@ -1744,6 +1742,14 @@
         </div>
       </div>
     </template>
+  </div>
+  <div class="ga-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <div class="ga-card-title" style="margin:0;">现场签到</div>
+      <van-switch :model-value="gaSigninFlagOn" :loading="gaSigninFlagBusy" :disabled="gaSigninBatchBusy" size="22px" @update:model-value="onToggleSigninFlag"></van-switch>
+    </div>
+    <div class="ga-row-sub" style="margin-top:4px;">开启后仅「已到」者可填志愿、参与分组/一对一；关闭立即恢复现状，不影响任何数据。</div>
+    <van-button size="small" plain type="primary" color="#ff6b81" style="margin-top:10px;" :loading="gaSigninLoading" @click="loadSigninRoster(true)">重新载入名册</van-button>
   </div>
   <div class="ga-card">
     <van-button plain type="danger" color="#ee0a24" block style="min-height:44px;" :loading="gaSigninBatchBusy" @click="openClearAllSignins()">全部清除签到状态</van-button>
@@ -7065,7 +7071,7 @@ createApp({
     function openCheckinPage(a) {
       gaDetailId.value = a.activity_id; gaCheckinName.value = a.name || '';
       gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false;
-      gaSigninQuery.value = ''; gaSigninGender.value = 'all'; gaSigninStatus.value = 'pending'; gaSigninShown.value = 30; gaSigninFlagOn.value = false;
+      gaSigninQuery.value = ''; gaSigninGender.value = 'all'; gaSigninStatus.value = 'all'; gaSigninShown.value = 30; gaSigninFlagOn.value = false;
       page.value = 'checkin';
     }
     async function refreshGroupDetail() {
@@ -7582,7 +7588,7 @@ createApp({
     const gaSigninFlagOn = ref(false), gaSigninFlagBusy = ref(false);
     const gaSigninList = ref([]), gaSigninLoading = ref(false), gaSigninError = ref(false), gaSigninLoaded = ref(false);
     const gaSigninQuery = ref(''), gaSigninShown = ref(30);
-    const gaSigninGender = ref('all'), gaSigninStatus = ref('pending');   // 两级筛选：性别（默认全部）× 状态（默认未签到）
+    const gaSigninGender = ref('all'), gaSigninStatus = ref('all');   // 两级筛选：性别（默认全部）× 状态（默认全部）——进页一览全貌，筛选只是收敛
     const gaSigninBusy = ref({}), gaSigninBatchBusy = ref(false);
     const gaClearConfirmShow = ref(false), gaClearConfirmInput = ref('');
     const gaSigninMarkedCount = computed(() => gaSigninList.value.filter(r => !!r.state).length);
@@ -7603,6 +7609,31 @@ createApp({
       });
     });
     const gaSigninVisible = computed(() => gaSigninFiltered.value.slice(0, gaSigninShown.value));
+    // 筛选 chips 计数：口径＝名册套用「对侧」当前筛选（性别列看状态筛选、状态列看性别筛选），不受搜索词影响
+    const gaSigninGenderCounts = computed(() => {
+      const status = gaSigninStatus.value;
+      const c = { all: 0, male: 0, female: 0 };
+      for (const r of gaSigninList.value) {
+        if (status === 'pending' && r.checked_in) continue;
+        if (status === 'in' && !r.checked_in) continue;
+        c.all++;
+        if (r.gender === '男性') c.male++;
+        else if (r.gender === '女性') c.female++;
+      }
+      return c;
+    });
+    const gaSigninStatusCounts = computed(() => {
+      const gender = gaSigninGender.value;
+      const c = { all: 0, pending: 0, checked: 0 };
+      for (const r of gaSigninList.value) {
+        if (gender === 'male' && r.gender !== '男性') continue;
+        if (gender === 'female' && r.gender !== '女性') continue;
+        c.all++;
+        if (r.checked_in) c.checked++;
+        else c.pending++;
+      }
+      return c;
+    });
 
     async function loadSigninRoster(force) {
       if (gaSigninLoading.value || !gaDetailId.value) return;
@@ -7787,6 +7818,7 @@ createApp({
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaDetailMode, gaModeText, gaModeSwitching, switchMode, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
       gaCheckinName, gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninLoading, gaSigninError, gaSigninLoaded,
       gaSigninQuery, gaSigninGender, gaSigninStatus, gaSigninShown, gaSigninBusy, gaSigninBatchBusy, gaSigninFiltered, gaSigninVisible,
+      gaSigninGenderCounts, gaSigninStatusCounts,
       gaSigninMarkedCount, loadSigninRoster, markSignin, toggleSignin, onToggleSigninFlag,
       gaClearConfirmShow, gaClearConfirmInput, gaClearConfirmOk, openClearAllSignins, cancelClearAllSignins, doClearAllSignins,
       gaStatusDisplay, refreshGroupDetail,

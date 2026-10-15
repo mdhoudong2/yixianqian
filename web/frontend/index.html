@@ -211,22 +211,20 @@
   .choice-rank { color: #ff6b81; font-size: 13px; font-weight: 600; flex-shrink: 0; }
   .choice-name { flex: 1; color: #323233; font-size: 14px; }
   .choice-badge-check { border-radius: 12px; width: auto; min-width: 24px; padding: 0 7px; }
-  /* 志愿选择重设计：已选 chips + 底部固定操作栏 */
-  .gs-page { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
+  /* 志愿选择重设计：底部计数 + 双按钮操作栏（调整次序 / 提交志愿） */
+  .gs-page { padding-bottom: calc(130px + env(safe-area-inset-bottom)); }
   .gs-notice { display: flex; align-items: flex-start; gap: 8px; background: #fff7e6; color: #ed6a0c; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; margin-bottom: 10px; }
   .gs-notice .van-icon { flex-shrink: 0; margin-top: 2px; cursor: pointer; font-size: 16px; }
   .gs-search-sticky { position: sticky; top: 54px; z-index: 9; }
   .gs-fixed-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: #fff; border-top: 1px solid #f2f3f5; }
-  .gs-chips-bar { display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 8px 12px 0; }
-  .gs-chip { display: inline-flex; align-items: center; flex-shrink: 0; background: #fff0f3; border-radius: 16px; padding-left: 10px; font-size: 13px; color: #323233; }
-  .gs-chip-seq { color: #ff6b81; font-weight: 600; margin-right: 4px; }
-  /* × 命中区 44×44（透明 padding）：负外边距保持 chips 紧凑外观 */
-  .gs-chip-x { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; color: #c8c9cc; font-size: 16px; cursor: pointer; margin: -8px -6px -8px 0; }
-  .gs-bottom-bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
-  .gs-bottom-left { flex: 1; min-width: 0; }
-  .gs-count-text { font-size: 13px; color: #646566; }
-  .gs-reorder-link { font-size: 13px; color: #ff6b81; cursor: pointer; margin-top: 2px; }
-  .gs-submit-btn { flex-shrink: 0; min-width: 132px; }
+  .gs-bottom-bar { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
+  .gs-count-text { font-size: 13px; color: #969799; }
+  .gs-bottom-actions { display: flex; gap: 10px; }
+  .gs-action-btn { flex: 1 1 0; min-width: 0; height: 44px; }
+  /* 选人飞入：克隆头像 fixed 飞行（落点=调整次序按钮），落定后按钮轻脉冲 */
+  .gs-fly-avatar { position: fixed; z-index: 60; pointer-events: none; transition: transform 0.35s ease-out, opacity 0.35s ease-out; will-change: transform, opacity; }
+  .gs-pulse { animation: gs-pulse 0.2s ease; }
+  @keyframes gs-pulse { 0% { transform: scale(1); } 50% { transform: scale(1.08); } 100% { transform: scale(1); } }
   /* 调整次序托盘 */
   .gs-tray-body { display: flex; flex-direction: column; max-height: 60vh; }
   .gs-tray-head { padding: 16px 16px 8px; text-align: center; flex-shrink: 0; }
@@ -235,6 +233,8 @@
   .gs-tray-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 16px; }
   .gs-tray-row { height: 56px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #f2f3f5; }
   .gs-tray-row:last-child { border-bottom: none; }
+  .gs-tray-avatar { width: 36px; height: 36px; font-size: 16px; }
+  .gs-row-move { transition: transform 0.2s ease; }
   .gs-tray-name { flex: 1; font-size: 15px; color: #323233; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gs-tray-btn { width: 40px; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #646566; cursor: pointer; user-select: none; -webkit-user-select: none; }
   .gs-tray-btn.disabled { color: #dcdee0; pointer-events: none; }
@@ -638,8 +638,6 @@
   .van-theme-dark .msg-input::placeholder, .van-theme-dark .candidate-search-input::placeholder { color: #a0a0a4; }
   .van-theme-dark .gs-fixed-bottom { background: #222226; border-color: #3a3a3e; }
   .van-theme-dark .gs-search-sticky { background: #1a1a1c; }
-  .van-theme-dark .gs-chip { background: #3a2a2e; color: #f5f5f5; }
-  .van-theme-dark .gs-chip-x { color: #a0a0a4; }
   .van-theme-dark .gs-count-text { color: #c8c9cc; }
   .van-theme-dark .gs-notice { background: #2b2413; color: #e8c97a; }
   .van-theme-dark .gs-notice .van-icon { color: #e8c97a; }
@@ -716,6 +714,8 @@
     .tab-slide-right-enter-active, .tab-slide-right-leave-active,
     .page-slide-enter-active, .page-slide-leave-active,
     .page-slide-back-enter-active, .page-slide-back-leave-active { transition: none !important; }
+    .gs-row-move, .gs-fly-avatar { transition: none !important; }
+    .gs-pulse { animation: none !important; }
   }
 </style>
 </head>
@@ -2261,7 +2261,7 @@
         :class="{selected: isSelected(c.openid)}"
         @touchstart="gsRowTouchStart"
         @touchend="gsRowTouchEnd($event, c)"
-        @click="gsRowClick(c)">
+        @click="gsRowClick($event, c)">
         <div class="signup-sheet-avatar" style="margin-right:12px;">
           <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
           <template v-else>{{ c.user_id || '👤' }}</template>
@@ -2275,19 +2275,14 @@
       </div>
     </template>
   </div>
-  <!-- 已选 chips 横滑条 + 底部固定操作栏 -->
+  <!-- 底部固定操作栏：计数行 + 「调整次序 / 提交志愿」双按钮 -->
   <div class="gs-fixed-bottom">
-    <div v-if="selectedChoices.length" class="gs-chips-bar">
-      <span v-for="(c, i) in selectedChoices" :key="c.openid" class="gs-chip">
-        <span class="gs-chip-seq">{{ i+1 }}</span>{{ gsDisplayName(c) }}<span class="gs-chip-x" @click="removeChoiceToast(i)">×</span>
-      </span>
-    </div>
     <div class="gs-bottom-bar">
-      <div class="gs-bottom-left">
-        <div class="gs-count-text">{{ gsCountText }}</div>
-        <div v-if="selectedChoices.length>=2" class="gs-reorder-link" @click="showGsTray=true">调整次序</div>
+      <div class="gs-count-text">{{ gsCountText }}</div>
+      <div class="gs-bottom-actions">
+        <van-button ref="gsReorderBtnEl" class="gs-action-btn" plain type="primary" color="#ff6b81" :disabled="!selectedChoices.length" @click="showGsTray=true"><van-icon name="arrow-up"></van-icon> 调整次序</van-button>
+        <van-button class="gs-action-btn" type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
       </div>
-      <van-button class="gs-submit-btn" type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
     </div>
   </div>
   <!-- 调整次序托盘 -->
@@ -2297,15 +2292,19 @@
         <div class="gs-tray-title">已选志愿（{{ selectedChoices.length }}/7）</div>
         <div class="gs-tray-desc">从上到下 = 志愿顺序</div>
       </div>
-      <div class="gs-tray-list">
+      <transition-group name="gs-row" tag="div" class="gs-tray-list">
         <div v-for="(c, i) in selectedChoices" :key="c.openid" class="gs-tray-row">
           <span class="choice-badge">{{ i+1 }}</span>
+          <div class="signup-sheet-avatar gs-tray-avatar">
+            <img v-if="c.photo" :src="c.photo" alt="" @error="retryImg($event, 2, ()=>{c.photo=''})" loading="lazy" decoding="async">
+            <template v-else>{{ c.user_id || '👤' }}</template>
+          </div>
           <span class="gs-tray-name">{{ gsDisplayName(c) }}</span>
           <span class="gs-tray-btn" :class="{disabled: i===0}" @click="moveChoice(i, -1)">↑</span>
           <span class="gs-tray-btn" :class="{disabled: i===selectedChoices.length-1}" @click="moveChoice(i, 1)">↓</span>
           <span class="gs-tray-x" @click="removeChoiceToast(i)">×</span>
         </div>
-      </div>
+      </transition-group>
       <div class="gs-tray-actions">
         <van-button block plain type="primary" color="#ff6b81" @click="showGsTray=false">继续挑选</van-button>
         <van-button block type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
@@ -4063,8 +4062,9 @@ createApp({
     const myGender = computed(() => user.value?.gender || '');
     const groupSelectFrom = ref('my_groups');   // 进入分组选择前的页面，用于返回
     const groupResultFrom = ref('my_groups');   // 进入分组结果前的页面，用于返回
-    // 志愿选择重设计：底部操作栏 / 已选 chips / 调整次序托盘 / 未保存离开拦截
+    // 志愿选择重设计：底部操作栏（调整次序/提交志愿）/ 调整次序托盘 / 未保存离开拦截
     const showGsTray = ref(false);
+    const gsReorderBtnEl = ref(null);     // 「调整次序」按钮（选人飞入落点 / 落定后脉冲）
     const gsSigninBlocked = ref(false);   // 签到被拦（403/503）：整页阻断卡
     const gsPrefillNotice = ref(false);   // 预填提示条（可关）
     const gsUnlistedCount = ref(0);       // 历史志愿中不在当前候选池的人数（P9）
@@ -5950,12 +5950,13 @@ createApp({
     function isGroupSelectDirty() { return page.value === 'group_select' && gsChoiceKey() !== gsBaseline; }
     function gsMarkClean() { gsBaseline = gsChoiceKey(); }
     function dismissGsNotice() { gsPrefillNotice.value = false; }
-    function toggleChoice(c) {
+    function toggleChoice(c, ev) {
       const idx = selectedChoices.value.findIndex(x => x.openid === c.openid);
       if (idx >= 0) { removeChoiceToast(idx); return; }
       if (selectedChoices.value.length >= 7) { vant.showToast('最多 7 个志愿，先移除一个才能再选'); return; }
       selectedChoices.value.push(c);
       gsTouchedOids.add(c.openid);
+      gsFlyChoiceAvatar(gsRowAvatarEl(ev));   // 新增成功：行头像飞入「调整次序」按钮
     }
     function removeChoiceToast(i) {
       const c = selectedChoices.value[i];
@@ -5981,11 +5982,72 @@ createApp({
       const moved = (gsTouchStartY !== null && t) ? Math.abs(t.clientY - gsTouchStartY) : 0;
       gsTouchStartY = null;
       gsSuppressClickUntil = Date.now() + 600;  // 抑制随后的合成 click，防双触发
-      if (moved <= 10 && t) toggleChoice(c);
+      if (moved <= 10 && t) toggleChoice(c, e);
     }
-    function gsRowClick(c) {
+    function gsRowClick(e, c) {
       if (Date.now() < gsSuppressClickUntil) return;  // 触摸路径已处理
-      toggleChoice(c);
+      toggleChoice(c, e);
+    }
+    // 选人飞入动画：克隆行头像一个（fixed 定位），rAF 后经 350ms ease-out 缩小淡出飞向
+    // 「调整次序」按钮，落定后按钮轻脉冲（scale 1→1.08→1，200ms）。快速连点时每次调用
+    // 独立（各自克隆、各自定时清理）；克隆清理走 try/finally，异常也不残留。
+    // prefers-reduced-motion: reduce 时整体跳过（不克隆、不脉冲）。
+    function gsRowAvatarEl(ev) {
+      const row = ev && ev.currentTarget;
+      return (row && row.querySelector) ? row.querySelector('.signup-sheet-avatar') : null;
+    }
+    function gsReorderBtnDom() {
+      const r = gsReorderBtnEl.value;
+      if (!r) return null;
+      return r.$el || (r.nodeType === 1 ? r : null);
+    }
+    function gsReducedMotion() {
+      try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+      catch(e) { return false; }
+    }
+    function gsPulseReorderBtn() {
+      if (gsReducedMotion()) return;
+      const el = gsReorderBtnDom();
+      if (!el || !el.classList) return;
+      el.classList.remove('gs-pulse');
+      void el.offsetWidth;   // 强制重排：连点时脉冲可重复播放
+      el.classList.add('gs-pulse');
+      const stop = () => { el.classList.remove('gs-pulse'); el.removeEventListener('animationend', stop); };
+      el.addEventListener('animationend', stop);
+      setTimeout(stop, 500);   // 兜底：animationend 丢失也可清掉类名
+    }
+    function gsFlyChoiceAvatar(sourceEl) {
+      if (gsReducedMotion()) return;
+      if (!sourceEl || typeof sourceEl.getBoundingClientRect !== 'function') return;
+      let clone = null;
+      const removeClone = () => { if (clone) { if (clone.parentNode) clone.parentNode.removeChild(clone); clone = null; } };
+      try {
+        const targetEl = gsReorderBtnDom();
+        if (!targetEl) return;
+        const src = sourceEl.getBoundingClientRect();
+        const dst = targetEl.getBoundingClientRect();
+        if (!src.width || !src.height || !dst.width || !dst.height) return;
+        clone = sourceEl.cloneNode(true);
+        clone.classList.add('gs-fly-avatar');
+        clone.style.left = src.left + 'px';
+        clone.style.top = src.top + 'px';
+        clone.style.width = src.width + 'px';
+        clone.style.height = src.height + 'px';
+        document.body.appendChild(clone);
+        const dx = (dst.left + dst.width / 2) - (src.left + src.width / 2);
+        const dy = (dst.top + dst.height / 2) - (src.top + src.height / 2);
+        const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (cb) => setTimeout(cb, 16);
+        raf(() => raf(() => {
+          if (!clone) return;
+          clone.style.transform = 'translate(' + dx + 'px, ' + dy + 'px) scale(0.45)';
+          clone.style.opacity = '0.2';
+        }));
+        setTimeout(() => {
+          try { gsPulseReorderBtn(); } finally { removeClone(); }   // 350ms 过渡 + 余量后清理
+        }, 380);
+      } catch(e) {
+        removeClone();   // 任何异常都不得遗留克隆
+      }
     }
     function gsSubmitErrorMessage(e) {
       // 可读原因，不拼后端原文
@@ -7599,7 +7661,7 @@ createApp({
       photoInput, uploadingPhoto, uploadProgress, uploadStage, faceChecking, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
       candidates, selectedChoices, candidateQuery, visibleCandidates, loadingCandidates, candidatesError, groupResult, groupResultLoading, myGender,
       groupSelectFrom, groupResultFrom,
-      showGsTray, gsSigninBlocked, gsPrefillNotice, gsUnlistedCount, gsCountText, gsDisplayName,
+      showGsTray, gsSigninBlocked, gsPrefillNotice, gsUnlistedCount, gsCountText, gsDisplayName, gsReorderBtnEl,
       goGroupSelect, reloadGroupCandidates, dismissGsNotice, isSelected, gsRowTouchStart, gsRowTouchEnd, gsRowClick,
       toggleChoice, removeChoiceToast, moveChoice, submitChoices, goGroupResult, switchGroupRound,
       onPhotoError, onPhotoLoad, retryImg, photoPositions, recalcPhotoPosition,

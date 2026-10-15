@@ -235,7 +235,7 @@ FIELD_OTO_USER_GENDER = "用户性别"
 FIELD_OTO_TARGET_OID = "必聊对象open_id"
 FIELD_OTO_TARGET_NAME = "必聊对象昵称"
 FIELD_OTO_ROUND = "轮次"  # 一对一结果轮次，单选(1..10)，支持同活动多轮生成（与分组同构）
-FIELD_ACT_ONETOONE_STATUS = "一对一状态"  # 单选：收集中/已截止/已完成（空=未开始）
+FIELD_ACT_ONETOONE_STATUS = "一对一状态"  # 单选：历史选项（收集中/已截止/已完成）；新流程只写「已完成」（空=未开始）
 FIELD_ACT_ONETOONE_FLAG = "一对一功能开启"  # 单选(是/否)：控制 H5 我的页「我的一对一」入口
 FIELD_ACT_SIGNIN_FLAG = "签到功能开启"  # 单选(是/否)：现场签到准入总闸（默认关，空=否）
 

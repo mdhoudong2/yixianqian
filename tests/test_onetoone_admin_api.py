@@ -215,7 +215,7 @@ ENDPOINTS = [
     ("GET", "/api/admin/onetoone/unsubmitted?activity_id=" + ACT, None),
     ("GET", "/api/admin/onetoone/result?activity_id=" + ACT, None),
     ("POST", "/api/admin/onetoone/preview", {"activity_id": ACT}),
-    ("POST", "/api/admin/onetoone/start", {"activity_id": ACT}),
+    ("POST", "/api/admin/onetoone/reset", {"activity_id": ACT}),
     ("POST", "/api/admin/onetoone/run", {"activity_id": ACT}),
     ("GET", "/api/admin/onetoone/job?job_id=x", None),
     ("POST", "/api/admin/onetoone/flag", {"activity_id": ACT, "enabled": True}),
@@ -248,7 +248,10 @@ def test_non_admin_is_403(api, method, path, payload):
 # ---------------------------------------------------------------- 互斥写入器
 
 def test_set_mode_writes_both_flags_in_one_put(api):
-    """L1 不变量：一次 PUT 同时写两个栏位（同一笔 update payload；飞书单条 update 本身不是整笔事务，互斥由活动锁串行化保证）。"""
+    """L1 不变量：一次 PUT 同时写两个栏位 + 签到默认（mode≠none 且签到为空时）。
+
+    飞书单条 update 本身不是整笔事务，互斥由活动锁串行化保证。
+    """
     fake = api.install(activity=_oto_act(oto_status="未开始", oto_flag="否"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "onetoone"})
     assert r.status_code == 200
@@ -256,7 +259,8 @@ def test_set_mode_writes_both_flags_in_one_put(api):
     assert body["mode"] == "onetoone" and body["changed"] is True
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1, "必须恰一笔 update"
-    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是"}
+    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是",
+                             "签到功能开启": "是"}
     assert api.refresh_calls == ["activities"]
 
     # 已经是目标态：幂等跳过（不再写、不再刷快照）
@@ -267,11 +271,11 @@ def test_set_mode_writes_both_flags_in_one_put(api):
 
 
 @pytest.mark.parametrize("mode,expect", [
-    ("group", {"分组功能开启": "是", "一对一功能开启": "否"}),
-    ("onetoone", {"分组功能开启": "否", "一对一功能开启": "是"}),
+    ("group", {"分组功能开启": "是", "一对一功能开启": "否", "签到功能开启": "是"}),
+    ("onetoone", {"分组功能开启": "否", "一对一功能开启": "是", "签到功能开启": "是"}),
 ], ids=["group", "onetoone"])
 def test_set_mode_dual_write_all_modes(api, mode, expect):
-    # 两种状态都已收尾（flag=否、已完成）：切换允许，且恒为一笔双栏位 PUT
+    # 两种状态都已收尾（flag=否、已完成）：切换允许，且恒为一笔双栏位 PUT（+签到默认）
     fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="否",
                                          group_status="已完成", group_flag="否"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": mode})
@@ -297,14 +301,25 @@ def test_set_mode_none_idempotent_when_nothing_open(api):
     assert [c for c in fake.writes() if c[0] == "update"] == []
 
 
-def test_mode_conflict_correction_blocked_when_closing_side_collecting(api):
-    """冲突纠偏的例外仅限「已收尾」侧：正在收集中/已截止的一侧仍必须拦。"""
+def test_mode_switch_not_blocked_by_legacy_status(api):
+    """移除志愿收集阶段后：状态不再是切换拦截项（历史遗留值 收集中/已截止 容忍），
+    唯一拦截 = 活跃 job。用户端 select 随时可改，不存在「通道还开着」的窗口。"""
     fake = api.install(activity=_oto_act(oto_status="收集中", oto_flag="是",
                                          group_status="已完成", group_flag="是"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
-    assert r.status_code == 409
-    assert "一对一" in r.get_json()["blocked_sides"]
-    assert fake.writes() == []
+    assert r.status_code == 200, r.get_json()
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1
+    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否",
+                             "签到功能开启": "是"}
+
+    # flag=否 + 分组状态=收集中（旧审计场景）：同样放行（状态不再参与拦截）
+    fake2 = api.install(activity=_oto_act(oto_flag="否", group_flag="否",
+                                          group_status="收集中"))
+    r2 = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "onetoone"})
+    assert r2.status_code == 200, r2.get_json()
+    updates2 = [c for c in fake2.writes() if c[0] == "update"]
+    assert len(updates2) == 1
 
 
 def test_set_mode_conflict_correction_single_put(api):
@@ -315,7 +330,8 @@ def test_set_mode_conflict_correction_single_put(api):
     assert r.status_code == 200
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
-    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
+    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否",
+                             "签到功能开启": "是"}
 
 
 def test_sequential_mode_switches_never_both_yes(api):
@@ -329,46 +345,28 @@ def test_sequential_mode_switches_never_both_yes(api):
     assert not (f["分组功能开启"] == "是" and f["一对一功能开启"] == "是")
     assert f["一对一功能开启"] == "是" and f["分组功能开启"] == "否"
     updates = [c for c in api.fake.writes() if c[0] == "update"]
-    assert updates and all(set(u[3]) == {"分组功能开启", "一对一功能开启"} for u in updates), \
+    assert updates and all({"分组功能开启", "一对一功能开启"} <= set(u[3])
+                           for u in updates), \
         "每一次切换都必须整笔写两个栏位"
-
-
-def test_activity_mode_blocked_when_closing_side_collecting(api):
-    fake = api.install(activity=_oto_act(oto_flag="否", group_flag="是", group_status="收集中"))
-    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "onetoone"})
-    assert r.status_code == 409
-    assert r.get_json()["code"] == "MODE_SWITCH_BLOCKED"
-    assert fake.writes() == [], "拒绝切换必须零写入"
-
-
-def test_activity_mode_blocked_when_flag_off_but_collecting(api):
-    """审计必修 1（漏洞复现）：flag=否 + 分组状态=收集中 时切模式必须 409。
-
-    用户端 select 只看状态不看 flag，此时分组通道实际还开着；旧实现（AND 判定）
-    放行切换 → 两条通道并存、互斥不变量被绕过。
-    """
-    fake = api.install(activity=_oto_act(oto_flag="否", group_flag="否", group_status="收集中"))
-    r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "onetoone"})
-    assert r.status_code == 409
-    assert r.get_json()["code"] == "MODE_SWITCH_BLOCKED"
-    assert "分组" in r.get_json()["blocked_sides"]
-    assert fake.writes() == [], "拒绝切换必须零写入"
+    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否",
+                             "签到功能开启": "是"}
+    assert updates[1][3] == {"分组功能开启": "否", "一对一功能开启": "是"}, \
+        "签到默认只在空值时补一次，已是「是」不重复写"
 
 
 def test_activity_mode_allows_switch_when_closing_flag_on_but_done(api):
-    """已收尾（状态=已完成）的 flag=是 不再拦截（2026-10-13 修死锁）。
+    """已收尾（状态=已完成）的 flag=是 不拦截；状态也不再是拦截项。
 
     切换本身是一次原子双栏位写：同一 PUT 关闭旧入口、开启新入口，与 bot
-    「开启一对一功能」同一套 set_mode 语义（该路径本就不拦 flag）。拦 flag 会造成
-    「完成分组后无法切一对一、控制台又无手动关 flag 入口」的死锁（A-0011 实测）。
-    只有 收集中/已截止 才必须先收尾（另两条用例锁定）。
+    「开启一对一功能」同一套 set_mode 语义。
     """
     fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是",
                                          group_flag="否", group_status="已完成"))
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
     assert r.status_code == 200, r.get_json()
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
+    assert len(updates) == 1 and updates[0][3] == {
+        "分组功能开启": "是", "一对一功能开启": "否", "签到功能开启": "是"}
 
 
 def test_activity_mode_blocked_when_active_job(api):
@@ -397,9 +395,10 @@ def test_onetoone_flag_enable_dual_write_disable_single(api):
     assert r.status_code == 200 and r.get_json()["onetoone_flag"] == "是"
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
-    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是"}, "开启=双栏位一 PUT"
+    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是",
+                             "签到功能开启": "是"}, "开启=双栏位一 PUT + 签到默认"
 
-    # 关闭：只写自身=否（不碰分组栏位）
+    # 关闭：只写自身=否（不碰分组栏位、不补签到默认）
     api.snapshot["activities"][0]["fields"]["一对一功能开启"] = "是"
     r2 = api.post("/api/admin/onetoone/flag", {"activity_id": ACT, "enabled": False})
     assert r2.status_code == 200 and r2.get_json()["onetoone_flag"] == "否"
@@ -414,13 +413,14 @@ def test_onetoone_flag_enable_dual_write_disable_single(api):
 
 
 def test_onetoone_flag_corrects_dirty_both_on(api):
-    """双是脏数据下再点开启：走 set_mode 双写把分组=否一并纠正。"""
+    """双是脏数据下再点开启：走 set_mode 双写把分组=否一并纠正（+签到默认）。"""
     fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="是", group_flag="是"))
     r = api.post("/api/admin/onetoone/flag", {"activity_id": ACT, "enabled": True})
     assert r.status_code == 200
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
-    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是"}
+    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是",
+                             "签到功能开启": "是"}
 
 
 @contextlib.contextmanager
@@ -451,7 +451,7 @@ def test_onetoone_flag_busy_returns_409(api, monkeypatch, enabled, lock_module):
 
 
 def test_activity_mode_busy_returns_409(api, monkeypatch):
-    # flag=否（两种状态都没开着）：过 closing 检查后才会走到抢锁，这样测的是锁路径
+    # flag=否（两种都没开着）：测的是抢锁路径
     fake = api.install(activity=_oto_act(oto_status="已完成", oto_flag="否", group_flag="否"))
     monkeypatch.setattr(lib_grouping, "grouping_lock", _busy_lock)
     r = api.post("/api/admin/activity/mode", {"activity_id": ACT, "mode": "group"})
@@ -489,29 +489,15 @@ def test_activity_mode_write_failed_returns_500(api):
 
 def test_guard_noop_when_counterpart_fields_absent(api):
     """假表/旧表没有分组栏位 → guard 不触发，与旧行为逐字一致（parity 保护面）。"""
-    # 活动只有一对一栏位（无分组功能开启/分组状态）
+    # 活动只有一对一栏位（无分组功能开启）
     act = {"record_id": "rec_act", "fields": {"活动ID": ACT, "活动名称": "关系自洽",
                                               "一对一状态": "收集中"}}
     fake = api.install(activity=act)
-    res = lib_onetoone.start_collection(ACT, client=fake, activity=act)
-    assert res["code"] == "OK"
-    res2 = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
-                                find_user_by_openid=app._grouping_find_user_by_openid,
-                                female_chats=2)
+    res = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
+                               find_user_by_openid=app._grouping_find_user_by_openid,
+                               female_chats=2)
     # 无参与者 → NO_PARTICIPANTS（与迁移前一致），绝无 EXCLUSIVE_MODE
-    assert res2["code"] == "NO_PARTICIPANTS"
-
-
-@pytest.mark.parametrize("flag,status", [("是", "未开始"), ("否", "收集中"), ("否", "已截止")],
-                         ids=["flag_on", "collecting", "closed"])
-def test_guard_blocks_onetoone_start(api, flag, status):
-    """「开始一对一」：对面分组 flag=是 或状态∈{收集中,已截止} → EXCLUSIVE_MODE 零写入。"""
-    act = _oto_act(oto_status="未开始", oto_flag="否",
-                   group_flag=flag, group_status=status)
-    fake = api.install(activity=act)
-    res = lib_onetoone.start_collection(ACT, client=fake, activity=act)
-    assert res["code"] == "EXCLUSIVE_MODE" and res["blocked_by"] == "group"
-    assert fake.writes() == []
+    assert res["code"] == "NO_PARTICIPANTS"
 
 
 def test_guard_blocks_onetoone_execute_when_group_flag_on(api):
@@ -526,22 +512,14 @@ def test_guard_blocks_onetoone_execute_when_group_flag_on(api):
 
 
 def test_guard_does_not_block_execute_on_group_status_only(api):
-    """执行不拦「对面只是收集中」：flag 层是唯一权威，状态层只拦「开始」。"""
+    """执行不拦对面状态：flag 层是唯一权威（收集中/已截止属历史遗留值，不再参与）。"""
     signups, selections = _balanced(2, 2)
-    act = _oto_act(oto_status="收集中", group_flag="否", group_status="已完成")
+    act = _oto_act(oto_status="收集中", group_flag="否", group_status="收集中")
     fake = api.install(activity=act, signups=signups, selections=selections)
     res = lib_onetoone.execute(ACT, 1, client=fake, activity=act,
                                find_user_by_openid=app._grouping_find_user_by_openid,
                                female_chats=2)
     assert res["code"] == "OK"
-
-
-def test_start_endpoint_exclusive_mode_409(api):
-    fake = api.install(activity=_oto_act(oto_status="未开始", oto_flag="否",
-                                         group_flag="是", group_status="已完成"))
-    r = api.post("/api/admin/onetoone/start", {"activity_id": ACT})
-    assert r.status_code == 409 and r.get_json()["code"] == "EXCLUSIVE_MODE"
-    assert fake.writes() == []
 
 
 # ---------------------------------------------------------------- preview 零写入
@@ -556,6 +534,7 @@ def test_preview_writes_nothing(api):
     assert body["can_execute"] is False
     assert body["participant_count"] == 4
     assert body["existing_results"] == 1
+    assert body["round"] == 2, "round 缺省=最新已有轮次+1（已有一轮结果）"
     assert fake.writes() == [], "preview 一次写都不能有"
     assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
 
@@ -582,40 +561,58 @@ def test_preview_participant_count_and_blockers(api):
     assert any("没有已报名" in b for b in body["blockers"])
 
 
-# ---------------------------------------------------------------- start：破坏性且如实上报
+# ---------------------------------------------------------------- reset：破坏性且如实上报
 
-def test_start_clears_results_and_reports(api):
+def test_reset_clears_results_and_resets_status(api):
     signups, selections = _balanced(2, 2)
     fake = api.install(activity=_oto_act(oto_status="已完成"), signups=signups,
                        selections=selections,
                        results=[_oto_res_row("ou_m0", "ou_f0"), _oto_res_row("ou_m1", "ou_f1")])
-    r = api.post("/api/admin/onetoone/start", {"activity_id": ACT})
+    r = api.post("/api/admin/onetoone/reset", {"activity_id": ACT})
     assert r.status_code == 200
     body = r.get_json()
     assert body["ok"] is True and body["cleared_results"] == 2
-    assert body["onetoone_status"] == "收集中"
+    assert "onetoone_status" not in body, "状态清空=空串，不回「收集中」"
     assert fake.tables[RESULT_TBL] == []
-    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == ""
     assert sorted(api.refresh_calls) == ["activities", "onetoone_results"]
 
 
-def test_start_search_failure_reports_500(api):
+def test_reset_without_results_still_clears_status(api):
     fake = api.install(activity=_oto_act(oto_status="已完成"))
+    r = api.post("/api/admin/onetoone/reset", {"activity_id": ACT})
+    assert r.status_code == 200 and r.get_json()["cleared_results"] == 0
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == ""
+
+
+def test_reset_search_failure_reports_500(api):
+    """fail-closed：结果表读失败 → 500，零删除、状态原样、不刷快照。"""
+    fake = api.install(activity=_oto_act(oto_status="已完成"),
+                       results=[_oto_res_row("ou_m0", "ou_f0")])
     fake.search_fails = {RESULT_TBL}
-    r = api.post("/api/admin/onetoone/start", {"activity_id": ACT})
+    r = api.post("/api/admin/onetoone/reset", {"activity_id": ACT})
     assert r.status_code == 500
     assert r.get_json()["code"] == "RESULTS_SEARCH_FAILED"
-    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中", "状态已写入，如实可见"
-    assert api.refresh_calls == ["activities"]
+    assert fake.tables[RESULT_TBL], "历史结果不能被误删"
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "已完成"
+    assert api.refresh_calls == [], "零变化不刷快照"
 
 
-def test_start_busy_lock_returns_409(api, monkeypatch):
-    fake = api.install(activity=_oto_act(oto_status="已完成"))
+def test_reset_busy_lock_returns_409(api, monkeypatch):
+    fake = api.install(activity=_oto_act(oto_status="已完成"),
+                       results=[_oto_res_row("ou_m0", "ou_f0")])
     monkeypatch.setattr(app, "GROUPING_API_LOCK_TIMEOUT", 0.1)
     with lib_grouping.grouping_lock(ACT, timeout=1):
-        r = api.post("/api/admin/onetoone/start", {"activity_id": ACT})
+        r = api.post("/api/admin/onetoone/reset", {"activity_id": ACT})
     assert r.status_code == 409
     assert fake.writes() == [], "抢锁失败不得写任何东西"
+
+
+def test_reset_validation_and_missing(api):
+    api.install()
+    assert api.post("/api/admin/onetoone/reset", {}).status_code == 400
+    assert api.post("/api/admin/onetoone/reset",
+                    {"activity_id": "A-9999"}).status_code == 404
 
 
 # ---------------------------------------------------------------- run：job 生命周期
@@ -671,7 +668,8 @@ def test_run_search_failure_aborts_without_writes(api):
     signups, selections = _balanced(2, 2)
     fake = api.install(signups=signups, selections=selections)
     fake.search_fails = {RESULT_TBL}
-    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
+    r = api.post("/api/admin/onetoone/run",
+                 {"activity_id": ACT, "round": 1, "female_chats": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "done"
@@ -770,10 +768,13 @@ def test_run_payload_validation_and_missing(api):
     assert api.post("/api/admin/onetoone/run", {"activity_id": ACT}).status_code == 400
     assert api.post("/api/admin/onetoone/run",
                     {"activity_id": "A-9999", "female_chats": 2}).status_code == 404
-    assert api.post("/api/admin/onetoone/start", {"activity_id": "A-9999"}).status_code == 404
+    assert api.post("/api/admin/onetoone/reset", {"activity_id": "A-9999"}).status_code == 404
     assert api.post("/api/admin/onetoone/preview", {}).status_code == 400
     assert api.post("/api/admin/onetoone/flag",
                     {"activity_id": ACT, "enabled": "yes"}).status_code == 400
+    # 已删除的 start 端点必须保持不可用（移除志愿收集阶段的回归护栏）：
+    # POST 会被 Flask 静态兜底路由判 405，关键是没有可用的 start 端点
+    assert api.post("/api/admin/onetoone/start", {"activity_id": ACT}).status_code in (404, 405)
 
 
 def test_run_female_chats_invalid_values_rejected(api):
@@ -951,20 +952,33 @@ def test_preview_accepts_round_and_reports_round_fields(api):
                     {"activity_id": ACT, "round": "x"}).status_code == 400
 
 
-def test_start_with_clear_results_false_keeps_history(api):
-    """start 收 clear_results：False = 开启新一轮（保留历史），默认 True 不变。"""
+def test_preview_default_round_is_latest_plus_one(api):
+    """preview 的 round 缺省=最新已有轮次+1（与 run 端点同口径）。"""
+    api.install(activity=_oto_act(oto_status="已完成"),
+                results=[_oto_res_round("ou_m0", "ou_f0", 1),
+                         _oto_res_round("ou_m0", "ou_f1", 2)])
+    body = api.post("/api/admin/onetoone/preview",
+                    {"activity_id": ACT, "female_chats": 2}).get_json()
+    assert body["round"] == 3
+    assert body["existing_round_results"] == 0
+    assert body["existing_rounds"] == [1, 2]
+
+
+def test_run_default_round_is_latest_plus_one_and_keeps_history(api):
+    """run 的 round 缺省=最新已有轮次+1：已有两轮 → 打第3轮，历史原样保留。"""
     signups, selections = _balanced(2, 2)
-    fake = api.install(activity=_oto_act(oto_status="已完成"), signups=signups,
-                       selections=selections,
+    fake = api.install(signups=signups, selections=selections,
                        results=[_oto_res_round("ou_m0", "ou_f0", 1),
                                 _oto_res_round("ou_m0", "ou_f0", 2)])
-    r = api.post("/api/admin/onetoone/start", {"activity_id": ACT, "clear_results": False})
-    assert r.status_code == 200
-    assert r.get_json()["cleared_results"] == 0
-    assert len(fake.tables[RESULT_TBL]) == 2, "历史轮次结果保留"
-
-    assert api.post("/api/admin/onetoone/start",
-                    {"activity_id": ACT, "clear_results": "yes"}).status_code == 400
+    r = api.post("/api/admin/onetoone/run", {"activity_id": ACT, "female_chats": 2})
+    assert r.status_code == 202
+    body = r.get_json()
+    assert body["round"] == 3, "缺省轮次=最新+1"
+    job = _poll_job(api, body["job_id"])
+    assert job["state"] == "done" and job["round"] == 3
+    rounds = [x["fields"].get("轮次") for x in fake.tables[RESULT_TBL]]
+    assert rounds.count("1") == 1 and rounds.count("2") == 1
+    assert rounds.count("3") == job["result"]["total_pairs"]
 
 
 def test_run_round_param_and_round_rows(api):

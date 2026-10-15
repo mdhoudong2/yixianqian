@@ -1,11 +1,11 @@
 """活动分组（bot 侧）：**渲染层 + re-export**，业务逻辑在 lib/grouping.py。
 
-管理员那五条指令的算法、读写、幂等判断都搬进了 `lib.grouping`，这里只做两件事：
+管理员指令的算法、读写、幂等判断都搬进了 `lib.grouping`，这里只做两件事：
 把 lib 回传的结构化结果拼成给管理员看的中文，以及把用户侧的分组卡片流程原样留着
 （用户侧 H5 已经完整实现，飞书卡片是旧通道，本次不迁移）。
 
-回传的每一句中文字符串与迁移前逐字相同，并由 tests/test_grouping_parity.py 对着
-从 base commit 冻结的旧实作逐案比对钉死——改文案必红灯。
+回传的每一句中文字符串由 tests/test_grouping_parity.py 对着从 base commit 冻结的
+旧实作逐案比对钉死（本次重构的刻意分歧见该文件「刻意分歧」一节）——改文案必红灯。
 
 保留的 re-export 是为了让旧入口继续可用：bot/onetoone.py 与
 scripts/dev/seed_test_grouping.py 直接 `from grouping import ...`。
@@ -27,9 +27,9 @@ from lib.grouping import (  # noqa: F401 — re-export 兼容旧入口，勿删
     run_grouping_algorithm,
 )
 
-# 分组指令互斥锁：防止并发「执行分组」「开始填志愿」互相删除/覆盖结果。
+# 分组指令互斥锁：防止并发「执行分组」「清空分组结果」互相删除/覆盖结果。
 # bot 与 H5 后端是两个进程、共用同一个数据目录，单纯的 threading.Lock 挡不住对面，
-# 所以走 lib.grouping 的 flock 版本。
+# 所以走 lib.grouping 的 flock 版本。清空指令的锁由 lib.reset_group_results 自持。
 GROUPING_LOCK_TIMEOUT = 180
 # 抢锁逾时的提示。整条路径是新增的（原先是无限等待，压根等不到这个分支）。
 GROUPING_BUSY_REPLY = "当前已有分组任务在执行中，请稍候再试。"
@@ -201,7 +201,7 @@ def handle_group_command(sender_id):
     user_gender = get_field_text(user_fields, FIELD_GENDER)
     user_nickname = get_field_text(user_fields, FIELD_NICKNAME)
 
-    # 查找用户报名了哪些"收集中"的活动
+    # 查找用户报名了哪些已开启分组功能的活动
     signups = search_records(SIGNUP_TABLE_ID, {
         "conjunction": "and",
         "conditions": [
@@ -212,19 +212,19 @@ def handle_group_command(sender_id):
     if not signups:
         return "你还没有报名任何活动。\n发送「活动」查看当前活动并报名。"
 
-    # 找收集中的活动
+    # 找已开启分组功能的活动（与 H5「我的分组」入口同口径：只看「分组功能开启」，
+    # 志愿收集状态已废除）
     collecting_activities = []
     for s in signups:
         aid = get_field_text(s.get("fields", {}), FIELD_SIGNUP_ACTIVITY_ID)
         activity = find_activity_by_id(aid)
         if activity:
             af = activity.get("fields", {})
-            group_status = get_field_text(af, FIELD_ACT_GROUP_STATUS)
-            if group_status == "收集中":
+            if get_field_text(af, FIELD_ACT_GROUP_FLAG) == "是":
                 collecting_activities.append(activity)
 
     if not collecting_activities:
-        return "当前没有正在进行分组选择的活动。\n分组选择由管理员在活动前开启，请关注通知。"
+        return "当前没有已开启分组功能的活动。\n分组功能由管理员开启，请关注通知。"
 
     # 如果只有一个活动，直接发卡片
     activity = collecting_activities[0]
@@ -249,7 +249,7 @@ def handle_group_command(sender_id):
     send_card_message(sender_id, card)
 
     if len(collecting_activities) > 1:
-        return f"你报名了多个正在分组的活动，当前显示「{activity_name}」。如需其他活动请联系管理员。"
+        return f"你报名了多个已开启分组功能的活动，当前显示「{activity_name}」。如需其他活动请联系管理员。"
     return ""
 
 
@@ -259,13 +259,11 @@ def handle_group_submit(operator_open_id, action_value, form_value):
     """处理分组选择提交"""
     activity_id = action_value.get("activity_id", "")
 
-    # 验证活动状态
+    # 验证活动存在（志愿随时可改：不再按状态拦截提交；签到闸门在下方 fail-closed 保留）
     activity = find_activity_by_id(activity_id)
     if not activity:
         return {"toast": {"type": "error", "content": "活动不存在"}}
     af = activity.get("fields", {})
-    if get_field_text(af, FIELD_ACT_GROUP_STATUS) != "收集中":
-        return {"toast": {"type": "warning", "content": "分组选择已截止"}}
 
     # 验证用户报名
     signups = search_records(SIGNUP_TABLE_ID, {
@@ -367,61 +365,33 @@ def handle_group_submit(operator_open_id, action_value, form_value):
 
 
 
-def handle_admin_start_group(keyword):
-    """管理员：开始填志愿 格式: 开始填志愿 A-0002 3 3"""
-    parts = keyword.split()
-    if len(parts) < 3:
-        return "格式：开始填志愿 活动ID 每组男生数 每组女生数\n例如：开始填志愿 A-0002 3 3"
-    activity_id = parts[0]
-    try:
-        m_per = int(parts[1])
-        f_per = int(parts[2])
-    except ValueError:
-        return "每组人数必须是数字"
-
-    if m_per < 1 or f_per < 1:
-        return "每组男女人数必须大于0"
+def handle_admin_reset_group(keyword):
+    """管理员：清空分组结果 格式: 清空分组结果 A-0002（该活动全部轮次）"""
+    activity_id = keyword.strip()
+    if not activity_id:
+        return "格式：清空分组结果 活动ID\n例如：清空分组结果 A-0002"
 
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    activity_name = get_field_text(activity.get("fields", {}), FIELD_ACTIVITY_NAME)
-
-    # 改状态 + 清历史结果必须整段持锁。原先这段完全不持锁，而管理指令跑在
-    # ADMIN_TASK_EXECUTOR（4 条线程）上，同时来「开始填志愿」和「执行分组」
-    # 就会删掉一半旧结果、写进去一半新结果。
-    try:
-        with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
-            res = lib_grouping.start_group(activity_id, m_per, f_per,
-                                           client=bitable, activity=activity)
-    except GroupingBusy:
+    res = lib_grouping.reset_group_results(activity_id, client=bitable, activity=activity)
+    code = res.get("code")
+    if code == "BUSY":
         return GROUPING_BUSY_REPLY
-
-    # start_group 的回传码不能丢。lib 里 SEARCH_FAILED 只有在
-    # treat_search_failure_as_empty=False 且「读历史分组结果失败」时才可能返回；
-    # bot 走默认 True，所以今天这行恒为 OK（parity 42 案例为证）——但正因如此，
-    # 一旦日后有人照 H5 的接法改成传 False，「清历史失败」就会被静默吞掉，管理员
-    # 仍收到「志愿填写已开始」。这里钉一道断言，让那种改动在这里立刻炸掉，
-    # 而不是悄悄发一条与事实相反的回执。抛异常由 _admin_task_worker 统一兜成
-    # 「任务处理失败：…」，不会把错误伪装成成功。
-    if res.get("code") == "EXCLUSIVE_MODE":
-        # 动作层互斥（设计 §2.3）：对面一对一开着或没收尾，明确让管理员先关对面。
-        # 新分支只在活动表有一对一栏位且命中时出现，parity 桩表不触发。
-        return ("无法开始填志愿：该活动的一对一模式正在使用中。\n"
-                "为避免两边混着跑，请先在 H5「活动管理」把模式切换为「分组」"
-                "（或等一对一收尾）后再试。")
-    if res.get("code") != "OK":
-        raise RuntimeError(
-            f"start_group 未成功（code={res.get('code')}），不发送成功回执。"
-            "bot 应保持默认 treat_search_failure_as_empty=True；若确需改为严格模式，"
-            "请一并为该分支补上面向管理员的失败文案。")
-
-    # 不再向报名者群发通知（现场活动，用户自查 H5）。管理员收到开始指令回执即可。
-    log(f"管理员开始填志愿: {activity_name} {m_per}男{f_per}女")
-    return (f"志愿填写已开始：{activity_name}（每组{m_per}男{f_per}女）\n"
-            f"已开放，未发送群发通知。\n"
-            f"请让用户在 H5 页面自查并提交志愿（现场活动）。")
+    if code == "RESULTS_SEARCH_FAILED":
+        return "清空失败：读取历史分组结果失败，未做任何删除，请稍后重试。"
+    if code == "DELETE_INCOMPLETE":
+        return (f"清空失败：分组结果删除不完整（成功删除 {res['deleted']}/{res['total']} 条），"
+                f"请稍后重试。")
+    if code == "STATUS_FAILED":
+        return (f"清空失败：活动「{res.get('activity_name') or activity_id}」状态清空写入失败"
+                f"（已删除 {res.get('cleared_results', 0)} 条结果），请稍后重试。")
+    if code != "OK":
+        return f"清空分组结果失败（{code}），请稍后重试。"
+    log(f"管理员清空分组结果: {res['activity_name']} {res['cleared_results']} 条")
+    return (f"已清空活动「{res['activity_name']}」的历史分组结果 {res['cleared_results']} 条，"
+            f"分组状态已重置为未开始。")
 
 
 
@@ -429,25 +399,32 @@ def handle_admin_start_group(keyword):
 def _render_grouping_result(res, round_no):
     """把 execute_round 的结构化结果拼成给管理员看的中文。
 
-    文案归渲染层：lib 只给数据。改这里的字必须同步改 tests/_golden_grouping_impl.py
-    之外的那份断言——等价性测试会直接红。
+    文案归渲染层：lib 只给数据。失败一律零状态变更，文案不再出现「恢复收集中」
+    之类的状态话术。
     """
     code = res["code"]
     if code == "EXCLUSIVE_MODE":
         return (f"无法执行分组：活动「{res['activity_name']}」的一对一模式已开启。\n"
                 f"请先在 H5「活动管理」把模式切换为「分组」再执行。")
+    if code == "GROUP_SIZE_INVALID":
+        return "每组男女人数必须是大于0的整数（本次未写入任何数据）。"
+    if code == "SIGNIN_QUERY_FAILED":
+        return "签到名单读取失败，无法确定现场到场名单，已中止（本次未写入任何数据），请稍后重试。"
     if code == "NOT_ENOUGH_PEOPLE":
         return (f"人数不足，无法分组：{res['males']}男{res['females']}女，"
                 f"每组需要{res['males_per_group']}男{res['females_per_group']}女。\n"
-                f"状态已恢复为「收集中」，等人够了再截止。"
+                f"本次未写入任何数据，请补充报名或调整每组人数后重试。"
                 + (f"\n（{res['skipped']}人因性别信息缺失被跳过）" if res["skipped"] else ""))
     if code == "ALGORITHM_ERROR":
-        return f"分组算法出错：{res['error']}，状态已恢复为「收集中」"
+        return f"分组算法出错：{res['error']}。本次未写入任何数据，请稍后重试。"
     if code == "EMPTY_GROUPS":
-        return "分组失败，人数不足以组成完整小组，状态已恢复为「收集中」"
+        return "分组失败，人数不足以组成完整小组（本次未写入任何数据，请补充报名或调整每组人数后重试）。"
     if code == "PARTIAL_WRITE":
-        return (f"分组结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚，"
-                f"状态恢复为「收集中」，请稍后重试。")
+        return (f"分组结果写入失败（成功 {res['created']}/{res['total']} 条），已回滚本轮已写入部分，"
+                f"状态未变，请稍后重试。")
+    if code == "DONE_STATUS_FAILED":
+        return ("分组结果已生成，但状态写入失败（未标记为「已完成」），用户可能看不到结果；"
+                "请稍后重试或让管理员检查。")
 
     # 走到这里就是 OK。bot 侧永远不会拿到 SEARCH_FAILED——execute_round 默认
     # treat_search_failure_as_empty=True，那条是留给 H5 用的。
@@ -467,41 +444,55 @@ def _render_grouping_result(res, round_no):
 
 
 
+_STOP_GROUP_FORMAT = ("格式：执行分组 活动ID 每组男 每组女 [轮次]\n"
+                      "例如：执行分组 A-0002 3 3 或 执行分组 A-0002 3 3 2")
+
+
 def handle_admin_stop_group(keyword):
-    """管理员：执行分组并运行算法 格式: 执行分组 A-0002 [轮次]（轮次可选，默认第1轮）"""
+    """管理员：执行分组并运行算法 格式: 执行分组 活动ID 每组男 每组女 [轮次]
+
+    轮次缺省 = 最新已有轮次 + 1（由 lib_grouping.latest_round 推演；无结果则第1轮）。
+    每组人数是执行入参（不再读活动栏位）；轮次的推导在活动锁内做，避免并发指令
+    各自推出同一个轮次。
+    """
     parts = keyword.split()
-    if not parts:
-        return "格式：执行分组 活动ID [轮次]\n例如：执行分组 A-0002 或 执行分组 A-0002 2"
+    if len(parts) < 3:
+        return _STOP_GROUP_FORMAT
     activity_id = parts[0]
-    round_no = 1
-    if len(parts) >= 2:
+    try:
+        m_per = int(parts[1])
+        f_per = int(parts[2])
+    except ValueError:
+        return _STOP_GROUP_FORMAT
+    if m_per < 1 or f_per < 1:
+        return "每组男女人数必须大于0"
+    round_no = None
+    if len(parts) >= 4:
         try:
-            round_no = int(parts[1])
+            round_no = int(parts[3])
             if round_no < 1:
                 return "轮次必须为大于0的整数"
         except ValueError:
-            return f"轮次必须为数字，当前：{parts[1]}"
+            return f"轮次必须为数字，当前：{parts[3]}"
 
     activity = find_activity_by_id(activity_id)
     if not activity:
         return f"未找到活动：{activity_id}"
 
-    af = activity.get("fields", {})
-    activity_name = get_field_text(af, FIELD_ACTIVITY_NAME)
-    m_per = int(get_field_number(af, FIELD_ACT_MALE_PER_GROUP, 3))
-    f_per = int(get_field_number(af, FIELD_ACT_FEMALE_PER_GROUP, 3))
-
-    if m_per < 1 or f_per < 1:
-        return f"每组男女人数必须大于0（当前：{m_per}男{f_per}女），请先设置再截止"
-
     try:
         with grouping_lock(activity_id, timeout=GROUPING_LOCK_TIMEOUT):
+            if round_no is None:
+                latest = lib_grouping.latest_round(bitable, activity_id)
+                if latest is None:
+                    return "查询历史分组结果失败，无法确定默认轮次，请稍后重试或显式指定轮次。"
+                round_no = latest + 1
             res = lib_grouping.execute_round(
                 activity_id, round_no, client=bitable, activity=activity,
-                find_user_by_openid=find_user_by_openid)
+                find_user_by_openid=find_user_by_openid,
+                males_per_group=m_per, females_per_group=f_per)
             if res["code"] == "ALREADY_DONE":
                 return (f"活动「{res['activity_name']}」第{round_no}轮已生成过分组结果，请勿重复执行。"
-                        f"如需重新分组，请先发送「开始填志愿 {activity_id} {m_per} {f_per}」重新开放，再执行分组。")
+                        f"如需重新分组，请先发送「清空分组结果 {activity_id}」清除已有结果，再执行分组。")
             return _render_grouping_result(res, round_no)
     except GroupingBusy:
         return GROUPING_BUSY_REPLY

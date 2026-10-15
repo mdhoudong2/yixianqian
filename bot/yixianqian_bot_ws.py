@@ -84,7 +84,7 @@ from constants import *
 from grouping import (
     configure_grouping_lib,
     handle_admin_group_status,
-    handle_admin_start_group,
+    handle_admin_reset_group,
     handle_admin_stop_group,
     handle_admin_unsubmitted,
     handle_group_command,
@@ -93,7 +93,7 @@ from grouping import (
 from onetoone import (
     configure_onetoone_lib,
     handle_admin_onetoone_status,
-    handle_admin_start_onetoone,
+    handle_admin_reset_onetoone,
     handle_admin_stop_onetoone,
     handle_admin_unsubmitted_onetoone,
     handle_onetoone_command,
@@ -155,7 +155,7 @@ def _log_memory():
         pass
 
 
-# 管理后台重任务线程池：把「开始填志愿/执行分组/分组状态」等耗时操作放到后台线程，
+# 管理后台重任务线程池：把「执行分组/执行一对一/分组状态」等耗时操作放到后台线程，
 # 让单线程消息处理器不被阻塞，管理员指令能秒回、期间其它消息也能正常响应。
 ADMIN_TASK_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="admin-task")
 
@@ -480,10 +480,6 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             reply = handle_admin_stats()
         elif text_lower in ["管理员帮助", "admin help", "管理帮助"]:
             reply = handle_admin_help()
-        elif text.startswith("开始填志愿"):
-            keyword = text[5:].strip()
-            reply = "收到，正在后台开启志愿填写，请稍候..."
-            _run_admin_task_async(sender_id, "开始填志愿", handle_admin_start_group, keyword)
         elif text.startswith("查看未提交"):
             keyword = text[len("查看未提交"):].strip()
             reply = "收到，正在后台查询未提交人员，请稍候..."
@@ -500,6 +496,10 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             keyword = text[4:].strip()
             reply = "收到，正在后台执行分组并保存结果，请稍候..."
             _run_admin_task_async(sender_id, "执行分组", handle_admin_stop_group, keyword)
+        elif text.startswith("清空分组结果"):
+            keyword = text[len("清空分组结果"):].strip()
+            reply = "收到，正在后台清空分组结果，请稍候..."
+            _run_admin_task_async(sender_id, "清空分组结果", handle_admin_reset_group, keyword)
         elif text.startswith("分组状态"):
             keyword = text[4:].strip()
             reply = "收到，正在后台查询分组状态，请稍候..."
@@ -507,10 +507,6 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
         elif text.startswith("开启分组功能"):
             keyword = text[len("开启分组功能"):].strip()
             reply = handle_admin_toggle_group_flag(keyword)
-        elif text.startswith("开始一对一"):
-            keyword = text[len("开始一对一"):].strip()
-            reply = "收到，正在后台开启一对一志愿填写，请稍候..."
-            _run_admin_task_async(sender_id, "开始一对一", handle_admin_start_onetoone, keyword)
         elif text.startswith("查看未提交一对一"):
             keyword = text[len("查看未提交一对一"):].strip()
             reply = "收到，正在后台查询未提交人员，请稍候..."
@@ -519,6 +515,10 @@ def do_p2_im_message_receive_v1(data: lark.im.v1.P2ImMessageReceiveV1) -> None:
             keyword = text[len("执行一对一"):].strip()
             reply = "收到，正在后台执行一对一匹配并保存结果，请稍候..."
             _run_admin_task_async(sender_id, "执行一对一", handle_admin_stop_onetoone, keyword)
+        elif text.startswith("清空一对一结果"):
+            keyword = text[len("清空一对一结果"):].strip()
+            reply = "收到，正在后台清空一对一结果，请稍候..."
+            _run_admin_task_async(sender_id, "清空一对一结果", handle_admin_reset_onetoone, keyword)
         elif text.startswith("一对一状态"):
             keyword = text[len("一对一状态"):].strip()
             reply = "收到，正在后台查询一对一状态，请稍候..."

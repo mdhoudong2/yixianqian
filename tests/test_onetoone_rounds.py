@@ -1,11 +1,12 @@
-"""一對一多輪：lib 層冪等/取結果/預覽/重開（樁表驅動，不聯網）。
+"""一對一多輪：lib 層冪等/取結果/預覽/清空（樁表驅動，不聯網）。
 
 - 同 (活動, 輪次) 重跑被 ALREADY_DONE 攔；換輪次可跑，且歷史輪次結果保留；
 - 遷移前的空輪次行 = 第 1 輪（回填由 scripts/dev/add_onetoone_result_round.py
   落地；lib 端以 round_of 統一，見 tests/test_onetoone_parity.py 的刻意分歧節）；
 - fetch_result：round=None 取最新、指定輪次取指定輪；輪次列表升序；
-- start_collection(clear_results=False)：只寫狀態、歷史不讀不刪（連 search 都不發）；
-- start_collection(clear_results=True 默認)：清全部輪次歷史（破壞性語義不變）。
+- latest_round：最新輪次推演（無結果回 0、讀失敗回 None、空輪次行按第1輪）；
+- reset_onetoone_results：清空全部輪次歷史 + 狀態清空（fail-closed：讀失敗/刪除不足
+  明報錯誤碼）。
 """
 import pytest
 
@@ -142,36 +143,70 @@ def test_fetch_result_latest_and_specific_round(configured):
     assert miss["round"] == 5 and miss["people"] == []
 
 
-def test_start_collection_keep_history_when_clear_results_false(configured):
-    """开启新一轮：只写状态，历史轮次结果不读不删（连 search 都不发）。"""
+def test_reset_onetoone_results_clears_all_rounds_and_status(configured):
+    """清空（reset）：清空全部輪次歷史、狀態欄位寫空（未開始）。"""
     fake = FakeBitable({**_default_tables(),
                         ONETOONE_RESULT_TABLE: [
                             _row("rec_r1", "ou_m1", "ou_f1", 1, "1"),
                             _row("rec_r2", "ou_m1", "ou_f1", 1, "2")]})
 
-    res = lib_onetoone.start_collection(ACT, client=fake, activity=_find_act(fake, ACT),
-                                        clear_results=False)
-    assert res["code"] == "OK" and res["cleared_results"] == 0
-    assert len(fake.tables[ONETOONE_RESULT_TABLE]) == 2, "历史轮次结果保留"
-    writes = fake.writes()
-    assert [c[0] for c in writes] == ["update"], "只写状态，不删结果"
-    # 「签到功能开启」是「签到默认打开」刻意追加的同笔栏目（空值→是，见 signin_default_payload）
-    assert writes[0][3] == {"一对一状态": "收集中", "签到功能开启": "是"}
-    assert not [c for c in fake.calls if c[0] == "search" and c[1] == ONETOONE_RESULT_TABLE], \
-        "开启新一轮不该读结果表（保留历史，零搜索失败面）"
-
-
-def test_start_collection_clears_all_rounds_by_default(configured):
-    """默认（clear_results=True）：清空全部轮次历史——破坏性语义与迁移前一致。"""
-    fake = FakeBitable({**_default_tables(),
-                        ONETOONE_RESULT_TABLE: [
-                            _row("rec_r1", "ou_m1", "ou_f1", 1, "1"),
-                            _row("rec_r2", "ou_m1", "ou_f1", 1, "2")]})
-
-    res = lib_onetoone.start_collection(ACT, client=fake, activity=_find_act(fake, ACT))
+    res = lib_onetoone.reset_onetoone_results(ACT, client=fake,
+                                              activity=_find_act(fake, ACT))
     assert res["code"] == "OK" and res["cleared_results"] == 2
     assert fake.tables[ONETOONE_RESULT_TABLE] == []
-    assert _find_act(fake, ACT)["fields"]["一对一状态"] == "收集中"
+    writes = fake.writes()
+    assert [c[0] for c in writes] == ["batch_delete", "update"], "先删结果再清状态"
+    assert writes[1][3] == {"一对一状态": ""}, "清状态写空串（不写「未开始」选项）"
+    assert _find_act(fake, ACT)["fields"]["一对一状态"] == ""
+
+
+def test_reset_onetoone_results_no_results_still_clears_status(configured):
+    """没有结果也照常清状态（幂等语义）；不清任何结果。"""
+    fake = FakeBitable(_default_tables())
+    res = lib_onetoone.reset_onetoone_results(ACT, client=fake,
+                                              activity=_find_act(fake, ACT))
+    assert res["code"] == "OK" and res["cleared_results"] == 0
+    writes = fake.writes()
+    assert [c[0] for c in writes] == ["update"]
+    assert writes[0][3] == {"一对一状态": ""}
+
+
+def test_reset_onetoone_results_fail_closed(configured):
+    """fail-closed：讀失敗 → RESULTS_SEARCH_FAILED；刪除不足 → DELETE_INCOMPLETE。"""
+    rows = [_row("rec_r1", "ou_m1", "ou_f1", 1, "1"),
+            _row("rec_r2", "ou_m1", "ou_f1", 1, "2")]
+
+    fake = FakeBitable({**_default_tables(), ONETOONE_RESULT_TABLE: rows},
+                       search_fails={ONETOONE_RESULT_TABLE})
+    res = lib_onetoone.reset_onetoone_results(ACT, client=fake,
+                                              activity=_find_act(fake, ACT))
+    assert res["code"] == "RESULTS_SEARCH_FAILED"
+    assert fake.writes() == []
+
+    fake2 = FakeBitable({**_default_tables(), ONETOONE_RESULT_TABLE: rows}, delete_limit=1)
+    res2 = lib_onetoone.reset_onetoone_results(ACT, client=fake2,
+                                               activity=_find_act(fake2, ACT))
+    assert res2["code"] == "DELETE_INCOMPLETE"
+    assert res2["deleted"] == 1 and res2["total"] == 2
+    assert not [c for c in fake2.writes() if c[0] == "update"], "刪除不足不得再清狀態"
+
+
+def test_latest_round_reads_max_normalizes_legacy_and_failures(configured):
+    """latest_round：最新輪次；空輪次行按第1輪；無結果回 0；讀失敗回 None。"""
+    rows = [
+        _row("rec_r1", "ou_m1", "ou_f1", 1, "1"),
+        _row("rec_r4", "ou_m1", "ou_f1", 1, "4"),
+        {"record_id": "rec_legacy",
+         "fields": {**_res("ou_m1", "ou_f1")["fields"], "轮次": ""}},   # 空 = 第1轮
+    ]
+    fake = FakeBitable({**_default_tables(), ONETOONE_RESULT_TABLE: rows})
+    assert lib_onetoone.latest_round(fake, ACT) == 4
+
+    empty = FakeBitable(_default_tables())
+    assert lib_onetoone.latest_round(empty, ACT) == 0
+
+    failing = FakeBitable(_default_tables(), search_fails={ONETOONE_RESULT_TABLE})
+    assert lib_onetoone.latest_round(failing, ACT) is None
 
 
 def test_preview_reports_round_state_and_preserve_counts(configured):

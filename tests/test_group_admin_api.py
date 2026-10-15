@@ -3,7 +3,7 @@
 覆盖 RFC §7.5 的 A1–A10 与迁移红线：
 - 鉴权全部走 _require_admin（未登录 401 / 非管理员 403）；
 - preview 零写入（R8：绝不能碰「分组状态」把活动误截止）；
-- H5 端 execute_round/start_group 必须传 treat_search_failure_as_empty=False（R7）；
+- H5 端 execute_round（分组）与 lib 的 fail-closed reset 路径的契约；
 - H5 与 bot 的 configure 注入对照表逐栏相等（静默写错栏位/base 的主要防线）。
 
 桩法比照 tests/test_points_admin_api.py（Flask test client + cookie session +
@@ -203,9 +203,9 @@ ENDPOINTS = [
     ("GET", "/api/admin/group/status?activity_id=" + ACT, None),
     ("GET", "/api/admin/group/unsubmitted?activity_id=" + ACT, None),
     ("POST", "/api/admin/group/preview", {"activity_id": ACT, "round": 1}),
-    ("POST", "/api/admin/group/start",
+    ("POST", "/api/admin/group/reset", {"activity_id": ACT}),
+    ("POST", "/api/admin/group/run",
      {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2}),
-    ("POST", "/api/admin/group/run", {"activity_id": ACT, "round": 1}),
     ("GET", "/api/admin/group/job?job_id=x", None),
     ("GET", "/api/admin/group/result?activity_id=" + ACT, None),
     ("POST", "/api/admin/group/flag", {"activity_id": ACT, "enabled": True}),
@@ -257,64 +257,54 @@ def test_a3_preview_writes_nothing(api):
     assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
 
 
-# ---------------------------------------------------------------- A4 start 快照刷新
+# ---------------------------------------------------------------- A4 reset 快照刷新
 
-def test_a4_start_refreshes_exactly_activities_and_group_results(api):
+def test_a4_reset_refreshes_exactly_activities_and_group_results(api):
     signups, selections = _balanced(2, 2)
     fake = api.install(signups=signups, selections=selections,
                        results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "1")])
 
-    r = api.post("/api/admin/group/start",
-                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    r = api.post("/api/admin/group/reset", {"activity_id": ACT})
     assert r.status_code == 200
     body = r.get_json()
     assert body["ok"] is True and body["cleared_results"] == 2
-    assert body["group_status"] == "收集中" and body["name"] == "关系自洽"
-    # 恰为两张表：多刷一张是浪费，少刷一张用户端读到旧状态
+    # 恰为两张表：多刷一张是浪费，少刷一张用户端读到旧结果
     assert sorted(api.refresh_calls) == ["activities", "group_results"]
     assert fake.tables[GROUP_RESULT_TABLE] == []
-    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
-    assert _find_act(fake, ACT)["fields"]["每组男生数"] == 2
+    assert _find_act(fake, ACT)["fields"]["分组状态"] == "", "状态清空=空串（未开始）"
 
 
-def test_start_clear_results_false_keeps_history(api):
-    """开启新一轮：clear_results=false 时历史结果保留，状态照常回「收集中」。"""
-    signups, selections = _balanced(2, 2)
-    fake = api.install(signups=signups, selections=selections,
-                       results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "1")])
-
-    r = api.post("/api/admin/group/start",
-                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2,
-                  "clear_results": False})
-    assert r.status_code == 200
-    body = r.get_json()
-    assert body["ok"] is True and body["cleared_results"] == 0
-    assert body["group_status"] == "收集中"
-    assert len(fake.tables[GROUP_RESULT_TABLE]) == 2, "历史结果必须原样保留"
-    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
+def test_reset_without_results_still_clears_status(api):
+    """空结果也照常清状态（幂等）；不产生 batch_delete。"""
+    fake = api.install(activity=_act(分组状态="已完成"))
+    r = api.post("/api/admin/group/reset", {"activity_id": ACT})
+    assert r.status_code == 200 and r.get_json()["cleared_results"] == 0
+    assert _find_act(fake, ACT)["fields"]["分组状态"] == ""
     assert sorted(api.refresh_calls) == ["activities", "group_results"]
 
 
-def test_start_clear_results_defaults_true_for_backward_compat(api):
-    """不传 clear_results 时行为与改动前完全相同（向后兼容，老调用不回归）。"""
+def test_reset_search_failure_returns_500_without_deleting(api):
+    """fail-closed：清空结果读失败 → 500 如实报错，零删除、状态原样、不刷快照。"""
     signups, selections = _balanced(2, 2)
     fake = api.install(signups=signups, selections=selections,
-                       results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "1")])
+                       results=[_res("ou_m0", 1, "1")])
+    fake.search_fails = {GROUP_RESULT_TABLE}
 
-    r = api.post("/api/admin/group/start",
-                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
-    assert r.status_code == 200
-    body = r.get_json()
-    assert body["ok"] is True and body["cleared_results"] == 2
-    assert fake.tables[GROUP_RESULT_TABLE] == []
+    r = api.post("/api/admin/group/reset", {"activity_id": ACT})
+    assert r.status_code == 500
+    assert r.get_json()["code"] == "RESULTS_SEARCH_FAILED"
+    assert fake.tables[GROUP_RESULT_TABLE], "历史结果不能被误删"
+    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
+    assert api.refresh_calls == [], "零变化不刷快照"
 
 
-def test_start_clear_results_must_be_bool(api):
-    api.install()
-    r = api.post("/api/admin/group/start",
-                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2,
-                  "clear_results": "false"})
-    assert r.status_code == 400
+def test_reset_busy_lock_returns_409(api, monkeypatch):
+    fake = api.install(results=[_res("ou_m0", 1, "1")])
+    monkeypatch.setattr(app, "GROUPING_API_LOCK_TIMEOUT", 0.1)
+    with lib_grouping.grouping_lock(ACT, timeout=1):
+        r = api.post("/api/admin/group/reset", {"activity_id": ACT})
+    assert r.status_code == 409
+    assert fake.writes() == [], "抢锁失败不得写任何东西"
 
 
 def test_preview_round_new_fields_for_new_round(api):
@@ -331,13 +321,41 @@ def test_preview_round_new_fields_for_new_round(api):
     assert body["historical_results_to_clear"] == 3, "旧字段语义不变"
 
 
+def test_group_preview_default_round_is_latest_plus_one(api):
+    """preview 的 round 缺省=最新已有轮次+1（与 run 端点同口径）。"""
+    # 已有第 1、2 轮结果 → 推第 3 轮，且第 3 轮尚无结果（写死 1 的突变在这里必红）
+    api.install(activity=_act(分组状态="已完成"),
+                results=[_res("ou_m0", 1, "1"), _res("ou_f0", 1, "2")])
+    body = api.post("/api/admin/group/preview", {"activity_id": ACT}).get_json()
+    assert body["round"] == 3
+    assert body["existing_round_results"] == 0
+    assert body["existing_rounds"] == [1, 2]
+
+    # 无任何结果 → 第 1 轮（空表是合法状态，不等于读失败）
+    api.install()
+    body = api.post("/api/admin/group/preview", {"activity_id": ACT}).get_json()
+    assert body["round"] == 1
+    assert body["existing_round_results"] == 0
+    assert body["existing_rounds"] == []
+
+    # 结果表读失败 → 500 明报（fail-closed，不得拿 0 当「没跑过」）
+    fake = api.install(results=[_res("ou_m0", 1, "1")])
+    fake.search_fails = {GROUP_RESULT_TABLE}
+    r = api.post("/api/admin/group/preview", {"activity_id": ACT})
+    assert r.status_code == 500
+    assert r.get_json()["code"] == "SEARCH_FAILED"
+    assert fake.writes() == [], "preview 读失败也必须零写入"
+
+
 # ---------------------------------------------------------------- A5 run → job
 
 def test_a5_run_returns_202_and_job_reaches_done(api):
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
 
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2,
+                  "round": 1})
     assert r.status_code == 202
     body = r.get_json()
     assert body["ok"] is True and body["state"] == "pending" and body["job_id"]
@@ -349,6 +367,49 @@ def test_a5_run_returns_202_and_job_reaches_done(api):
     assert job["result"]["participant_count"] == 4
     assert api.fake.tables[GROUP_RESULT_TABLE], "结果必须真的写进表"
     _wait_refresh_calls(api, {"activities", "group_results"})
+
+
+def test_a5b_run_default_round_is_latest_plus_one_and_keeps_history(api):
+    """run 的 round 缺省=最新已有轮次+1：已有两轮 → 打第3轮，历史原样保留。"""
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections,
+                results=[_res("ou_m0", 1, "1"), _res("ou_m0", 1, "2")])
+
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
+    assert r.status_code == 202
+    assert r.get_json()["round"] == 3, "缺省轮次=最新+1"
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done" and job["result"]["code"] == "OK"
+    rounds = [row["fields"].get("轮次") for row in api.fake.tables[GROUP_RESULT_TABLE]]
+    assert rounds.count("1") == 1 and rounds.count("2") == 1
+    assert rounds.count("3") == 4
+
+
+def test_run_passes_group_sizes_to_lib(api, monkeypatch):
+    """每组人数是执行入参：run 把它随 job 传给 lib.execute_round（不再读活动栏位）。"""
+    signups, selections = _balanced(2, 2)
+    api.install(signups=signups, selections=selections)
+    captured = {}
+
+    def fake_execute(activity_id, round_no, *, client, activity, find_user_by_openid,
+                     males_per_group, females_per_group, treat_search_failure_as_empty):
+        captured.update(round=round_no, m=males_per_group, f=females_per_group,
+                        treat=treat_search_failure_as_empty)
+        return {"code": "OK", "activity_id": activity_id, "round": round_no,
+                "activity_name": "关系自洽", "males_per_group": males_per_group,
+                "females_per_group": females_per_group, "group_count": 1,
+                "participant_count": 6, "groups": []}
+
+    monkeypatch.setattr(lib_grouping, "execute_round", fake_execute)
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "males_per_group": 3, "females_per_group": 2,
+                  "round": 5})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done" and job["result"]["code"] == "OK"
+    assert captured == {"round": 5, "m": 3, "f": 2, "treat": False}, \
+        "H5 必须传 treat_search_failure_as_empty=False（R7）"
 
 
 # ---------------------------------------------------------------- A6 排队层幂等
@@ -368,12 +429,13 @@ def test_a6_run_duplicate_submission_returns_existing_job(api, monkeypatch):
 
     monkeypatch.setattr(lib_grouping, "execute_round", slow_execute)
 
-    r1 = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    payload = {"activity_id": ACT, "round": 1, "males_per_group": 2, "females_per_group": 2}
+    r1 = api.post("/api/admin/group/run", payload)
     assert r1.status_code == 202
     job_id = r1.get_json()["job_id"]
     assert entered.wait(timeout=5), "job 线程应已开始执行"
 
-    r2 = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r2 = api.post("/api/admin/group/run", payload)
     assert r2.status_code == 409
     assert r2.get_json()["job_id"] == job_id
 
@@ -384,21 +446,17 @@ def test_a6_run_duplicate_submission_returns_existing_job(api, monkeypatch):
 # ---------------------------------------------------------------- A7 活动锁
 
 @pytest.mark.parametrize("path,payload", [
-    ("/api/admin/group/run", {"activity_id": ACT, "round": 1}),
-    ("/api/admin/group/start", {"activity_id": ACT, "males_per_group": 2,
-                                "females_per_group": 2}),
-], ids=["run", "start"])
+    ("/api/admin/group/run", {"activity_id": ACT, "round": 1,
+                              "males_per_group": 2, "females_per_group": 2}),
+    ("/api/admin/group/reset", {"activity_id": ACT}),
+], ids=["run", "reset"])
 def test_a7_activity_lock_busy_returns_409_with_busy_activity(api, monkeypatch, path, payload):
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
+    monkeypatch.setattr(app, "GROUPING_API_LOCK_TIMEOUT", 0.1)
 
-    @contextlib.contextmanager
-    def busy_lock(activity_id, timeout):
-        raise lib_grouping.GroupingBusy(activity_id)
-        yield  # pragma: no cover
-
-    monkeypatch.setattr(lib_grouping, "grouping_lock", busy_lock)
-    r = api.post(path, payload)
+    with lib_grouping.grouping_lock(ACT, timeout=1):
+        r = api.post(path, payload)
     assert r.status_code == 409
     assert r.get_json()["busy_activity_id"] == ACT
 
@@ -552,14 +610,21 @@ def test_activities_list_reads_rounds_for_collecting_activity(api):
 def test_group_run_round_validation_and_unbounded_high_round(api):
     """不限轮次：0/-1/非整数/布尔回 400 零写入；51/999 这类大轮次合法可执行。"""
     fake = api.install()
+    base = {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2}
     for bad in (0, -1, "2", True):
-        assert api.post("/api/admin/group/run",
-                        {"activity_id": ACT, "round": bad}).status_code == 400, bad
-    assert fake.writes() == [], "拒绝的轮次不得产生任何写入"
+        assert api.post("/api/admin/group/run", {**base, "round": bad}).status_code == 400, bad
+    app._rate_store.clear()          # run 端点 5 次/60s 限流：分段清理，测的是校验不是限流
+    # 每组人数缺省/非法同样 400
+    assert api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1}).status_code == 400
+    assert api.post("/api/admin/group/run",
+                    {"activity_id": ACT, "males_per_group": 0, "females_per_group": 2,
+                     "round": 1}).status_code == 400
+    assert fake.writes() == [], "拒绝的入参不得产生任何写入"
 
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 999})
+    app._rate_store.clear()
+    r = api.post("/api/admin/group/run", {**base, "round": 999})
     assert r.status_code == 202, "大轮次必须能入列执行"
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "done" and job["result"]["code"] == "OK"
@@ -582,9 +647,11 @@ def test_a10_flag_is_idempotent(api):
     r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
     assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
     updates = [c for c in fake.writes() if c[0] == "update"]
-    # 迁移后的表含一对一栏位 → 开启时无条件合写对侧=否（schema 判别，见上方用例）
+    # 迁移后的表含一对一栏位 → 开启时无条件合写对侧=否（schema 判别，见上方用例）；
+    # 「签到默认打开」自开始动作迁移到本路径：空 → 同笔补「是」
     assert len(updates) == 1 \
-        and updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
+        and updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否",
+                              "签到功能开启": "是"}
     assert api.refresh_calls == ["activities"]
 
     # 真实环境 fresh=True 会从飞书读到刚写入的「是」；同步桩快照模拟这次实时读
@@ -651,36 +718,29 @@ def test_run_search_failure_aborts_without_writes(api):
     fake = api.install(signups=signups, selections=selections)
     fake.search_fails = {GROUP_RESULT_TABLE}
 
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "done"
     assert job["result"]["code"] == "SEARCH_FAILED"
     assert fake.writes() == [], "读不到既有结果就不能动任何字段"
-    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
+    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中", "失败零状态变更"
     # job 线程先落终态、后刷快照：等刷新调用补齐，避免漏到下一个用例的
-    # mock 列表里（全量跑时偶发：test_start_search_failure 的 == ["activities"] 被串台）。
+    # mock 列表里（全量跑时偶发：test_reset_search_failure 的 == [] 被串台）。
     _wait_refresh_calls(api, {"activities", "group_results"})
 
 
-def test_start_search_failure_returns_500_without_deleting(api):
-    """start 严格模式：清历史结果读失败时如实报错。
-
-    lib 先写「收集中」再查历史结果，所以此路径状态已开、结果保留；接口刷新
-    activities 让管理台看到真实状态后重试，不吞成成功。
-    """
-    signups, selections = _balanced(2, 2)
-    fake = api.install(signups=signups, selections=selections,
-                       results=[_res("ou_m0", 1, "1")])
+def test_run_default_round_search_failure_returns_500(api):
+    """round 缺省时推演读失败 → 500 明报（不得拿 0 当「没跑过」）。"""
+    fake = api.install()
     fake.search_fails = {GROUP_RESULT_TABLE}
-
-    r = api.post("/api/admin/group/start",
+    r = api.post("/api/admin/group/run",
                  {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
     assert r.status_code == 500
     assert r.get_json()["code"] == "SEARCH_FAILED"
-    assert fake.tables[GROUP_RESULT_TABLE], "历史结果不能被误删"
-    assert _find_act(fake, ACT)["fields"]["分组状态"] == "收集中"
-    assert api.refresh_calls == ["activities"], "状态已变，必须刷新一次 activities"
+    assert fake.writes() == []
 
 
 def test_dead_process_job_reports_unknown_and_does_not_block(api):
@@ -696,7 +756,9 @@ def test_dead_process_job_reports_unknown_and_does_not_block(api):
 
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202, "上个进程的残留 job 不能永远挡住重跑"
     assert _poll_job(api, r.get_json()["job_id"])["state"] == "done"
 
@@ -712,7 +774,9 @@ def test_job_exception_is_recorded_as_failed_and_releases_lock(api, monkeypatch)
         raise RuntimeError("写表炸了")
 
     monkeypatch.setattr(lib_grouping, "execute_round", boom)
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "failed"
@@ -724,7 +788,9 @@ def test_job_exception_is_recorded_as_failed_and_releases_lock(api, monkeypatch)
 
     # 异常路径也必须把锁放掉，否则整场活动再也跑不了分组
     monkeypatch.setattr(lib_grouping, "execute_round", real_execute)
-    r2 = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 2})
+    r2 = api.post("/api/admin/group/run",
+                  {"activity_id": ACT, "round": 2, "males_per_group": 2,
+                   "females_per_group": 2})
     assert r2.status_code == 202
     assert _poll_job(api, r2.get_json()["job_id"])["state"] == "done"
 
@@ -735,20 +801,34 @@ def test_payload_validation_and_missing_resources(api):
                     {"activity_id": ACT, "round": 0}).status_code == 400
     assert api.post("/api/admin/group/preview",
                     {"activity_id": "", "round": 1}).status_code == 400
-    assert api.post("/api/admin/group/start",
-                    {"activity_id": ACT, "males_per_group": 0,
+    # reset：缺 activity_id → 400
+    assert api.post("/api/admin/group/reset", {}).status_code == 400
+    # run：轮次非法 / 每组人数缺省或非法 → 400
+    assert api.post("/api/admin/group/run",
+                    {"activity_id": ACT, "round": "1", "males_per_group": 2,
                      "females_per_group": 2}).status_code == 400
     assert api.post("/api/admin/group/run",
-                    {"activity_id": ACT, "round": "1"}).status_code == 400
+                    {"activity_id": ACT, "round": 1}).status_code == 400
+    assert api.post("/api/admin/group/run",
+                    {"activity_id": ACT, "males_per_group": 2, "females_per_group": 0,
+                     "round": 1}).status_code == 400
     assert api.post("/api/admin/group/flag",
                     {"activity_id": ACT, "enabled": "yes"}).status_code == 400
+    # 已删除的 start 端点必须保持不可用（移除志愿收集阶段的回归护栏）：
+    # POST 会被 Flask 静态兜底路由判 405，关键是没有可用的 start 端点
+    assert api.post("/api/admin/group/start",
+                    {"activity_id": ACT, "males_per_group": 2,
+                     "females_per_group": 2}).status_code in (404, 405)
     assert api.get("/api/admin/group/job?job_id=nope").status_code == 404
     assert api.get("/api/admin/group/status?activity_id=A-9999").status_code == 404
     assert api.get("/api/admin/group/unsubmitted?activity_id=A-9999").status_code == 404
     assert api.post("/api/admin/group/preview",
                     {"activity_id": "A-9999", "round": 1}).status_code == 404
+    assert api.post("/api/admin/group/reset",
+                    {"activity_id": "A-9999"}).status_code == 404
     assert api.post("/api/admin/group/run",
-                    {"activity_id": "A-9999", "round": 1}).status_code == 404
+                    {"activity_id": "A-9999", "males_per_group": 2,
+                     "females_per_group": 2}).status_code == 404
 
 
 # ---------------------------------------------------------------- C4：现场签到端点冒烟
@@ -900,7 +980,9 @@ def test_result_display_name_fallback_matches_job_when_nickname_empty(api):
                   _sel("ou_f0", "女性"), _sel("ou_f1", "女性")]
     api.install(signups=signups, selections=selections)
 
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "done" and job["result"]["code"] == "OK"
@@ -938,7 +1020,9 @@ def test_same_pid_stale_job_reports_unknown_and_allows_rerun(api):
 
     signups, selections = _balanced(2, 2)
     api.install(signups=signups, selections=selections)
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202, "pid 相同的过期 job 不能永久挡住重跑"
     assert _poll_job(api, r.get_json()["job_id"])["state"] == "done"
 
@@ -1016,29 +1100,14 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
 
 # ---------------------------------------------------------------- C3：互斥 guard 与条件合并
 
-def test_group_start_blocked_when_onetoone_active(api):
-    """「开始填志愿」：对面一对一 flag=是 或状态∈{收集中,已截止} → 409 零写入。"""
-    fake = api.install(activity=_act(一对一功能开启="是"))
-    r = api.post("/api/admin/group/start",
-                 {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
-    assert r.status_code == 409
-    assert r.get_json()["code"] == "EXCLUSIVE_MODE"
-    assert fake.writes() == []
-
-    fake2 = api.install(activity=_act(一对一状态="收集中"))
-    r2 = api.post("/api/admin/group/start",
-                  {"activity_id": ACT, "males_per_group": 2, "females_per_group": 2})
-    assert r2.status_code == 409
-    assert r2.get_json()["code"] == "EXCLUSIVE_MODE"
-    assert fake2.writes() == []
-
-
 def test_group_run_blocked_when_onetoone_flag_on(api):
     """「执行分组」：对面一对一 flag=是 → job 结果 EXCLUSIVE_MODE、零写入。"""
     signups, selections = _balanced(2, 2)
     fake = api.install(activity=_act(一对一功能开启="是"),
                        signups=signups, selections=selections)
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["state"] == "done"
@@ -1052,18 +1121,22 @@ def test_group_guard_noop_without_onetoone_fields(api):
     signups, selections = _balanced(2, 2)
     fake = api.install(activity=_act(), signups=signups, selections=selections,
                        results=[_res("ou_m0", 1, "1")])
-    r = api.post("/api/admin/group/run", {"activity_id": ACT, "round": 1})
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
     assert r.status_code == 202
     job = _poll_job(api, r.get_json()["job_id"])
     assert job["result"]["code"] == "ALREADY_DONE", "无对侧栏位 → 不触发 guard"
     assert not [c for c in fake.writes() if c[0] == "batch_delete"]
 
 
-def test_set_group_flag_merges_counterpart_when_field_exists(api):
+def test_set_group_flag_merges_counterpart_and_signin_default(api):
     """schema 判别：表里有一对一栏位 → 开启分组时**无条件**合写「一对一=否」（同一笔）。
 
     修复语义：不再看快照里的现值（并发窗口里读到的必是旧值；空值场景
-    search_records 还会省略 key）。逐一覆盖 一对一=是 / =否 / 空（key 缺失）。"""
+    search_records 还会省略 key）。逐一覆盖 一对一=是 / =否 / 空（key 缺失）。
+    同时「签到默认打开」自开始动作迁移到本路径：空 → 同笔补「是」。
+    """
     for value in ("是", "否", None):
         fields = {"分组功能开启": "否"}
         if value is not None:
@@ -1072,28 +1145,28 @@ def test_set_group_flag_merges_counterpart_when_field_exists(api):
         r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
         assert r.status_code == 200 and r.get_json()["group_flag"] == "是"
         updates = [c for c in fake.writes() if c[0] == "update"]
-        assert len(updates) == 1, f"value={value!r} 必须恰一笔 update（同一笔 payload 合写两栏）"
-        assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}, \
-            f"value={value!r} 也必须合写"
+        assert len(updates) == 1, f"value={value!r} 必须恰一笔 update（同一笔 payload 合写多栏）"
+        assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否",
+                                 "签到功能开启": "是"}, f"value={value!r}"
 
 
 def test_set_group_flag_no_merge_without_field_exists(api, monkeypatch):
-    """表里没有该栏位（未迁移形态/parity 桩表）→ 只写自身，写序列逐字不变。"""
+    """表里没有该栏位（未迁移形态/parity 桩表）→ 不合写对侧；签到默认照写。"""
     monkeypatch.setattr(sys.modules[__name__], "FakeBitable", _UnmigratedFake)
     fake = api.install(activity=_act(分组功能开启="否", 一对一功能开启="是"))
     r = api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
     assert r.status_code == 200
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是"}
+    assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "是", "签到功能开启": "是"}
 
     fake2 = api.install(activity=_act(分组功能开启="否"))
     api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": True})
     updates2 = [c for c in fake2.writes() if c[0] == "update"]
-    assert len(updates2) == 1 and updates2[0][3] == {"分组功能开启": "是"}
+    assert len(updates2) == 1 and updates2[0][3] == {"分组功能开启": "是", "签到功能开启": "是"}
 
 
 def test_set_group_flag_disable_never_touches_onetoone(api):
-    """关闭分组只写自身=否；即使一对一=是（脏数据）也不合并不动它。"""
+    """关闭分组只写自身=否；即使一对一=是（脏数据）也不合并不动它，且不补签到默认。"""
     fake = api.install(activity=_act(分组功能开启="是", 一对一功能开启="是"))
     api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": False})
     updates = [c for c in fake.writes() if c[0] == "update"]

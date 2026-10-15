@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """一次性脚本：给活动表(ACTIVITY_TABLE)添加一对一相关字段。
 
-- 一对一状态（单选：收集中/已截止/已完成）—— 空值即「未开始」
+- 一对一状态（单选：历史选项 收集中/已截止/已完成——保留以兼容存量数据；新流程只写「已完成」，空值即「未开始」）
 - 一对一功能开启（单选：是/否）
 
 用法: ./venv/bin/python add_onetoone_fields.py
@@ -27,7 +27,7 @@ APP_SECRET = getattr(_cfg, "FEISHU_APP_SECRET", None) or getattr(_cfg, "APP_SECR
 BASE_TOKEN = _cfg.BASE_TOKEN
 ACTIVITY_TABLE_ID = getattr(_cfg, "ACTIVITY_TABLE_ID", None) or "tblHLltReY8xHTfu"  # 活动表
 
-# (字段名, type, 选项)；type=3 单选
+# (字段名, type, 选项)；type=3 单选（一对一状态为历史选项，新流程只写「已完成」，空=未开始）
 FIELDS = [
     ("一对一状态", 3, ["收集中", "已截止", "已完成"]),
     ("一对一功能开启", 3, ["是", "否"]),

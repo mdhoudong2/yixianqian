@@ -81,7 +81,7 @@ def main():
         f_per = fv(act["fields"], bot.FIELD_ACT_FEMALE_PER_GROUP)
         cur = fv(act["fields"], bot.FIELD_ACTIVITY_CURRENT_SIGNUP)
         check(True, f"找到活动, 活动状态={st}, 每组男生数={m_per}, 每组女生数={f_per}, 当前报名={cur}")
-        # 状态应为「未开始」或「报名中」——开始填志愿前应是未开始/报名中皆可
+        # 状态应为「未开始」或「报名中」——志愿随时可填（收集阶段已废除）
 
     # 2. 假账号
     print("\n[2] 假测试账号 (用户表 ou_fake_*)")
@@ -138,7 +138,7 @@ def main():
     check("run_grouping_algorithm" in src and "def run_grouping_algorithm" in src, "分组算法存在")
 
     print("\n" + "=" * 60)
-    print("结论: " + ("✅ 环境健全，可以发送「开始填志愿 A-0005 4 4」" if ok else "❌ 存在 FAIL，请先处理"))
+    print("结论: " + ("✅ 环境健全，志愿随时可填（收集阶段已废除）；执行分组用：执行分组 A-0005 4 4" if ok else "❌ 存在 FAIL，请先处理"))
     print("=" * 60)
     return 0 if ok else 1
 

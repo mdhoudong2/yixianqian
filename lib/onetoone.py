@@ -96,10 +96,10 @@ ONETOONE_UNSELECTED_SCORE = 30
 # 资料相似度 0.2，再用运输问题求「每个女生恰好 K 场、男生配额均衡」下的总分最大。
 WEIGHT_OFFLINE_PRIORITY = 0.4
 
-# 一对一执行互斥已改走 lib.grouping.grouping_lock（跨进程 flock，bot 与 H5 共用
-# 同一批 yixianqian_grouping_<活动>.lock）。等待预算：执行/开始收集是分钟级作业，
+# 一对一执行/清空结果的互斥走 lib.grouping.grouping_lock（跨进程 flock，bot 与 H5
+# 共用同一批 yixianqian_grouping_<活动>.lock）。等待预算：执行/清空是分钟级作业，
 # 与分组同口径；用户提交要快速失败，不占线程池。
-START_LOCK_TIMEOUT = 180
+EXECUTE_LOCK_TIMEOUT = 180
 SUBMIT_LOCK_TIMEOUT = 5
 
 
@@ -581,13 +581,9 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
 def preview(activity_id, round_no, *, client, activity, find_user_by_openid, female_chats=None):
     """执行前的影响面预览——**一个栏位都不写**（对照 lib.grouping.preview_round）。
 
-    绝不碰「一对一状态」：执行路径一进门就把活动改成「已截止」，preview 若沿用同
-    一条路径，管理员只是「看一眼」就把活动截止掉，用户立刻不能提交志愿。
-    所以这里是独立的一条纯读路径。
-
+    独立于 execute 的纯读路径：管理员只是「看一眼」，绝不能产生任何副作用。
     round_no：本次拟执行的轮次。`existing_round_results` 是该轮已有结果数（非 0 时
-    执行会被幂等拦住）；`historical_results_to_clear` / `rounds_preserved` 等回答
-    「开始一对一」会清掉 / 「开启新一轮」会留下什么。
+    执行会被幂等拦住）；`rounds_preserved` 等字段回答该活动现有历史轮次与结果量。
     `female_chats`：女生场次 K；缺/非法/超男生数时进 blockers，不让前端确认执行。
     """
     _require_configured()
@@ -667,13 +663,13 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid, fem
         "female_chats": female_chats,
         "total_pairs_expected": total_pairs_expected,
         "skipped_no_gender": skipped,
-        # 旧字段语义不动：始终回答「开始一对一会删掉多少历史结果」。
+        # 旧字段语义不动：始终回答「清空一对一结果会删掉多少历史结果」。
         "existing_results": len(existing),
         "existing_round_results": len(this_round),
         "existing_rounds": rounds,
         "historical_results_to_clear": len(existing),
         "historical_rounds_to_clear": rounds,
-        # 加法字段：clear_results=False（开启新一轮）时保留的轮次与结果条数。
+        # 加法字段：执行本轮不清历史时保留的轮次与结果条数。
         "rounds_preserved": rounds,
         "results_preserved": len(existing),
         "can_execute": not blockers,
@@ -808,28 +804,43 @@ def save_selection(activity_id, open_id, fields, *, client, lock_timeout=None):
         return {"code": "BUSY"}
 
 
-def start_collection(activity_id, *, client, activity, lock_timeout=None, clear_results=True):
-    """开放一对一志愿收集；**整体持锁**切状态 + 默认清空该活动全部历史结果。
+def latest_round(client, activity_id):
+    """该活动一对一结果的最新轮次（int）；没有任何结果时回 0；读失败回 None。
 
-    锁内做「状态→收集中 + 清历史结果」：不持锁时，并发的「开始一对一」与
-    「执行一对一」会互相删除/覆盖结果。删除数不足必须明报失败——报成功会让
-    管理员以为可以重跑，实际被残留结果卡住。
+    轮次默认值 =「最新已有轮次 + 1」的唯一推演入口：bot 执行指令与 H5
+    run/preview 端点共用，避免各算各的。空/非正整数轮次行按第 1 轮处理
+    （round_of 归一化口径：迁移前的空轮次遗留行 = 第 1 轮）。
 
-    动作层互斥（设计 §2.3）：对面分组 flag=「是」或状态 ∈ {收集中, 已截止} →
-    拒绝（EXCLUSIVE_MODE），不自动动对面数据。假表缺分组栏位 → 不触发。
+    读失败（raw client 回 None）与「没有结果」必须严格区分：调用端拿到 None
+    必须明报失败，绝不能拿 0 当「没跑过」——那等于用一次限流换掉一份既有结果。
+    """
+    _require_configured()
+    rows = client.search_records(_cfg["tables"]["onetoone_result_table"], {
+        "conjunction": "and",
+        "conditions": [{"field_name": _cfg["fields"]["oto_activity_id"], "operator": "is",
+                        "value": [activity_id]}]})
+    if rows is None:
+        return None
+    rounds = [round_of(r.get("fields", {})) for r in rows]
+    return max(rounds) if rounds else 0
 
-    `clear_results`（对照 lib.grouping.start_group）：
-    - True（默认）：开放收集 + 清空全部历史轮次结果，供「重跑既有轮次」；
-    - False（H5「开启新一轮」）：只写「一对一状态=收集中」，结果表**不读也不删**
-      （连 search 都不发，也不会有 RESULTS_SEARCH_FAILED），历史轮次全部保留，
-      `cleared_results` 恒为 0。算法是确定性的，直接重跑旧轮次毫无意义——保留
-      历史 + 重开收集才能跑出第 N+1 轮。
 
-    返回 code：OK / BUSY / EXCLUSIVE_MODE / STATUS_FAILED / RESULTS_SEARCH_FAILED /
-    DELETE_INCOMPLETE。
+def reset_onetoone_results(activity_id, *, client, activity, lock_timeout=None):
+    """清空该活动全部一对一结果，并把「一对一状态」清空回未开始（写空字串）。
+
+    整体持 grouping_lock(activity_id)（**自持锁**，调用方不得再持同一把锁——
+    锁不可重入）。
+
+    fail-closed（原 start_collection「清结果」能力的收编，不弱化）：结果表读失败
+    → RESULTS_SEARCH_FAILED；删除数不足 → DELETE_INCOMPLETE；状态栏位清空写失败 →
+    STATUS_FAILED。报成功会让管理员以为可以重跑，实际被残留结果卡住（重跑同轮次
+    会被 ALREADY_DONE 拦）。
+
+    只清该侧结果与状态：不碰分组结果/状态，不碰报名与志愿记录。
+    成功回传 cleared_results。
     """
     if lock_timeout is None:
-        lock_timeout = START_LOCK_TIMEOUT
+        lock_timeout = EXECUTE_LOCK_TIMEOUT
     _require_configured()
     f = _cfg["fields"]
     t = _cfg["tables"]
@@ -837,23 +848,8 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None, clear_
     activity_name = get_field_text(af, f["activity_name"])
     record_id = activity.get("record_id")
     base = {"activity_id": activity_id, "activity_name": activity_name}
-    if lib_grouping.counterpart_start_active(activity, flag_field=f["group_flag"],
-                                             status_field=f["group_status"]):
-        return dict(base, code="EXCLUSIVE_MODE", blocked_by="group")
     try:
         with grouping_lock(activity_id, timeout=lock_timeout):
-            # 签到功能默认打开：单选栏位没有 API 级默认值，趁写状态这一笔顺带补「是」
-            # （当前值已存在则不动；栏位名未注入则写空 dict，见 lib.grouping.signin_default_payload）
-            payload = {f["onetoone_status"]: "收集中"}
-            payload.update(lib_grouping.signin_default_payload(af))
-            if not client.update_record(t["activity_table_id"], record_id, payload):
-                return dict(base, code="STATUS_FAILED")
-
-            if not clear_results:
-                # 开启新一轮：历史轮次与结果全部保留（不读不删，零搜索失败面）
-                log(f"管理员开启新一轮一对一志愿收集（保留历史结果）: {activity_name}")
-                return dict(base, code="OK", cleared_results=0)
-
             old_results = client.search_records(t["onetoone_result_table"], {
                 "conjunction": "and",
                 "conditions": [{"field_name": f["oto_activity_id"], "operator": "is",
@@ -868,9 +864,11 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None, clear_
                 if deleted < len(old_results):
                     return dict(base, code="DELETE_INCOMPLETE",
                                 deleted=deleted, total=len(old_results))
-                log(f"重新开放一对一，已清除 {deleted} 条历史结果: {activity_name}")
-
-            log(f"管理员开始一对一: {activity_name}")
+                log(f"已清空 {deleted} 条历史一对一结果: {activity_name}")
+            if not client.update_record(t["activity_table_id"], record_id,
+                                        {f["onetoone_status"]: ""}):
+                return dict(base, code="STATUS_FAILED", cleared_results=deleted)
+            log(f"管理员清空一对一结果: {activity_name}")
             return dict(base, code="OK", cleared_results=deleted)
     except GroupingBusy:
         return dict(base, code="BUSY")
@@ -878,7 +876,7 @@ def start_collection(activity_id, *, client, activity, lock_timeout=None, clear_
 
 def execute(activity_id, round_no, *, client, activity, find_user_by_openid, lock_timeout=None,
             female_chats=None):
-    """执行一对一匹配（幂等检查 + 状态机 + 写结果）。
+    """执行一对一匹配（幂等检查 + 读入参 + 写结果）。
 
     `round_no`：写入与幂等都锚定「(活动, 轮次)」——同一轮重跑被 ALREADY_DONE
     拦住，换一轮即可产出第 N+1 轮（与 lib.grouping.execute_round 同语义）。
@@ -891,29 +889,30 @@ def execute(activity_id, round_no, *, client, activity, find_user_by_openid, loc
 
     **调用方不需要持锁**：本函数整体持 lib.grouping.grouping_lock（跨进程 flock，
     与 H5/分组共用同一批活动锁）。状态机每一步的读失败（raw client 返回 None）
-    都在写入之前中止，绝不当空表继续：
+    都在写入之前中止，**失败一律零状态变更**（不再有「已截止」前置写，也不再有
+    「恢复收集中」的恢复写）：
 
     ① 幂等查该活动该轮历史结果，None → 中止（零写入）；
-    ② 写「已截止」，失败 → 中止；
-    ③ 读志愿，None → 恢复「收集中」（并检查恢复结果）＋明说失败；
-    ④ 空 → 维持原「没有参与者」文案；⑤ 算法异常 → 恢复状态；
+    ② 读志愿，None → 中止并明说失败（零写入）；
+    ③ 签到开启时读签到名单，None → 中止（零写入）；
+    ④ 空参与者 → 维持原「没有参与者」文案（零写入）；
+    ⑤ 算法异常（含 K 非法）→ 中止（零写入）；
     ⑥ 写结果，`created < total` → 回查：None → 不得宣称已回滚；回查成功 → 删除
-       本轮的部分写入并检查删除数；
-    ⑦ 成功 → 状态「已完成」（检查返回值）。
+       本轮的部分写入并检查删除数（活动表一个栏位都不写）；
+    ⑦ 成功 → 状态「已完成」（检查返回值；结果已写但状态写失败明报 DONE_STATUS_FAILED）。
 
     返回 code：OK / BUSY / ROUND_OUT_OF_RANGE / SEARCH_FAILED / ALREADY_DONE /
-    CLOSE_FAILED / SELECTIONS_SEARCH_FAILED / NO_PARTICIPANTS / ALGORITHM_ERROR /
-    FEMALE_CHATS_REQUIRED / FEMALE_CHATS_INVALID / PARTIAL_WRITE /
+    SELECTIONS_SEARCH_FAILED / SIGNIN_QUERY_FAILED / NO_PARTICIPANTS /
+    ALGORITHM_ERROR / FEMALE_CHATS_REQUIRED / FEMALE_CHATS_INVALID / PARTIAL_WRITE /
     PARTIAL_WRITE_VERIFY_FAILED / PARTIAL_WRITE_INCOMPLETE / DONE_STATUS_FAILED。
     """
     if lock_timeout is None:
-        lock_timeout = START_LOCK_TIMEOUT
+        lock_timeout = EXECUTE_LOCK_TIMEOUT
     _require_configured()
     f = _cfg["fields"]
     activity_name = get_field_text(activity.get("fields", {}), f["activity_name"])
     base = {"activity_id": activity_id, "round": round_no, "activity_name": activity_name}
     # 写入路径的轮次收口：轮次字段已转文本、不设上限，只挡非「≥1 整数」。
-    # 否则状态机会先把活动改成「已截止」，必须在任何读/写/锁之前拒绝。
     if (not isinstance(round_no, int) or isinstance(round_no, bool)
             or round_no < 1):
         return dict(base, code="ROUND_OUT_OF_RANGE")
@@ -962,21 +961,14 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
     # 后续所有读写都用活动记录自己的 ID，不退回入参：入参可能是用户随手敲的别名
     rec_activity_id = get_field_text(af, f["activity_id"]) or ""
 
-    # ② 状态切「已截止」：写失败就中止，不能带着「收集中」继续写结果
-    if not client.update_record(t["activity_table_id"], record_id,
-                                {f["onetoone_status"]: "已截止"}):
-        return dict(base, code="CLOSE_FAILED")
-
-    # ③ 读志愿记录：读失败恢复「收集中」并如实报告
+    # ② 读志愿记录：读失败中止（零写入），如实报告
     selections_records = client.search_records(t["onetoone_select_table"], {
         "conjunction": "and",
         "conditions": [{"field_name": f["oto_activity_id"], "operator": "is",
                         "value": [rec_activity_id]}],
     })
     if selections_records is None:
-        restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                             {f["onetoone_status"]: "收集中"}))
-        return dict(base, code="SELECTIONS_SEARCH_FAILED", restored=restored)
+        return dict(base, code="SELECTIONS_SEARCH_FAILED")
     _selection_participants, selections, skipped = _scan_selections(selections_records)
 
     # 参与者 = 全部「已报名」者（含未提交志愿的人）——线下「女生坐镇」必须人人有
@@ -987,40 +979,32 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
                      "gender": "male" if s["gender"] == "男性" else "female"}
                     for s in signups if s["gender"] in ("男性", "女性")]
 
-    # ③.5 现场签到执行池过滤（设计 §3.3/§3.4，与 lib.grouping.execute_round 同一
-    # 兜底）：只挡提交挡不住「早提交、活动当天未到」；读失败（None）fail-closed，
-    # 恢复「收集中」再明报，绝不带着「读不到」把全部人放进来。
+    # ③ 现场签到执行池过滤（设计 §3.3/§3.4，与 lib.grouping.execute_round 同一
+    # 兜底）：只挡提交挡不住「早提交、活动当天未到」；读失败（None）fail-closed
+    # 零写入，绝不带着「读不到」把全部人放进来。
     if lib_grouping.signin_enabled(af):
         attendance = lib_grouping.attendance_map(rec_activity_id, client=client)
         if attendance is None:
-            restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                                 {f["onetoone_status"]: "收集中"}))
-            return dict(base, code="SIGNIN_QUERY_FAILED", restored=restored)
+            return dict(base, code="SIGNIN_QUERY_FAILED")
         participants = [p for p in participants
                         if lib_grouping.is_checked_in(attendance.get(p["id"]))]
 
-    # ④ 没有参与者：恢复状态，维持原文案
+    # ④ 没有参与者：维持原文案（零写入）
     if not participants:
-        restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                             {f["onetoone_status"]: "收集中"}))
-        return dict(base, code="NO_PARTICIPANTS", skipped=skipped, restored=restored)
+        return dict(base, code="NO_PARTICIPANTS", skipped=skipped)
 
     profiles = build_profiles([p["id"] for p in participants],
                               find_user_by_openid=find_user_by_openid)
 
-    # ⑤ 算法异常（含 K 非法）恢复状态
+    # ⑤ 算法异常（含 K 非法）中止（零写入）
     try:
         offline = run_offline_onetoone_matching(participants, selections, profiles,
                                                 female_chats)
         matches = _offline_result_to_lists(offline)
     except ValueError as e:
-        restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                             {f["onetoone_status"]: "收集中"}))
-        return dict(base, code="FEMALE_CHATS_INVALID", error=str(e), restored=restored)
+        return dict(base, code="FEMALE_CHATS_INVALID", error=str(e))
     except Exception as e:
-        restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                             {f["onetoone_status"]: "收集中"}))
-        return dict(base, code="ALGORITHM_ERROR", error=str(e), restored=restored)
+        return dict(base, code="ALGORITHM_ERROR", error=str(e))
 
     # 报名信息：open_id -> 显示名（现场活动统一「真名（缺省昵称）」，姓名去空白非空才用）
     oid_to_name = {s["open_id"]: (s["real_name"] or s["nickname"]) for s in signups}
@@ -1043,7 +1027,7 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
         created = client.batch_create_records(t["onetoone_result_table"], result_records)
         if created < len(result_records):
             # ⑥ 写入不完整：回查已写入的部分结果并回滚（只回滚本轮——历史轮次
-            # 的结果不是这次写坏的，不能一起删）。
+            # 的结果不是这次写坏的，不能一起删）。活动表一个栏位都不写。
             # 回查失败（None）时**不得宣称已回滚**——可能残留在表里，谎报成功
             # 会把管理员的后续重试引向「结果重复」或「被幂等卡死」。
             partial = client.search_records(t["onetoone_result_table"], {
@@ -1052,10 +1036,8 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
                                 "value": [rec_activity_id]}],
             })
             if partial is None:
-                restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                                     {f["onetoone_status"]: "收集中"}))
                 return dict(base, code="PARTIAL_WRITE_VERIFY_FAILED", created=created,
-                            total=len(result_records), restored=restored)
+                            total=len(result_records))
             this_round = [p for p in partial
                           if round_of(p.get("fields", {})) == round_no]
             deleted = 0
@@ -1063,15 +1045,11 @@ def _execute_locked(activity_id, round_no, *, client, activity, find_user_by_ope
                 deleted = client.batch_delete_records(
                     t["onetoone_result_table"], [p["record_id"] for p in this_round])
             if deleted < len(this_round):
-                restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                                     {f["onetoone_status"]: "收集中"}))
                 return dict(base, code="PARTIAL_WRITE_INCOMPLETE", created=created,
                             total=len(result_records), deleted=deleted,
-                            residual=len(this_round) - deleted, restored=restored)
-            restored = bool(client.update_record(t["activity_table_id"], record_id,
-                                                 {f["onetoone_status"]: "收集中"}))
+                            residual=len(this_round) - deleted)
             return dict(base, code="PARTIAL_WRITE", created=created,
-                        total=len(result_records), restored=restored)
+                        total=len(result_records))
 
     # ⑦ 成功 → 状态「已完成」（检查返回值：结果已写但状态写失败必须明说）
     total_pairs = sum(len(v) for v in matches.values())
@@ -1117,11 +1095,10 @@ def set_onetoone_flag(activity_id, enabled, *, client, activity=None):
     lib.grouping.FLAG_LOCK_TIMEOUT 与 docs/读取一致性.md）。抢不到锁（执行作业
     分钟级持锁）快速失败回 BUSY。
 
-    `activity` 由调用端在锁外解析好（与 start_group 等同约定：网络读不压在锁里），
-    产品调用端一律显式传入：真实 base 的「活动ID」是自动编号字段，按字符串过滤
-    必回 0 行。`activity=None` 时在锁内查一次——该路径仅供桩表/测试使用、真表
-    不可用（只会得到 NOT_FOUND），不是产品路径。写失败如实回 WRITE_FAILED
-    （检查 update_record 返回值，不报成功）。
+    `activity` 由调用端在锁外解析好（网络读不压在锁里），产品调用端一律显式传入：
+    真实 base 的「活动ID」是自动编号字段，按字符串过滤必回 0 行。`activity=None`
+    时在锁内查一次——该路径仅供桩表/测试使用、真表不可用（只会得到 NOT_FOUND），
+    不是产品路径。写失败如实回 WRITE_FAILED（检查 update_record 返回值，不报成功）。
     返回 {"code", "activity_id", "name", "onetoone_flag", "enabled"}。
     """
     _require_configured()

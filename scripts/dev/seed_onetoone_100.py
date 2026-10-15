@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """测试服「100 人一对一」压测种子 + 执行 + 读回验证（只允许在 /opt/yixianqian-test 执行）。
 
-造 100 个假号（50 男 + 50 女，open_id=ou_fake_oto_{male|female}_NNN），新建一个专用活动，
-全部报名 + 轮转法预填 7 志愿，走真实 bot 命令链 handle_admin_start_onetoone →
-handle_admin_stop_onetoone("<活动ID> <女生场次>")——「女生坐镇、男生上门」均衡分配，
-最后读回结果表逐条验证均衡不变量。
+造 100 个假号（50 男 + 50 女，open_id=ou_fake_oto_{male|female}_NNN），新建一个专用活动
+（一对一功能开启=是），全部报名 + 轮转法预填 7 志愿，走真实 bot 命令链
+handle_admin_stop_onetoone("<活动ID> <女生场次>")——「女生坐镇、男生上门」均衡分配
+（轮次缺省=最新+1，新活动即第 1 轮），最后读回结果表逐条验证均衡不变量。
 
 - 结果行数 = 2 × 女生数 × K（50 女 × 10 = 500 女名单 + 500 男名单 = 1000 条）；
 - 每个女生恰好 K 位不同男性来访、排名 1..K 无重复；
@@ -350,11 +350,7 @@ def _seed_choices(act_id, males, females):
 
 
 def _run_matching(act_id):
-    from onetoone import handle_admin_start_onetoone, handle_admin_stop_onetoone
-    reply = handle_admin_start_onetoone(act_id)
-    print(f"  handle_admin_start_onetoone -> {reply.splitlines()[0]}")
-    if "志愿填写已开始" not in reply:
-        _fail(f"开始一对一失败：{reply}")
+    from onetoone import handle_admin_stop_onetoone
     reply = handle_admin_stop_onetoone(f"{act_id} {_FEMALE_CHATS}")
     print(f"  handle_admin_stop_onetoone({act_id} {_FEMALE_CHATS}) -> {reply.splitlines()[0]}")
     if "匹配完成" not in reply:
@@ -472,8 +468,8 @@ def _cmd_plan():
     print(f"  资料相似度：学历 {_EDUCATIONS} / 城市 {_CITIES} / 教堂 {_CHURCHES} + 爱好/运动/性格/MBTI 轮转")
     print(f"【活动】新建「百人对一对一演示」：报名中、一对一功能开启=是")
     print(f"【志愿】轮转法：每人选 7 位异性（跳过同序位），共 {len(males) + len(females)} 条")
-    print(f"【执行】handle_admin_start_onetoone → "
-          f"handle_admin_stop_onetoone('<活动ID> {_FEMALE_CHATS}')")
+    print(f"【执行】handle_admin_stop_onetoone('<活动ID> {_FEMALE_CHATS}')"
+          f"（轮次缺省=最新+1，新活动即第 1 轮）")
     print(f"【预期】女 {len(females)} 人 × K {_FEMALE_CHATS} 场 = "
           f"{len(females) * _FEMALE_CHATS} 女名单 + {len(females) * _FEMALE_CHATS} 男名单 = "
           f"{2 * len(females) * _FEMALE_CHATS} 条结果")

@@ -1,7 +1,8 @@
 """lib/grouping.py 的管理员分组业务单测（不联网，桩表驱动）。
 
-迁移前 `_do_grouping` 是零覆盖的。这一组把它的每条分支钉死：状态回滚、写入回滚、
-幂等拦截、状态流转顺序、逐人写入的字段、preview 的零写入红线。
+覆盖：执行分组（幂等拦截、失败零状态变更、单笔「已完成」写、逐人字段、轮次参数）、
+清空分组结果（fail-closed：读失败/删除不足/状态写失败）、轮次推演 helper、
+preview 的零写入红线。
 
 桩的是「存取」（tests/test_grouping_parity.py 的 FakeBitable），规则全跑真实现。
 """
@@ -36,11 +37,7 @@ def _tables(activity=None, signups=(), selections=(), results=()):
 
 
 def _balanced(n_males, n_females, prefix="p"):
-    """造 n 男 n 女、每人交 1 份志愿的报名与志愿记录（性别齐全）。
-
-    不接收每组人数——那是活动栏位，由各用例自己在 _act(...) 里写死，避免
-    「以为设了 4 男 4 女、其实是活动表里那个 2」这种以为设了其实没设的错。
-    """
+    """造 n 男 n 女、每人交 1 份志愿的报名与志愿记录（性别齐全）。"""
     signups, selections = [], []
     for i in range(n_males):
         oid = f"ou_{prefix}m{i}"
@@ -65,22 +62,28 @@ def _activity(fake):
     return _find_act(fake, ACT)
 
 
-# ---------------------------------------------------------------- 分支覆盖
+def _execute(fake, round_no=1, males_per_group=2, females_per_group=2,
+             treat_search_failure_as_empty=True):
+    return lib_grouping.execute_round(
+        ACT, round_no, client=fake, activity=_activity(fake),
+        find_user_by_openid=_find_user,
+        males_per_group=males_per_group, females_per_group=females_per_group,
+        treat_search_failure_as_empty=treat_search_failure_as_empty)
 
-def test_not_enough_people_restores_collecting(configured):
-    """T1：人数不够 → 状态必须被写回「收集中」，且分组结果表零写入。
 
-    忘了回滚的话，活动会永远卡在「已截止」，用户再也提交不了志愿。
-    """
+# ---------------------------------------------------------------- 执行分组：分支覆盖
+
+def test_not_enough_people_leaves_zero_state_changes(configured):
+    """T1：人数不够 → 零状态变更（不再有「恢复收集中」的恢复写），结果表零写入。"""
     signups, selections = _balanced(1, 1)
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake)
 
     assert res["code"] == "NOT_ENOUGH_PEOPLE"
     assert (res["males"], res["females"]) == (1, 1)
-    assert _activity(fake)["fields"]["分组状态"] == "收集中"
+    assert fake.writes() == [], "失败不得写任何表"
+    assert _activity(fake)["fields"]["分组状态"] == "收集中", "活动栏位原样不动"
     assert fake.tables[GROUP_RESULT_TABLE] == []
 
 
@@ -90,16 +93,15 @@ def test_not_enough_people_message_includes_skipped(configured):
     selections.append(_sel("ou_unknown", ""))          # 性别缺失
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake)
 
     assert res["code"] == "NOT_ENOUGH_PEOPLE"
     assert res["skipped"] == 1
     assert res["males"] == 1 and res["females"] == 1, "跳过的那个不算进人数"
 
 
-def test_algorithm_exception_restores_collecting(configured, monkeypatch):
-    """T3：算法抛异常 → 状态回滚 + 错误文字带上异常内容，不能只写一句「失败了」。"""
+def test_algorithm_exception_leaves_zero_state_changes(configured, monkeypatch):
+    """T3：算法抛异常 → 零状态变更 + 错误文字带上异常内容。"""
     signups, selections = _balanced(4, 4)
 
     def _boom(*a, **k):
@@ -108,88 +110,122 @@ def test_algorithm_exception_restores_collecting(configured, monkeypatch):
     monkeypatch.setattr(lib_grouping, "run_grouping_algorithm", _boom)
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake)
 
     assert res["code"] == "ALGORITHM_ERROR"
     assert res["error"] == "炸了"
-    assert _activity(fake)["fields"]["分组状态"] == "收集中"
+    assert fake.writes() == []
     assert fake.tables[GROUP_RESULT_TABLE] == []
 
 
-def test_empty_groups_restores_collecting(configured, monkeypatch):
-    """T4：人数够但组不出来 → 同样是回滚，不能让活动停在「已截止」。"""
+def test_empty_groups_leaves_zero_state_changes(configured, monkeypatch):
+    """T4：人数够但组不出来 → 零状态变更。"""
     signups, selections = _balanced(4, 4)
     monkeypatch.setattr(lib_grouping, "run_grouping_algorithm", lambda *a, **k: [])
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake)
 
     assert res["code"] == "EMPTY_GROUPS"
-    assert _activity(fake)["fields"]["分组状态"] == "收集中"
+    assert fake.writes() == []
     assert fake.tables[GROUP_RESULT_TABLE] == []
 
 
-def test_partial_write_rolls_back(configured):
-    """T5：批量只写进一半 → 必须查回来删掉 + 回滚状态。
-
-    否则用户看到的是「已完成」，点进去发现自己那一组根本不存在。
-    """
+def test_partial_write_rolls_back_results_without_touching_activity(configured):
+    """T5：批量只写进一半 → 必须查回来删掉本轮半截结果；活动表一个栏位都不写。"""
     signups, selections = _balanced(4, 4)
     fake = FakeBitable(_tables(signups=signups, selections=selections), fail_create_after=5)
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake)
 
     assert res["code"] == "PARTIAL_WRITE"
     assert (res["created"], res["total"]) == (5, 8)
     assert fake.tables[GROUP_RESULT_TABLE] == [], "半截结果必须被清干净"
-    assert _activity(fake)["fields"]["分组状态"] == "收集中"
+    assert [c for c in fake.writes() if c[0] == "update"] == [], "失败不得写活动表"
+
+
+def test_group_size_validation_rejects_bad_values_with_zero_calls(configured):
+    """每组人数防御性校验：非 ≥1 整数 → GROUP_SIZE_INVALID、零表操作、零状态变更。"""
+    for m_per, f_per in ((0, 2), (2, 0), (-1, 2), ("2", 2), (True, 2), (2, None), (2.0, 2)):
+        fake = FakeBitable(_tables())
+        res = _execute(fake, males_per_group=m_per, females_per_group=f_per)
+        assert res["code"] == "GROUP_SIZE_INVALID", f"({m_per!r},{f_per!r})"
+        assert fake.calls == [], f"({m_per!r},{f_per!r}) 不得有任何表操作"
+        assert _activity(fake)["fields"]["分组状态"] == "收集中"
 
 
 def test_idempotency_blocks_rerun(configured):
-    """T6：本轮已有结果 → 一个字都不能写，连「已截止」都不许先改。
-
-    幂等检查与写入之间的时间窗靠外层的 grouping_lock 补上。
-    """
+    """T6：本轮已有结果 → 一个字都不能写（含活动表）。"""
     signups, selections = _balanced(4, 4)
     fake = FakeBitable(_tables(signups=signups, selections=selections,
                                results=[_res("ou_x", 1, "2")]))
 
-    res = lib_grouping.execute_round(ACT, 2, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake, round_no=2)
 
     assert res["code"] == "ALREADY_DONE"
     assert fake.writes() == []
     assert _activity(fake)["fields"]["分组状态"] == "收集中"
 
 
-def test_status_transitions_on_success(configured):
-    """T7：成功路径的状态流转顺序必须是 收集中 → 已截止 → 已完成。"""
+def test_success_writes_done_and_sizes_in_single_update(configured):
+    """T7：成功路径活动表只有一笔 update：已完成 + 每组人数（同笔）。"""
     signups, selections = _balanced(4, 4)
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake)
 
     assert res["code"] == "OK"
-    statuses = [c[3]["分组状态"] for c in fake.writes() if c[0] == "update"]
-    assert statuses == ["已截止", "已完成"]
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert len(updates) == 1, "成功必须单笔 update"
+    assert updates[0][3] == {"分组状态": "已完成", "每组男生数": 2, "每组女生数": 2}
     assert _activity(fake)["fields"]["分组状态"] == "已完成"
 
 
-def test_writes_every_member_of_every_group(configured):
-    """T8：3 组 × 8 人 = 24 条，每条的五个字段都要对。
-
-    少写一条就有一个用户在 H5 上查不到自己的组，而且没有任何报错。
-    """
-    signups, selections = _balanced(12, 12)
+def test_execute_uses_command_group_sizes_not_activity_fields(configured):
+    """执行入参覆盖活动栏位：活动写 4/4、入参 2/2 → 结果按 2/2 分组、栏位被改成 2/2。"""
+    signups, selections = _balanced(2, 2)
     fake = FakeBitable(_tables(activity=_act(每组男生数=4, 每组女生数=4),
                                signups=signups, selections=selections))
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user)
+    res = _execute(fake, males_per_group=2, females_per_group=2)
+
+    assert res["code"] == "OK"
+    assert res["males_per_group"] == 2 and res["females_per_group"] == 2
+    assert _activity(fake)["fields"]["每组男生数"] == 2
+
+
+def test_success_round_field_is_stored(configured):
+    """轮次写入：第 7 轮执行的每条结果行都带「轮次=7」。"""
+    signups, selections = _balanced(2, 2)
+    fake = FakeBitable(_tables(signups=signups, selections=selections))
+
+    res = _execute(fake, round_no=7)
+
+    assert res["code"] == "OK" and res["round"] == 7
+    rows = fake.tables[GROUP_RESULT_TABLE]
+    assert rows and all(r["fields"]["轮次"] == "7" for r in rows)
+
+
+def test_done_status_write_failure_reports_explicit_error(configured):
+    """结果已写但「已完成」写失败 → DONE_STATUS_FAILED（绝不报成功）。"""
+    signups, selections = _balanced(2, 2)
+    fake = FakeBitable(_tables(signups=signups, selections=selections))
+    real_update = fake.update_record
+    fake.update_record = lambda table_id, rid, fields: (
+        None if table_id == ACTIVITY_TABLE_ID else real_update(table_id, rid, fields))
+
+    res = _execute(fake)
+
+    assert res["code"] == "DONE_STATUS_FAILED"
+    assert fake.tables[GROUP_RESULT_TABLE], "结果确实已写入"
+
+
+def test_writes_every_member_of_every_group(configured):
+    """T8：3 组 × 8 人 = 24 条，每条的五个字段都要对。"""
+    signups, selections = _balanced(12, 12)
+    fake = FakeBitable(_tables(signups=signups, selections=selections))
+
+    res = _execute(fake, males_per_group=4, females_per_group=4)
 
     assert res["code"] == "OK"
     assert res["group_count"] == 3
@@ -214,16 +250,15 @@ def test_writes_every_member_of_every_group(configured):
     assert len({oid for members in by_group.values() for oid, _ in members}) == 24
 
 
-def test_start_group_clears_all_historical_results(configured):
-    """T9：重新开放要把该活动**所有轮次**的结果一次清干净，不分轮次。
+# ---------------------------------------------------------------- 清空分组结果（reset）
 
-    只清当轮的话，幂等保护会拦下重跑，管理员会以为指令没生效。
-    """
+def test_reset_group_results_clears_all_rounds_and_clears_status(configured):
+    """清空要把该活动**所有轮次**的结果一次清干净，状态栏位写空（未开始）。"""
     results = [_res("ou_m1", 1, "1"), _res("ou_m2", 1, "1"),
                _res("ou_f1", 2, "2"), _res("ou_f2", 2, "2")]
     fake = FakeBitable(_tables(results=results))
 
-    res = lib_grouping.start_group(ACT, 3, 3, client=fake, activity=_activity(fake))
+    res = lib_grouping.reset_group_results(ACT, client=fake, activity=_activity(fake))
 
     assert res["code"] == "OK"
     assert res["cleared_results"] == 4
@@ -231,77 +266,94 @@ def test_start_group_clears_all_historical_results(configured):
     assert len(deletes) == 1
     assert sorted(deletes[0][2]) == sorted(r["record_id"] for r in results)
     assert fake.tables[GROUP_RESULT_TABLE] == []
-
-
-def test_start_group_writes_config_fields(configured):
-    """T10：活动表只写那三个栏位 + 签到默认——多写一个就可能顺手盖掉别人正在改的东西。
-
-    「签到功能开启」是本次「签到默认打开」刻意追加的同笔栏目（空值→是），
-    单独由 test_realname_lib.py 的矩阵与 parity 的専用用例覆盖。
-    """
-    fake = FakeBitable(_tables())
-
-    lib_grouping.start_group(ACT, 4, 5, client=fake, activity=_activity(fake))
-
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1
-    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 4, "每组女生数": 5,
-                             "签到功能开启": "是"}
+    assert len(updates) == 1 and updates[0][3] == {"分组状态": ""}
+    assert _activity(fake)["fields"]["分组状态"] == ""
+
+
+def test_reset_group_results_fail_closed_on_search_failure(configured):
+    """fail-closed：结果表读失败 → RESULTS_SEARCH_FAILED，零写入、状态原样。"""
+    fake = FakeBitable(_tables(results=[_res("ou_m1", 1, "1")]),
+                       search_fails={GROUP_RESULT_TABLE})
+
+    res = lib_grouping.reset_group_results(ACT, client=fake, activity=_activity(fake))
+
+    assert res["code"] == "RESULTS_SEARCH_FAILED"
+    assert fake.writes() == []
     assert _activity(fake)["fields"]["分组状态"] == "收集中"
 
 
-def test_start_group_keeps_history_when_clear_results_false(configured):
-    """开启新一轮：只开放收集，历史结果一条不动，连结果表都不读。
+def test_reset_group_results_fail_closed_on_delete_incomplete(configured):
+    """fail-closed：删除数不足 → DELETE_INCOMPLETE（不报成功、不清状态）。"""
+    results = [_res("ou_m1", 1, "1"), _res("ou_f1", 2, "2"), _res("ou_f2", 2, "2")]
+    fake = FakeBitable(_tables(results=results), delete_limit=2)
 
-    算法是确定性的，直接重跑旧轮次没有意义——保留历史 + 重开收集才能跑出
-    第 N+1 轮。
-    """
-    results = [_res("ou_m1", 1, "1"), _res("ou_m2", 1, "1"),
-               _res("ou_f1", 2, "2"), _res("ou_f2", 2, "2")]
+    res = lib_grouping.reset_group_results(ACT, client=fake, activity=_activity(fake))
+
+    assert res["code"] == "DELETE_INCOMPLETE"
+    assert res["deleted"] == 2 and res["total"] == 3
+    assert [c for c in fake.writes() if c[0] == "update"] == [], "删除不足不得再清状态"
+    assert len(fake.tables[GROUP_RESULT_TABLE]) == 1
+
+
+def test_reset_group_results_status_write_failure_reports(configured):
+    """状态清空写失败 → STATUS_FAILED（结果已删，如实报告）。"""
+    results = [_res("ou_m1", 1, "1")]
     fake = FakeBitable(_tables(results=results))
+    real_update = fake.update_record
+    fake.update_record = lambda table_id, rid, fields: (
+        None if table_id == ACTIVITY_TABLE_ID else real_update(table_id, rid, fields))
 
-    res = lib_grouping.start_group(ACT, 3, 3, client=fake, activity=_activity(fake),
-                                   clear_results=False)
+    res = lib_grouping.reset_group_results(ACT, client=fake, activity=_activity(fake))
 
-    assert res["code"] == "OK"
-    assert res["cleared_results"] == 0
-    assert _activity(fake)["fields"]["分组状态"] == "收集中"
-    # 历史结果原样保留，且结果表零读零删
-    assert [r["record_id"] for r in fake.tables[GROUP_RESULT_TABLE]] == \
-        [r["record_id"] for r in results]
-    assert not any(c[0] == "batch_delete" for c in fake.calls)
-    assert not any(c == ("search", GROUP_RESULT_TABLE) for c in fake.calls), \
-        "保留模式不得读结果表（省一次全表读，也不进 SEARCH_FAILED）"
-    updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1
-    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 3, "每组女生数": 3,
-                             "签到功能开启": "是"}
+    assert res["code"] == "STATUS_FAILED"
+    assert res["cleared_results"] == 1
+    assert fake.tables[GROUP_RESULT_TABLE] == []
 
 
-def test_start_group_clear_results_true_matches_default(configured):
-    """显式 clear_results=True 与默认路径完全一致（bot 走的仍是默认值）。"""
-    results = [_res("ou_m1", 1, "1"), _res("ou_f1", 2, "2")]
-    fake_default = FakeBitable(_tables(results=results))
-    fake_explicit = FakeBitable(_tables(results=results))
+def test_reset_group_results_busy_when_lock_held(configured, monkeypatch):
+    """抢锁失败 → BUSY、零写入（锁不可重入，这里是另一持有者持锁的外部视角）。"""
+    monkeypatch.setattr(lib_grouping, "RESET_LOCK_TIMEOUT", 0.1)
+    fake = FakeBitable(_tables(results=[_res("ou_m1", 1, "1")]))
 
-    res_default = lib_grouping.start_group(ACT, 3, 3, client=fake_default,
-                                           activity=_activity(fake_default))
-    res_explicit = lib_grouping.start_group(ACT, 3, 3, client=fake_explicit,
-                                            activity=_activity(fake_explicit),
-                                            clear_results=True)
+    with lib_grouping.grouping_lock(ACT, timeout=1):
+        res = lib_grouping.reset_group_results(ACT, client=fake, activity=_activity(fake))
 
-    assert res_default == res_explicit
-    assert res_explicit["cleared_results"] == 2
-    assert fake_default.writes() == fake_explicit.writes()
-    assert fake_default.tables == fake_explicit.tables
+    assert res["code"] == "BUSY"
+    assert fake.writes() == []
 
 
-def test_preview_round_reports_preserved_history(configured):
-    """开启新一轮的加法字段：preview 要能报出「保留 N 轮 / 共 X 条」。
+# ---------------------------------------------------------------- 轮次推演 helper
 
-    旧字段 historical_results_to_clear 语义不动（它始终回答「会删多少」），
-    rounds_preserved / results_preserved 回答「会留下什么」。
-    """
+def test_latest_round_reads_max_and_handles_empty(configured):
+    signups, selections = _balanced(2, 2)
+    with_rounds = FakeBitable(_tables(signups=signups, selections=selections, results=[
+        _res("ou_pm0", 1, "1"), _res("ou_pm1", 1, "2"), _res("ou_pf0", 1, "2")]))
+    assert lib_grouping.latest_round(with_rounds, ACT) == 2
+
+    empty = FakeBitable(_tables())
+    assert lib_grouping.latest_round(empty, ACT) == 0
+
+
+def test_latest_round_ignores_blank_and_non_digit_rounds(configured):
+    """空/非数字轮次行不参与（与 execute_round 幂等口径一致）。"""
+    fake = FakeBitable(_tables(results=[
+        {"record_id": "r_blank", "fields": {"活动ID": ACT, "组号": 1, "用户open_id": "x",
+                                             "用户昵称": "", "用户性别": "男性", "轮次": ""}},
+        _res("ou_pm0", 1, "3"),
+    ]))
+    assert lib_grouping.latest_round(fake, ACT) == 3
+
+
+def test_latest_round_search_failure_returns_none(configured):
+    """读失败必须回 None（与「没有结果」的 0 严格区分——调用端据此明报失败）。"""
+    fake = FakeBitable(_tables(), search_fails={GROUP_RESULT_TABLE})
+    assert lib_grouping.latest_round(fake, ACT) is None
+
+
+# ---------------------------------------------------------------- preview
+
+def test_preview_round_reports_current_history(configured):
     signups, selections = _balanced(4, 4)
     results = [_res("ou_m1", 1, "1"), _res("ou_m2", 1, "1"), _res("ou_f1", 2, "2")]
     fake = FakeBitable(_tables(signups=signups, selections=selections, results=results))
@@ -316,11 +368,7 @@ def test_preview_round_reports_preserved_history(configured):
 
 
 def test_round_out_of_range_is_blocked_by_preview(configured):
-    """T11：轮次不限（字段已转文本），preview 只挡「非 ≥1 整数」。
-
-    0/-1/字符串/None/布尔必须在执行前就被挡住，且挡住它的那次调用一个栏位都不能写；
-    大轮次（50/51/999）必须照常可执行——「上限」语义已随字段转文本废除。
-    """
+    """T11：轮次不限（字段已转文本），preview 只挡「非 ≥1 整数」。"""
     signups, selections = _balanced(4, 4)
     fake = FakeBitable(_tables(signups=signups, selections=selections))
 
@@ -341,10 +389,7 @@ def test_round_out_of_range_is_blocked_by_preview(configured):
 
 
 def test_duplicate_selector_oid_keeps_first(configured):
-    """T12：同一个 open_id 交了两份志愿 → 只取第一份，且不计入「性别缺失」跳过数。
-
-    取到两份的话同一个人会被塞进两个组；错记成跳过则「人数不足」的提示会误导。
-    """
+    """T12：同一个 open_id 交了两份志愿 → 只取第一份，且不计入「性别缺失」跳过数。"""
     signups, selections = _balanced(4, 4)
     dup = _sel("ou_pm0", "女性", ())                   # 与 ou_pm0 的「男性」重复
     dup["record_id"] = "rec_g_dup"
@@ -359,10 +404,7 @@ def test_duplicate_selector_oid_keeps_first(configured):
 
 
 def test_summarize_selections_dedupes_dirty_rows(configured):
-    """必修 1/2 的共同实现：非空 open_id 去重；首行性别缺失不吞人（后续有效行仍算）。
-
-    同一实现同时喂 bot「分组状态」、preview 与 H5 端点，三处口径不可能再漂移。
-    """
+    """必修 1/2 的共同实现：非空 open_id 去重；首行性别缺失不吞人（后续有效行仍算）。"""
     records = [
         _sel("ou_dup", ""),                      # 首行性别缺失：算已提交，但不吞掉这个人
         _sel("ou_dup", "男性", ("ou_pf0",)),     # 次行有效：参与分组
@@ -452,11 +494,7 @@ def test_fetch_result_empty_table(configured):
 # ---------------------------------------------------------------- 迁移红线
 
 def test_preview_round_writes_nothing(configured):
-    """RFC R8：preview 绝不能碰「分组状态」。
-
-    执行路径一进门就把活动改成「已截止」；preview 若沿用同一条路径，管理员只是
-    「看一眼预览」就把活动截止掉，用户立刻不能提交志愿。这是本次最重的一条红线。
-    """
+    """preview 绝不能写任何栏位（管理台「看一眼」不得产生副作用）。"""
     signups, selections = _balanced(4, 4)
     fake = FakeBitable(_tables(signups=signups, selections=selections,
                                results=[_res("ou_m1", 1, "1"), _res("ou_f2", 1, "2")]))
@@ -476,10 +514,7 @@ def test_preview_round_writes_nothing(configured):
 
 
 def test_preview_blockers_cover_all_four_causes(configured):
-    """四种事前拦截各要能单独触发，且每组人数为 0 时不再重复报「人数不足」。
-
-    两条一起报等于把同一个根因说两遍，管理员会去改错的那个设置。
-    """
+    """四种事前拦截各要能单独触发，且每组人数为 0 时不再重复报「人数不足」。"""
     signups, selections = _balanced(4, 4)
 
     zero = FakeBitable(_tables(activity=_act(每组男生数=0, 每组女生数=0),
@@ -513,7 +548,7 @@ def test_preview_blockers_cover_all_four_causes(configured):
 
 
 def test_search_failure_is_not_treated_as_empty_when_asked(configured):
-    """RFC R7：幂等检查读不到飞书时，H5 侧要中止而不是当成「没跑过」。
+    """幂等检查读不到飞书时，H5 侧要中止而不是当成「没跑过」。
 
     当成没跑过就会重跑并覆盖既有结果——那正是这个开关要挡的事。
     bot 侧保持老行为（当空表继续），所以默认参数必须是 True。
@@ -522,27 +557,14 @@ def test_search_failure_is_not_treated_as_empty_when_asked(configured):
     fake = FakeBitable(_tables(signups=signups, selections=selections),
                        search_fails={GROUP_RESULT_TABLE})
 
-    res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_activity(fake),
-                                     find_user_by_openid=_find_user,
-                                     treat_search_failure_as_empty=False)
+    res = _execute(fake, treat_search_failure_as_empty=False)
     assert res["code"] == "SEARCH_FAILED"
     assert fake.writes() == []
 
     fake2 = FakeBitable(_tables(signups=signups, selections=selections),
                         search_fails={GROUP_RESULT_TABLE})
-    res2 = lib_grouping.execute_round(ACT, 1, client=fake2, activity=_activity(fake2),
-                                      find_user_by_openid=_find_user)
+    res2 = _execute(fake2)
     assert res2["code"] == "OK", "bot 侧默认必须沿用「读不到当空表」的老行为"
-
-
-def test_start_group_reports_search_failure_when_asked(configured):
-    signups, selections = _balanced(4, 4)
-    fake = FakeBitable(_tables(signups=signups, selections=selections),
-                       search_fails={GROUP_RESULT_TABLE})
-
-    res = lib_grouping.start_group(ACT, 2, 2, client=fake, activity=_activity(fake),
-                                   treat_search_failure_as_empty=False)
-    assert res["code"] == "SEARCH_FAILED"
 
 
 def test_scores_survived_the_move():
@@ -574,54 +596,81 @@ def test_business_functions_require_configure(monkeypatch):
 
 
 def test_incomplete_config_names_the_missing_items(monkeypatch):
-    """只注入一部分（这里只给 activity_table_id）时，要点名缺哪几项。
-
-    否则报错要等到业务跑深了才炸成 KeyError('group_result_table')，看不出根因；
-    Phase 2 接 H5 端点时最容易踩这个。
-    """
+    """只注入一部分（这里只给 activity_table_id）时，要点名缺哪几项。"""
     # 栏位名补齐，只留三张表不注入
     monkeypatch.setitem(lib_grouping._cfg, "tables", {"activity_table_id": ACTIVITY_TABLE_ID})
     monkeypatch.setitem(lib_grouping._cfg, "fields",
                         {k: f"F_{k}" for k in lib_grouping._REQUIRED_FIELDS})
     with pytest.raises(RuntimeError) as ei:
         lib_grouping.fetch_status(ACT, client=object(), activity={},
-                                 find_user_by_openid=_find_user)
+                                  find_user_by_openid=_find_user)
     msg = str(ei.value)
     for missing in ("group_select_table", "group_result_table", "signup_table_id"):
         assert missing in msg, f"报错应点名缺少 {missing}，实际：{msg}"
     assert "activity_table_id" not in msg, "已注入的表不该被列进缺失清单"
 
 
-def test_bot_start_group_refuses_to_claim_success_on_failure(configured, monkeypatch):
-    """bot 不能在「清历史失败」后仍回「志愿填写已开始」。
+# ---------------------------------------------------------------- bot 渲染（清空指令）
 
-    今天 bot 走默认 treat_search_failure_as_empty=True，SEARCH_FAILED 不可达（parity
-    佐证），所以这条用桩把 lib 的回传码换成失败，钉住 bot/grouping.py 里那道
-    「回传码不能被丢」的断言——否则日后照 H5 改成传 False，就会静默回一条
-    与事实相反的成功回执。
-    """
-    signups, selections = _balanced(2, 2)
-    fake = FakeBitable(_tables(signups=signups, selections=selections))
+def _patch_bot(monkeypatch, fake):
     monkeypatch.setattr(bot_grouping, "bitable", fake)
     monkeypatch.setattr(bot_grouping, "find_activity_by_id", lambda aid: _find_act(fake, aid))
     monkeypatch.setattr(bot_grouping, "log", lambda *a, **k: None)
 
-    real_start = lib_grouping.start_group
-    monkeypatch.setattr(
-        lib_grouping, "start_group",
-        lambda *a, **k: dict(real_start(*a, **k), code="SEARCH_FAILED"))
 
-    with pytest.raises(RuntimeError, match="start_group 未成功"):
-        bot_grouping.handle_admin_start_group(f"{ACT} 2 2")
+def test_bot_reset_group_reports_success_and_failures(configured, monkeypatch):
+    """清空指令回执：成功报「已清空 N 条」；读失败/删除不足如实报错、不吞成成功。"""
+    results = [_res("ou_m1", 1, "1"), _res("ou_f1", 2, "2")]
+    fake = FakeBitable(_tables(results=results))
+    _patch_bot(monkeypatch, fake)
+
+    reply = bot_grouping.handle_admin_reset_group(ACT)
+    assert reply == "已清空活动「关系自洽」的历史分组结果 2 条，分组状态已重置为未开始。"
+    assert fake.tables[GROUP_RESULT_TABLE] == []
+    assert _activity(fake)["fields"]["分组状态"] == ""
+
+    # 读失败
+    fake2 = FakeBitable(_tables(results=results), search_fails={GROUP_RESULT_TABLE})
+    _patch_bot(monkeypatch, fake2)
+    reply2 = bot_grouping.handle_admin_reset_group(ACT)
+    assert reply2 == "清空失败：读取历史分组结果失败，未做任何删除，请稍后重试。"
+    assert fake2.writes() == []
+
+    # 删除不完整
+    fake3 = FakeBitable(_tables(results=results), delete_limit=1)
+    _patch_bot(monkeypatch, fake3)
+    reply3 = bot_grouping.handle_admin_reset_group(ACT)
+    assert reply3 == "清空失败：分组结果删除不完整（成功删除 1/2 条），请稍后重试。"
+    assert [c for c in fake3.writes() if c[0] == "update"] == []
+
+    # 活动不存在 / 格式错误
+    assert bot_grouping.handle_admin_reset_group("") == \
+        "格式：清空分组结果 活动ID\n例如：清空分组结果 A-0002"
+    assert bot_grouping.handle_admin_reset_group("A-9999") == "未找到活动：A-9999"
 
 
-def test_bot_start_group_still_returns_verbatim_success_reply(configured, monkeypatch):
-    """对照组：正常路径的回执一字都不能变（红线：parity 84 条全绿靠它）。"""
+def test_bot_reset_group_busy_reports_busy(configured, monkeypatch):
+    """清空指令自持锁：锁被占时明确回执，绝不无限等待。"""
+    fake = FakeBitable(_tables(results=[_res("ou_m1", 1, "1")]))
+    _patch_bot(monkeypatch, fake)
+    monkeypatch.setattr(lib_grouping, "RESET_LOCK_TIMEOUT", 0.1)
+
+    with lib_grouping.grouping_lock(ACT, timeout=1):
+        reply = bot_grouping.handle_admin_reset_group(ACT)
+
+    assert reply == bot_grouping.GROUPING_BUSY_REPLY
+    assert fake.writes() == []
+
+
+def test_bot_stop_group_refuses_to_claim_success_on_failure(configured, monkeypatch):
+    """bot 渲染层对未知/失败码不得伪装成成功（以 DONE_STATUS_FAILED 为例）。"""
     signups, selections = _balanced(2, 2)
     fake = FakeBitable(_tables(signups=signups, selections=selections))
-    monkeypatch.setattr(bot_grouping, "bitable", fake)
-    monkeypatch.setattr(bot_grouping, "find_activity_by_id", lambda aid: _find_act(fake, aid))
-    monkeypatch.setattr(bot_grouping, "log", lambda *a, **k: None)
+    _patch_bot(monkeypatch, fake)
+    real_update = fake.update_record
+    fake.update_record = lambda table_id, rid, fields: (
+        None if table_id == ACTIVITY_TABLE_ID else real_update(table_id, rid, fields))
 
-    reply = bot_grouping.handle_admin_start_group(f"{ACT} 2 2")
-    assert reply.startswith("志愿填写已开始：") and "已开放，未发送群发通知。" in reply
+    reply = bot_grouping.handle_admin_stop_group(f"{ACT} 2 2")
+    assert "已生成" in reply and "状态写入失败" in reply
+    assert "🎉" not in reply, "不得伪装成成功回执"

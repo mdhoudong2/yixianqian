@@ -13,17 +13,20 @@
   轮转法：异性 8 人按 uid 升序成 list，第 k 位跳过「同序位 k」的那位，
   选其余 7 位（list[(k+1..k+7) mod 8]），保证每人都被 7 位异性选中。
 
-- 活动设置：handle_admin_start_group("A-0011 4 4")（分组状态=收集中/
-  4男4女/清历史结果）+ handle_admin_toggle_group_flag("A-0011 开")
-  （分组功能开启=是）。不执行分组，不动活动其它状态。start 成功后把
-  A-0011 全部「已报名」报名记录的签到状态批量置「按时」：模拟全员现场
-  到场（签到默认开启后的执行池口径）——空签到状态会被执行池按「已到」
-  过滤清空。
+- 活动设置：handle_admin_toggle_group_flag("A-0011 开")（分组功能开启=是；
+  志愿收集阶段已废除，不再写「分组状态」，「每组人数」改为执行入参）。
+  开启成功后把 A-0011 全部「已报名」报名记录的签到状态批量置「按时」：
+  模拟全员现场到场（签到默认开启后的执行池口径）——空签到状态会被执行池按
+  「已到」过滤清空。分组由管理员另行执行（见下），本脚本不执行分组。
 
 用法（在 /opt/yixianqian-test 仓库根，必须显式 YIXIANQIAN_ENV=dev）：
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_grouping.py plan    # 只打印计划，不写
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_grouping.py run     # 执行写入并读回验证
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_grouping.py verify  # 只读复核（U-0006 留白）
+
+执行分组（管理员侧，另行发起）：
+  执行分组 A-0011 4 4        # 轮次缺省=最新已有轮次+1；如需重跑旧轮次先清空结果：
+  清空分组结果 A-0011        # 清空全部分组结果并把分组状态重置为未开始
 
 自建守卫（任一不满足即退出，绝不写入）：
   1) 仓库根 realpath 必须等于 /opt/yixianqian-test；
@@ -347,16 +350,15 @@ def _print_plan(plan):
         print(f"  {verb} {sel['uid']}({sel['gender']}) 7 个志愿 -> {targets}")
 
     af = plan["activity"].get("fields", {})
-    print("\n【活动更新 2 项】")
-    print(f"  1) handle_admin_start_group(\"{_ACTIVITY_ID} {_GROUP_MALES} {_GROUP_FEMALES}\")："
-          f"分组状态 {get_select_value(af, C.FIELD_ACT_GROUP_STATUS) or '空'}→收集中、"
-          f"每组男生数 {get_field_number(af, C.FIELD_ACT_MALE_PER_GROUP)}→{_GROUP_MALES}、"
-          f"每组女生数 {get_field_number(af, C.FIELD_ACT_FEMALE_PER_GROUP)}→{_GROUP_FEMALES}"
-          f"（历史分组结果 {len(plan['results'])} 条，"
-          f"{'将拒绝执行：与“不删现有记录”红线冲突' if plan['results'] else '无删除'}）")
-    print(f"  2) handle_admin_toggle_group_flag(\"{_ACTIVITY_ID} 开\")："
-          f"分组功能开启 {get_select_value(af, C.FIELD_ACT_GROUP_FLAG) or '空'}→是")
-    print("\n【预期】分组池=15 条志愿+U-0006 H5 提交=8男8女 → 每组4男4女，恰好 2 组。")
+    print("\n【活动更新 1 项】")
+    print(f"  1) handle_admin_toggle_group_flag(\"{_ACTIVITY_ID} 开\")："
+          f"分组功能开启 {get_select_value(af, C.FIELD_ACT_GROUP_FLAG) or '空'}→是"
+          f"（同笔补「签到功能开启=是」，若为空）")
+    print("\n【下一步】管理员执行分组（另行发起，本脚本不执行）："
+          f"「执行分组 {_ACTIVITY_ID} {_GROUP_MALES} {_GROUP_FEMALES}」"
+          f"（轮次缺省=最新轮次+1；重跑旧轮次先「清空分组结果 {_ACTIVITY_ID}」）。")
+    print(f"【预期】分组池=15 条志愿+U-0006 H5 提交=8男8女 → 每组{_GROUP_MALES}男"
+          f"{_GROUP_FEMALES}女，恰好 2 组。")
     print("【保留】既有 D（U-0004，女，已报名）与 4 条已取消报名原样不动；"
           "bot 对账后「当前报名人数」预计 17（16 新 + 已有 D）。")
 
@@ -431,19 +433,14 @@ def _mark_signups_attendance_present():
 
 def _apply_activity_settings():
     from commands import handle_admin_toggle_group_flag
-    from grouping import handle_admin_start_group
 
-    reply1 = handle_admin_start_group(f"{_ACTIVITY_ID} {_GROUP_MALES} {_GROUP_FEMALES}")
-    print(f"  handle_admin_start_group -> {reply1.splitlines()[0]}")
-    if "志愿填写已开始" not in reply1:
-        _fail(f"开始填志愿失败：{reply1}（写入可能未生效，已读回验证会如实报告）")
-    # start 已同笔写入「签到功能开启=是」（默认打开）；把全部「已报名」置
+    reply = handle_admin_toggle_group_flag(f"{_ACTIVITY_ID} 开")
+    print(f"  handle_admin_toggle_group_flag -> {reply.splitlines()[0]}")
+    if "已开启" not in reply:
+        _fail(f"开启分组功能失败：{reply}")
+    # 开启分组功能已同笔写入「签到功能开启=是」（默认打开）；把全部「已报名」置
     # 「按时」模拟全员现场到场，避免后续执行/预览池被签到闸门清空。
     _mark_signups_attendance_present()
-    reply2 = handle_admin_toggle_group_flag(f"{_ACTIVITY_ID} 开")
-    print(f"  handle_admin_toggle_group_flag -> {reply2.splitlines()[0]}")
-    if "已开启" not in reply2:
-        _fail(f"开启分组功能失败：{reply2}")
 
 
 def _read_choices(fields):
@@ -560,15 +557,13 @@ def _verify_state(plan):
     lines.append(f"[关系] orphans={orphan}, dup={dup}, wrong_gender={wrong_gender}, "
                  f"self_ref={self_ref}")
 
-    # C3 活动字段
+    # C3 活动字段（状态模型：未开始/已完成；本脚本只负责开启分组功能）
     af = _read_activity().get("fields", {})
     gs = get_select_value(af, C.FIELD_ACT_GROUP_STATUS)
-    mp = get_field_number(af, C.FIELD_ACT_MALE_PER_GROUP)
-    fp = get_field_number(af, C.FIELD_ACT_FEMALE_PER_GROUP)
     flag = get_select_value(af, C.FIELD_ACT_GROUP_FLAG)
-    lines.append(f"[活动] 分组状态={gs} 每组男生数={mp} 每组女生数={fp} 分组功能开启={flag}")
-    if (gs, mp, fp, flag) != ("收集中", _GROUP_MALES, _GROUP_FEMALES, "是"):
-        issues.append(f"活动四栏不符：{gs}/{mp}/{fp}/{flag}")
+    lines.append(f"[活动] 分组状态={gs or '（空=未开始）'} 分组功能开启={flag}")
+    if flag != "是":
+        issues.append(f"分组功能开启不符：{flag}")
     cur = get_field_number(af, C.FIELD_ACTIVITY_CURRENT_SIGNUP)
     lines.append(f"[当前报名人数] {cur}（16 新 + 既有 D；由 bot 每 30s 对账，运行后可能短暂滞后）")
 
@@ -588,20 +583,20 @@ def _cmd_plan():
 def _cmd_run():
     plan = _compute_plan()
     if plan["results"]:
-        _fail(f"分组结果表现有 A-0011 记录 {len(plan['results'])} 条，"
-              "handle_admin_start_group 会清除它们，与「不删现有记录」红线冲突，拒绝执行")
+        print(f"  注：A-0011 现有分组结果 {len(plan['results'])} 条；"
+              f"缺省执行轮次=最新+1 不受影响，如需重跑旧轮次先发送「清空分组结果 {_ACTIVITY_ID}」。")
     print("========== RUN 开始（只写测试 base） ==========")
     created, skipped = _create_signups(plan)
-    print(f"[1/4] 报名：创建 {len(created)} 条，跳过 {len(skipped)} 条（查重命中）")
+    print(f"[1/3] 报名：创建 {len(created)} 条，跳过 {len(skipped)} 条（查重命中）")
     sc, su = _write_selections(plan)
-    print(f"[2/4] 志愿：创建 {len(sc)} 条，覆盖更新 {len(su)} 条")
-    print("[3/4] 活动设置：")
+    print(f"[2/3] 志愿：创建 {len(sc)} 条，覆盖更新 {len(su)} 条")
+    print("[3/3] 活动设置：")
     _apply_activity_settings()
-    print("[4/4] 读回验证：")
+    print("[读回验证]：")
     ok, _ = _verify_state(plan)
     if not ok:
         _fail("读回验证未全部通过（见上方 ⛔ 项）")
-    print("\n✅ run 完成：16 报名 + 15 志愿 + 活动设置，读回验证全部通过。")
+    print("\n✅ run 完成：16 报名 + 15 志愿 + 开启分组功能，读回验证全部通过。")
 
 
 def _cmd_verify():

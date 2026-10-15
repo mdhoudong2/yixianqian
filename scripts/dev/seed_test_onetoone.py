@@ -4,15 +4,17 @@
 
 复用 A-0011 的报名（U-0006 真号 + 假号，与 seed_test_grouping.py 同一批人），给
 每人预填 7 个异性志愿（轮转法），然后走真实 bot 命令链：
-handle_admin_start_onetoone → handle_admin_stop_onetoone("A-0011 <女生场次>")——
-「女生坐镇、男生上门」均衡分配（每女恰好 K 场、男配额 base~base+1、双向一致），
-最后读回结果表逐条验证均衡不变量。
+handle_admin_reset_onetoone（清空历史结果、状态重置）→
+handle_admin_toggle_onetoone_flag（开启功能；顺带把分组功能=否，避免执行互斥拦截）→
+handle_admin_stop_onetoone("A-0011 <女生场次>")——「女生坐镇、男生上门」均衡分配
+（每女恰好 K 场、男配额 base~base+1、双向一致），最后读回结果表对**最新一轮**逐条
+验证均衡不变量（轮次缺省=最新+1，清空后即第 1 轮）。
 
-start 成功后把 A-0011 全部「已报名」报名记录的签到状态批量置「按时」：
+执行前把 A-0011 全部「已报名」报名记录的签到状态批量置「按时」：
 模拟全员现场到场（签到默认开启后的执行池口径）——签到功能默认开启后，
 执行池按「已到」（按时/迟到）过滤，空签到状态会把执行池清空。
 
-端到端要覆盖的核心断言：
+端到端要覆盖的核心断言（只验最新轮）：
 - 结果行数 = 2 × 女生数 × K（男名单 + 女名单各一份）；
 - 每个女生恰好 K 位不同男性来访、排名 1..K 无重复；
 - 每个男生 base~base+1 位、排名 1..base(+1) 无重复；
@@ -22,7 +24,7 @@ start 成功后把 A-0011 全部「已报名」报名记录的签到状态批量
 用法（在 /opt/yixianqian-test 仓库根，必须显式 YIXIANQIAN_ENV=dev）：
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_onetoone.py plan    # 只打印计划，不写
   YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_onetoone.py run     # 种子+执行+读回验证
-  YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_onetoone.py verify  # 只读复核结果表
+  YIXIANQIAN_ENV=dev python3 scripts/dev/seed_test_onetoone.py verify  # 只读复核结果表（最新轮）
 
 守卫同 seed_test_grouping.py：仓库根必须 /opt/yixianqian-test、显式 YIXIANQIAN_ENV=dev、
 BASE_TOKEN≠生产、5 张表 ID 必须=测试 base 已知值（防 constants 生产 fallback 生效）。
@@ -292,16 +294,17 @@ def _print_plan(p):
         print(f"  {verb} {sel['uid']}({sel['gender']}) -> "
               + ",".join(t["uid"] for t in item["targets"]))
     af = p["activity"].get("fields", {})
-    print("\n【活动更新 2 项】")
-    print(f"  1) handle_admin_start_onetoone(\"{_ACTIVITY_ID}\")：一对一状态 "
-          f"{get_select_value(af, C.FIELD_ACT_ONETOONE_STATUS) or '空'}→收集中"
-          f"（历史结果 {len(p['results'])} 条，将清除）")
+    print("\n【活动处理 3 项】")
+    print(f"  1) handle_admin_reset_onetoone(\"{_ACTIVITY_ID}\")：清空历史结果 "
+          f"{len(p['results'])} 条，一对一状态重置为未开始")
     print(f"  2) handle_admin_toggle_onetoone_flag(\"{_ACTIVITY_ID} 开\")：一对一功能开启 "
-          f"{get_select_value(af, C.FIELD_ACT_ONETOONE_FLAG) or '空'}→是")
+          f"{get_select_value(af, C.FIELD_ACT_ONETOONE_FLAG) or '空'}→是"
+          f"（并保证分组功能=否，避免执行互斥拦截）")
+    print("  3) 全部「已报名」签到状态 → 按时（模拟全员现场到场）")
     print(f"\n【执行】handle_admin_stop_onetoone(\"{_ACTIVITY_ID} {_FEMALE_CHATS}\")："
-          f"女生坐镇均衡分配（每女 {_FEMALE_CHATS} 场）。")
+          f"女生坐镇均衡分配（每女 {_FEMALE_CHATS} 场；轮次缺省=最新+1，已清空则为第 1 轮）。")
     print(f"【预期】2 × {len(p['females'])} 女 × {_FEMALE_CHATS} = "
-          f"{2 * len(p['females']) * _FEMALE_CHATS} 条结果；"
+          f"{2 * len(p['females']) * _FEMALE_CHATS} 条结果（最新一轮）；"
           f"男配额 base~base+1 = {len(p['females']) * _FEMALE_CHATS // len(p['males'])}"
           f"~{len(p['females']) * _FEMALE_CHATS // len(p['males']) + 1}。")
 
@@ -358,21 +361,26 @@ def _mark_signups_attendance_present():
     print(f"  签到状态：{updated} 条「已报名」→ 按时（模拟全员现场到场）")
 
 
+def _reset_results():
+    """[1/5] 清空 A-0011 全部历史一对一结果（状态重置为未开始）。"""
+    from onetoone import handle_admin_reset_onetoone
+
+    reply = handle_admin_reset_onetoone(_ACTIVITY_ID)
+    print(f"  handle_admin_reset_onetoone -> {reply.splitlines()[0]}")
+    if "已清空" not in reply:
+        _fail(f"清空一对一结果失败：{reply}")
+
+
 def _apply_activity_settings():
     from commands import handle_admin_toggle_onetoone_flag
-    from onetoone import handle_admin_start_onetoone
 
-    reply1 = handle_admin_start_onetoone(_ACTIVITY_ID)
-    print(f"  handle_admin_start_onetoone -> {reply1.splitlines()[0]}")
-    if "志愿填写已开始" not in reply1:
-        _fail(f"开始一对一失败：{reply1}")
-    # start 已同笔写入「签到功能开启=是」（默认打开）；先把 A-0011 全部
+    reply = handle_admin_toggle_onetoone_flag(f"{_ACTIVITY_ID} 开")
+    print(f"  handle_admin_toggle_onetoone_flag -> {reply.splitlines()[0]}")
+    if "已开启" not in reply:
+        _fail(f"开启一对一功能失败：{reply}")
+    # 开启功能已同笔写入「签到功能开启=是」（默认打开）；先把 A-0011 全部
     # 「已报名」置「按时」模拟全员现场到场，否则执行时会被签到闸门清空。
     _mark_signups_attendance_present()
-    reply2 = handle_admin_toggle_onetoone_flag(f"{_ACTIVITY_ID} 开")
-    print(f"  handle_admin_toggle_onetoone_flag -> {reply2.splitlines()[0]}")
-    if "已开启" not in reply2:
-        _fail(f"开启一对一功能失败：{reply2}")
 
 
 def _run_matching():
@@ -388,12 +396,25 @@ def _run_matching():
 def _verify_state(p):
     """读回结果表，逐条验证「女生坐镇均衡分配」的不变量（不重算具体配对顺序）。
 
+    **只验最新一轮**：历史轮次（若有）不在本次执行的断言范围内。空/非数字轮次行
+    按第 1 轮归一（与 lib.onetoone.round_of 同口径）。
     均衡算法（run_offline_onetoone_matching）的正确性由单测钉死（tests/test_onetoone_offline.py）；
     这里只验证端到端落库后的结构性不变量：行数 = 2×女×K、每女恰好 K 位、男配额均衡、
     双向一致、无自己无同性。
     """
     lines, issues = [], []
-    results = _read_results()
+    results_all = _read_results()
+
+    def _round_of(fields):
+        raw = get_field_text(fields, C.FIELD_OTO_ROUND)
+        return int(raw) if raw.isdigit() and int(raw) >= 1 else 1
+
+    rounds = sorted({_round_of(r.get("fields", {})) for r in results_all})
+    latest_round = rounds[-1] if rounds else 1
+    results = [r for r in results_all if _round_of(r.get("fields", {})) == latest_round]
+    lines.append(f"[轮次] 全部结果 {len(results_all)} 条、轮次 {rounds or ['无']}；"
+                 f"本次只验最新轮 第{latest_round}轮（{len(results)} 条）")
+
     af = _read_activity().get("fields", {})
     status = get_select_value(af, C.FIELD_ACT_ONETOONE_STATUS)
     flag = get_select_value(af, C.FIELD_ACT_ONETOONE_FLAG)
@@ -484,17 +505,19 @@ def _cmd_plan():
 def _cmd_run():
     p = _compute_plan()
     print("========== RUN 开始（只写测试 base） ==========")
+    print("[1/5] 清空历史结果：")
+    _reset_results()
     created, updated = _seed_selections(p)
-    print(f"[1/4] 志愿：创建 {len(created)} 条，覆盖更新 {len(updated)} 条")
-    print("[2/4] 活动设置：")
+    print(f"[2/5] 志愿：创建 {len(created)} 条，覆盖更新 {len(updated)} 条")
+    print("[3/5] 活动设置（开启功能 + 签到置「按时」）：")
     _apply_activity_settings()
-    print("[3/4] 执行匹配：")
+    print("[4/5] 执行匹配：")
     _run_matching()
-    print("[4/4] 读回验证：")
+    print("[5/5] 读回验证（最新轮）：")
     ok, _ = _verify_state(p)
     if not ok:
         _fail("读回验证未全部通过（见上方 ⛔ 项）")
-    print("\n✅ run 完成：志愿种子 + 开始 + 执行 + 结果读回验证全部通过。")
+    print("\n✅ run 完成：清空 + 志愿种子 + 开启功能 + 签到 + 执行 + 最新轮结果读回验证全部通过。")
 
 
 def _cmd_verify():

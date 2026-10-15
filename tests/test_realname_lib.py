@@ -5,8 +5,8 @@
 
 - collect_participants / build_participants 读用户表「姓名」（去空白非空才生效）；
 - execute_round / execute 落库与回传 display_name 的真名回退＋user_id；
-- start_group / start_collection 的「签到功能默认打开」：空→是（同笔写）、
-  已是 是/否→不动、栏位未配置→不写；
+- set_mode（mode≠none）/ set_group_flag（开启方向）的「签到功能默认打开」：
+  空→是（同笔写）、已是 是/否→不动、栏位未配置→不写；关闭路径不补默认；
 - find_user_by_id_or_name 的「姓名」兜底（不改既有 uid/昵称命中行为）；
 - 「查看未提交」回覆与选择卡 label 读真名；
 - 管理员「签到」指令回覆统一「真名（用户ID）」。
@@ -127,7 +127,8 @@ def test_grouping_execute_round_stores_real_name_and_falls_back_nickname(configu
     fake = GroupingFake(_g_tables())
 
     res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_find_act(fake, ACT),
-                                     find_user_by_openid=_find_user)
+                                     find_user_by_openid=_find_user,
+                                     males_per_group=2, females_per_group=2)
 
     assert res["code"] == "OK"
     stored = {r["fields"]["用户open_id"]: r["fields"]["用户昵称"]
@@ -151,7 +152,8 @@ def test_grouping_execute_round_member_falls_back_to_oid_when_name_missing(confi
 
     res = lib_grouping.execute_round(ACT, 1, client=fake, activity=_find_act(fake, ACT),
                                      find_user_by_openid=lambda oid: (
-                                         [] if oid == "ou_f2" else _find_user(oid)))
+                                         [] if oid == "ou_f2" else _find_user(oid)),
+                                     males_per_group=2, females_per_group=2)
 
     members = {m["open_id"]: m for g in res["groups"] for m in g["members"]}
     assert members["ou_f2"]["display_name"] == "ou_f2"
@@ -174,46 +176,71 @@ def test_onetoone_execute_stores_real_name_for_user_and_target(configured_oto):
                for r in rows)
 
 
-# ---------------------------------------------------------------- ③ 签到默认（两边 start）
+# ---------------------------------------------------------------- ③ 签到默认（开启功能路径）
 
-def test_start_group_signin_default_matrix(configured):
-    """空 → 同笔写「是」；已是 是/否 → 不动；未配置 → 不写（见下一个用例）。"""
+def test_set_group_flag_signin_default_matrix(configured):
+    """开启分组功能：空 → 同笔写「是」；已是 是/否 → 不动；关闭方向不补默认。"""
     fake = GroupingFake(_g_tables())
-    lib_grouping.start_group(ACT, 2, 2, client=fake, activity=_find_act(fake, ACT))
+    res = lib_grouping.set_group_flag(ACT, True, client=fake, activity=_find_act(fake, ACT))
+    assert res["code"] == "OK"
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1
-    assert updates[0][3]["分组状态"] == "收集中", "签到默认必须与状态在同一笔 update"
-    assert updates[0][3]["签到功能开启"] == "是"
+    assert updates[0][3] == {"分组功能开启": "是", "签到功能开启": "是"}, \
+        "签到默认必须与 flag 在同一笔 update"
     assert _find_act(fake, ACT)["fields"]["签到功能开启"] == "是"
 
     for value in ("是", "否"):
         tables = _g_tables()
         tables[ACTIVITY_TABLE_ID] = [_act(签到功能开启=value)]
         fake2 = GroupingFake(tables)
-        lib_grouping.start_group(ACT, 2, 2, client=fake2, activity=_find_act(fake2, ACT))
+        lib_grouping.set_group_flag(ACT, True, client=fake2, activity=_find_act(fake2, ACT))
         assert _find_act(fake2, ACT)["fields"]["签到功能开启"] == value, "已配置值不得被动"
         updates2 = [c for c in fake2.writes() if c[0] == "update"]
-        assert "签到功能开启" not in updates2[0][3]
+        assert updates2[0][3] == {"分组功能开启": "是"}
+
+    # 关闭方向：只写自身，不补签到默认（即使签到为空）
+    tables = _g_tables()
+    tables[ACTIVITY_TABLE_ID] = [_act(分组功能开启="是")]
+    fake3 = GroupingFake(tables)
+    lib_grouping.set_group_flag(ACT, False, client=fake3, activity=_find_act(fake3, ACT))
+    updates3 = [c for c in fake3.writes() if c[0] == "update"]
+    assert updates3[0][3] == {"分组功能开启": "否"}
+    assert "签到功能开启" not in _find_act(fake3, ACT)["fields"]
 
 
-def test_start_collection_signin_default_matrix(configured_oto):
-    fake = OnetooneFake(_oto_tables())
-    res = lib_onetoone.start_collection(ACT, client=fake, activity=_find_act(fake, ACT))
+def test_set_mode_signin_default_matrix(configured):
+    """开启任一侧功能（mode≠none）：同笔补签到默认；mode=none 不补。"""
+    # mode=group：空签到 → 补「是」
+    fake = GroupingFake(_g_tables())
+    res = lib_grouping.set_mode(ACT, "group", client=fake, activity=_find_act(fake, ACT))
     assert res["code"] == "OK"
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert len(updates) == 1
-    assert updates[0][3]["一对一状态"] == "收集中", "签到默认必须与状态在同一笔 update"
-    assert updates[0][3]["签到功能开启"] == "是"
-    assert _find_act(fake, ACT)["fields"]["签到功能开启"] == "是"
+    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否", "签到功能开启": "是"}
 
+    # mode=onetoone：空签到 → 补「是」
+    fake2 = GroupingFake(_g_tables())
+    res2 = lib_grouping.set_mode(ACT, "onetoone", client=fake2, activity=_find_act(fake2, ACT))
+    assert res2["code"] == "OK"
+    updates2 = [c for c in fake2.writes() if c[0] == "update"]
+    assert updates2[0][3] == {"分组功能开启": "否", "一对一功能开启": "是", "签到功能开启": "是"}
+
+    # 已是 是/否 → 不动
     for value in ("是", "否"):
-        tables = _oto_tables()
-        tables[ACTIVITY_TABLE_ID][0]["fields"]["签到功能开启"] = value
-        fake2 = OnetooneFake(tables)
-        lib_onetoone.start_collection(ACT, client=fake2, activity=_find_act(fake2, ACT))
-        assert _find_act(fake2, ACT)["fields"]["签到功能开启"] == value, "已配置值不得被动"
-        updates2 = [c for c in fake2.writes() if c[0] == "update"]
-        assert "签到功能开启" not in updates2[0][3]
+        tables = _g_tables()
+        tables[ACTIVITY_TABLE_ID] = [_act(签到功能开启=value)]
+        fake3 = GroupingFake(tables)
+        lib_grouping.set_mode(ACT, "group", client=fake3, activity=_find_act(fake3, ACT))
+        assert _find_act(fake3, ACT)["fields"]["签到功能开启"] == value
+
+    # mode=none：不补签到默认
+    tables = _g_tables()
+    tables[ACTIVITY_TABLE_ID] = [_act(一对一功能开启="是")]
+    fake4 = GroupingFake(tables)
+    res4 = lib_grouping.set_mode(ACT, "none", client=fake4, activity=_find_act(fake4, ACT))
+    assert res4["code"] == "OK"
+    updates4 = [c for c in fake4.writes() if c[0] == "update"]
+    assert updates4[0][3] == {"分组功能开启": "否", "一对一功能开启": "否"}
+    assert "签到功能开启" not in _find_act(fake4, ACT)["fields"]
 
 
 def _unconfigure_signin(monkeypatch):
@@ -226,23 +253,41 @@ def _unconfigure_signin(monkeypatch):
         tuple(k for k in lib_grouping._REQUIRED_FIELDS if k != "signin_flag"))
 
 
-def test_start_group_signin_default_skipped_when_field_not_configured(configured):
+def test_set_group_flag_signin_default_skipped_when_field_not_configured(configured):
     _unconfigure_signin(configured)
     fake = GroupingFake(_g_tables())
-    lib_grouping.start_group(ACT, 2, 2, client=fake, activity=_find_act(fake, ACT))
+    lib_grouping.set_group_flag(ACT, True, client=fake, activity=_find_act(fake, ACT))
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert updates[0][3] == {"分组状态": "收集中", "每组男生数": 2, "每组女生数": 2}
+    assert updates[0][3] == {"分组功能开启": "是"}
     assert "签到功能开启" not in _find_act(fake, ACT)["fields"]
 
 
-def test_start_collection_signin_default_skipped_when_field_not_configured(configured_oto):
-    _unconfigure_signin(configured_oto)
-    fake = OnetooneFake(_oto_tables())
-    res = lib_onetoone.start_collection(ACT, client=fake, activity=_find_act(fake, ACT))
+def test_set_mode_signin_default_skipped_when_field_not_configured(configured):
+    _unconfigure_signin(configured)
+    fake = GroupingFake(_g_tables())
+    lib_grouping.set_mode(ACT, "group", client=fake, activity=_find_act(fake, ACT))
+    updates = [c for c in fake.writes() if c[0] == "update"]
+    assert updates[0][3] == {"分组功能开启": "是", "一对一功能开启": "否"}
+    assert "签到功能开启" not in _find_act(fake, ACT)["fields"]
+
+
+def test_set_onetoone_flag_enable_adds_signin_via_set_mode(configured_oto):
+    """开启一对一功能走 set_mode（同笔补签到默认）；关闭路径只写自身、不补默认。"""
+    fake = GroupingFake(_g_tables())
+    res = lib_onetoone.set_onetoone_flag(ACT, True, client=fake, activity=_find_act(fake, ACT))
     assert res["code"] == "OK"
     updates = [c for c in fake.writes() if c[0] == "update"]
-    assert updates[0][3] == {"一对一状态": "收集中"}
-    assert "签到功能开启" not in _find_act(fake, ACT)["fields"]
+    assert updates[0][3] == {"分组功能开启": "否", "一对一功能开启": "是", "签到功能开启": "是"}
+
+    tables = _g_tables()
+    tables[ACTIVITY_TABLE_ID] = [_act(一对一功能开启="是")]
+    fake2 = GroupingFake(tables)
+    res2 = lib_onetoone.set_onetoone_flag(ACT, False, client=fake2,
+                                          activity=_find_act(fake2, ACT))
+    assert res2["code"] == "OK"
+    updates2 = [c for c in fake2.writes() if c[0] == "update"]
+    assert updates2[0][3] == {"一对一功能开启": "否"}
+    assert "签到功能开启" not in _find_act(fake2, ACT)["fields"]
 
 
 # ---------------------------------------------------------------- ④ 姓名兜底查找

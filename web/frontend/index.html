@@ -2960,11 +2960,12 @@
     <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
     <div class="ga-confirm-box">
       <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaOtoRunPreview ? (gaOtoRunPreview.male_count + ' 男 · ' + gaOtoRunPreview.female_count + ' 女') : '…' }}</b></div>
-      <div class="ga-confirm-row"><span>女生场次</span><b>每个女生聊几场（必填）</b></div>
+      <div class="ga-confirm-row"><span>女生场次</span><b>每位坐镇女生接待几位男生（必填）</b></div>
     </div>
-    <input v-model="gaOtoRunFemaleChats" type="number" inputmode="numeric" class="ga-confirm-input" placeholder="例如：15（每个女生聊 15 场）" />
+    <input v-model="gaOtoRunFemaleChats" type="number" inputmode="numeric" class="ga-confirm-input" placeholder="例如：10 —— 每位女生接待 10 位男生" />
+    <div class="ga-row-sub" style="margin-top:6px;">全场共「女生人数 × 场次」场，由男生分摊上门：如 16 女 × 10 场 = 160 场，30 男每人约 5~6 场</div>
     <div v-if="gaOtoRunSummary" class="ga-tip ga-tip-ok" style="margin-top:10px;">✓ {{ gaOtoRunSummary }}</div>
-    <div v-if="gaOtoRunK && gaOtoRunPreview && gaOtoRunPreview.male_count && gaOtoRunK > gaOtoRunPreview.male_count" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">女生场次不能超过男生人数 {{ gaOtoRunPreview.male_count }}</div>
+    <div v-if="gaOtoRunK && gaOtoRunPreview && gaOtoRunPreview.male_count && gaOtoRunK > gaOtoRunPreview.male_count" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">女生场次不能超过男生人数 {{ gaOtoRunPreview.male_count }}（每位女生最多与每位男生各聊一次）</div>
     <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaOtoRunBusy" @click="confirmOtoRun()">确认执行（状态将变为「已完成」）</van-button>
   </div>
 </van-popup>
@@ -3425,7 +3426,7 @@ createApp({
       { title: "一对一", items: [
         "【开启一对一功能 活动ID 开/关】控制活动页/活动卡上的志愿与结果入口",
         "【查看未提交一对一 活动ID】查看未提交志愿的报名者",
-        "【执行一对一 活动ID 女生场次 [轮次]】女生坐镇、男生上门均衡匹配（轮次缺省为最新轮次+1）",
+        "【执行一对一 活动ID 女生场次 [轮次]】女生坐镇、男生上门：每位女生固定接待 N 位男生（N＝女生场次），全场 N×女生数 场由男生分摊上门（轮次缺省为最新轮次+1）",
         "【清空一对一结果 活动ID】清空该活动全部历史一对一结果",
         "【一对一状态 活动ID】查看一对一进度",
         "【一对一帮助】一对一指令说明",
@@ -7414,7 +7415,7 @@ createApp({
       if (!pv || !k || !pv.male_count || !pv.female_count || k > pv.male_count) return '';
       const E = pv.female_count * k;
       const base = Math.floor(E / pv.male_count), rem = E % pv.male_count;
-      return '女生每人 ' + k + ' 场 · 共 ' + E + ' 场；男生每人 ' + base + (rem ? '~' + (base + 1) : '') + ' 场';
+      return '女生 ' + pv.female_count + ' 人每人 ' + k + ' 场 · 全场共 ' + E + ' 场；男生 ' + pv.male_count + ' 人每人 ' + base + (rem ? '~' + (base + 1) : '') + ' 场';
     });
     async function startOtoRunFlow() {
       if (gaOtoRunBusy.value || !gaDetailId.value) return;
@@ -7450,9 +7451,9 @@ createApp({
       const rd = gaOtoNextRound.value;
       const pv = gaOtoRunPreview.value || {};
       const K = gaOtoRunK.value;
-      if (!K) { vant.showToast('女生场次必须是 ≥1 的整数'); return; }
+      if (!K) { vant.showToast('女生场次必须是 ≥1 的整数（每位女生接待的男生数）'); return; }
       if (pv.male_count && K > pv.male_count) {
-        vant.showToast('女生场次不能超过男生人数 ' + pv.male_count);
+        vant.showToast('女生场次不能超过男生人数 ' + pv.male_count + '（每位女生最多与每位男生各聊一次）');
         return;
       }
       gaOtoRunBusy.value = true;

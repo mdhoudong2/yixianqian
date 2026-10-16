@@ -896,8 +896,8 @@ def test_admin_stop_round2_runs_and_keeps_round1(configured):
 
 def test_admin_stop_argument_validation(configured):
     """非法女生场次 / 轮次：新路分别报错（旧路把整串当活动ID）。"""
-    for keyword, expected in ((f"{ACT} 0", "女生场次必须为大于0的整数"),
-                              (f"{ACT} x", "女生场次必须为数字，当前：x"),
+    for keyword, expected in ((f"{ACT} 0", "女生场次必须为大于0的整数（每位女生接待的男生数）"),
+                              (f"{ACT} x", "女生场次必须为数字（每位女生接待的男生数），当前：x"),
                               (f"{ACT} 2 0", "轮次必须为大于0的整数"),
                               (f"{ACT} 2 x", "轮次必须为数字，当前：x")):
         case = Case("stop/坏参数", "stop", keyword)

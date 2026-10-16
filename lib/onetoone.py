@@ -639,7 +639,7 @@ def preview(activity_id, round_no, *, client, activity, find_user_by_openid, fem
         blockers.append(f"轮次必须是 ≥1 的整数，当前 {round_no}")
     # 女生场次 K 校验（与 execute 进门同口径）
     if female_chats is None:
-        blockers.append("请指定女生场次（每个女生聊几场）")
+        blockers.append("请指定女生场次（每位女生接待几位男生）")
     elif (not isinstance(female_chats, int) or isinstance(female_chats, bool)
             or female_chats < 1):
         blockers.append(f"女生场次必须是 ≥1 的整数，当前 {female_chats}")

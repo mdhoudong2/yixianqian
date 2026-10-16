@@ -13,7 +13,7 @@
 <style>
   /* 统一主题色：Vant 默认主色（蓝）覆盖为品牌粉，保证按钮/标签/单选框/开关等一致 */
 [v-cloak]{display:none !important;}
-  :root { --van-primary-color: #ff6b81; }
+  :root { --van-primary-color: #ff6b81; --yxq-brand-ink: #cc304e; }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-touch-callout: none; }
   html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f7f8fa; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-touch-callout: none; }
   img { -webkit-touch-callout: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-user-drag: none; user-drag: none; pointer-events: none; }
@@ -88,7 +88,7 @@
   .photo-zoom-btn:active { transform: scale(0.9); }
   .card-info { flex: 1; overflow-y: auto; padding: 14px 16px; -webkit-overflow-scrolling: touch; }
   .info-section { margin-bottom: 12px; }
-  .info-section-title { font-size: 13px; color: #ff6b81; font-weight: 600; margin-bottom: 4px; }
+  .info-section-title { font-size: 13px; color: var(--yxq-brand-ink); font-weight: 600; margin-bottom: 4px; }
   .info-section-content { font-size: 14px; color: #323233; line-height: 1.6; }
   .info-tags { display: flex; flex-wrap: wrap; gap: 6px; }
   .info-tag { background: #fff0f3; color: #ff6b81; padding: 3px 10px; border-radius: 12px; font-size: 12px; }
@@ -104,12 +104,12 @@
   .card-section:last-child { margin-bottom: 0; }
   .info-grid.simple-line { margin-bottom: 20px; }
   .card-actions { position: absolute; bottom: 18px; right: 18px; left: auto; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 18px; z-index: 12; }
-  .heart-btn { width: 64px; height: 64px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,107,129,0.4); transition: transform 0.15s; }
+  .heart-btn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.55); background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,107,129,0.4); transition: transform 0.15s; }
   .heart-btn:active { transform: scale(0.88); }
   .heart-btn.liked { background: #c8c9cc; box-shadow: none; cursor: not-allowed; }
-  .feedback-btn { width: 64px; height: 32px; padding: 0; border-radius: 16px; border: 1px solid #dcdee0; background: #fff; color: #969799; font-size: 12px; cursor: pointer; }
+  .feedback-btn { width: 64px; height: 32px; padding: 0; border-radius: 16px; border: 1px solid #dcdee0; background: #fff; color: #6b7280; font-size: 12px; cursor: pointer; }
   /* 点赞：尺寸与 ♥ 一致，色调用橙黄区分——轻动作不抢「喜欢」的主次 */
-  .praise-btn { width: 64px; height: 64px; border-radius: 50%; border: none; background: linear-gradient(135deg, #ffb26b, #ffcf8e); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,178,107,0.4); transition: transform 0.15s; }
+  .praise-btn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.55); background: linear-gradient(135deg, #ffb26b, #ffcf8e); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,178,107,0.4); transition: transform 0.15s; }
   .praise-btn:active { transform: scale(0.88); }
   .praise-btn.praised { background: #c8c9cc; box-shadow: none; }
   .praise-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -118,22 +118,22 @@
   .back-btn:active { transform: scale(0.88); }
   .back-btn:disabled { opacity: 0.3; }
   .card-top-left { position: absolute; top: 12px; left: 16px; display: flex; align-items: center; gap: 8px; z-index: 5; }
-  .hearts-badge { background: rgba(0,0,0,0.4); color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 13px; }
-  .card-counter { background: rgba(0,0,0,0.3); color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
+  .hearts-badge { background: rgba(0,0,0,0.55); color: #fff; padding: 4px 12px; border-radius: 20px; font-size: 13px; }
+  .card-counter { background: rgba(0,0,0,0.55); color: #fff; padding: 4px 10px; border-radius: 20px; font-size: 12px; }
   /* 消息 */
   .msg-card { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: flex-start; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
   .msg-avatar { width: 46px; height: 46px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; overflow: hidden; }
   .msg-avatar img { width: 100%; height: 100%; object-fit: cover; }
   .msg-body { flex: 1; min-width: 0; }
   .msg-name { font-size: 16px; font-weight: 500; color: #323233; }
-  .msg-sub { font-size: 13px; color: #969799; margin-top: 3px; line-height: 1.5; }
+  .msg-sub { font-size: 13px; color: #6b7280; margin-top: 3px; line-height: 1.5; }
   .msg-message { font-size: 13px; color: #646566; margin-top: 6px; background: #f7f8fa; padding: 6px 10px; border-radius: 8px; }
   .msg-actions { margin-top: 10px; }
   .msg-right { display: flex; align-items: center; gap: 5px; flex-shrink: 0; align-self: center; }
   .msg-right .van-icon { font-size: 18px; }
   .msg-count-wrap { display: inline-flex; align-items: center; }
-  .msg-count { color: #ff6b81; font-weight: 700; font-size: 18px; }
-  .section-title { font-size: 15px; color: #969799; margin: 16px 4px 8px; }
+  .msg-count { color: var(--yxq-brand-ink); font-weight: 700; font-size: 18px; }
+  .section-title { font-size: 15px; color: #6b7280; margin: 16px 4px 8px; }
   /* 个人中心 */
   .profile-header { position: relative; background: linear-gradient(135deg, #ff6b81, #ff8e9b); padding: 28px 20px 32px; color: #fff; text-align: center; }
   .theme-toggle { position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,0.28); display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); box-shadow: 0 2px 8px rgba(0,0,0,0.12); transition: transform 0.15s; }
@@ -143,7 +143,7 @@
   .profile-header .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .profile-name-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
   .profile-name { font-size: 20px; font-weight: bold; }
-  .role-pill { font-size: 12px; line-height: 1; padding: 5px 10px; border-radius: 20px; background: rgba(255,255,255,0.92); color: #ff6b81; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
+  .role-pill { font-size: 12px; line-height: 1; padding: 5px 10px; border-radius: 20px; background: rgba(255,255,255,0.92); color: var(--yxq-brand-ink); white-space: nowrap; flex-shrink: 0; cursor: pointer; }
   .role-pill.role-pill-hidden { background: rgba(0,0,0,0.28); color: rgba(255,255,255,0.85); }
   .profile-card { background: #fff; border-radius: 12px; padding: 0 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
   .profile-card-row { display: flex; align-items: center; gap: 10px; padding: 14px 0; font-size: 15px; color: #323233; }
@@ -184,15 +184,15 @@
   .picker-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #f2f3f5; }
   .picker-options { max-height: 60vh; overflow-y: auto; padding: 8px 0; }
   .picker-option { padding: 12px 16px; font-size: 14px; color: #323233; }
-  .picker-option.active { color: #ff6b81; font-weight: 600; }
+  .picker-option.active { color: var(--yxq-brand-ink); font-weight: 600; }
   .multi-options { max-height: 60vh; overflow-y: auto; padding: 16px; display: flex; flex-wrap: wrap; gap: 10px; }
   .multi-option { padding: 8px 14px; border-radius: 16px; background: #f7f8fa; font-size: 14px; color: #323233; }
-  .multi-option.active { background: #fff0f3; color: #ff6b81; }
+  .multi-option.active { background: #fff0f3; color: var(--yxq-brand-ink); }
   /* 登录页 */
   .login-page { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 30px; text-align: center; }
   .login-logo { font-size: 50px; margin-bottom: 20px; }
   .login-title { font-size: 24px; color: #323233; margin-bottom: 10px; }
-  .login-desc { color: #969799; font-size: 15px; line-height: 1.6; margin-bottom: 30px; }
+  .login-desc { color: #6b7280; font-size: 15px; line-height: 1.6; margin-bottom: 30px; }
   /* 返回导航 */
   .back-nav { background: #fff; padding: 14px 12px; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 500; color: #323233; border-bottom: 1px solid #f2f3f5; cursor: pointer; position: sticky; top: 0; z-index: 10; }
   .back-nav .van-icon { font-size: 22px; }
@@ -242,14 +242,14 @@
   .gs-tray-actions { display: flex; gap: 12px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); flex-shrink: 0; }
   .modal-action.disabled { opacity: .5; pointer-events: none; }
   .group-result-header { text-align: center; padding: 20px; }
-  .group-number { font-size: 48px; color: #ff6b81; font-weight: bold; }
+  .group-number { font-size: 48px; color: var(--yxq-brand-ink); font-weight: bold; }
   /* 分组结果-轮次切换 */
   .round-tabs { display: flex; gap: 8px; justify-content: center; padding: 8px 0 4px; flex-wrap: wrap; }
-  .round-tab { padding: 5px 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
-  .round-tab.active { background: #ff6b81; color: #fff; }
+  .round-tab { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
+  .round-tab.active { background: var(--yxq-brand-ink); color: #fff; }
   .group-member { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
   .group-member-avatar { width: 44px; height: 44px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; }
-  .group-member-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .group-member-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
   .group-member-name { font-size: 16px; }
   .group-member-meta { font-size: 13px; color: #969799; }
   /* 我的喜欢列表 */
@@ -269,7 +269,7 @@
   /* 送爱心弹窗 */
   .like-dialog-body { padding: 16px; }
   .like-notes { color: #969799; font-size: 12px; line-height: 1.7; margin-bottom: 12px; }
-  .like-note-highlight { color: #ff6b81; font-weight: 600; }
+  .like-note-highlight { color: var(--yxq-brand-ink); font-weight: 600; }
   .feedback-radio-group .van-radio { margin-bottom: 14px; }
   .feedback-radio-group .van-radio:last-child { margin-bottom: 0; }
   .like-radio-group .van-radio { margin-right: 24px; margin-bottom: 8px; }
@@ -319,20 +319,21 @@
   .ud-name .gender-icon { font-size: 16px; margin-left: 6px; }
   /* 消息-动态（已并入 msg-card） */
   /* 筛选 */
-  .filter-btn { position: absolute; top: 12px; right: 16px; background: rgba(0,0,0,0.4); color: #fff; padding: 5px 12px; border-radius: 20px; font-size: 13px; z-index: 6; cursor: pointer; display: flex; align-items: center; gap: 4px; }
-  .filter-btn.active { background: #ff6b81; }
+  .filter-btn { position: absolute; top: 12px; right: 16px; background: rgba(0,0,0,0.55); color: #fff; padding: 5px 12px; border-radius: 20px; font-size: 13px; z-index: 6; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+  .filter-btn.active { background: var(--yxq-brand-ink); }
   .filter-row { margin-bottom: 22px; }
   .filter-label { font-size: 14px; color: #323233; font-weight: 500; margin-bottom: 6px; }
   .filter-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-  .filter-tag { padding: 5px 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
-  .filter-tag.active { background: #ff6b81; color: #fff; }
+  .filter-tag { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 16px; background: #f2f3f5; color: #646566; font-size: 13px; cursor: pointer; }
+  .filter-tag.active { background: var(--yxq-brand-ink); color: #fff; }
   .filter-input { padding: 6px 10px; background: #f7f8fa; border-radius: 8px; }
   /* 卡片留言 */
   .card-tabs { display: flex; flex-shrink: 0; background: #fff; padding: 0 16px; border-bottom: 1px solid #f2f3f5; }
-  .card-tab { flex: 1; text-align: center; padding: 10px 0; font-size: 15px; font-weight: 500; color: #969799; cursor: pointer; position: relative; }
-  .card-tab.active { color: #ff6b81; font-weight: 600; }
+  .card-tab { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 10px 0; font-size: 15px; font-weight: 500; color: #969799; cursor: pointer; position: relative; }
+  .card-tab + .card-tab { margin-left: 8px; }
+  .card-tab.active { color: var(--yxq-brand-ink); font-weight: 600; }
   .card-tab.active::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); bottom: -1px; width: 32px; height: 3px; border-radius: 2px; background: #ff6b81; }
-  .msg-count-badge { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; margin-left: 4px; border-radius: 8px; background: #ff6b81; color: #fff; font-size: 11px; font-weight: 600; vertical-align: 1px; }
+  .msg-count-badge { display: inline-block; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; margin-left: 4px; border-radius: 8px; background: var(--yxq-brand-ink); color: #fff; font-size: 11px; font-weight: 600; vertical-align: 1px; }
   .message-panel { display: flex; flex-direction: column; height: 100%; }
   .msg-tip { padding: 30px 0; text-align: center; color: #969799; font-size: 14px; }
   .msg-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
@@ -342,8 +343,8 @@
   .msg-head { display: flex; align-items: center; gap: 8px; }
   .msg-avatar-sm { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #fff0f3; }
   .msg-avatar-sm-fallback { display: flex; align-items: center; justify-content: center; color: #ff6b81; font-size: 14px; font-weight: 600; }
-  .msg-author { font-size: 13px; font-weight: 600; color: #ff6b81; }
-  .msg-time { font-size: 11px; color: #c8c9cc; }
+  .msg-author { font-size: 13px; font-weight: 600; color: var(--yxq-brand-ink); }
+  .msg-time { font-size: 11px; color: #6b7280; }
   .msg-del { font-size: 12px; color: #969799; cursor: pointer; }
   .msg-report { font-size: 12px; color: #ee0a24; cursor: pointer; margin-left: 6px; }
   .msg-report:active { opacity: 0.7; }
@@ -393,12 +394,12 @@
   .points-entry { background: #fff; border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
   .points-entry-main { flex: 1; min-width: 0; }
   .points-entry-kind { font-size: 15px; font-weight: 500; color: #323233; }
-  .points-entry-reason { font-size: 12px; color: #969799; margin-top: 3px; line-height: 1.5; word-break: break-all; }
+  .points-entry-reason { font-size: 12px; color: #6b7280; margin-top: 3px; line-height: 1.5; word-break: break-all; }
   .points-entry-right { text-align: right; flex-shrink: 0; }
   .points-entry-delta { font-size: 17px; font-weight: 700; }
   .points-entry-delta.plus { color: #ff6b81; }
   .points-entry-delta.minus { color: #969799; }
-  .points-entry-time { font-size: 11px; color: #c8c9cc; margin-top: 3px; }
+  .points-entry-time { font-size: 11px; color: #6b7280; margin-top: 3px; }
   /* 兑换面板 */
   .redeem-panel { display: flex; flex-direction: column; max-height: 85vh; }
   .redeem-list { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 16px; }
@@ -422,7 +423,7 @@
   .redeem-order-main { flex: 1; min-width: 0; }
   .redeem-order-label { font-size: 15px; color: #323233; }
   .redeem-order-sub { font-size: 12px; color: #969799; margin-top: 3px; line-height: 1.5; word-break: break-all; }
-  .redeem-order-time { font-size: 11px; color: #c8c9cc; margin-top: 3px; }
+  .redeem-order-time { font-size: 11px; color: #6b7280; margin-top: 3px; }
   .redeem-order-right { text-align: right; flex-shrink: 0; }
   .redeem-order-cost { font-size: 15px; font-weight: 700; color: #969799; }
   .redeem-order-status { font-size: 12px; color: #ff6b81; margin-top: 3px; }
@@ -443,7 +444,7 @@
   .pa-title { font-size: 18px; font-weight: 600; color: #323233; padding: 12px 16px 0; }
   .pa-stats { display: flex; gap: 8px; margin: 12px 0 6px; }
   .pa-stat { flex: 1; background: #fff7f8; border-radius: 12px; padding: 12px 4px; text-align: center; }
-  .pa-stat-num { font-size: 22px; font-weight: 700; color: #ff6b81; }
+  .pa-stat-num { font-size: 22px; font-weight: 700; color: var(--yxq-brand-ink); }
   .pa-stat-label { font-size: 11px; color: #969799; margin-top: 4px; }
   .pa-total-line { font-size: 12px; color: #969799; margin: 0 0 8px; }
   .pa-search { margin: 8px 0; }
@@ -482,7 +483,7 @@
   .invite-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f7f8fa; font-size: 13px; color: #323233; }
   .invite-row:last-child { border-bottom: none; }
   .invite-row-main { flex: 1; min-width: 0; }
-  .invite-row-time { font-size: 11px; color: #c8c9cc; margin-top: 2px; }
+  .invite-row-time { font-size: 11px; color: #6b7280; margin-top: 2px; }
   .invite-row-status { flex-shrink: 0; font-size: 12px; color: #969799; }
   /* ========== 管理员·活动分组管理台（ga-，DESIGN §3/§4） ========== */
   :root {
@@ -501,12 +502,12 @@
   .ga-card-title { font-size: 15px; font-weight: 600; color: #323233; display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
   .ga-stats { display: flex; gap: 8px; margin: 12px 0 8px; }
   .ga-stat { flex: 1; min-width: 0; background: #f7f8fa; border-radius: 12px; padding: 10px 4px; text-align: center; }
-  .ga-stat-num { font-size: 22px; font-weight: 700; color: #ff6b81; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .ga-stat-num { font-size: 22px; font-weight: 700; color: var(--yxq-brand-ink); line-height: 1.2; font-variant-numeric: tabular-nums; }
   .ga-stat-num.warn { color: var(--yxq-st-danger-fg); }
   .ga-stat-num.ok { color: var(--yxq-st-done-fg); }
   .ga-stat-label { font-size: 11px; color: #969799; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .ga-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; background: var(--yxq-st-neutral-bg); color: var(--yxq-st-neutral-fg); }
-  .ga-chip.collecting { background: var(--yxq-st-progress-bg); color: var(--yxq-st-progress-fg); }
+  .ga-chip.collecting { background: var(--yxq-brand-ink); color: #fff; }
   .ga-chip.running { background: var(--yxq-st-run-bg); color: var(--yxq-st-run-fg); }
   .ga-chip.done { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
   .ga-chip.danger { background: var(--yxq-st-danger-bg); color: var(--yxq-st-danger-fg); }
@@ -525,10 +526,10 @@
   .ga-steps { display: flex; align-items: center; padding: 6px 0 2px; }
   .ga-step { flex: 1; text-align: center; position: relative; }
   .ga-step-dot { position: relative; z-index: 1; width: 24px; height: 24px; border-radius: 50%; margin: 0 auto 5px; background: var(--yxq-st-neutral-bg); color: var(--yxq-st-neutral-fg); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-  .ga-step.on .ga-step-dot { background: #ff6b81; color: #fff; }
+  .ga-step.on .ga-step-dot { background: var(--yxq-brand-ink); color: #fff; }
   .ga-step.done .ga-step-dot { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
   .ga-step-label { font-size: 11px; color: #969799; }
-  .ga-step.on .ga-step-label { color: #ff6b81; font-weight: 600; }
+  .ga-step.on .ga-step-label { color: var(--yxq-brand-ink); font-weight: 600; }
   .ga-step-line { position: absolute; top: 11px; left: 50%; width: 100%; height: 2px; background: #ebedf0; }
   .ga-step.done .ga-step-line { background: var(--yxq-st-done-bg); }
   .ga-empty { text-align: center; padding: 40px 20px; } .ga-empty-retry { margin-top: 12px; }
@@ -546,14 +547,14 @@
   .ga-link { color: #ff6b81; text-decoration: underline; }
   .ga-roster-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
   .ga-roster-tab { flex: 1; text-align: center; padding: 8px 0; border-radius: 10px; background: #f2f3f5; color: #646566; font-size: 13px; font-weight: 600; position: relative; } .ga-roster-tab::after { content: ''; position: absolute; inset: -6px 0; }
-  .ga-roster-tab.active { background: #ff6b81; color: #fff; }
+  .ga-roster-tab.active { background: var(--yxq-brand-ink); color: #fff; }
   /* 现场签到筛选两级：一级（性别）沿用粉实底略强；二级（状态）描边略弱 */
   .ga-roster-tab.ga-signin-sub { font-weight: 500; }
-  .ga-roster-tab.ga-signin-sub.active { background: #fff0f3; color: #ff6b81; box-shadow: inset 0 0 0 1px #ff6b81; }
+  .ga-roster-tab.ga-signin-sub.active { background: #fff0f3; color: var(--yxq-brand-ink); box-shadow: inset 0 0 0 1px var(--yxq-brand-ink); }
   /* 行内签到钮=按状态着色（未签到红底白字 / 已签到绿底白字，颜色表达当前状态，点击语义见确认弹窗）；
-     44px 命中区（视觉保持 small；padding-box 30px + 上下各 7px = 44px），失败/加载态由 busy map 控制 */
+     命中区上下各扩 7px（32→46），水平不加宽——水平外扩会撑出 scrollWidth（F-10）；失败/加载态由 busy map 控制 */
   .ga-signin-btn { position: relative; }
-  .ga-signin-btn::after { content: ''; position: absolute; inset: -7px -6px; }
+  .ga-signin-btn::after { content: ''; position: absolute; inset: -7px 0; }
   .ga-signin-btn.ga-signin-btn-out { background: #ee0a24; border-color: #ee0a24; color: #fff; }
   .ga-signin-btn.ga-signin-btn-in { background: #0a8548; border-color: #0a8548; color: #fff; }
   .ga-avatar { width: 40px; height: 40px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
@@ -594,6 +595,28 @@
   .van-theme-dark .ga-title-sub { color:#c8c9cc; }
   .van-theme-dark .ga-title-name { color:#f5f5f5; }
   .van-theme-dark .pay-dialog-title { color:#f5f5f5; }
+  /* 命中区透明扩展：不动视觉，把可点区域补到 ≥44px（F-08）；mini 按钮字号提到 12px（F-09） */
+  .gs-tray-btn { position: relative; }
+  .gs-tray-btn::after { content: ''; position: absolute; inset: 0 -2px; }
+  .msg-del, .msg-reply-btn { position: relative; }
+  .msg-del::after { content: ''; position: absolute; inset: -14px 0 -14px -20px; }
+  .msg-reply-btn::after { content: ''; position: absolute; inset: -14px 0 -14px -20px; }
+  .theme-toggle::after { content: ''; position: absolute; inset: -5px 0 -5px -10px; }
+  .sg-btn { position: relative; }
+  .sg-btn::after { content: ''; position: absolute; inset: -3px 0 -3px -12px; }
+  .tap-mini { position: relative; }
+  .tap-mini::after { content: ''; position: absolute; inset: -10px 0 -10px -14px; }
+  .van-button--mini { font-size: 12px; }
+  /* F-08 补漏：liked_me「去牵线看看」32px → 透明扩展命中至 44（视觉不变） */
+  .tap-44 { position: relative; }
+  .tap-44::after { content: ''; position: absolute; inset: -6px 0; }
+  /* F-08 补漏：用户主流程块状小按钮（32px）高度提到 ≥44 */
+  .btn-44 { min-height: var(--yxq-tap-min); }
+  /* 首卡是自己：一次性引导气泡（F-11） */
+  .self-guide-tip { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); z-index: 3000; width: min(86%, 340px); background: rgba(0,0,0,0.78); color: #fff; border-radius: 12px; padding: 12px 14px 14px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
+  .self-guide-text { font-size: 13px; line-height: 1.6; text-align: center; }
+  .self-guide-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; background: var(--yxq-brand-ink); color: #fff; border: none; border-radius: 999px; padding: 0 30px; font-size: 14px; }
+  .self-guide-btn:active { transform: scale(0.97); }
   /* 夜间模式 */
   .van-theme-dark { --van-background: #1a1a1c; --van-background-2: #222226; --van-background-3: #2c2c30; --van-border-color: #3a3a3e; --van-active-color: #3a3a3e; --van-field-placeholder-text-color: #8a8a8e; }
   .van-theme-dark html, .van-theme-dark body, html.van-theme-dark, html.van-theme-dark body { background: #1a1a1c; color: #f5f5f5; }
@@ -639,6 +662,10 @@
   .van-theme-dark .msg-reply-tag { color: #8c8d91; }
   .van-theme-dark .msg-reply-btn { color: #6e6f73; }
   .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
+  .van-theme-dark .feedback-btn { color: #c8c9cc; }
+  .van-theme-dark .login-desc, .van-theme-dark .msg-sub:not(.msg-sub-strong), .van-theme-dark .section-title,
+  .van-theme-dark .points-entry-reason, .van-theme-dark .points-entry-time,
+  .van-theme-dark .msg-time, .van-theme-dark .redeem-order-time, .van-theme-dark .invite-row-time { color: #c8c9cc; }
   .van-theme-dark .praise-hint-inline { background: #3a2830; color: #ff8fa1; }
   .van-theme-dark .pa-stat { background: #2a1a1e; }
   .van-theme-dark .pa-filter-chip { background: #2a1a1e; }
@@ -663,10 +690,18 @@
   .van-theme-dark .modal-action.disabled { color: #6e6f73; }
   .van-theme-dark .edit-tip { background: #2b2413; color: #e8c97a; }
   .van-theme-dark .like-realname-warn { background: #2b2413; color: #f0a25c; }
-  /* 选中态：暗色覆盖不能吞掉 active 的粉色反馈 */
-  .van-theme-dark .filter-tag.active, .van-theme-dark .round-tab.active { background: #ff6b81; color: #fff; }
+  /* 选中态：暗色覆盖不能吞掉 active 的粉色反馈；底色同加深版品牌粉，白字 ≥4.5:1（F-02 收尾） */
+  .van-theme-dark .filter-tag.active, .van-theme-dark .round-tab.active { background: var(--yxq-brand-ink); color: #fff; }
   .van-theme-dark .picker-option.active, .van-theme-dark .multi-option.active { color: #ff6b81; }
   .van-theme-dark .multi-option.active { background: rgba(255,107,129,0.14); }
+  /* 加深版品牌粉文字在暗色下换浅粉，保证 ≥4.5:1（F-02） */
+  .van-theme-dark .card-tab.active { color: #ff8fa1; }
+  .van-theme-dark .msg-count { color: #ff8fa1; }
+  .van-theme-dark .group-number { color: #ff8fa1; }
+  .van-theme-dark .ga-stat-num { color: #ff8fa1; }
+  .van-theme-dark .like-note-highlight, .van-theme-dark .info-section-title,
+  .van-theme-dark .msg-author, .van-theme-dark .pa-stat-num { color: #ff8fa1; }
+  .van-theme-dark .ga-step.on .ga-step-label { color: #ff8fa1; }
   /* 麦穗/兑换/邀请：新增的白色与浅灰面在暗色下需要各自的替代色（渐变卡自带底色，保留品牌粉） */
   .van-theme-dark .points-entry { background: #222226; }
   .van-theme-dark .points-entry-kind, .van-theme-dark .redeem-item-label,
@@ -692,7 +727,7 @@
   .van-theme-dark .ga-tip { background: #2b2413; color: #e8c97a; }
   .van-theme-dark .ga-tip-ok { background: var(--yxq-st-done-bg); color: var(--yxq-st-done-fg); }
   .van-theme-dark .ga-roster-tab { background: #2c2c30; color: #c8c9cc; }
-  .van-theme-dark .ga-roster-tab.active { background: #ff6b81; color: #fff; }
+  .van-theme-dark .ga-roster-tab.active { background: var(--yxq-brand-ink); color: #fff; }
   .van-theme-dark .ga-roster-tab.ga-signin-sub.active { background: rgba(255,107,129,0.14); color: #ff8e9b; box-shadow: inset 0 0 0 1px #ff8e9b; }
   .van-theme-dark .ga-signin-btn.ga-signin-btn-out { background: #d63a4a; border-color: #d63a4a; }
   .van-theme-dark .ga-signin-btn.ga-signin-btn-in { background: #0e9151; border-color: #0e9151; }
@@ -822,6 +857,10 @@
       <div class="hearts-badge" v-if="!isObserver">💕 匿名 {{ user.anon_left }} · 实名 {{ user.real_left }}</div>
     </div>
     <div class="filter-btn" :class="{active: hasActiveFilter}" @click="showFilter=true">⚙ 筛选</div>
+    <div v-if="showSelfCardGuide && currentCard && currentCard.is_self" class="self-guide-tip">
+      <div class="self-guide-text">第一张是你自己的卡片，左滑开始浏览 TA 们</div>
+      <button class="self-guide-btn" @click="dismissSelfCardGuide">知道了</button>
+    </div>
     <van-empty v-if="!cards.length" :description="hasActiveFilter ? '没有符合筛选条件的人，试试调整筛选' : '暂时没有可推荐的人了～'"></van-empty>
     <template v-else>
     <div v-if="currentCard" class="swipe-card" :key="cardIndex"
@@ -983,7 +1022,7 @@
       <div class="msg-sub" v-if="n.time">{{ n.time }}</div>
     </div>
     <div class="msg-right" v-if="n.activity_id">
-      <van-button type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
+      <van-button class="tap-mini" type="primary" color="#ff6b81" size="mini" @click="openActivity(n.activity_id)">查看活动</van-button>
     </div>
   </div>
 </div>
@@ -1023,7 +1062,7 @@
         </div>
       </div>
       <div class="msg-actions" style="margin-top:4px;">
-        <van-button type="primary" color="#ff6b81" size="small" block @click="gotoCards('liked_me')">去牵线看看</van-button>
+        <van-button class="tap-44" type="primary" color="#ff6b81" size="small" block @click="gotoCards('liked_me')">去牵线看看</van-button>
       </div>
     </template>
   </div>
@@ -1040,24 +1079,24 @@
       <div class="activity-body">
         <h3>{{ act.name }}</h3>
         <div class="activity-meta">
-          <van-tag type="primary" color="#ff6b81">{{ act.status }}</van-tag>
+          <van-tag type="primary" color="var(--yxq-brand-ink)">{{ act.status }}</van-tag>
           <van-tag v-if="act.group_status" plain type="primary">{{ act.group_status }}</van-tag>
         </div>
         <div class="activity-desc">{{ act.description || '暂无描述' }}</div>
         <div style="font-size:13px; color:#969799;">📍 {{ act.location || '待定' }}</div>
-        <div class="signup-bar">
+        <div class="signup-bar" v-if="showSignupInfo">
           <div class="signup-count" v-if="showSignupInfo">已报名 <b>{{ act.current_signup }}</b>/{{ act.max_signup || '不限' }}</div>
           <van-icon name="arrow" color="#c8c9cc" />
         </div>
         <!-- 志愿/结果入口：由模式开关控制（「关闭全部」后整块不显示）；志愿随时可改；
              签到未到/未签到时停用并提示 -->
         <div v-if="act.my_signup && (act.group_flag==='是' || act.onetoone_flag==='是')" style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
-          <van-button type="primary" color="#ff6b81" size="small" block
+          <van-button type="primary" color="#ff6b81" size="small" block class="btn-44"
             :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
             @click.stop="goGroupSelect(act.record_id)">✏️ 志愿选择</van-button>
-          <van-button v-if="act.group_flag==='是' && act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block
+          <van-button v-if="act.group_flag==='是' && act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block class="btn-44"
             @click.stop="goGroupResult(act.record_id)">🎉 查看分组结果</van-button>
-          <van-button v-if="act.onetoone_flag==='是' && act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block
+          <van-button v-if="act.onetoone_flag==='是' && act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block class="btn-44"
             @click.stop="goOnetooneResult(act.record_id)">💬 查看我的必聊</van-button>
           <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
         </div>
@@ -1775,7 +1814,7 @@
     </div>
     <div style="height:14px;"></div>
     <div style="padding: 0 16px;">
-      <van-button v-if="!isObserver" type="primary" plain block round size="small" @click="openProfileEdit">修改资料</van-button>
+      <van-button v-if="!isObserver" type="primary" plain block round size="small" class="btn-44" @click="openProfileEdit">修改资料</van-button>
     </div>
 
     <!-- 基本信息 -->
@@ -1965,7 +2004,7 @@
           <div class="msg-sub">{{ fmtTimeAgo(m.created_at) }}</div>
         </div>
         <div class="msg-right">
-          <van-button size="mini" plain type="danger" @click="deleteMyMessage(m)">删除</van-button>
+          <van-button class="tap-mini" size="mini" plain type="danger" @click="deleteMyMessage(m)">删除</van-button>
         </div>
       </div>
     </div>
@@ -2043,7 +2082,7 @@
         <div class="activity-body" @click="openActivity(act.record_id)" style="cursor:pointer;">
           <h3>{{ act.name }}</h3>
           <div class="activity-meta">
-            <van-tag type="primary" color="#ff6b81">{{ act.status }}</van-tag>
+            <van-tag type="primary" color="var(--yxq-brand-ink)">{{ act.status }}</van-tag>
             <van-tag v-if="act.group_status" plain type="primary">{{ act.group_status }}</van-tag>
             <van-tag v-if="act.onetoone_status" plain type="primary">{{ act.onetoone_status }}</van-tag>
           </div>
@@ -2052,12 +2091,12 @@
         <!-- 志愿/结果入口与「活动」页卡片一致（模式开关控制；随时可改、签到未到置灰+提示） -->
         <div class="activity-body" style="padding-top:0;">
           <div v-if="act.my_signup && (act.group_flag==='是' || act.onetoone_flag==='是')" style="display:flex; flex-direction:column; gap:8px;">
-            <van-button type="primary" color="#ff6b81" size="small" block
+            <van-button type="primary" color="#ff6b81" size="small" block class="btn-44"
               :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
               @click="goGroupSelect(act.record_id)">✏️ 志愿选择</van-button>
-            <van-button v-if="act.group_flag==='是' && act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block
+            <van-button v-if="act.group_flag==='是' && act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block class="btn-44"
               @click="goGroupResult(act.record_id)">🎉 查看分组结果</van-button>
-            <van-button v-if="act.onetoone_flag==='是' && act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block
+            <van-button v-if="act.onetoone_flag==='是' && act.onetoone_status==='已完成'" type="primary" color="#ff6b81" size="small" block class="btn-44"
               @click="goOnetooneResult(act.record_id)">💬 查看我的必聊</van-button>
             <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:12px; color:#ee0a24; text-align:center;">本活动需现场签到后才能填志愿，请联系管理员</div>
           </div>
@@ -2081,18 +2120,18 @@
         <div class="activity-body">
           <h3>{{ act.name }}</h3>
           <div class="activity-meta">
-            <van-tag type="primary" color="#ff6b81">{{ act.group_status }}</van-tag>
+            <van-tag type="primary" color="var(--yxq-brand-ink)">{{ act.group_status }}</van-tag>
             <van-tag v-if="act.male_per_group" plain type="primary">每组 {{ act.male_per_group }}男{{ act.female_per_group }}女</van-tag>
             <van-tag v-if="act.signin_enabled" :type="isAttendancePresent(act.my_attendance) ? 'success' : 'warning'" plain>{{ isAttendancePresent(act.my_attendance) ? '已到' : (act.my_attendance==='未到' ? '未到' : '未签到') }}</van-tag>
           </div>
           <div style="font-size:13px; color:#969799;" v-if="act.my_choice_count > 0">已提交 {{ act.my_choice_count }} 个志愿</div>
         </div>
         <div class="activity-body" style="padding-top:0;">
-          <van-button type="primary" color="#ff6b81" size="small" block :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goGroupSelect(act.record_id)">
+          <van-button type="primary" color="#ff6b81" size="small" block class="btn-44" :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)" @click="goGroupSelect(act.record_id)">
             {{ act.my_choice_count > 0 ? '✏️ 修改志愿' : '🎯 提交志愿' }}
           </van-button>
           <div v-if="act.signin_enabled && !isAttendancePresent(act.my_attendance)" style="font-size:13px; color:#ee0a24; text-align:center; padding:6px 0;">本活动需现场签到后才能填志愿，请联系管理员</div>
-          <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block style="margin-top:8px;" @click="goGroupResult(act.record_id)">
+          <van-button v-if="act.group_status==='已完成'" type="primary" color="#ff6b81" size="small" block class="btn-44" style="margin-top:8px;" @click="goGroupResult(act.record_id)">
             🎉 查看我的分组
           </van-button>
         </div>
@@ -2166,7 +2205,7 @@
       <div class="activity-body">
         <h3>{{ currentActivity.name }}</h3>
         <div class="activity-meta">
-          <van-tag type="primary" color="#ff6b81">{{ currentActivity.status }}</van-tag>
+          <van-tag type="primary" color="var(--yxq-brand-ink)">{{ currentActivity.status }}</van-tag>
           <van-tag v-if="currentActivity.group_status" plain type="primary">{{ currentActivity.group_status }}</van-tag>
         </div>
         <div class="activity-desc">{{ currentActivity.description || '暂无描述' }}</div>
@@ -2176,7 +2215,7 @@
           <div>🍚 食宿：{{ currentActivity.food || '无' }}</div>
           <div v-if="currentActivity.condition">📋 条件：{{ currentActivity.condition }}</div>
         </div>
-        <div class="signup-bar">
+        <div class="signup-bar" v-if="showSignupInfo || !isDetailCheckedIn">
           <div class="signup-count" v-if="showSignupInfo">已报名 <b>{{ currentActivity.current_signup }}</b>/{{ currentActivity.max_signup || '不限' }}</div>
           <van-button v-if="!isObserver && currentActivity.status==='报名中' && !isDetailCheckedIn" type="primary" color="#ff6b81" size="small"
             @click="currentActivity.my_signup ? cancelSignup() : onSignupClick()" :loading="actionLoading">
@@ -2184,7 +2223,7 @@
           </van-button>
           <van-tag v-else-if="!isDetailCheckedIn" type="warning">{{ currentActivity.status }}</van-tag>
         </div>
-        <van-button v-if="showSignupInfo" plain type="primary" color="#ff6b81" size="small" block @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
+        <van-button v-if="showSignupInfo" plain type="primary" color="#ff6b81" size="small" block class="btn-44" @click="openSignupSheet" style="margin-top:8px;">查看报名名单（{{ currentActivity.current_signup }}）</van-button>
         <div v-if="currentActivity.my_signup && currentActivity.signin_enabled" class="signin-status-box">
           <span v-if="isDetailCheckedIn">✅ 已签到</span>
           <span v-else-if="currentActivity.my_attendance==='未到'" class="signin-status-danger">⚠️ 未到：本活动需现场签到，请联系管理员</span>
@@ -2249,6 +2288,8 @@
     </div>
     <div v-if="loadingCandidates" style="text-align:center; padding:30px;">
       <van-loading size="24px">正在加载可选名单…</van-loading>
+      <div v-if="gsSlowLoading" style="font-size:13px; color:#6b7280; margin-top:8px;">网络较慢，正在努力加载…</div>
+      <van-button v-if="gsVerySlowLoading" type="primary" color="#ff6b81" size="small" style="margin-top:12px;" @click="reloadGroupCandidates">重新加载</van-button>
     </div>
     <div v-else-if="gsSigninBlocked" style="text-align:center; padding:60px 20px;">
       <div style="font-size:44px; margin-bottom:12px;">🔒</div>
@@ -2348,7 +2389,10 @@
       <div v-if="groupResult.members && groupResult.members.length">
         <div class="section-title" style="text-align:center;">同组成员（{{groupResult.members.length}}人）</div>
         <div v-for="m in groupResult.members" :key="m.openid" class="group-member">
-          <div class="group-member-avatar">{{m.gender==='男性'?'👨':'👩'}}</div>
+          <div class="group-member-avatar">
+            <img v-if="m.photo" :src="m.photo" alt="" @error="retryImg($event, 2, ()=>{m.photo=''})" loading="lazy" decoding="async">
+            <template v-else>{{m.gender==='男性'?'👨':'👩'}}</template>
+          </div>
           <div>
             <div class="group-member-name">{{m.nickname}}</div>
             <div class="group-member-meta">{{ m.user_id || '' }} · {{ m.gender }}</div>
@@ -2387,7 +2431,7 @@
           <div class="group-candidate-name">{{ p.nickname }}</div>
           <div class="group-candidate-meta">{{ p.user_id || '' }} · 第{{ p.rank }}位</div>
         </div>
-        <van-button v-if="!p.chatted" type="primary" color="#ff6b81" size="mini" @click="openOnetooneMsg(p)">留言</van-button>
+        <van-button class="tap-mini" v-if="!p.chatted" type="primary" color="#ff6b81" size="mini" @click="openOnetooneMsg(p)">留言</van-button>
         <van-tag v-else type="success">已聊</van-tag>
       </div>
     </div>
@@ -2846,7 +2890,8 @@
       <div class="ga-form-label">每组女生数</div>
       <input v-model.number="gaRunF" type="number" inputmode="numeric" min="1" class="ga-confirm-input" style="width:120px; padding:8px 10px;" />
     </div>
-    <div v-if="gaRunPopupPreview" class="ga-tip ga-tip-ok" style="margin-top:10px;">✓ 参与 {{ gaRunPopupPreview.participant_count }} 人（{{ gaRunPopupPreview.male_count }}男{{ gaRunPopupPreview.female_count }}女）· 按此设置预计可分 {{ gaRunExpected }} 组</div>
+    <div v-if="gaRunPopupPreview" class="ga-tip ga-tip-ok" style="margin-top:10px;">已填志愿 {{ gaRunPopupPreview.male_count }} 男 {{ gaRunPopupPreview.female_count }} 女 · 按此设置预计可分 {{ gaRunPopupExpectedGroups }} 组</div>
+    <div v-if="gaRunPopupPreview && !gaRunPopupHasPeople" class="ga-tip" style="margin-top:6px;">⚠ 还没有人提交志愿：请参与者在 H5 完成志愿后再执行</div>
     <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaRunBusy" @click="confirmGaRun()">确认执行（状态将变为「已完成」）</van-button>
   </div>
 </van-popup>
@@ -2915,11 +2960,12 @@
     <div class="ga-row-sub" style="margin-bottom:8px;">{{ gaDetail ? ((gaDetail.name || '未命名活动') + ' · ' + gaDetailId) : gaDetailId }}</div>
     <div class="ga-confirm-box">
       <div class="ga-confirm-row"><span>参与人数</span><b>{{ gaOtoRunPreview ? (gaOtoRunPreview.male_count + ' 男 · ' + gaOtoRunPreview.female_count + ' 女') : '…' }}</b></div>
-      <div class="ga-confirm-row"><span>女生场次</span><b>每个女生聊几场（必填）</b></div>
+      <div class="ga-confirm-row"><span>女生场次</span><b>每位坐镇女生接待几位男生（必填）</b></div>
     </div>
-    <input v-model="gaOtoRunFemaleChats" type="number" inputmode="numeric" class="ga-confirm-input" placeholder="例如：15（每个女生聊 15 场）" />
+    <input v-model="gaOtoRunFemaleChats" type="number" inputmode="numeric" class="ga-confirm-input" placeholder="例如：10 —— 每位女生接待 10 位男生" />
+    <div class="ga-row-sub" style="margin-top:6px;">全场共「女生人数 × 场次」场，由男生分摊上门：如 16 女 × 10 场 = 160 场，30 男每人约 5~6 场</div>
     <div v-if="gaOtoRunSummary" class="ga-tip ga-tip-ok" style="margin-top:10px;">✓ {{ gaOtoRunSummary }}</div>
-    <div v-if="gaOtoRunK && gaOtoRunPreview && gaOtoRunPreview.male_count && gaOtoRunK > gaOtoRunPreview.male_count" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">女生场次不能超过男生人数 {{ gaOtoRunPreview.male_count }}</div>
+    <div v-if="gaOtoRunK && gaOtoRunPreview && gaOtoRunPreview.male_count && gaOtoRunK > gaOtoRunPreview.male_count" class="ga-row-sub" style="color:#ee0a24; margin-top:4px;">女生场次不能超过男生人数 {{ gaOtoRunPreview.male_count }}（每位女生最多与每位男生各聊一次）</div>
     <van-button type="primary" color="#ff6b81" block class="ga-main-btn" :loading="gaOtoRunBusy" @click="confirmOtoRun()">确认执行（状态将变为「已完成」）</van-button>
   </div>
 </van-popup>
@@ -3223,6 +3269,8 @@ createApp({
     const cardIndex = ref(0);
     const showSwipeGuide = ref(false); // 牵线左右滑动新手引导，仅首次显示一次
     const SWIPE_GUIDE_KEY = 'yxq_swipe_guide_v1';
+    const showSelfCardGuide = ref(false); // 首卡=自己：一次性引导气泡（F-11）
+    const SELF_CARD_GUIDE_KEY = 'yxq_self_card_guide_v1';
     const showActivityPromo = ref(false);               // 牵线页活动报名引导弹窗
     const ACTIVITY_PROMO_KEY = 'yxq_activity_promo_v1'; // sessionStorage：本会话已弹过
     // 引导报名的活动ID：由 /api/home 按环境下发（活动ID是自动编号，测试库与生产库编号不同），
@@ -3378,7 +3426,7 @@ createApp({
       { title: "一对一", items: [
         "【开启一对一功能 活动ID 开/关】控制活动页/活动卡上的志愿与结果入口",
         "【查看未提交一对一 活动ID】查看未提交志愿的报名者",
-        "【执行一对一 活动ID 女生场次 [轮次]】女生坐镇、男生上门均衡匹配（轮次缺省为最新轮次+1）",
+        "【执行一对一 活动ID 女生场次 [轮次]】女生坐镇、男生上门：每位女生固定接待 N 位男生（N＝女生场次），全场 N×女生数 场由男生分摊上门（轮次缺省为最新轮次+1）",
         "【清空一对一结果 活动ID】清空该活动全部历史一对一结果",
         "【一对一状态 活动ID】查看一对一进度",
         "【一对一帮助】一对一指令说明",
@@ -4104,6 +4152,15 @@ createApp({
     });
     const loadingCandidates = ref(false);
     const candidatesError = ref(false);
+    // 慢加载提示（F-01）：>3s 补一句话、>10s 给重试钮；计时器在成功/失败/离开时统一清理
+    const gsSlowLoading = ref(false);
+    const gsVerySlowLoading = ref(false);
+    let gsCandReq = 0;
+    let gsSlowTimer = null, gsVerySlowTimer = null;
+    function clearGsLoadTimers() {
+      if (gsSlowTimer) { clearTimeout(gsSlowTimer); gsSlowTimer = null; }
+      if (gsVerySlowTimer) { clearTimeout(gsVerySlowTimer); gsVerySlowTimer = null; }
+    }
     const groupResult = ref({});
     const groupResultLoading = ref(false);
     const myGender = computed(() => user.value?.gender || '');
@@ -4481,6 +4538,7 @@ createApp({
       triggerPhotoLoading();
       preloadAround();
       maybeShowSwipeGuide();
+      maybeShowSelfCardGuide();
       maybeShowActivityPromo();
       maybeShowUpdateNotes();
     }
@@ -4577,6 +4635,22 @@ createApp({
       try { localStorage.setItem(SWIPE_GUIDE_KEY, '1'); } catch(e) {}
       maybeShowActivityPromo(); // 新手引导让位后再补弹活动引导
       maybeShowUpdateNotes();
+      maybeShowSelfCardGuide();
+    }
+    // 首卡=自己卡时的一次性引导气泡（F-11）：只弹一次，点「知道了」或翻页后记忆
+    function maybeShowSelfCardGuide() {
+      try { if (localStorage.getItem(SELF_CARD_GUIDE_KEY)) return; } catch(e) {}
+      setTimeout(() => {
+        try { if (localStorage.getItem(SELF_CARD_GUIDE_KEY)) return; } catch(e) {}
+        if (page.value !== 'cards' || cardIndex.value !== 0) return;
+        if (showSwipeGuide.value || showActivityPromo.value || showUpdateNotes.value || showSelfCardGuide.value) return;
+        const c = cards.value[0];
+        if (c && c.is_self) showSelfCardGuide.value = true;
+      }, 900);
+    }
+    function dismissSelfCardGuide() {
+      showSelfCardGuide.value = false;
+      try { localStorage.setItem(SELF_CARD_GUIDE_KEY, '1'); } catch(e) {}
     }
 
     // 牵线页活动报名引导：每个会话弹一次，且只对「未报名目标活动」的用户弹。
@@ -4728,6 +4802,7 @@ createApp({
         triggerPhotoLoading();
         preloadAround();
         maybeShowSwipeGuide();
+        maybeShowSelfCardGuide();
       }
       catch(e) { vant.showToast(e.message); }
       loadingCards.value = false;
@@ -5965,15 +6040,23 @@ createApp({
       await loadGroupCandidates(activityId);
     }
     async function loadGroupCandidates(activityId) {
+      const req = ++gsCandReq;
       loadingCandidates.value = true;
       candidatesError.value = false;
       gsSigninBlocked.value = false;
       gsPrefillNotice.value = false;
+      gsSlowLoading.value = false;
+      gsVerySlowLoading.value = false;
+      clearGsLoadTimers();
+      gsSlowTimer = setTimeout(() => { if (req === gsCandReq && loadingCandidates.value) gsSlowLoading.value = true; }, 3000);
+      gsVerySlowTimer = setTimeout(() => { if (req === gsCandReq && loadingCandidates.value) gsVerySlowLoading.value = true; }, 10000);
       try {
         const candData = await api('/api/activities/' + activityId + '/group/candidates');
+        if (req !== gsCandReq) return;
         candidates.value = candData.candidates || [];
         await prefillGroupChoices(activityId);
       } catch(e) {
+        if (req !== gsCandReq) return;
         candidates.value = [];
         if (e && (e.code === 'SIGNIN_REQUIRED' || e.code === 'SIGNIN_QUERY_FAILED')) {
           gsSigninBlocked.value = true;   // 签到被拦：整页阻断卡
@@ -5981,6 +6064,8 @@ createApp({
           candidatesError.value = true;   // 加载失败：名单没有加载出来 + 重新加载
         }
       }
+      if (req !== gsCandReq) return;
+      clearGsLoadTimers();
       gsMarkClean(); // 进页预填完成 → 更新 baseline（dirty 从此起算）
       loadingCandidates.value = false;
     }
@@ -6377,7 +6462,7 @@ createApp({
         gaRunPopupShow.value = false; gaOtoRunShow.value = false; gaOtoResetShow.value = false;
         stopGaPolling(false);
       }
-      if (p !== 'group_select') showGsTray.value = false;   // 离开志愿页时清次序托盘
+      if (p !== 'group_select') { showGsTray.value = false; clearGsLoadTimers(); }   // 离开志愿页：清次序托盘与慢加载计时器（F-01）
       if (p === 'group_admin') loadGroupAdminList();
       if (p === 'group_detail' && gaDetailId.value) refreshGroupDetail();
       if (p === 'group_roster' && gaDetailId.value) loadGroupRoster(true);
@@ -6436,6 +6521,7 @@ createApp({
         try { sessionStorage.setItem(ACTIVITY_PROMO_KEY, '1'); } catch(e) {}
         if(!isHandlingPopState && history.state && history.state.overlay==='activityPromo'){ ignoreNextPop=true; history.back(); }
         maybeShowUpdateNotes(); // 活动引导让位后，更新说明仍有机会在首页弹一次
+        maybeShowSelfCardGuide(); // 首卡自我提示排在最后（只对首卡是自己的用户）
       }
     });
     // 更新说明弹窗：关闭动作统一记入 localStorage（每版本一次），历史回退与活动引导同款
@@ -6444,11 +6530,12 @@ createApp({
       else if(!v){
         try { localStorage.setItem(UPDATE_NOTES_KEY, '1'); } catch(e) {}
         if(!isHandlingPopState && history.state && history.state.overlay==='updateNotes'){ ignoreNextPop=true; history.back(); }
+        maybeShowSelfCardGuide(); // 更新说明让位后，首卡自我提示仍有机会弹一次
       }
     });
 
-    // 用户成功左右翻页，说明已学会滑动，自动关闭新手引导
-    watch(cardIndex, () => { if (showSwipeGuide.value) closeSwipeGuide(); });
+    // 用户成功左右翻页，说明已学会滑动，自动关闭新手引导；首卡自我提示同理（翻页即已看到后面的人）
+    watch(cardIndex, () => { if (showSwipeGuide.value) closeSwipeGuide(); if (showSelfCardGuide.value) dismissSelfCardGuide(); });
 
     // 切换卡片/照片时显示图片加载占位
     watch([cardIndex, photoIndex], () => {
@@ -6995,6 +7082,17 @@ createApp({
       if (!pv || !Number.isInteger(m) || m < 1 || !Number.isInteger(f) || f < 1) return 0;
       return Math.min(Math.floor((pv.male_count || 0) / m), Math.floor((pv.female_count || 0) / f));
     });
+    // F-07：摘要口径——「已填志愿 X 男 Y 女」取预览的 male/female_count；
+    // 「预计可分 Z 组」优先用后端预览的 expected_groups（与执行口径一致），缺失时回退既有本地估算
+    const gaRunPopupHasPeople = computed(() => {
+      const pv = gaRunPopupPreview.value;
+      return !!(pv && (pv.male_count || pv.female_count));
+    });
+    const gaRunPopupExpectedGroups = computed(() => {
+      const pv = gaRunPopupPreview.value;
+      if (pv && pv.expected_groups != null) return pv.expected_groups;
+      return gaRunExpected.value;
+    });
     // 清空确认：必须输入活动编号（破坏性操作，固定要求确认）
     const gaConfirmOk = computed(() => String(gaConfirmInput.value || '').trim().toLowerCase()
       === String(gaDetailId.value || '').trim().toLowerCase());
@@ -7051,14 +7149,21 @@ createApp({
     function openGroupAdmin() { gaQ.value = ''; gaError.value = false; page.value = 'group_admin'; }
     async function loadGroupAdminList() {
       if (gaLoading.value) return;
-      gaLoading.value = true; gaError.value = false;
+      // 已有缓存（如从详情返回）：先用旧列表渲染、后台静默刷新；失败留旧数据只 toast。
+      // 首次加载（无缓存）才显示 loading / 错误态（F-13）
+      const silent = gaList.value.length > 0;
+      if (!silent) gaLoading.value = true;
+      gaError.value = false;
       try {
         const data = await gaGet('/api/admin/group/activities');
         gaList.value = data.activities || [];
         const n = gaList.value.filter(gaRunPending).length;
         gaAdminBadge.value = n > 0 ? (n + '场待执行') : ''; gaBadgeAt = Date.now();
       } catch(e) {
-        if (!gaAuthBack(e)) { gaError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); }
+        if (!gaAuthBack(e)) {
+          if (!silent) gaError.value = true;
+          vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
+        }
       }
       gaLoading.value = false;
     }
@@ -7310,7 +7415,7 @@ createApp({
       if (!pv || !k || !pv.male_count || !pv.female_count || k > pv.male_count) return '';
       const E = pv.female_count * k;
       const base = Math.floor(E / pv.male_count), rem = E % pv.male_count;
-      return '女生每人 ' + k + ' 场 · 共 ' + E + ' 场；男生每人 ' + base + (rem ? '~' + (base + 1) : '') + ' 场';
+      return '女生 ' + pv.female_count + ' 人每人 ' + k + ' 场 · 全场共 ' + E + ' 场；男生 ' + pv.male_count + ' 人每人 ' + base + (rem ? '~' + (base + 1) : '') + ' 场';
     });
     async function startOtoRunFlow() {
       if (gaOtoRunBusy.value || !gaDetailId.value) return;
@@ -7346,9 +7451,9 @@ createApp({
       const rd = gaOtoNextRound.value;
       const pv = gaOtoRunPreview.value || {};
       const K = gaOtoRunK.value;
-      if (!K) { vant.showToast('女生场次必须是 ≥1 的整数'); return; }
+      if (!K) { vant.showToast('女生场次必须是 ≥1 的整数（每位女生接待的男生数）'); return; }
       if (pv.male_count && K > pv.male_count) {
-        vant.showToast('女生场次不能超过男生人数 ' + pv.male_count);
+        vant.showToast('女生场次不能超过男生人数 ' + pv.male_count + '（每位女生最多与每位男生各聊一次）');
         return;
       }
       gaOtoRunBusy.value = true;
@@ -7612,13 +7717,11 @@ createApp({
       });
     });
     const gaSigninVisible = computed(() => gaSigninFiltered.value.slice(0, gaSigninShown.value));
-    // 筛选 chips 计数：口径＝名册套用「对侧」当前筛选（性别列看状态筛选、状态列看性别筛选），不受搜索词影响
+    // 筛选 chips 计数（F-06 口径）：一级（性别）恒按全量名册计数，不随状态筛选变；
+    // 二级（状态）随性别筛选变（见 gaSigninStatusCounts）；两者都不受搜索词影响
     const gaSigninGenderCounts = computed(() => {
-      const status = gaSigninStatus.value;
       const c = { all: 0, male: 0, female: 0 };
       for (const r of gaSigninList.value) {
-        if (status === 'pending' && r.checked_in) continue;
-        if (status === 'in' && !r.checked_in) continue;
         c.all++;
         if (r.gender === '男性') c.male++;
         else if (r.gender === '女性') c.female++;
@@ -7753,7 +7856,7 @@ createApp({
       isAttendancePresent, isDetailCheckedIn, detailSigninBlocked, activityDetailLoading,
       openActivity, doSignup, cancelSignup, onSignupClick, confirmPay, showPayDialog,
       cards, cardsTotal, cardsStart, loadingCards, currentCard, cardIndex, photoIndex, photoSlideDir, currentPhotoUrl, currentPhotoList, photoLoading,
-      showSwipeGuide, closeSwipeGuide,
+      showSwipeGuide, closeSwipeGuide, showSelfCardGuide, dismissSelfCardGuide,
       showActivityPromo, gotoPromoActivity, promoPoster, showUpdateNotes,
       filter, educationOptions, incomeOptions, showFilter, hasActiveFilter, toggleMultiTag, resetFilter, applyFilter, requestCloseFilter,
       showIdInvalidDialog, idInvalidCountdown, goIdInvalidNow, guardTabChange,
@@ -7786,7 +7889,7 @@ createApp({
       openProfileEdit, openPicker, openMultiPicker, pickSelect, clearPickerField, toggleMulti, saveProfile,
       showUnsavedConfirm, unsavedConfirmBody, discardLeaveConfirm, cancelLeaveConfirm,
       photoInput, uploadingPhoto, uploadProgress, uploadStage, faceChecking, pickPhoto, onPhotoChange, profilePhotos, deletePhoto, setCover,
-      candidates, selectedChoices, candidateQuery, visibleCandidates, loadingCandidates, candidatesError, groupResult, groupResultLoading, myGender,
+      candidates, selectedChoices, candidateQuery, visibleCandidates, loadingCandidates, candidatesError, gsSlowLoading, gsVerySlowLoading, groupResult, groupResultLoading, myGender,
       groupSelectFrom, groupResultFrom,
       showGsTray, gsSigninBlocked, gsPrefillNotice, gsUnlistedCount, gsCountText, gsDisplayName, gsReorderBtnEl,
       goGroupSelect, reloadGroupCandidates, dismissGsNotice, isSelected, gsRowTouchStart, gsRowTouchEnd, gsRowClick,
@@ -7826,7 +7929,7 @@ createApp({
       gaClearConfirmShow, gaClearConfirmInput, gaClearConfirmOk, openClearAllSignins, cancelClearAllSignins, doClearAllSignins,
       gaStatusDisplay, refreshGroupDetail,
       gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
-      gaRunPopupShow, gaRunM, gaRunF, gaRunPopupPreview, gaRunExpected, closeGaRunPopup, requestCloseGaRunPopup, confirmGaRun, openGaResetConfirm, doGaReset, gaConfirmBusy,
+      gaRunPopupShow, gaRunM, gaRunF, gaRunPopupPreview, gaRunExpected, gaRunPopupHasPeople, gaRunPopupExpectedGroups, closeGaRunPopup, requestCloseGaRunPopup, confirmGaRun, openGaResetConfirm, doGaReset, gaConfirmBusy,
       gaConfirmShow, gaConfirmInput, gaConfirmOk, cancelGaConfirm,
       gaOtoResetShow, gaOtoResetOk, gaOtoResetBusy, gaOtoConfirmInput, openOtoResetConfirm, cancelOtoReset, doOtoReset,
       gaOtoRunShow, gaOtoRunFemaleChats, gaOtoRunPreview, gaOtoRunK, gaOtoRunSummary, confirmOtoRun, closeOtoRun, requestCloseOtoRun,

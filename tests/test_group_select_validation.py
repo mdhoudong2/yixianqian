@@ -105,6 +105,8 @@ class Api:
             GS_TBL: [],
         })
         self.monkeypatch.setattr(app.bitable, "search_records", self.fake.search_records)
+        # 候选端点走 _grouping_client 直读报名表（与 signin_gate/realname 脚手架同款桩法）
+        self.monkeypatch.setattr(app, "_grouping_client", self.fake)
         self.monkeypatch.setattr(app.bitable, "create_record", self.fake.create_record)
         self.monkeypatch.setattr(app.bitable, "update_record", self.fake.update_record)
         self.snapshot["activities"] = [_act()]

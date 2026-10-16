@@ -9,7 +9,7 @@
 <link rel="icon" href="favicon.ico?v=5" type="image/x-icon">
 <link rel="stylesheet" href="lib/vant.min.css">
 <style>
-  :root{ --pink:#ff6b81; --pink-soft:#ffe3ea; --ink:#333; --sub:#8a8f99; --line:#f0f0f3; --bg:#f6f7f9; }
+  :root{ --pink:#ff6b81; --pink-soft:#ffe3ea; --ink:#333; --sub:#6b7280; --line:#f0f0f3; --bg:#f6f7f9; }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body{ margin:0; padding:0; background:var(--bg); color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Helvetica,Arial,sans-serif;
@@ -94,7 +94,7 @@
     <h2>请在飞书 App 中打开本页</h2>
     <p>为保证你的身份真实可靠，注册需要通过飞书登录。<br>
        请在「一线牵」机器人中重新进入注册页面。</p>
-    <p v-if="loginErr" style="color:#e35d76;font-size:12px;margin-top:10px">技术信息：{{ loginErr }}</p>
+    <p v-if="loginErr" style="color:#e35d76;font-size:12px;margin-top:10px">请在飞书 App 内打开链接完成注册/认领</p>
     <van-button round block class="btn-main" style="max-width:280px;margin-top:16px" @click="retry">我已在飞书中，重试</van-button>
   </div>
 

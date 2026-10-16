@@ -390,15 +390,15 @@ def _render_execute_result(res, activity_id):
         return (f"无法执行一对一：活动「{res['activity_name']}」的分组模式已开启。\n"
                 f"请先在 H5「活动管理」把模式切换为「一对一」再执行。")
     if code == "FEMALE_CHATS_REQUIRED":
-        return ("请指定女生场次（每个女生聊几场）。\n"
+        return ("请指定女生场次（每位坐镇女生接待几位男生）。\n"
                 "格式：执行一对一 活动ID 女生场次 [轮次]\n"
-                "例如：执行一对一 A-0002 15")
+                "例如：执行一对一 A-0002 10")
     if code == "FEMALE_CHATS_INVALID":
         if "error" in res:
             # 锁内算法拒绝（如女生场次 > 男生人数），零写入
             return f"女生场次不合法：{res['error']}（本次未写入任何数据，请调整后重试）"
         # 进门校验（女生场次非正整数），零写入
-        return (f"女生场次必须是 ≥1 的整数，当前 {res.get('female_chats')}。\n"
+        return (f"女生场次必须是 ≥1 的整数（每位女生接待的男生数），当前 {res.get('female_chats')}。\n"
                 "格式：执行一对一 活动ID 女生场次 [轮次]")
     if code == "ALREADY_DONE":
         return (f"活动「{res['activity_name']}」第{res['round']}轮已生成过一对一结果，请勿重复执行。"
@@ -447,9 +447,9 @@ def handle_admin_stop_onetoone(keyword):
     try:
         female_chats = int(parts[1])
         if female_chats < 1:
-            return "女生场次必须为大于0的整数"
+            return "女生场次必须为大于0的整数（每位女生接待的男生数）"
     except ValueError:
-        return f"女生场次必须为数字，当前：{parts[1]}"
+        return f"女生场次必须为数字（每位女生接待的男生数），当前：{parts[1]}"
     round_no = None
     if len(parts) >= 3:
         try:

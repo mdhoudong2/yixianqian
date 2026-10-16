@@ -105,14 +105,14 @@ const app = createApp({
         };
         tryGet();
       });
-      const timeout = new Promise(res=>setTimeout(()=>res({code:null,error:"免登超时(8s)"}),8000));
+      const timeout = new Promise(res=>setTimeout(()=>{ this.log("免登超时(8s)"); res({code:null,error:"免登超时(8s)"}); },8000));
       return Promise.race([task, timeout]);
     },
     async bootLogin(){
       this.stage="loading";
-      if(!this.isInFeishu()){ this.loginErr="当前不在飞书环境"; this.stage="needfeishu"; return; }
+      if(!this.isInFeishu()){ this.log("当前不在飞书环境（外部浏览器/桌面门禁态）"); this.loginErr="当前不在飞书环境"; this.stage="needfeishu"; return; }
       const r = await this.getSilentCode();
-      if(!r || !r.code){ this.loginErr=(r&&r.error)||"未拿到免登code"; this.stage="needfeishu"; return; }
+      if(!r || !r.code){ this.loginErr=(r&&r.error)||"未拿到免登code"; this.log("免登失败："+this.loginErr); this.stage="needfeishu"; return; }
       try{
         this.log("用code换会话 appId="+window.FEISHU_APP_ID);
         const d = await this.api("/api/auth/feishu_register?code=" + r.code);

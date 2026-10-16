@@ -7583,13 +7583,11 @@ def admin_activity_signin():
 
 @app.route("/api/admin/activity/signin", methods=["POST"])
 def admin_activity_signin_write():
-    """单笔 {activity_id, open_id, state}、批次补空 {activity_id, all_pending: true}
-    或全部清除 {activity_id, clear_all: true}。
+    """单笔 {activity_id, open_id, state} 或全部清除 {activity_id, clear_all: true}。
 
     UI 只有两态：未签到→「按时」、已签到→清空（取消签到，state=""）；显式拒绝
     「迟到」（D13；历史值仍按已到判定）。直接对报名记录盲写（同活动/人只有一条；
-    多条 → 明确报错，照 bot 签到指令的处理），不需要锁。批次只补空值，不覆盖
-    已标记的（旧 UI 的入口，保留兼容旧客户端与既有测试；新 UI 不再调用）。
+    多条 → 明确报错，照 bot 签到指令的处理），不需要锁。
     全部清除把该活动所有已报名记录的「签到状态」清空回「未签到」。
     """
     open_id, err, code = _require_admin()
@@ -7607,27 +7605,6 @@ def admin_activity_signin_write():
     if miss:
         return miss
 
-    if data.get("all_pending"):
-        records = _signin_signup_records(act_id)
-        if records is None:
-            return jsonify({"error": "签到信息查询失败，请重试",
-                            "code": "SIGNIN_QUERY_FAILED"}), 500
-        pending = [rec for rec in records
-                   if not bitable.get_field_text(rec.get("fields", {}), F_SIGNUP_ATTENDANCE)]
-        skipped = len(records) - len(pending)
-        # 一次 batch_update，不是逐条 update：逐条写在几十人规模就会超过浏览器
-        # 15s fetch 预算（E2E 实测 15 人 >15s），前端会 abort 并误报失败。
-        updated = _grouping_client.batch_update_records(
-            SIGNUP_TABLE_ID,
-            [{"record_id": rec.get("record_id"),
-              "fields": {F_SIGNUP_ATTENDANCE: "按时"}} for rec in pending]) or 0
-        failed = len(pending) - updated
-        if updated:
-            refresh_snapshot_table_async("signups")
-            app.logger.info(f"管理员批量签到: {act_id} 补标记 {updated} 人")
-        return jsonify({"ok": True, "activity_id": act_id, "updated": updated,
-                        "skipped": skipped, "failed": failed})
-
     if data.get("clear_all"):
         records = _signin_signup_records(act_id)
         if records is None:
@@ -7635,7 +7612,7 @@ def admin_activity_signin_write():
                             "code": "SIGNIN_QUERY_FAILED"}), 500
         marked = [rec for rec in records
                   if bitable.get_field_text(rec.get("fields", {}), F_SIGNUP_ATTENDANCE)]
-        # 一次 batch_update（同 all_pending）：逐条写在几十人规模就会超过浏览器
+        # 一次 batch_update：逐条写在几十人规模就会超过浏览器
         # 15s fetch 预算。返回值如实回传，不足即 failed，不谎报成功。
         cleared = _grouping_client.batch_update_records(
             SIGNUP_TABLE_ID,

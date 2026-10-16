@@ -1,9 +1,9 @@
 """lib/bitable_client.py batch_update_records 单测（不联网）。
 
-真版本只在活服务 E2E 用过（A-0011 批量签到 17 人），此前 tests/ 只有 FakeBitable
+真版本只在活服务 E2E 用过（A-0011 批量标记签到 17 人），此前 tests/ 只有 FakeBitable
 的假版本。这里用假 Session.post 钉死请求形状、分批边界，以及「部分失败如实少算、
-不得报成功」的语义——调用方（web/backend/app.py 批量签到）按 `len(pending) - updated`
-报 failed，多算会谎报成功。
+不得报成功」的语义——调用方（web/backend/app.py 签到场次清除）按
+`len(marked) - cleared` 报 failed，多算会谎报成功。
 """
 import requests
 

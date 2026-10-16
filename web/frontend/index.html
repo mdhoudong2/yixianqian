@@ -213,12 +213,14 @@
   .choice-badge-check { border-radius: 12px; width: auto; min-width: 24px; padding: 0 7px; }
   /* 志愿选择重设计：底部计数 + 双按钮操作栏（调整次序 / 提交志愿） */
   .gs-page { padding-bottom: calc(130px + env(safe-area-inset-bottom)); }
+  .gs-page.gs-page--tip { padding-bottom: calc(168px + env(safe-area-inset-bottom)); }
   .gs-notice { display: flex; align-items: flex-start; gap: 8px; background: #fff7e6; color: #ed6a0c; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; margin-bottom: 10px; }
   .gs-notice .van-icon { flex-shrink: 0; margin-top: 2px; cursor: pointer; font-size: 16px; }
   .gs-search-sticky { position: sticky; top: 54px; z-index: 9; }
   .gs-fixed-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: #fff; border-top: 1px solid #f2f3f5; }
   .gs-bottom-bar { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
   .gs-count-text { font-size: 13px; color: #969799; }
+  .gs-round-diff-tip { padding: 8px 12px 0; font-size: 12px; color: #ed6a0c; line-height: 1.5; }
   .gs-bottom-actions { display: flex; gap: 10px; }
   .gs-action-btn { flex: 1 1 0; min-width: 0; height: 44px; }
   /* 选人飞入：克隆头像 fixed 飞行（落点=调整次序按钮），落定后按钮轻脉冲 */
@@ -679,6 +681,7 @@
   .van-theme-dark .gs-fixed-bottom { background: #222226; border-color: #3a3a3e; }
   .van-theme-dark .gs-search-sticky { background: #1a1a1c; }
   .van-theme-dark .gs-count-text { color: #c8c9cc; }
+  .van-theme-dark .gs-round-diff-tip { color: #ffa940; }
   .van-theme-dark .gs-notice { background: #2b2413; color: #e8c97a; }
   .van-theme-dark .gs-notice .van-icon { color: #e8c97a; }
   .van-theme-dark .gs-tray { background: #222226; }
@@ -2276,7 +2279,7 @@
   <div class="back-nav" @click="handleBack">
     <van-icon name="arrow-left"></van-icon> 返回
   </div>
-  <div class="page gs-page">
+  <div class="page gs-page" :class="{ 'gs-page--tip': gsNeedsChange }">
     <div v-if="gsPrefillNotice" class="gs-notice">
       <div style="flex:1;">
         <div>已载入你上次提交的志愿，修改后记得点提交</div>
@@ -2334,11 +2337,12 @@
   </div>
   <!-- 底部固定操作栏：计数行 + 「调整次序 / 提交志愿」双按钮 -->
   <div class="gs-fixed-bottom">
+    <div v-if="gsNeedsChange" class="gs-round-diff-tip">{{ gsRoundDiffTip }}</div>
     <div class="gs-bottom-bar">
       <div class="gs-count-text">{{ gsCountText }}</div>
       <div class="gs-bottom-actions">
         <van-button ref="gsReorderBtnEl" class="gs-action-btn" plain type="primary" color="#ff6b81" :disabled="!selectedChoices.length" @click="showGsTray=true"><van-icon name="arrow-up"></van-icon> 调整次序</van-button>
-        <van-button class="gs-action-btn" type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
+        <van-button class="gs-action-btn" type="primary" color="#ff6b81" :disabled="!gsCanSubmit" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
       </div>
     </div>
   </div>
@@ -2364,7 +2368,7 @@
       </transition-group>
       <div class="gs-tray-actions">
         <van-button block plain type="primary" color="#ff6b81" @click="showGsTray=false">继续挑选</van-button>
-        <van-button block type="primary" color="#ff6b81" :disabled="actionLoading || !selectedChoices.length" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
+        <van-button block type="primary" color="#ff6b81" :disabled="!gsCanSubmit" :loading="actionLoading" @click="submitChoices()">提交志愿</van-button>
       </div>
     </div>
   </van-popup>
@@ -4182,9 +4186,27 @@ createApp({
     let gsSuppressClickUntil = 0;         // touchend 后抑制合成 click，防双触发
     const gsCountText = computed(() => {
       const n = selectedChoices.value.length;
-      if (n === 0) return '已选 0/7 · 最多选 7 人';
+      if (n === 0) return '已选 0/7 · 需选满 7 人';
       if (n === 7) return '已选 7/7 · 已满';
-      return '已选 ' + n + '/7 · 还可选 ' + (7 - n) + ' 人';
+      return '已选 ' + n + '/7 · 还需选 ' + (7 - n) + ' 人';
+    });
+    // 跨轮差异（2026-10-16）：R = 服务器下发的应提交轮次；needs_change 时需与
+    // 进页载入的旧志愿至少换 4 人（本地实时算，与后端同口径）。
+    const gsSelectRound = ref(null);
+    const gsNeedsChange = ref(false);
+    const gsOldChoiceOids = ref(new Set());
+    const gsChangedCount = computed(() =>
+      selectedChoices.value.filter(c => !gsOldChoiceOids.value.has(c.openid)).length);
+    const gsRoundDiffTip = computed(() => {
+      const x = gsChangedCount.value;
+      return '第' + gsSelectRound.value + '轮：需与上一轮至少4人不同（已换 ' + x +
+             ' 人，还需再换 ' + Math.max(0, 4 - x) + ' 人）';
+    });
+    const gsCanSubmit = computed(() => {
+      if (actionLoading.value) return false;
+      if (selectedChoices.value.length !== 7) return false;   // 必须恰好 7 人
+      if (gsNeedsChange.value && gsChangedCount.value < 4) return false;
+      return true;
     });
 
     // 一对一
@@ -6040,6 +6062,9 @@ createApp({
       gsTouchedOids = new Set();
       gsPrefillNotice.value = false;
       gsUnlistedCount.value = 0;
+      gsSelectRound.value = null;
+      gsNeedsChange.value = false;
+      gsOldChoiceOids.value = new Set();
       gsBaseline = '';
       await loadGroupCandidates(activityId);
     }
@@ -6082,6 +6107,10 @@ createApp({
       try {
         const statusData = await api('/api/activities/' + activityId + '/group/status');
         const myChoices = statusData.my_choices || [];
+        // 跨轮差异状态（服务器口径）：旧志愿快照 + 应提交轮次 + 是否需换 ≥4 人
+        gsOldChoiceOids.value = new Set(myChoices);
+        gsSelectRound.value = (typeof statusData.select_round === 'number') ? statusData.select_round : null;
+        gsNeedsChange.value = !!statusData.needs_change;
         if (!myChoices.length) return;
         const byOid = {};
         candidates.value.forEach(c => { byOid[c.openid] = c; });
@@ -6211,6 +6240,8 @@ createApp({
       // 可读原因，不拼后端原文
       if (e && e.code === 'SIGNIN_REQUIRED') return '需要现场签到后才能填志愿，请联系管理员';
       if (e && e.code === 'SIGNIN_QUERY_FAILED') return '签到信息查询失败，请稍后重试';
+      // 恰好 7 人 / 跨轮差异：直接显示后端 error 文案（含已选数/已换数）
+      if (e && (e.code === 'SELECT_NOT_FULL' || e.code === 'SELECT_ROUND_DIFF')) return e.message;
       if (e && typeof e.message === 'string' && e.message.includes('不在可选列表')) return '有志愿不在当前名单，请移除后重试';
       if (e && e.status === 409) return '当前有其他操作进行中，请稍后重试';
       return '提交失败，请稍后重试';
@@ -6230,9 +6261,13 @@ createApp({
       actionLoading.value = true;
       setPageBusy('正在提交志愿…');   // 页面级锁：提交期间点候选/托盘/搜索/返回皆无效（P16）
       try {
-        await api('/api/activities/' + activityId + '/group/select', {
+        const res = await api('/api/activities/' + activityId + '/group/select', {
           method: 'POST', body: JSON.stringify({ choices: selectedChoices.value.map(c => c.openid) })
         });
+        // 提交成功：该行轮次已刷新为 R → 跨轮约束解除（新回包 + 本地状态双保险）
+        gsNeedsChange.value = false;
+        gsOldChoiceOids.value = new Set(selectedChoices.value.map(c => c.openid));
+        if (res && typeof res.select_round === 'number') gsSelectRound.value = res.select_round;
         gsMarkClean();   // 提交成功先标净再跳转（避免自动返回被离开拦截误拦）
         // 注：删掉本行自动化抓不到（突变 M4「提交成功不 gsMarkClean」盲区）——该场景需靠手测覆盖。
         vant.showToast('志愿提交成功');
@@ -7903,6 +7938,7 @@ createApp({
       candidates, selectedChoices, candidateQuery, visibleCandidates, loadingCandidates, candidatesError, gsSlowLoading, gsVerySlowLoading, groupResult, groupResultLoading, myGender,
       groupSelectFrom, groupResultFrom,
       showGsTray, gsSigninBlocked, gsPrefillNotice, gsUnlistedCount, gsCountText, gsDisplayName, gsReorderBtnEl,
+      gsSelectRound, gsNeedsChange, gsOldChoiceOids, gsChangedCount, gsRoundDiffTip, gsCanSubmit,
       goGroupSelect, reloadGroupCandidates, dismissGsNotice, isSelected, gsRowTouchStart, gsRowTouchEnd, gsRowClick,
       toggleChoice, removeChoiceToast, moveChoice, submitChoices, goGroupResult, switchGroupRound,
       onPhotoError, onPhotoLoad, retryImg, photoPositions, recalcPhotoPosition,

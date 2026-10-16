@@ -296,6 +296,10 @@ F_GS_SELECTOR_OID = "选择人open_id"
 F_GS_SELECTOR_NAME = "选择人昵称"
 F_GS_SELECTOR_GENDER = "选择人性别"
 F_GS_CHOICES = ["第1志愿", "第2志愿", "第3志愿", "第4志愿", "第5志愿", "第6志愿", "第7志愿"]
+# 轮次（数字）：该行志愿保存时的提交轮次 = 已执行最新轮次+1。跨轮差异约束用它判断
+# 「行轮次 < R → 与上一轮至少换 4 人」；旧数据行空值按第 1 轮处理。
+# 建栏：python scripts/ops/add_select_round_field.py apply
+F_GS_ROUND = "轮次"
 
 # 分组结果表字段
 F_GR_ACTIVITY_ID = "活动ID"

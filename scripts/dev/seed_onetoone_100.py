@@ -154,12 +154,32 @@ def _pick(pool, n, offset):
     return [pool[(offset + j) % len(pool)] for j in range(n)]
 
 
+_ID_REGION = "440305"  # 深圳占位区划（仅测试号码，不指向真实公民）
+_ID_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+_ID_CHECK = "10X98765432"
+
+
+def _gen_id_card(gender, seq):
+    """生成格式合法的测试身份证号（GB 11643 校验位），第17位男奇女偶。
+
+    现场作业面门禁（get_id_valid）验校验位，旧 fix_fake_gender 那种固定占位校验位
+    过不了；gender 与第17位奇偶一致，万一表切回「性别=公式」也不会翻性别。
+    """
+    year = 1985 + (seq % 15)
+    month = (seq % 12) + 1
+    day = (seq % 27) + 1
+    body = (_ID_REGION + f"{year:04d}{month:02d}{day:02d}"
+            + f"{seq % 100:02d}" + ("3" if gender == "男性" else "2"))
+    return body + _ID_CHECK[sum(int(body[i]) * _ID_WEIGHTS[i] for i in range(17)) % 11]
+
+
 def _build_users():
     """100 个假号（50 男 + 50 女）。"""
     males, females = [], []
     for i in range(_N_MALE):
         males.append({
             "oid": f"{_PREFIX_MALE}{i + 1:03d}",
+            "seq": i + 1,
             "gender": "男性",
             "nickname": f"百人男{i + 1:03d}",
             "name": f"百人男{i + 1:03d}",
@@ -174,6 +194,7 @@ def _build_users():
     for i in range(_N_FEMALE):
         females.append({
             "oid": f"{_PREFIX_FEMALE}{i + 1:03d}",
+            "seq": _N_MALE + i + 1,
             "gender": "女性",
             "nickname": f"百人女{i + 1:03d}",
             "name": f"百人女{i + 1:03d}",
@@ -194,6 +215,8 @@ def _user_fields(u):
         C.FIELD_NICKNAME: u["nickname"],
         "姓名": u["name"],
         C.FIELD_GENDER: u["gender"],
+        # 合法身份证号：H5 门禁 get_id_valid 强验（缺/错会弹「身份证有误或缺失」）
+        "身份证号": _gen_id_card(u["gender"], u["seq"]),
         C.FIELD_ACCOUNT_STATUS: "单身",
         C.FIELD_EDUCATION: u["education"],
         C.FIELD_CITY: u["city"],

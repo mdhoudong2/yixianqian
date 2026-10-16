@@ -5791,33 +5791,76 @@ def group_candidates(activity_id):
     if gate:
         return jsonify(gate[0]), gate[1]
 
+    # 报名表「宽读」（非已取消）是本端点本人报名/签到闸门/候选池的唯一数据源，只依赖
+    # 文本活动ID；它与活动 fresh 读互不依赖。原实现串行打 4 次飞书（活动 fresh + 本人
+    # 报名窄查 + 签到宽查 + 候选宽查，实测各约 0.95s），这里合并成一次宽读并起并行抓取，
+    # 把端点的墙钟压到一个飞书往返量级。
+    def _fetch_activity_signups(aid):
+        return _grouping_client.search_records(SIGNUP_TABLE_ID, {
+            "conjunction": "and",
+            "conditions": [
+                {"field_name": F_SIGNUP_ACTIVITY_ID, "operator": "is", "value": [aid]},
+                {"field_name": F_SIGNUP_STATUS, "operator": "isNot", "value": ["已取消"]},
+            ],
+        })
+
+    _, snap_text_id = snap_resolve_activity(activity_id, fresh=False)
+    signups_box = []
+    signup_fetch = None
+    if snap_text_id:
+        signup_fetch = threading.Thread(
+            target=lambda aid=snap_text_id: signups_box.append(_fetch_activity_signups(aid)),
+            name="group-candidates-signups", daemon=True)
+        signup_fetch.start()
+
     # 检查活动状态（分组状态由 bot 进程写入，判定依赖它 → 实时读）
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
     if not act_record:
+        if signup_fetch:
+            signup_fetch.join()
         return jsonify({"error": "活动不存在"}), 404
     # 志愿随时可改（2026-10-13）：候选列表不再要求「收集中」；签到闸门保留。
 
-    # 检查是否报名（直读飞书，避免报名快照 stale 导致误判未报名）
-    signup = bitable.get_user_signup(text_act_id, open_id)
-    if not signup:
-        return jsonify({"error": "你未报名此活动"}), 403
+    if signup_fetch and snap_text_id == text_act_id:
+        signup_fetch.join()
+        records = signups_box[0] if signups_box else None
+    else:
+        # 快照未解析出文本ID（如刚创建的活动）或与 fresh 不一致：拿到文本ID后串行兜底
+        records = _fetch_activity_signups(text_act_id)
 
     # 现场签到闸门（条件开启，设计 §3.2/§3.3）：本人须已报到；查询失败 fail-closed
     # ——业务准入上 fail-open 会把未到场者放进来。attendance=None 表示未开启。
     af = act_record.get("fields", {})
-    attendance = None
-    if lib_grouping.signin_enabled(af):
-        attendance = lib_grouping.attendance_map(text_act_id, client=_grouping_client)
-        if attendance is None:
+    signin_on = lib_grouping.signin_enabled(af)
+    if records is None:
+        # 宽读失败：签到开启 → fail-closed（与 lib.attendance_map 读失败同形，可重试）；
+        # 未开启 → 与旧 get_user_signup 失败路径同形（wrapper 失败转 []，按未报名处理）
+        if signin_on:
             return jsonify({"error": "签到信息查询失败，请重试",
                             "code": "SIGNIN_QUERY_FAILED"}), 503
-        if not lib_grouping.is_checked_in(attendance.get(open_id)):
-            return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
-                            "code": "SIGNIN_REQUIRED"}), 403
+        return jsonify({"error": "你未报名此活动"}), 403
+    signups = records
 
-    # 获取报名的异性（直读飞书，避免报名快照 stale 导致「0 可选人」——快照为跨 worker 内存态，
-    # 刷新前新增的报名会被漏掉，历史 bug：提交志愿页一个候选都没有）
-    signups = bitable.get_signups(text_act_id)
+    attendance = None
+    if signin_on:
+        # 签到表从同一份宽读派生（只收「已报名」行），与 lib.attendance_map 同口径；
+        # 同一次读取同时供本人报名/候选池使用，三处判定天然一致。
+        attendance = {}
+        for s in signups:
+            sf = s.get("fields", {})
+            if bitable.get_select_value(sf, F_SIGNUP_STATUS) != "已报名":
+                continue
+            s_oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+            if s_oid:
+                attendance[s_oid] = bitable.get_field_text(sf, F_SIGNUP_ATTENDANCE)
+
+    # 检查是否报名（与 get_user_signup 同口径：本活动 + 非已取消）
+    if not any(bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) == open_id
+               for s in signups):
+        return jsonify({"error": "你未报名此活动"}), 403
+    if attendance is not None and not lib_grouping.is_checked_in(attendance.get(open_id)):
+        return jsonify({"error": "本活动需现场签到后才能填志愿，请联系管理员",
+                        "code": "SIGNIN_REQUIRED"}), 403
     me = snap_self_user()
     if not me:
         return jsonify({"error": "用户不存在，请确认已完善资料"}), 404

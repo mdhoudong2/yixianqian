@@ -6,7 +6,7 @@
   关键案例：早提交志愿但未签到的人，执行结果里必须不出现（只挡提交不够）；
 - 判定 D13：「已到」= 值 ∈ {按时, 迟到}（历史遗留的迟到也算到）；未到/空 = 否；
 - fail-closed：attendance 查询失败 → 拒绝而非放行（业务准入，fail-open 会放未到场者进来）；
-- 管理端点：GET 名册 fresh 直读、POST 单笔/批次只补空、flag 幂等且检查写返回值。
+- 管理端点：GET 名册 fresh 直读、POST 单笔/全部清除、flag 幂等且检查写返回值。
 
 桩法沿用 tests/test_grouping_parity.py 的 FakeBitable（桩存取，规则跑真实现）与
 tests/test_group_admin_api.py 的 Api 脚手架（Flask test client + 会话 + 快照桩）。
@@ -671,7 +671,7 @@ def test_admin_signin_roster_search_failure_500(api):
     assert r.status_code == 500 and r.get_json()["code"] == "SIGNIN_QUERY_FAILED"
 
 
-# ---------------------------------------------------------------- 管理端点：单笔/批次
+# ---------------------------------------------------------------- 管理端点：单笔/清除
 
 def test_admin_signin_single_write(api):
     api.install(activity=_act_group(),
@@ -704,7 +704,7 @@ def test_admin_signin_single_clear_and_invalid_states(api):
     """单笔清空（取消签到）：state="" 合法 → 清空回「未签到」；非法 state 一律 400。
 
     2026-10-15 两态收口：行内「取消签到」＝空串（清空该人）；「未到」保留兼容旧
-    客户端提交，但不再是 UI 入口（存量「未到」显示归入未签到）。批次/全部清除
+    客户端提交，但不再是 UI 入口（存量「未到」显示归入未签到）。全部清除
     端点行为不动（另有专项用例）。
     """
     api.install(activity=_act_group(),
@@ -740,33 +740,6 @@ def test_admin_signin_single_write_failure_500(api, monkeypatch):
     r = api.post("/api/admin/activity/signin",
                  {"activity_id": ACT, "open_id": "ou_m0", "state": "按时"})
     assert r.status_code == 500
-
-
-def test_admin_signin_batch_fills_only_empty(api):
-    act = _act_group()
-    signups = [
-        _signup_att("ou_m0", "按时"), _signup_att("ou_m1", "未到"),
-        _signup_att("ou_f0", None), _signup_att("ou_f1", ""),
-        _signup_att("ou_f2", None, status="已取消"),
-    ]
-    api.install(activity=act, signups=signups)
-    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True})
-    assert r.status_code == 200
-    body = r.get_json()
-    assert body["updated"] == 2 and body["skipped"] == 2 and body["failed"] == 0
-    by_oid = {x["fields"]["报名人open_id"]: x["fields"].get(ATT)
-              for x in api.fake.tables[SIGNUP_TABLE_ID]}
-    assert by_oid["ou_m0"] == "按时", "已标记的不得被覆盖"
-    assert by_oid["ou_m1"] == "未到", "未到不得被批次改写"
-    assert by_oid["ou_f0"] == "按时" and by_oid["ou_f1"] == "按时"
-    assert by_oid["ou_f2"] is None, "已取消不参与批次"
-
-
-def test_admin_signin_batch_search_failure_500(api):
-    api.install(activity=_act_group(), signups=[_signup_att("ou_m0", None)])
-    api.fake.search_fails = {SIGNUP_TABLE_ID}
-    r = api.post("/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True})
-    assert r.status_code == 500 and r.get_json()["code"] == "SIGNIN_QUERY_FAILED"
 
 
 def test_admin_signin_clear_all_clears_marked(api):

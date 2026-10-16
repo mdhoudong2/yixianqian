@@ -211,7 +211,7 @@ ENDPOINTS = [
     ("POST", "/api/admin/group/flag", {"activity_id": ACT, "enabled": True}),
     # C4 现场签到三端点（同走 _require_admin + rate limit）
     ("GET", "/api/admin/activity/signin?activity_id=" + ACT, None),
-    ("POST", "/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True}),
+    ("POST", "/api/admin/activity/signin", {"activity_id": ACT}),
     ("POST", "/api/admin/activity/signin/flag", {"activity_id": ACT, "enabled": True}),
 ]
 ENDPOINT_IDS = [p.split("?")[0].rsplit("/", 1)[-1] for m, p, _ in ENDPOINTS]
@@ -834,7 +834,7 @@ def test_payload_validation_and_missing_resources(api):
 # ---------------------------------------------------------------- C4：现场签到端点冒烟
 
 def test_signin_admin_roster_marks_and_flag(api):
-    """签到端点冒烟：fresh 名册 + 两态单笔 + 批次只补空 + flag 幂等。
+    """签到端点冒烟：fresh 名册 + 两态单笔 + flag 幂等。
 
     完整契约（失败注入/多条报名/迟到拒绝等）在 tests/test_signin_gate.py。
     """
@@ -856,11 +856,6 @@ def test_signin_admin_roster_marks_and_flag(api):
     row = [x for x in fake.tables[SIGNUP_TABLE_ID]
            if x["fields"]["报名人open_id"] == "ou_f0"][0]
     assert row["fields"]["签到状态"] == "未到"
-
-    # 批次只补空：m0 是「迟到」（非空，跳过）、f0 是「未到」（非空，跳过）
-    r2 = api.post("/api/admin/activity/signin", {"activity_id": ACT, "all_pending": True})
-    assert r2.get_json() == {"ok": True, "activity_id": ACT, "updated": 0,
-                             "skipped": 2, "failed": 0}
 
     # flag：已是「是」→ 幂等零写；关 → 写「否」
     updates_before = [c for c in fake.writes() if c[0] == "update"]

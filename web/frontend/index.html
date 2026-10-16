@@ -1376,8 +1376,8 @@
         </div>
         <div class="ga-row-name">{{ a.name || '(未命名活动)' }}<span class="ga-row-id">{{ a.activity_id }}</span></div>
         <div class="ga-row-sub">{{ gaRowSub(a) }}</div>
-        <div class="ga-actions" style="margin-top:10px;">
-          <van-button size="small" plain type="primary" color="#ff6b81" @click.stop="openCheckinPage(a)">📋 签到</van-button>
+        <div class="ga-actions" style="margin-top:0; padding-top:10px;" @click.stop>
+          <van-button size="small" plain type="primary" color="#ff6b81" style="min-height:44px; padding:0 18px;" @click.stop="openCheckinPage(a)">📋 签到</van-button>
         </div>
       </div>
     </div>
@@ -1389,6 +1389,7 @@
   <div class="ga-title" style="display:flex; align-items:center; gap:8px;">
     <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ gaDetail ? (gaDetail.name || '未命名活动') : '活动' }}</span>
     <span v-if="gaDetail" class="ga-chip" :class="gaModeChipClass(gaDetail)"><span class="ga-chip-dot"></span>{{ gaModeChip(gaDetail) }}</span>
+    <van-button size="small" plain type="primary" color="#ff6b81" style="min-height:44px; padding:0 14px;" @click="openCheckinPage({activity_id: gaDetailId, name: gaDetail ? (gaDetail.name || '') : ''})">📋 现场签到</van-button>
   </div>
   <div class="ga-title-sub">{{ gaDetailId }} · {{ gaModeText }}</div>
 
@@ -3156,6 +3157,9 @@ createApp({
     // —— 返回拦截（飞书手势/物理返回）——
     let isHandlingPopState = false;
     let ignoreNextPop = false;
+    // 「控制台→签到」历史塌缩的一次性旗标：openCheckinPage 已把当前条目 replaceState 为 checkin，
+    // watch(page) 见旗标且 nv==='checkin' 时跳过补 push（仅此一次；其它页面切换不受影响、不误食）
+    let suppressPagePushOnce = false;
     // 守卫收尾的历史条目消费队列：overlay/未保存弹窗关闭时「一层一条」串行 back()，
     // 每次 back 的 popstate 用计数抑制。同 tick 连关两层（弹窗 + 其下被拦浮层）时按队列
     // 逐条消费，不等 history.state 的异步更新，避免 overlay 条目残留→返回重进/震荡。
@@ -6491,6 +6495,7 @@ createApp({
     watch(page, (nv, ov) => {
       if(isHandlingPopState) return;
       if(nv !== ov){
+        if(suppressPagePushOnce && nv === 'checkin'){ suppressPagePushOnce = false; return; }   // 塌缩条目已在位，不补 push
         pushHistory({page: nv});
       }
     });
@@ -7180,6 +7185,12 @@ createApp({
       gaDetailId.value = a.activity_id; gaCheckinName.value = a.name || '';
       gaSigninList.value = []; gaSigninLoaded.value = false; gaSigninError.value = false;
       gaSigninQuery.value = ''; gaSigninGender.value = 'all'; gaSigninStatus.value = 'all'; gaSigninShown.value = 30; gaSigninFlagOn.value = false;
+      if(page.value === 'group_detail'){
+        // 控制台页头入口：把当前 group_detail 条目就地改写为 checkin（塌缩历史，不新增条目），
+        // 返回时自然回退 group_admin；一次性旗标让 watch(page) 跳过本 tick 的补 push
+        try{ history.replaceState({page:'checkin'}, '', location.pathname + '#checkin'); }catch(e){}
+        suppressPagePushOnce = true;
+      }
       page.value = 'checkin';
     }
     async function refreshGroupDetail() {

@@ -251,9 +251,10 @@ class BitableClient:
     def batch_update_records(self, table_id, records, batch_size=500):
         """批量更新记录。records: [{"record_id": ..., "fields": {...}}, ...]。
 
-        现场签到「未签到者全部标记已到」用它：逐条 update 在几十人规模就会超过
-        浏览器 15s fetch 预算（飞书每笔一个往返，E2E 实测 15 人 >15s）；batch_update
-        一批一个请求。返回更新成功的记录数；某批失败如实少算（调用方不得报成功）。
+        写后刷新类端点用于一次提交多行（如签到场次清除），seed 脚本也用它批量置「按时」。
+        逐条 update 在几十人规模就会超过浏览器 15s fetch 预算（飞书每笔一个往返，
+        E2E 实测 15 人 >15s）；batch_update 一批一个请求。返回更新成功的记录数；
+        某批失败如实少算（调用方不得报成功）。
         """
         updates = [r for r in (records or [])
                    if r and r.get("record_id") and r.get("fields")]

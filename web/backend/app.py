@@ -6072,11 +6072,11 @@ def group_result(activity_id):
         req_round = latest_round
     round_results = [r for r in results if _round_of(r.get("fields", {})) == req_round]
 
-    # 一次性把 users 快照映射为 open_id -> 用户ID/真名/昵称（避免对每个成员逐条查库）
+    # 一次性把 users 快照映射为 open_id -> 用户ID/真名/昵称/头像（避免对每个成员逐条查库）
     users_snap = _snap("users")
     if not users_snap:
         users_snap = bitable.get_all_users()
-    uid_by_oid, real_by_oid, nick_by_oid = {}, {}, {}
+    uid_by_oid, real_by_oid, nick_by_oid, photo_by_oid = {}, {}, {}, {}
     for u in users_snap:
         uf = u.get("fields", {})
         oid = bitable.get_field_text(uf, F_FEISHU_ID)
@@ -6084,6 +6084,8 @@ def group_result(activity_id):
             uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
             real_by_oid[oid] = _display_real_name(uf)
             nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
+            tokens = bitable.get_attachment_tokens(uf, F_PHOTO)
+            photo_by_oid[oid] = ("/api/image/" + tokens[0] + "?fv11") if tokens else ""
 
     # 找到我的组号
     my_group = None
@@ -6099,7 +6101,8 @@ def group_result(activity_id):
                          or nick_by_oid.get(oid, "")),
             "gender": bitable.get_select_value(fields, F_GR_USER_GENDER),
             "openid": oid,
-            "user_id": uid_by_oid.get(oid, "")
+            "user_id": uid_by_oid.get(oid, ""),
+            "photo": photo_by_oid.get(oid, "")
         }
         if member["openid"] == open_id:
             my_group = group_no

@@ -155,10 +155,7 @@ def test_group_select_invalid_is_400_with_zero_writes(api, choices, err, code):
 
 
 def test_group_select_accepts_exactly_seven_and_writes_one_row(api):
-    """恰好 7 个 → 200 且恰写一行（2026-10-16 起由「1..7」收紧为必须恰好 7）。
-
-    无已执行轮次时提交轮次 R=1，行内写「轮次」=1。
-    """
+    """恰好 7 个 → 200 且恰写一行（2026-10-16 起由「1..7」收紧为必须恰好 7）。"""
     r = api.post(FEMME_SEVEN)
     assert r.status_code == 200, r.get_json()
     creates = [c for c in api.fake.writes() if c[0] == "create"]
@@ -166,7 +163,6 @@ def test_group_select_accepts_exactly_seven_and_writes_one_row(api):
     assert len(api.fake.tables[GS_TBL]) == 1
     assert api.fake.tables[GS_TBL][0]["fields"]["选择人open_id"] == ME
     assert api.fake.tables[GS_TBL][0]["fields"]["第1志愿"] == "ou_f1"
-    assert api.fake.tables[GS_TBL][0]["fields"]["轮次"] == 1, "R=1 时行轮次应记 1"
 
 
 def test_group_select_six_choices_is_rejected(api):

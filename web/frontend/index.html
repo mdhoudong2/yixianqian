@@ -199,9 +199,10 @@
   /* 分组 */
   .group-candidate { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
   .group-candidate.selected { border: 2px solid #ff6b81; }
-  .group-candidate-info { flex: 1; }
-  .group-candidate-name { font-size: 16px; font-weight: 500; }
-  .group-candidate-meta { font-size: 13px; color: #969799; margin-top: 4px; }
+  .group-candidate-info { flex: 1; min-width: 0; }
+  .group-candidate-name { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .group-candidate-meta { font-size: 13px; color: #969799; margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .gs-detail-btn { flex-shrink: 0; min-height: 44px; padding: 0 10px; margin: 0 6px 0 8px; border: 1px solid #ff6b81; border-radius: 10px; background: #fff; color: #ff6b81; font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
   .choice-badge { background: #ff6b81; color: #fff; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
   .selected-list { background: #fff; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
   .selected-list h4 { margin-bottom: 8px; color: #323233; }
@@ -664,6 +665,7 @@
   .van-theme-dark .msg-reply-tag { color: #8c8d91; }
   .van-theme-dark .msg-reply-btn { color: #6e6f73; }
   .van-theme-dark .feedback-btn, .van-theme-dark .back-btn { border-color: #4a4a4e; }
+  .van-theme-dark .gs-detail-btn { background: #2a1a1e; color: #ff8fa1; border-color: rgba(255,107,129,0.55); }
   .van-theme-dark .feedback-btn { color: #c8c9cc; }
   .van-theme-dark .login-desc, .van-theme-dark .msg-sub:not(.msg-sub-strong), .van-theme-dark .section-title,
   .van-theme-dark .points-entry-reason, .van-theme-dark .points-entry-time,
@@ -2330,6 +2332,7 @@
           <div class="group-candidate-name">{{ c.real_name || c.nickname }}</div>
           <div class="group-candidate-meta">{{ c.user_id||'' }} · {{ c.baptismal_name||'' }} · {{ c.birthday||'' }} · {{ c.education||'' }} · {{ c.native_place||'' }} · {{ c.city||'' }}</div>
         </div>
+        <button type="button" class="gs-detail-btn" aria-label="查看资料" @click.stop="openUserDetailFromGs(c.openid)" @touchstart.stop @touchend.stop>资料 ›</button>
         <span v-if="isSelected(c.openid)" class="choice-badge choice-badge-check">✓{{ selectedChoices.findIndex(x=>x.openid===c.openid)+1 }}</span>
         <van-icon v-else name="plus" color="#dcdee0" size="22"></van-icon>
       </div>
@@ -5434,6 +5437,19 @@ createApp({
         userDetail.value = data;
       } catch(e) { vant.showToast(e.message); }
     }
+    async function openUserDetailFromGs(openid) {
+      // 从志愿选择页进入：不经过报名名单弹层（否则返回会命中名单重开特例）
+      userDetailFromSheet.value = false;
+      userDetailFrom.value = 'group_select';
+      page.value = 'user_detail';
+      userDetail.value = null;
+      try {
+        const data = await api('/api/users/' + openid + '/public');
+        // 在途喜欢快照有 60s 滞后：刚喜欢过的人进资料页也隐藏按钮
+        if (data && (data.liked || justLiked.has(openid))) { data.liked = true; data.can_like = false; }
+        userDetail.value = data;
+      } catch(e) { vant.showToast(e.message); }
+    }
     async function copyText(text, okMsg) {
       try {
         await navigator.clipboard.writeText(text);
@@ -7961,7 +7977,7 @@ createApp({
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet, showSignupInfo,
-      userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, loadNotifications,
+      userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, openUserDetailFromGs, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
       paLoading, paLedgerLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,

@@ -2476,13 +2476,13 @@
         </div>
       </template>
     </div>
-    <div style="padding:20px 12px;" v-if="canLikeUserDetail">
+    <div style="padding:20px 12px;" v-if="userDetailFrom !== 'group_select' && canLikeUserDetail">
       <!-- 需求第 8 条：给TA点过赞、还没表白，就在这儿问一句。praised 由后端按
            「我点过赞没有」算好；这里不含任何「TA收到几个赞」的信息。 -->
       <div class="praise-hint-inline" v-if="userDetail && userDetail.praised">你给TA点过赞——要不要表示喜欢？</div>
       <van-button color="#ff6b81" block @click="openLikeDialogForUser(userDetail)">💕 喜欢TA</van-button>
     </div>
-    <div style="padding:20px 12px;" v-else-if="canPraiseDetail">
+    <div style="padding:20px 12px;" v-else-if="userDetailFrom !== 'group_select' && canPraiseDetail">
       <button class="praise-btn" style="margin:0 auto;" :class="{praised: !!userDetail.praised}"
               @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy"><van-icon name="good-job" /></button>
       <div style="text-align:center; margin-top:8px; color:#969799; font-size:12px;">

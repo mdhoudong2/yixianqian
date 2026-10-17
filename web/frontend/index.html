@@ -2479,13 +2479,13 @@
         </div>
       </template>
     </div>
-    <div style="padding:20px 12px;" v-if="userDetailFrom !== 'group_select' && canLikeUserDetail">
+    <div style="padding:20px 12px;" v-if="!userDetailHideActions && canLikeUserDetail">
       <!-- 需求第 8 条：给TA点过赞、还没表白，就在这儿问一句。praised 由后端按
            「我点过赞没有」算好；这里不含任何「TA收到几个赞」的信息。 -->
       <div class="praise-hint-inline" v-if="userDetail && userDetail.praised">你给TA点过赞——要不要表示喜欢？</div>
       <van-button color="#ff6b81" block @click="openLikeDialogForUser(userDetail)">💕 喜欢TA</van-button>
     </div>
-    <div style="padding:20px 12px;" v-else-if="userDetailFrom !== 'group_select' && canPraiseDetail">
+    <div style="padding:20px 12px;" v-else-if="!userDetailHideActions && canPraiseDetail">
       <button class="praise-btn" style="margin:0 auto;" :class="{praised: !!userDetail.praised}"
               @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy"><van-icon name="good-job" /></button>
       <div style="text-align:center; margin-top:8px; color:#969799; font-size:12px;">
@@ -4245,6 +4245,8 @@ createApp({
     const userDetail = ref(null);
     const userDetailFrom = ref('home');
     const userDetailFromSheet = ref(false); // 是否从报名名单弹层进入他人资料页，用于返回时重开名单
+    // 纯阅览入口（志愿选择/分组结果/必聊结果）：只看资料与照片，不显示喜欢/点赞
+    const userDetailHideActions = computed(() => ['group_select', 'group_result', 'onetoone_result'].includes(userDetailFrom.value));
     // 他人资料页「喜欢TA」按钮门禁：以后端 can_like 为准（单身异性、非自己、未喜欢过）；
     // 老数据无该字段时降级为本地判断（观察员/自己/同性/性别缺失一律隐藏）。
     const canLikeUserDetail = computed(() => {
@@ -7983,7 +7985,7 @@ createApp({
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet, showSignupInfo,
-      userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, openUserDetailFromGs, openUserDetailFromPage, loadNotifications,
+      userDetail, userDetailFrom, userDetailFromSheet, userDetailHideActions, canLikeUserDetail, openUserDetail, openUserDetailFromGs, openUserDetailFromPage, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
       paLoading, paLedgerLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,

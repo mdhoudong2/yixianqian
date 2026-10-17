@@ -203,6 +203,8 @@
   .group-candidate-name { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .group-candidate-meta { font-size: 13px; color: #969799; margin-top: 4px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .gs-detail-btn { flex-shrink: 0; min-height: 44px; padding: 0 10px; margin: 0 6px 0 8px; border: 1px solid #ff6b81; border-radius: 10px; background: #fff; color: #ff6b81; font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
+  /* 必聊行「留言」与「资料 ›」等大（56×44），保持主色填充 */
+  .oo-msg-btn { flex-shrink: 0; width: 56px; min-width: 56px; height: 44px; margin: 0; padding: 0; border-radius: 10px; font-size: 13px; line-height: 1; }
   .choice-badge { background: #ff6b81; color: #fff; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
   .selected-list { background: #fff; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
   .selected-list h4 { margin-bottom: 8px; color: #323233; }
@@ -253,8 +255,9 @@
   .group-member { background: #fff; border-radius: 10px; padding: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
   .group-member-avatar { width: 44px; height: 44px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 20px; overflow: hidden; }
   .group-member-avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
-  .group-member-name { font-size: 16px; }
-  .group-member-meta { font-size: 13px; color: #969799; }
+  .group-member-info { flex: 1; min-width: 0; }
+  .group-member-name { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .group-member-meta { font-size: 13px; color: #969799; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* 我的喜欢列表 */
   .like-item { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
   .like-item-avatar { width: 46px; height: 46px; border-radius: 50%; background: #fff0f3; display: flex; align-items: center; justify-content: center; font-size: 22px; overflow: hidden; flex-shrink: 0; }
@@ -2401,10 +2404,11 @@
             <img v-if="m.photo" :src="m.photo" alt="" @error="retryImg($event, 2, ()=>{m.photo=''})" loading="lazy" decoding="async">
             <template v-else>{{m.gender==='男性'?'👨':'👩'}}</template>
           </div>
-          <div>
+          <div class="group-member-info">
             <div class="group-member-name">{{m.nickname}}</div>
             <div class="group-member-meta">{{ m.user_id || '' }} · {{ m.gender }}</div>
           </div>
+          <button type="button" class="gs-detail-btn" aria-label="查看资料" @click.stop="openUserDetailFromPage(m.openid,'group_result')" @touchstart.stop @touchend.stop>资料 ›</button>
         </div>
       </div>
     </template>
@@ -2439,7 +2443,8 @@
           <div class="group-candidate-name">{{ p.nickname }}</div>
           <div class="group-candidate-meta">{{ p.user_id || '' }} · 第{{ p.rank }}位</div>
         </div>
-        <van-button class="tap-mini" v-if="!p.chatted" type="primary" color="#ff6b81" size="mini" @click="openOnetooneMsg(p)">留言</van-button>
+        <button type="button" class="gs-detail-btn" aria-label="查看资料" @click.stop="openUserDetailFromPage(p.openid,'onetoone_result')" @touchstart.stop @touchend.stop>资料 ›</button>
+        <van-button class="oo-msg-btn" v-if="!p.chatted" type="primary" color="#ff6b81" @click="openOnetooneMsg(p)">留言</van-button>
         <van-tag v-else type="success">已聊</van-tag>
       </div>
     </div>
@@ -2476,13 +2481,13 @@
         </div>
       </template>
     </div>
-    <div style="padding:20px 12px;" v-if="userDetailFrom !== 'group_select' && canLikeUserDetail">
+    <div style="padding:20px 12px;" v-if="!userDetailHideActions && canLikeUserDetail">
       <!-- 需求第 8 条：给TA点过赞、还没表白，就在这儿问一句。praised 由后端按
            「我点过赞没有」算好；这里不含任何「TA收到几个赞」的信息。 -->
       <div class="praise-hint-inline" v-if="userDetail && userDetail.praised">你给TA点过赞——要不要表示喜欢？</div>
       <van-button color="#ff6b81" block @click="openLikeDialogForUser(userDetail)">💕 喜欢TA</van-button>
     </div>
-    <div style="padding:20px 12px;" v-else-if="userDetailFrom !== 'group_select' && canPraiseDetail">
+    <div style="padding:20px 12px;" v-else-if="!userDetailHideActions && canPraiseDetail">
       <button class="praise-btn" style="margin:0 auto;" :class="{praised: !!userDetail.praised}"
               @click="togglePraise(userDetail)" :disabled="actionLoading || praiseBusy"><van-icon name="good-job" /></button>
       <div style="text-align:center; margin-top:8px; color:#969799; font-size:12px;">
@@ -4242,6 +4247,8 @@ createApp({
     const userDetail = ref(null);
     const userDetailFrom = ref('home');
     const userDetailFromSheet = ref(false); // 是否从报名名单弹层进入他人资料页，用于返回时重开名单
+    // 纯阅览入口（志愿选择/分组结果/必聊结果）：只看资料与照片，不显示喜欢/点赞
+    const userDetailHideActions = computed(() => ['group_select', 'group_result', 'onetoone_result'].includes(userDetailFrom.value));
     // 他人资料页「喜欢TA」按钮门禁：以后端 can_like 为准（单身异性、非自己、未喜欢过）；
     // 老数据无该字段时降级为本地判断（观察员/自己/同性/性别缺失一律隐藏）。
     const canLikeUserDetail = computed(() => {
@@ -5437,10 +5444,10 @@ createApp({
         userDetail.value = data;
       } catch(e) { vant.showToast(e.message); }
     }
-    async function openUserDetailFromGs(openid) {
-      // 从志愿选择页进入：不经过报名名单弹层（否则返回会命中名单重开特例）
+    async function openUserDetailFromPage(openid, from) {
+      // 从志愿选择/分组结果/必聊结果进入：不经过报名名单弹层（否则返回会命中名单重开特例）
       userDetailFromSheet.value = false;
-      userDetailFrom.value = 'group_select';
+      userDetailFrom.value = from;
       page.value = 'user_detail';
       userDetail.value = null;
       try {
@@ -5449,6 +5456,9 @@ createApp({
         if (data && (data.liked || justLiked.has(openid))) { data.liked = true; data.can_like = false; }
         userDetail.value = data;
       } catch(e) { vant.showToast(e.message); }
+    }
+    function openUserDetailFromGs(openid) {
+      return openUserDetailFromPage(openid, 'group_select');
     }
     async function copyText(text, okMsg) {
       try {
@@ -7977,7 +7987,7 @@ createApp({
       showAdminHelp, adminCommands,
       openPhotoViewerForCurrent, openPhotoViewerForUser,
       gotoCards, signupSheetShow, signupList, loadingSignups, signupCache, openSignupSheet, showSignupInfo,
-      userDetail, userDetailFrom, userDetailFromSheet, canLikeUserDetail, openUserDetail, openUserDetailFromGs, loadNotifications,
+      userDetail, userDetailFrom, userDetailFromSheet, userDetailHideActions, canLikeUserDetail, openUserDetail, openUserDetailFromGs, openUserDetailFromPage, loadNotifications,
       hasProfileBasic, hasProfileWork, hasProfileAbout, hasProfilePartner, hasProfileContact,
       paLoading, paLedgerLoading, paStats, paConfig, paUsers, paLedger, paRedemptions, paInvites, paTab,
       paUserQuery, paLedgerFilter, paLedgerFilterNick, paFilteredUsers,

@@ -103,6 +103,10 @@ def _act_oto(**over):
     return {"record_id": "rec_act", "fields": fields}
 
 
+# 2026-10-16：志愿提交口径=必须恰好 7 人；提交类用例统一用 7 个女性候选。
+FEMME7 = [f"ou_f{i}" for i in range(7)]
+
+
 def _sel_oto(oid, gender, choices=()):
     from constants import FIELD_OTO_CHOICES, FIELD_OTO_SELECTOR_GENDER
     fields = {"活动ID": ACT, "选择人open_id": oid, FIELD_OTO_SELECTOR_GENDER: gender}
@@ -407,7 +411,7 @@ def test_group_select_gate_on_blocks_unchecked(api):
     api.install(activity=act, signups=signups)
     c = _me_client("ou_m0")
     r = api.post if False else c.post(
-        "/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
+        "/api/activities/" + ACT + "/group/select", json={"choices": FEMME7},
         headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 403
     assert r.get_json()["code"] == "SIGNIN_REQUIRED"
@@ -417,12 +421,13 @@ def test_group_select_gate_on_blocks_unchecked(api):
 def test_group_select_gate_off_allows_unchecked(api):
     act = _act_group()
     act["fields"].pop(FLAG)
-    signups = [_signup_att("ou_m0", "未到"), _signup_att("ou_f0", "按时")]
+    signups = [_signup_att("ou_m0", "未到")] + [_signup_att(f"ou_f{i}", None)
+                                                 for i in range(7)]
     api.install(activity=act, signups=signups)
     c = _me_client("ou_m0")
-    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
+    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": FEMME7},
                headers={"X-Requested-With": "XMLHttpRequest"})
-    assert r.status_code == 200
+    assert r.status_code == 200, r.get_json()
     rows = api.fake.tables[GROUP_SELECT_TABLE]
     assert len(rows) == 1 and rows[0]["fields"]["选择人open_id"] == "ou_m0"
 
@@ -437,7 +442,7 @@ def test_gate_fail_closed_when_attendance_search_fails(api):
     r = c.get("/api/activities/" + ACT + "/group/candidates")
     assert r.status_code == 503
     assert r.get_json()["code"] == "SIGNIN_QUERY_FAILED"
-    r2 = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
+    r2 = c.post("/api/activities/" + ACT + "/group/select", json={"choices": FEMME7},
                 headers={"X-Requested-With": "XMLHttpRequest"})
     assert r2.status_code == 503
     assert r2.get_json()["code"] == "SIGNIN_QUERY_FAILED"
@@ -446,21 +451,23 @@ def test_gate_fail_closed_when_attendance_search_fails(api):
 def test_group_select_gate_and_pool(api):
     """迁移自原一对一 select（该端点已删，志愿选择统一走分组）：签到闸门 + 候选池同口径。"""
     act = _act_group()
-    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时"),
-               _signup_att("ou_f1", "未到")]
+    signups = [_signup_att("ou_m0", "按时")] + [_signup_att(f"ou_f{i}", "按时")
+                                                for i in range(7)]
     api.install(activity=act, signups=signups)
     c = _me_client("ou_m0")
     # 已到目标可提交
-    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
+    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": FEMME7},
                headers={"X-Requested-With": "XMLHttpRequest"})
-    assert r.status_code == 200
-    # 未到目标不在候选池
-    r2 = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f1"]},
+    assert r.status_code == 200, r.get_json()
+    # 未到目标不在候选池（f1 放首位，报第 1 个志愿的错；先把 f1 改为未到）
+    api.fake.tables[SIGNUP_TABLE_ID][2]["fields"][ATT] = "未到"
+    r2 = c.post("/api/activities/" + ACT + "/group/select",
+                json={"choices": ["ou_f1", "ou_f0", "ou_f2", "ou_f3", "ou_f4", "ou_f5", "ou_f6"]},
                 headers={"X-Requested-With": "XMLHttpRequest"})
     assert r2.status_code == 400 and "可选列表" in r2.get_json()["error"]
     # 本人未签到 → 403
     c1 = _me_client("ou_f1")
-    r3 = c1.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_m0"]},
+    r3 = c1.post("/api/activities/" + ACT + "/group/select", json={"choices": FEMME7},
                  headers={"X-Requested-With": "XMLHttpRequest"})
     assert r3.status_code == 403 and r3.get_json()["code"] == "SIGNIN_REQUIRED"
 
@@ -581,10 +588,11 @@ def test_activities_list_carries_mode_flags(api):
 def test_group_select_allowed_when_not_collecting(api):
     """志愿随时可改：状态非「收集中」也能提交（2026-10-13），两个快照键都刷。"""
     act = _act_group(分组状态="已完成")
-    signups = [_signup_att("ou_m0", "按时"), _signup_att("ou_f0", "按时")]
+    signups = [_signup_att("ou_m0", "按时")] + [_signup_att(f"ou_f{i}", "按时")
+                                                for i in range(7)]
     api.install(activity=act, signups=signups)
     c = _me_client("ou_m0")
-    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": ["ou_f0"]},
+    r = c.post("/api/activities/" + ACT + "/group/select", json={"choices": FEMME7},
                headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 200, r.get_json()
     rows = api.fake.tables[GROUP_SELECT_TABLE]

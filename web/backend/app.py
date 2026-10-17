@@ -5916,14 +5916,16 @@ def group_select(activity_id):
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({"error": "请求体不合法"}), 400
-    choices = data.get("choices", [])  # [openid1, openid2, ...] 最多7个
+    choices = data.get("choices", [])  # [openid1, ..., openid7]：必须恰好 7 个
+    if not isinstance(choices, list):
+        choices = []
 
-    if not choices or not isinstance(choices, list):
-        return jsonify({"error": "请至少选择一个志愿"}), 400
-    if len(choices) > 7:
-        return jsonify({"error": "最多选择7个志愿"}), 400
     if not all(isinstance(c, str) and c for c in choices):
         return jsonify({"error": "志愿格式不合法"}), 400
+    # 必须恰好 7 个（2026-10-16）：不足不可提交；超过 7 一并拒绝（原「最多7」分支并入）。
+    if len(choices) != 7:
+        return jsonify({"error": f"请选满7个志愿（当前已选 {len(choices)} 个）",
+                        "code": "SELECT_NOT_FULL"}), 400
 
     # 检查活动状态（分组状态由 bot 进程写入，判定依赖它 → 实时读）
     act_record, text_act_id = snap_resolve_activity(activity_id, fresh=True)
@@ -5987,6 +5989,26 @@ def group_select(activity_id):
         # 快照优先、未命中回退实时，与旧实现同一读取路径，只是换了执行时机。
         existing = (snap_group_selection(text_act_id, open_id)
                     or bitable.get_user_group_selection(text_act_id, open_id))
+        # 跨轮差异（2026-10-16）：提交轮次 R = 已执行最新轮次 + 1。行轮次 < R 且行
+        # 内有志愿 → 新志愿与「本人的该行」至少 4 人不同（不跨其它轮比较）。
+        # R 读失败 → 本次跳过校验，保存时轮次沿用旧值（无旧行则记 1）——绝不挡提交。
+        executed = _latest_executed_round(text_act_id)
+        select_round = None if executed is None else executed + 1
+        if existing and select_round is not None:
+            old_fields = existing.get("fields", {})
+            if _select_row_round(old_fields) < select_round:
+                old_set = {bitable.get_field_text(old_fields, cf) for cf in F_GS_CHOICES}
+                old_set.discard("")
+                if old_set:
+                    changed = len(set(choices) - old_set)
+                    if changed < 4:
+                        return jsonify({
+                            "error": f"与上一轮相比至少需要更换4人（当前只换了 {changed} 人）",
+                            "code": "SELECT_ROUND_DIFF"}), 400
+        if select_round is not None:
+            fields[F_GS_ROUND] = select_round
+        elif not existing:
+            fields[F_GS_ROUND] = 1
         if existing:
             ok = bitable.update_record(GROUP_SELECT_TABLE, existing["record_id"], fields)
         else:
@@ -5997,7 +6019,7 @@ def group_select(activity_id):
     # 志愿表已统一（一對一与分组同表）：两个快照键都刷，避免另一侧读到旧缓存
     refresh_snapshot_table_async("group_selections")
     refresh_snapshot_table_async("onetoone_selections")
-    return jsonify({"ok": True, "message": "志愿提交成功"})
+    return jsonify({"ok": True, "message": "志愿提交成功", "select_round": select_round})
 
 @app.route("/api/activities/<activity_id>/group/status", methods=["GET"])
 def group_status(activity_id):
@@ -6026,10 +6048,16 @@ def group_status(activity_id):
             if val:
                 my_choices.append(val)
 
+    # 跨轮差异提示用（2026-10-16）：select_round = 已执行最新轮次 + 1（读失败为 null）；
+    # needs_change = 行存在且行轮次 < R 且行内有志愿 → 前端提示「至少换 4 人」并禁用提交。
+    select_round, needs_change = _select_round_state(text_act_id, my_selection)
+
     return jsonify({
         "group_status": group_status,
         "my_selected": bool(my_selection),
-        "my_choices": my_choices
+        "my_choices": my_choices,
+        "select_round": select_round,
+        "needs_change": needs_change
     })
 
 @app.route("/api/activities/<activity_id>/group/result", methods=["GET"])
@@ -6200,6 +6228,58 @@ def _oto_rounds(rows):
     按第 1 轮处理才能在多轮上线后与迁移回填后的数据一致。
     """
     return sorted({lib_onetoone.round_of(r.get("fields", {})) for r in rows})
+
+
+# ===== 志愿跨轮差异（2026-10-16）：恰好 7 人 + 行轮次 < R 时需换 ≥4 人 =====
+
+def _select_row_round(fields):
+    """志愿行的「轮次」→ int；空/非法/小于 1 一律视为第 1 轮（旧数据没有该栏）。"""
+    n = bitable.get_field_number(fields, F_GS_ROUND, 0)
+    return int(n) if n and int(n) >= 1 else 1
+
+
+def _latest_executed_round(text_act_id):
+    """该活动已执行的最新轮次 = 分组结果表与一对一结果表轮次的最大值。
+
+    fresh 直读（结果由 bot 进程写入，轮次切换必须立刻可见，不吃快照）。读失败
+    （raw search 回 None）与「没有结果」严格区分：回 None，调用端必须跳过跨轮
+    差异校验并沿用旧轮次，绝不因读失败挡住提交。一对一结果表未配置时按「没有
+    一对一结果」处理（该环境执行不了一对一）。
+    """
+    def _search(table_id, field_name):
+        return bitable.raw_search_records(table_id, {
+            "conjunction": "and",
+            "conditions": [{"field_name": field_name, "operator": "is",
+                            "value": [text_act_id]}]})
+
+    rows = _search(GROUP_RESULT_TABLE, F_GR_ACTIVITY_ID)
+    if rows is None:
+        return None
+    rounds = _group_rounds(rows, text_act_id)
+    if ONETOONE_RESULT_TABLE:
+        oto_rows = _search(ONETOONE_RESULT_TABLE, F_OTO_ACTIVITY_ID)
+        if oto_rows is None:
+            return None
+        rounds = rounds + _oto_rounds(_onetoone_result_rows(oto_rows, text_act_id))
+    return max(rounds) if rounds else 0
+
+
+def _select_round_state(text_act_id, selection):
+    """志愿页状态端点用：(select_round, needs_change)。
+
+    select_round = 已执行最新轮次 + 1；R 读失败 → (None, False)（前端不显示提示）。
+    needs_change = 行存在 且 行轮次 < R 且 行内至少 1 个志愿。
+    """
+    executed = _latest_executed_round(text_act_id)
+    if executed is None:
+        return None, False
+    select_round = executed + 1
+    if not selection:
+        return select_round, False
+    sf = selection.get("fields", {})
+    needs_change = (_select_row_round(sf) < select_round
+                    and any(bitable.get_field_text(sf, cf) for cf in F_GS_CHOICES))
+    return select_round, needs_change
 
 
 def _onetoone_submitted_oids(rows):

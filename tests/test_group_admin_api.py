@@ -412,6 +412,28 @@ def test_run_passes_group_sizes_to_lib(api, monkeypatch):
         "H5 必须传 treat_search_failure_as_empty=False（R7）"
 
 
+def test_a5c_run_proceeds_with_unsubmitted_and_missing_selections(api):
+    """执行路径零改动的回归（2026-10-16 志愿新规则只管「提交」）：
+
+    报名者里有人从未填志愿（无志愿行）、有人志愿为空 → 分组照常执行到 done。
+    算法参与者取自志愿行（现行为）——没填的人不进算法、但执行绝不因此被拦。
+    用户需求原文：不管有人没按要求填、甚至有人没填，仍像现在一样可以执行。
+    """
+    signups, selections = _balanced(2, 2)          # selections 的志愿全为空
+    signups.append(_signup("ou_f9", "阿东"))       # ou_f9 报名但从未填志愿
+    api.install(signups=signups, selections=selections)
+
+    r = api.post("/api/admin/group/run",
+                 {"activity_id": ACT, "round": 1, "males_per_group": 2,
+                  "females_per_group": 2})
+    assert r.status_code == 202
+    job = _poll_job(api, r.get_json()["job_id"])
+    assert job["state"] == "done", job
+    assert job["result"]["code"] == "OK", "有人未填志愿不得拦住执行"
+    assert job["result"]["participant_count"] == 4, "参与者=有志愿行的 4 人（现口径）"
+    assert api.fake.tables[GROUP_RESULT_TABLE], "结果必须真的写进表"
+
+
 # ---------------------------------------------------------------- A6 排队层幂等
 
 def test_a6_run_duplicate_submission_returns_existing_job(api, monkeypatch):
@@ -1070,10 +1092,13 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
                         lambda: {"record_id": "rec_u",
                                  "fields": {"昵称": "小北", "性别": "男性"}})
     monkeypatch.setattr(app, "snap_group_selection", lambda aid, oid: None)
-    # 新增的候选集校验要读实表报名（与 group/candidates 端点同口径）：桩一行有效候选，
-    # ou_f0 在 _find_user 里是女性
+    # 新增的候选集校验要读实表报名（与 group/candidates 端点同口径）：桩 7 行有效候选
+    # （2026-10-16 起提交必须恰好 7 人；候选女性由本地 _find_user 桩保证）
+    monkeypatch.setattr(app, "snap_find_user_by_openid",
+                        lambda oid: {"record_id": "rec_u_" + oid,
+                                     "fields": {"飞书用户ID": oid, "昵称": "阿南", "性别": "女性"}})
     monkeypatch.setattr(app.bitable, "get_signups",
-                        lambda aid: [_signup("ou_f0", "阿南")])
+                        lambda aid: [_signup(f"ou_f{i}", "阿南") for i in range(1, 8)])
 
     def _lookup(aid, oid):
         events.append("lookup")
@@ -1087,7 +1112,8 @@ def test_group_select_decides_create_update_inside_file_lock(api, monkeypatch):
 
     monkeypatch.setattr(app.bitable, "create_record", _create)
 
-    r = api.post("/api/activities/" + ACT + "/group/select", {"choices": ["ou_f0"]})
+    r = api.post("/api/activities/" + ACT + "/group/select",
+                 {"choices": [f"ou_f{i}" for i in range(1, 8)]})
     assert r.status_code == 200
     assert events == ["lock_enter", "lookup", "create", "lock_exit"], \
         "查 existing 与 create/update 必须同处锁内，且查询在前"

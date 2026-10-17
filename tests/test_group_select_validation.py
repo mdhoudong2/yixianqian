@@ -6,8 +6,9 @@
 
 2026-10-15：原一对一选择三端点（candidates/select/status）已随 onetoone_select
 死页删除，其等价用例迁入本文件（统一志愿语义由分组端点承载）：
-1..7 合法提交、me=None 不 500、并发双击锁内查重、快照未命中回退实时 update、
+me=None 不 500、并发双击锁内查重、快照未命中回退实时 update、
 活动状态决定性读取走 fresh；签到闸门相关迁入 tests/test_signin_gate.py。
+2026-10-16：提交口径由「1..7」收紧为「必须恰好 7」，未满/超出 → 400 SELECT_NOT_FULL。
 """
 import os
 import sys
@@ -131,42 +132,56 @@ def api(monkeypatch):
     return a
 
 
-@pytest.mark.parametrize("choices,err", [
-    ([], "请至少选择一个志愿"),
-    (None, "请至少选择一个志愿"),
-    ("ou_f1", "请至少选择一个志愿"),
-    (["ou_f1"] * 8, "最多选择7个志愿"),
-    ([123], "志愿格式不合法"),
-    ([""], "志愿格式不合法"),
-    ([ME], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
-    (["ou_m2"], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
-    (["ou_f9"], "第1个志愿不在可选列表中（须为本活动已报名的异性）"),
-    (["ou_f1", "ou_f1"], "不能重复选择同一人"),
+@pytest.mark.parametrize("choices,err,code", [
+    ([], "请选满7个志愿（当前已选 0 个）", "SELECT_NOT_FULL"),
+    (None, "请选满7个志愿（当前已选 0 个）", "SELECT_NOT_FULL"),
+    ("ou_f1", "请选满7个志愿（当前已选 0 个）", "SELECT_NOT_FULL"),
+    (["ou_f1"] * 8, "请选满7个志愿（当前已选 8 个）", "SELECT_NOT_FULL"),
+    ([123], "志愿格式不合法", ""),
+    ([""], "志愿格式不合法", ""),
+    ([ME] + FEMME_SEVEN[:6], "第1个志愿不在可选列表中（须为本活动已报名的异性）", ""),
+    (["ou_m2"] + FEMME_SEVEN[:6], "第1个志愿不在可选列表中（须为本活动已报名的异性）", ""),
+    (["ou_f9"] + FEMME_SEVEN[:6], "第1个志愿不在可选列表中（须为本活动已报名的异性）", ""),
+    (["ou_f1"] + FEMME_SEVEN[:6], "不能重复选择同一人", ""),
 ], ids=["空列表", "缺字段", "非列表", "8项", "整数项", "空串项", "含自己", "含同性",
         "含未报名者", "重复"])
-def test_group_select_invalid_is_400_with_zero_writes(api, choices, err):
+def test_group_select_invalid_is_400_with_zero_writes(api, choices, err, code):
     r = api.post(choices)
     assert r.status_code == 400, r.get_json()
     assert r.get_json()["error"] == err
+    if code:
+        assert r.get_json()["code"] == code
     assert api.fake.writes() == [], "非法志愿必须零写入"
 
 
-@pytest.mark.parametrize("n", [1, 7], ids=["1个", "7个"])
-def test_group_select_accepts_one_to_seven_and_writes_one_row(api, n):
-    """迁移自原一对一 select：合法 1/7 个 → 200 且恰写一行（统一志愿表）。"""
-    r = api.post(FEMME_SEVEN[:n])
+def test_group_select_accepts_exactly_seven_and_writes_one_row(api):
+    """恰好 7 个 → 200 且恰写一行（2026-10-16 起由「1..7」收紧为必须恰好 7）。
+
+    无已执行轮次时提交轮次 R=1，行内写「轮次」=1。
+    """
+    r = api.post(FEMME_SEVEN)
     assert r.status_code == 200, r.get_json()
     creates = [c for c in api.fake.writes() if c[0] == "create"]
     assert len(creates) == 1
     assert len(api.fake.tables[GS_TBL]) == 1
     assert api.fake.tables[GS_TBL][0]["fields"]["选择人open_id"] == ME
     assert api.fake.tables[GS_TBL][0]["fields"]["第1志愿"] == "ou_f1"
+    assert api.fake.tables[GS_TBL][0]["fields"]["轮次"] == 1, "R=1 时行轮次应记 1"
+
+
+def test_group_select_six_choices_is_rejected(api):
+    """6 个（差 1 个）→ 400 SELECT_NOT_FULL，错误里带当前已选数。"""
+    r = api.post(FEMME_SEVEN[:6])
+    assert r.status_code == 400, r.get_json()
+    assert r.get_json()["code"] == "SELECT_NOT_FULL"
+    assert r.get_json()["error"] == "请选满7个志愿（当前已选 6 个）"
+    assert api.fake.writes() == [], "未选满必须零写入"
 
 
 def test_group_select_me_none_is_not_500(api, monkeypatch):
     """迁移自原一对一 select：me=None 必须被门禁拦住，不能 500。"""
     monkeypatch.setattr(app, "snap_self_user", lambda: None)
-    r = api.post(["ou_f1"])
+    r = api.post(FEMME_SEVEN)
     assert r.status_code == 404, "me=None 必须被门禁/防护拦住，不能 500"
     assert r.get_json()["error"] == "用户不存在"
 
@@ -183,7 +198,7 @@ def test_group_select_concurrent_double_click_creates_once(api):
         c = app.app.test_client()
         c.set_cookie("yxq_session", app.create_session(ME))
         r = c.post(f"/api/activities/{ACT}/group/select",
-                   json={"choices": ["ou_f1"]},
+                   json={"choices": FEMME_SEVEN},
                    headers={"X-Requested-With": "XMLHttpRequest"})
         codes.append(r.status_code)
 
@@ -206,7 +221,7 @@ def test_group_select_snapshot_miss_falls_back_to_live_update(api):
     existing = {"record_id": "rec_gs_me", "fields": {"活动ID": ACT, "选择人open_id": ME,
                                                      "选择人性别": "男性"}}
     api.fake.tables[GS_TBL].append(existing)
-    r = api.post(FEMME_SEVEN[:2])
+    r = api.post(FEMME_SEVEN)
     assert r.status_code == 200, r.get_json()
     assert not [c for c in api.fake.writes() if c[0] == "create"]
     updates = [c for c in api.fake.writes() if c[0] == "update"]
@@ -238,7 +253,7 @@ def test_group_select_uses_live_status(api):
     api.snapshot["activities"] = [stale]
     api.live["activities"] = [live]
     api.fresh_calls.clear()
-    r = api.post(["ou_f1"])
+    r = api.post(FEMME_SEVEN)
     assert r.status_code == 200, "快照「未开始」、live「收集中」时应以 live 为准"
     assert "activities" in api.fresh_calls
 

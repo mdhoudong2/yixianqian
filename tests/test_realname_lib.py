@@ -382,6 +382,71 @@ def test_onetoone_unsubmitted_reply_uses_real_name(configured_oto):
     assert "U-0004 · 女性 · 周小西" in text
 
 
+def test_grouping_unsubmitted_attendance_marks_and_site_count(configured):
+    """签到开启时：lib 回传原值+已到判定，bot 每行标记与首行现场数；关闭时逐字不变。"""
+    tables = _g_tables()
+    tables[ACTIVITY_TABLE_ID] = [_act(签到功能开启="是")]
+    tables[GROUP_SELECT_TABLE] = [_sel("ou_m1", "男性"), _sel("ou_f1", "女性")]
+    states = {"ou_m2": "按时", "ou_f2": "未到"}
+    for s in tables[SIGNUP_TABLE_ID]:
+        oid = s["fields"]["报名人open_id"]
+        if oid in states:
+            s["fields"]["签到状态"] = states[oid]
+    tables[SIGNUP_TABLE_ID].append(_signup("ou_x", "神秘人"))
+    fake = GroupingFake(tables)
+    configured.setattr(bot_grouping, "bitable", fake)
+    configured.setattr(bot_grouping, "find_activity_by_id", lambda aid: _find_act(fake, aid))
+    configured.setattr(bot_grouping, "find_user_by_openid", _find_user)
+    configured.setattr(bot_grouping, "log", lambda *a, **k: None)
+
+    res = lib_grouping.fetch_unsubmitted(ACT, client=fake, activity=_find_act(fake, ACT),
+                                         find_user_by_openid=_find_user)
+    assert res["signin_enabled"] is True
+    by_oid = {u["open_id"]: u for u in res["unsubmitted"]}
+    assert (by_oid["ou_m2"]["attendance"], by_oid["ou_m2"]["checked_in"]) == ("按时", True)
+    assert (by_oid["ou_f2"]["attendance"], by_oid["ou_f2"]["checked_in"]) == ("未到", False)
+    assert (by_oid["ou_x"]["attendance"], by_oid["ou_x"]["checked_in"]) == ("", False)
+
+    text = bot_grouping.handle_admin_unsubmitted(ACT)
+    assert "未提交志愿（3人，其中 1 人到场）：" in text
+    assert "U-0002 · 男性 · 阿北（已到）" in text
+    assert "U-0004 · 女性 · 周小西（未到）" in text
+    assert "- · - · 神秘人（未签到）" in text
+
+    fake.tables[ACTIVITY_TABLE_ID][0]["fields"]["签到功能开启"] = "否"
+    off = bot_grouping.handle_admin_unsubmitted(ACT)
+    assert "其中" not in off and "已到" not in off and "未签到" not in off
+
+
+def test_onetoone_unsubmitted_attendance_marks_and_site_count(configured_oto):
+    """一对一：lib 回传原值+已到判定，bot 每行标记与首行现场数。"""
+    tables = _oto_tables()
+    tables[ACTIVITY_TABLE_ID][0]["fields"]["签到功能开启"] = "是"
+    tables[OTO_SELECT] = [_oto_sel("ou_m1", "男性"), _oto_sel("ou_f1", "女性")]
+    states = {"ou_m2": "迟到", "ou_f2": ""}
+    for s in tables[SIGNUP_TABLE_ID]:
+        oid = s["fields"]["报名人open_id"]
+        if oid in states:
+            s["fields"]["签到状态"] = states[oid]
+    fake = OnetooneFake(tables)
+    configured_oto.setattr(bot_onetoone, "bitable", fake)
+    configured_oto.setattr(bot_onetoone, "find_activity_by_id", lambda aid: _find_act(fake, aid))
+    configured_oto.setattr(bot_onetoone, "find_user_by_openid", _find_user)
+    configured_oto.setattr(bot_onetoone, "log", lambda *a, **k: None)
+
+    res = lib_onetoone.fetch_unsubmitted(ACT, client=fake, activity=_find_act(fake, ACT),
+                                         find_user_by_openid=_find_user)
+    assert res["signin_enabled"] is True
+    by_oid = {u["open_id"]: u for u in res["unsubmitted"]}
+    assert (by_oid["ou_m2"]["attendance"], by_oid["ou_m2"]["checked_in"]) == ("迟到", True)
+    assert (by_oid["ou_f2"]["attendance"], by_oid["ou_f2"]["checked_in"]) == ("", False)
+
+    text = bot_onetoone.handle_admin_unsubmitted_onetoone(ACT)
+    assert "未提交志愿（2人，其中 1 人到场）：" in text
+    assert "U-0002 · 男性 · 阿北（已到）" in text
+    assert "U-0004 · 女性 · 周小西（未签到）" in text
+
+
 def _card_options(card):
     for el in card["elements"][0]["elements"]:
         if el.get("options"):

@@ -146,6 +146,7 @@ def configure_onetoone_lib(lock_dir):
             "signup_openid": F_SIGNUP_OPENID,
             "signup_nickname": F_SIGNUP_NICKNAME,
             "signup_status": F_SIGNUP_STATUS,
+            "signup_attendance": F_SIGNUP_ATTENDANCE,
             "gender": F_GENDER,
             "user_id": F_USER_ID,
             "real_name": F_REAL_NAME,
@@ -6592,6 +6593,15 @@ def admin_group_status():
         1 for s in signup_rows
         if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_oids)
 
+    def _unsubmitted_on_site(submitted):
+        return sum(
+            1 for s in signup_rows
+            if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted
+            and lib_grouping.is_checked_in(
+                bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ATTENDANCE)))
+
+    unsubmitted_on_site_count = _unsubmitted_on_site(submitted_oids)
+
     rounds = _group_rounds(_snap_fresh("group_results"), act_id) if read_group else []
 
     # 一对一摘要（加法字段）：详情页模式卡与动态 tabs 据此渲染；计数口径与
@@ -6602,6 +6612,7 @@ def admin_group_status():
     oto_unsubmitted_count = sum(
         1 for s in signup_rows
         if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in oto_submitted_set)
+    oto_unsubmitted_on_site_count = _unsubmitted_on_site(oto_submitted_set)
     oto_results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id) if read_oto else []
     oto_matched = {oid for oid in
                    (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID)
@@ -6617,6 +6628,7 @@ def admin_group_status():
         "signup_count": len(signup_rows),
         "submitted_count": summary["submitted_count"],
         "unsubmitted_count": unsubmitted_count,
+        "unsubmitted_on_site_count": unsubmitted_on_site_count,
         "male_count": summary["male_count"],
         "female_count": summary["female_count"],
         "group_flag": bitable.get_field_text(f, F_ACTIVITY_GROUP_FLAG) or "否",
@@ -6629,6 +6641,7 @@ def admin_group_status():
         "signin_code": bitable.get_field_text(f, F_ACT_SIGNIN_CODE),
         "onetoone_submitted_count": len(oto_submitted_oids),
         "onetoone_unsubmitted_count": oto_unsubmitted_count,
+        "onetoone_unsubmitted_on_site_count": oto_unsubmitted_on_site_count,
         "onetoone_result_count": len(oto_results),
         "onetoone_matched_count": len(oto_matched),
         "onetoone_rounds": oto_rounds,
@@ -6660,6 +6673,12 @@ def admin_group_unsubmitted():
     summary = lib_grouping.summarize_selections(selection_rows)
     submitted_oids = set(summary["submitted_oids"])
     signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+    attendance_by_oid = {}
+    for s in signup_rows:
+        sf = s.get("fields", {})
+        oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+        if oid and oid not in attendance_by_oid:
+            attendance_by_oid[oid] = bitable.get_field_text(sf, F_SIGNUP_ATTENDANCE)
 
     def _user_fields(oid):
         return (snap_find_user_by_openid(oid) or {}).get("fields", {})
@@ -6673,24 +6692,30 @@ def admin_group_unsubmitted():
         if oid in submitted_oids:
             continue
         uf = _user_fields(oid)
+        attendance = attendance_by_oid.get(oid, "")
         items.append({
             "open_id": oid,
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
             "real_name": _display_real_name(uf),
+            "attendance": attendance,
+            "checked_in": lib_grouping.is_checked_in(attendance),
         })
 
     # 已填写名单（加法字段）：顺序与去重集合一致，前端一次载入即可切换两个名单
     submitted = []
     for oid in summary["submitted_oids"]:
         uf = _user_fields(oid)
+        attendance = attendance_by_oid.get(oid, "")
         submitted.append({
             "open_id": oid,
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
             "real_name": _display_real_name(uf),
+            "attendance": attendance,
+            "checked_in": lib_grouping.is_checked_in(attendance),
         })
     return jsonify({
         "activity_id": act_id,
@@ -6699,6 +6724,8 @@ def admin_group_unsubmitted():
         "unsubmitted": items,
         "submitted": submitted,
         "all_submitted": not items,
+        "signin_enabled": lib_grouping.signin_enabled(f),
+        "unsubmitted_checked_in": sum(1 for it in items if it["checked_in"]),
     })
 
 
@@ -7050,6 +7077,11 @@ def admin_onetoone_status():
     unsubmitted_count = sum(
         1 for s in signup_rows
         if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_set)
+    unsubmitted_on_site_count = sum(
+        1 for s in signup_rows
+        if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_OPENID) not in submitted_set
+        and lib_grouping.is_checked_in(
+            bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ATTENDANCE)))
     results = _onetoone_result_rows(_snap_fresh("onetoone_results"), act_id)
     matched = {oid for oid in
                (bitable.get_field_text(r.get("fields", {}), F_OTO_USER_OID) for r in results)
@@ -7068,6 +7100,7 @@ def admin_onetoone_status():
         "signup_count": len(signup_rows),
         "submitted_count": len(submitted_oids),
         "unsubmitted_count": unsubmitted_count,
+        "onetoone_unsubmitted_on_site_count": unsubmitted_on_site_count,
         "result_count": len(results),
         "matched_count": len(matched),
         "rounds": rounds,
@@ -7098,6 +7131,12 @@ def admin_onetoone_unsubmitted():
     submitted = _onetoone_submitted_oids(selection_rows)
     submitted_set = set(submitted)
     signup_rows = _group_signup_rows(_snap_fresh("signups"), act_id)
+    attendance_by_oid = {}
+    for s in signup_rows:
+        sf = s.get("fields", {})
+        oid = bitable.get_field_text(sf, F_SIGNUP_OPENID)
+        if oid and oid not in attendance_by_oid:
+            attendance_by_oid[oid] = bitable.get_field_text(sf, F_SIGNUP_ATTENDANCE)
 
     def _user_fields(oid):
         return (snap_find_user_by_openid(oid) or {}).get("fields", {})
@@ -7111,23 +7150,29 @@ def admin_onetoone_unsubmitted():
         if oid in submitted_set:
             continue
         uf = _user_fields(oid)
+        attendance = attendance_by_oid.get(oid, "")
         items.append({
             "open_id": oid,
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": bitable.get_field_text(sf, F_SIGNUP_NICKNAME),
             "real_name": _display_real_name(uf),
+            "attendance": attendance,
+            "checked_in": lib_grouping.is_checked_in(attendance),
         })
 
     submitted_items = []
     for oid in submitted:
         uf = _user_fields(oid)
+        attendance = attendance_by_oid.get(oid, "")
         submitted_items.append({
             "open_id": oid,
             "user_id": bitable.get_field_text(uf, F_USER_ID),
             "gender": bitable.get_field_text(uf, F_GENDER),
             "nickname": nickname_by_oid.get(oid) or bitable.get_field_text(uf, F_NICKNAME),
             "real_name": _display_real_name(uf),
+            "attendance": attendance,
+            "checked_in": lib_grouping.is_checked_in(attendance),
         })
     return jsonify({
         "activity_id": act_id,
@@ -7136,6 +7181,8 @@ def admin_onetoone_unsubmitted():
         "unsubmitted": items,
         "submitted": submitted_items,
         "all_submitted": not items,
+        "signin_enabled": lib_grouping.signin_enabled(f),
+        "unsubmitted_checked_in": sum(1 for it in items if it["checked_in"]),
     })
 
 

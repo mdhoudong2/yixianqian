@@ -565,6 +565,27 @@
   .ga-group-card { background: #f7f8fa; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
   .ga-group-members { display: flex; flex-wrap: wrap; gap: 6px; }
   .ga-member-chip { background: #fff; border-radius: 12px; padding: 4px 10px; font-size: 12px; color: #323233; }
+  /* 一对一·聊天情况总览（管理台 tab 3）：只读概览，行可展开 */
+  .chat-ov-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .chat-ov-title { font-size: 15px; font-weight: 600; color: #323233; min-width: 0; }
+  .chat-ov-refresh { min-height: 44px; padding: 0 12px; flex-shrink: 0; }
+  .chat-ov-summary { background: #f7f8fa; border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.6; color: #646566; overflow-wrap: anywhere; }
+  .chat-ov-list { margin-top: 4px; }
+  .chat-ov-person { border-bottom: 1px solid #f2f3f5; }
+  .chat-ov-person:last-child { border-bottom: none; }
+  .chat-ov-row { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 12px 0; cursor: pointer; }
+  .chat-ov-main { flex: 1; min-width: 0; }
+  .chat-ov-name { font-size: 15px; color: #323233; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-ov-uid { font-size: 11px; color: #969799; font-weight: 400; }
+  .chat-ov-un { font-size: 12px; color: #646566; margin-top: 3px; line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+  .chat-ov-count { flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--yxq-st-done-fg); font-variant-numeric: tabular-nums; }
+  .chat-ov-zero .chat-ov-name, .chat-ov-zero .chat-ov-count { color: var(--yxq-st-danger-fg); }
+  .chat-ov-detail { padding: 0 0 10px; }
+  .chat-ov-target { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 2px 0; font-size: 13px; color: #646566; }
+  .chat-ov-mark { min-width: 48px; flex-shrink: 0; font-size: 12px; color: #c8c9cc; }
+  .chat-ov-target.chatted .chat-ov-mark { color: var(--yxq-st-done-fg); }
+  .chat-ov-target-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-ov-target-msg { flex-shrink: 0; font-size: 12px; color: #969799; font-variant-numeric: tabular-nums; }
   .ga-more { text-align: center; padding: 10px 0 0; }
   .ga-start-popup { padding: 18px 16px 24px; }
   .ga-start-head { display: flex; align-items: center; justify-content: space-between; font-size: 16px; font-weight: 600; color: #323233; margin-bottom: 4px; }
@@ -750,6 +771,13 @@
   .van-theme-dark .ga-avatar { background: rgba(255,107,129,0.14); }
   .van-theme-dark .ga-group-card { background: #2c2c30; }
   .van-theme-dark .ga-member-chip { background: #222226; color: #f5f5f5; }
+  .van-theme-dark .chat-ov-title, .van-theme-dark .chat-ov-name { color: #f5f5f5; }
+  .van-theme-dark .chat-ov-summary { background: #2c2c30; color: #c8c9cc; }
+  .van-theme-dark .chat-ov-person { border-color: #3a3a3e; }
+  .van-theme-dark .chat-ov-un, .van-theme-dark .chat-ov-target { color: #c8c9cc; }
+  .van-theme-dark .chat-ov-count { color: var(--yxq-st-done-fg); }
+  .van-theme-dark .chat-ov-zero .chat-ov-name, .van-theme-dark .chat-ov-zero .chat-ov-count { color: var(--yxq-st-danger-fg); }
+  .van-theme-dark .chat-ov-target-msg, .van-theme-dark .chat-ov-uid { color: #a0a0a4; }
   .van-theme-dark .ga-confirm-box { background: #2c2c30; }
   .van-theme-dark .ga-confirm-row b.danger { color: #ff7a85; }
   .van-theme-dark .ga-confirm-input { background: #1a1a1c; border-color: #3a3a3e; color: #f5f5f5; }
@@ -1711,6 +1739,49 @@
               {{ gaOtoResultError ? '这一轮的结果没载出来，检查一下网络后再点一次轮次。' : ('第' + gaOtoResultRound + '轮没有可展示的必聊结果。') }}
             </div>
           </template>
+        </div>
+      </van-tab>
+      <van-tab v-if="gaDetailMode==='onetoone'" title="聊天">
+        <div class="ga-card" style="margin-top:12px;">
+          <div v-if="chatOvLoading && !chatOvData" class="ga-empty"><ga-loading size="24px"></ga-loading></div>
+          <div v-else-if="chatOvError && !chatOvData" class="ga-empty">
+            <van-empty image="error" description="聊天情况没载出来，检查一下网络"></van-empty>
+            <van-button class="ga-empty-retry" size="small" type="primary" color="#ff6b81" @click="loadChatOverview(chatOvRound, true)">重新载入</van-button>
+          </div>
+          <template v-else-if="chatOvData">
+            <div class="chat-ov-head">
+              <div class="chat-ov-title">聊天情况<span v-if="chatOvData.round"> · 第{{ chatOvData.round }}轮</span></div>
+              <van-button size="small" plain type="primary" color="#ff6b81" class="chat-ov-refresh" :loading="chatOvLoading" @click="loadChatOverview(chatOvRound, true)">刷新</van-button>
+            </div>
+            <div class="chat-ov-summary">
+              已聊 {{ chatOvSummary.chatted_pairs }}/{{ chatOvSummary.pairs }} 对（{{ chatOvRatePct }}%）· 全员完成 {{ chatOvSummary.done_people }} 人 · 零聊天 {{ chatOvSummary.zero_people }} 人 · 互聊 {{ chatOvSummary.mutual_pairs }} 对
+            </div>
+            <div v-if="chatOvData.rounds && chatOvData.rounds.length>1" class="round-tabs" style="padding-top:0;">
+              <span v-for="r in chatOvData.rounds" :key="r" class="round-tab" :class="{active: chatOvData.round===r}" @click="selectChatOvRound(r)">第{{ r }}轮</span>
+            </div>
+            <div v-if="chatOvError" class="ga-tip" style="margin-top:4px;">刷新没成功，显示的是上一次的数据。</div>
+            <van-empty v-if="!chatOvData.people || !chatOvData.people.length" description="这一轮还没有必聊结果"></van-empty>
+            <div v-else class="chat-ov-list">
+              <div v-for="p in chatOvData.people" :key="p.open_id" class="chat-ov-person" :class="{'chat-ov-zero': p.chatted===0}">
+                <div class="chat-ov-row" @click="toggleChatOvPerson(p.open_id)">
+                  <div class="chat-ov-main">
+                    <div class="chat-ov-name">{{ p.name || '（没有名字）' }}<span v-if="p.user_id" class="chat-ov-uid">（{{ p.user_id }}）</span></div>
+                    <div class="chat-ov-un">未聊：{{ chatOvUnchattedText(p) }}</div>
+                  </div>
+                  <div class="chat-ov-count">已聊 {{ p.chatted }}/{{ p.assigned }}</div>
+                  <van-icon :name="chatOvOpen[p.open_id] ? 'arrow-up' : 'arrow-down'" color="#c8c9cc"></van-icon>
+                </div>
+                <div v-if="chatOvOpen[p.open_id]" class="chat-ov-detail">
+                  <div v-for="t in p.pairs" :key="t.open_id" class="chat-ov-target" :class="{chatted: t.chatted}">
+                    <span class="chat-ov-mark">{{ t.chatted ? '✓ 已聊' : '○ 未聊' }}</span>
+                    <span class="chat-ov-target-name">{{ t.name || t.open_id }}<span v-if="t.user_id" class="chat-ov-uid">（{{ t.user_id }}）</span></span>
+                    <span class="chat-ov-target-msg">{{ t.msg_count }} 条</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+          <van-empty v-else description="还没有一对一结果"></van-empty>
         </div>
       </van-tab>
 
@@ -7125,6 +7196,10 @@ createApp({
     const gaOtoPeople = ref([]), gaOtoOpen = ref({});
     const gaOtoResultLoading = ref(false), gaOtoResultError = ref(false);
     const gaOtoResultRound = ref(0), gaOtoLoadedRound = ref(0), gaOtoResultCount = ref(0);
+    // 一对一「聊天情况总览」tab（只读；进入 tab / 切轮次时拉取）
+    const chatOvData = ref(null), chatOvLoading = ref(false), chatOvError = ref(false);
+    const chatOvOpen = ref({}), chatOvRound = ref(0), chatOvLoadedRound = ref(0);
+    let chatOvSeq = 0;
     let gaPollTimer = null, gaPollCount = 0, gaPollFails = 0, gaMaskTimer = null, gaJobStartedAt = 0;
     const GA_POLL_MS = 2000, GA_POLL_MAX = 120, GA_JOB_KEY = 'yxq_ga_job_';  // 2s 一次、最多 4 分钟：超时只提示，不报错
 
@@ -7161,6 +7236,9 @@ createApp({
     const gaOtoRounds = computed(() => (gaDetail.value && gaDetail.value.onetoone_rounds) || []);
     const gaOtoLatestRound = computed(() => (gaDetail.value && gaDetail.value.onetoone_latest_round) || 0);
     const gaOtoNextRound = computed(() => gaOtoLatestRound.value ? gaOtoLatestRound.value + 1 : 1);
+    const chatOvSummary = computed(() => (chatOvData.value && chatOvData.value.summary)
+      || { people: 0, pairs: 0, chatted_pairs: 0, rate: 0, zero_people: 0, done_people: 0, mutual_pairs: 0, messages: 0 });
+    const chatOvRatePct = computed(() => Math.round((chatOvSummary.value.rate || 0) * 100));
     // 清空一对一结果确认：必须输入活动编号（破坏性操作，固定要求确认）
     const gaOtoResetOk = computed(() => String(gaOtoConfirmInput.value || '').trim().toLowerCase()
       === String(gaDetailId.value || '').trim().toLowerCase());
@@ -7311,6 +7389,7 @@ createApp({
       gaResultLoading.value = false; gaResultError.value = false;
       gaOtoPeople.value = []; gaOtoOpen.value = {}; gaOtoResultLoading.value = false; gaOtoResultError.value = false;
       gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
+      resetChatOverview();
       gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false;
       page.value = 'group_detail';
     }
@@ -7340,6 +7419,7 @@ createApp({
           gaGroups.value = []; gaGroupsRound.value = 0;
           gaOtoPeople.value = []; gaOtoOpen.value = {};
           gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
+          resetChatOverview();
           gaRosterList.value = []; gaRosterSubmittedList.value = []; gaRosterTotal.value = 0;
         }
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
@@ -7666,6 +7746,49 @@ createApp({
       gaOtoResultRound.value = r;
       loadGaOtoResult(r);
     }
+    function resetChatOverview() {
+      chatOvSeq += 1;   // 让在途响应失效，避免串到另一个活动/模式
+      chatOvData.value = null; chatOvLoading.value = false; chatOvError.value = false;
+      chatOvOpen.value = {}; chatOvRound.value = 0; chatOvLoadedRound.value = 0;
+    }
+    async function loadChatOverview(round, force) {
+      if (!gaDetailId.value) return;
+      const wanted = Number(round) || 0;
+      if (!force && chatOvData.value && chatOvLoadedRound.value === wanted) return;
+      const seq = ++chatOvSeq;
+      chatOvLoading.value = true; chatOvError.value = false;
+      try {
+        let url = '/api/admin/onetoone/chat-overview?activity_id=' + encodeURIComponent(gaDetailId.value);
+        if (wanted > 0) url += '&round=' + wanted;
+        const data = await gaGet(url);
+        if (seq !== chatOvSeq) return;   // 已切轮次/活动：丢弃过期响应
+        chatOvData.value = data;
+        chatOvRound.value = data.round || 0;
+        chatOvLoadedRound.value = data.round || 0;
+        chatOvOpen.value = {};
+      } catch(e) {
+        if (seq !== chatOvSeq) return;
+        if (!gaAuthBack(e)) {
+          chatOvError.value = true;
+          if (!chatOvData.value) vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次'));
+        }
+      } finally {
+        if (seq === chatOvSeq) chatOvLoading.value = false;
+      }
+    }
+    function selectChatOvRound(r) {
+      if (chatOvData.value && chatOvData.value.round === r && !chatOvError.value) return;
+      chatOvOpen.value = {};
+      loadChatOverview(r, true);
+    }
+    function toggleChatOvPerson(openid) {
+      chatOvOpen.value = { ...chatOvOpen.value, [openid]: !chatOvOpen.value[openid] };
+    }
+    function chatOvUnchattedText(p) {
+      const list = (p && p.unchatted) || [];
+      if (!list.length) return '无（全部聊过）';
+      return list.map(x => x.name || x.open_id).join('、');
+    }
     function gaOtoToggle(openid) {
       gaOtoOpen.value = { ...gaOtoOpen.value, [openid]: !gaOtoOpen.value[openid] };
     }
@@ -7837,6 +7960,11 @@ createApp({
     }
 
     watch(gaDetailTab, (v) => {
+      // 聊天 tab（一对一索引 3）：进入即拉一次；切轮次由 selectChatOvRound 触发
+      if (v === 3 && gaDetailMode.value === 'onetoone') {
+        if (!chatOvLoading.value) loadChatOverview(chatOvRound.value, true);
+        return;
+      }
       if (v === 1 && (gaDetailMode.value === 'group' || gaDetailMode.value === 'onetoone')
           && !gaRosterList.value.length && !gaRosterLoading.value && gaDetailId.value) loadGroupRoster();
       if (v !== 2) return;
@@ -8098,6 +8226,8 @@ createApp({
       gaOtoRunShow, gaOtoRunFemaleChats, gaOtoRunPreview, gaOtoRunK, gaOtoRunSummary, confirmOtoRun, closeOtoRun, requestCloseOtoRun,
       gaOtoRunBusy, startOtoRunFlow, gaOtoPeople, gaOtoOpen, gaOtoResultLoading, gaOtoResultError, loadGaOtoResult, selectGaOtoResultRound, gaOtoToggle,
       gaOtoRounds, gaOtoLatestRound, gaOtoNextRound, gaOtoResultRound, gaOtoLoadedRound, gaOtoResultCount,
+      chatOvData, chatOvLoading, chatOvError, chatOvOpen, chatOvRound, chatOvSummary, chatOvRatePct,
+      loadChatOverview, selectChatOvRound, toggleChatOvPerson, chatOvUnchattedText,
       gaRunShow, gaRunBusy, gaJobId, gaJobRound, gaJobActivityName, gaJobProgress, gaJobKind, gaMaskTitle, gaMaskSecs, gaRunTip, gaUnknownShow, gaUnknownReload, gaUnknownRetry, gaGroups, gaGroupsRound, gaResultRound, gaResultLoading, gaResultError, selectGaResultRound, startRunFlow, resumeGaPolling, refreshAdminBadge
     };
   }

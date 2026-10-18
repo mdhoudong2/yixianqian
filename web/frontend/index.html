@@ -1587,7 +1587,7 @@
           <template v-else>
             <div class="ga-roster-tabs">
               <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0"><template v-if="gaRosterSigninOn">未填写（现场）{{ gaRosterOnSite }}</template><template v-else>未填写 {{ gaRosterTotal }}</template></div>
-              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1"><template v-if="gaRosterSigninOn">已填写（现场）{{ gaSubmittedOnSite }}</template><template v-else>已填写 {{ gaRosterSubmitted }}</template></div>
             </div>
             <template v-if="gaRosterTab===0">
               <div v-if="gaRosterList.length" class="candidate-search-box">
@@ -1613,8 +1613,8 @@
               <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
                 <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
-              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
-              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
+              <van-empty v-if="!gaRosterSubmittedList.length" :description="gaRosterSigninOn ? '现场还没有人填写志愿' : '还没有人填写志愿'"></van-empty>
+              <van-empty v-else-if="!gaSubmittedFiltered.length" :description="gaRosterQuery.trim() ? '没有匹配的人' : '现场还没有人填写志愿'"></van-empty>
               <div v-else>
                 <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -1642,7 +1642,7 @@
           <template v-else>
             <div class="ga-roster-tabs">
               <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0"><template v-if="gaRosterSigninOn">未填写（现场）{{ gaRosterOnSite }}</template><template v-else>未填写 {{ gaRosterTotal }}</template></div>
-              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1"><template v-if="gaRosterSigninOn">已填写（现场）{{ gaSubmittedOnSite }}</template><template v-else>已填写 {{ gaRosterSubmitted }}</template></div>
             </div>
             <template v-if="gaRosterTab===0">
               <div v-if="gaRosterList.length" class="candidate-search-box">
@@ -1668,8 +1668,8 @@
               <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
                 <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
-              <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
-              <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
+              <van-empty v-if="!gaRosterSubmittedList.length" :description="gaRosterSigninOn ? '现场还没有人填写志愿' : '还没有人填写志愿'"></van-empty>
+              <van-empty v-else-if="!gaSubmittedFiltered.length" :description="gaRosterQuery.trim() ? '没有匹配的人' : '现场还没有人填写志愿'"></van-empty>
               <div v-else>
                 <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -1805,7 +1805,7 @@
     <template v-else>
       <div class="ga-roster-tabs">
         <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0"><template v-if="gaRosterSigninOn">未填写（现场）{{ gaRosterOnSite }}</template><template v-else>未填写 {{ gaRosterTotal }}</template></div>
-        <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
+        <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1"><template v-if="gaRosterSigninOn">已填写（现场）{{ gaSubmittedOnSite }}</template><template v-else>已填写 {{ gaRosterSubmitted }}</template></div>
       </div>
       <template v-if="gaRosterTab===0">
         <div v-if="gaRosterList.length" class="candidate-search-box">
@@ -1831,8 +1831,8 @@
         <div v-if="gaRosterSubmittedList.length" class="candidate-search-box">
           <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
         </div>
-        <van-empty v-if="!gaRosterSubmittedList.length" description="还没有人填写志愿"></van-empty>
-        <van-empty v-else-if="!gaSubmittedFiltered.length" description="没有匹配的人"></van-empty>
+        <van-empty v-if="!gaRosterSubmittedList.length" :description="gaRosterSigninOn ? '现场还没有人填写志愿' : '还没有人填写志愿'"></van-empty>
+        <van-empty v-else-if="!gaSubmittedFiltered.length" :description="gaRosterQuery.trim() ? '没有匹配的人' : '现场还没有人填写志愿'"></van-empty>
         <div v-else>
           <div v-for="r in gaSubmittedVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
@@ -7291,12 +7291,16 @@ createApp({
       });
     });
     const gaRosterVisible = computed(() => gaRosterFiltered.value.slice(0, gaRosterShown.value));
+    const gaSubmittedOnSite = computed(() => gaRosterSubmittedList.value.filter(r => r.checked_in === true).length);
     const gaSubmittedFiltered = computed(() => {
       const q = gaRosterQuery.value.trim().toLowerCase();
-      if (!q) return gaRosterSubmittedList.value;
-      return gaRosterSubmittedList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q)
-        || String(r.real_name || '').toLowerCase().includes(q)
-        || String(r.user_id || '').toLowerCase().includes(q));
+      return gaRosterSubmittedList.value.filter(r => {
+        if (gaRosterSigninOn.value && r.checked_in !== true) return false;   // 签到开启：已填写只列已到现场的人
+        if (!q) return true;
+        return String(r.nickname || '').toLowerCase().includes(q)
+          || String(r.real_name || '').toLowerCase().includes(q)
+          || String(r.user_id || '').toLowerCase().includes(q);
+      });
     });
     const gaSubmittedVisible = computed(() => gaSubmittedFiltered.value.slice(0, gaRosterShown.value));
     // 执行分组弹层：按输入的每组人数预估组数（人数取预览的最新数据）
@@ -8236,7 +8240,7 @@ createApp({
       gaSigninMarkedCount, loadSigninRoster, markSignin, toggleSignin, onToggleSigninFlag,
       gaClearConfirmShow, gaClearConfirmInput, gaClearConfirmOk, openClearAllSignins, cancelClearAllSignins, doClearAllSignins,
       gaStatusDisplay, refreshGroupDetail,
-      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaRosterSigninOn, gaRosterOnSite, gaAttText, gaAttClass, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
+      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaRosterSigninOn, gaRosterOnSite, gaSubmittedOnSite, gaAttText, gaAttClass, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
       gaRunPopupShow, gaRunM, gaRunF, gaRunPopupPreview, gaRunExpected, gaRunPopupHasPeople, gaRunPopupExpectedGroups, closeGaRunPopup, requestCloseGaRunPopup, confirmGaRun, openGaResetConfirm, doGaReset, gaConfirmBusy,
       gaConfirmShow, gaConfirmInput, gaConfirmOk, cancelGaConfirm,
       gaOtoResetShow, gaOtoResetOk, gaOtoResetBusy, gaOtoConfirmInput, openOtoResetConfirm, cancelOtoReset, doOtoReset,

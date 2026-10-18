@@ -596,6 +596,17 @@
   .claim-field .van-field__control, .claim-field .van-field__label { color:#323233; }
   .van-theme-dark .signin-status-box { background:#2b2413; color:#f5f5f5; }
   .van-theme-dark .signin-status-danger { color:#ff7a85; }
+  /* 用户自助现场签到：绿色完成态必须保持实色（Vant disabled 默认半透明会灰化） */
+  .signin-done-btn.van-button--disabled { opacity: 1; background: #0a8548; border-color: #0a8548; color: #fff; }
+  .signin-dialog-body { padding: 18px 16px calc(20px + env(safe-area-inset-bottom)); }
+  .signin-dialog-desc { margin: 6px 0 14px; font-size: 13px; color: #969799; }
+  .signin-code-field { background: #f7f8fa; border-radius: 10px; }
+  .van-theme-dark .signin-dialog-desc { color: #c8c9cc; }
+  .van-theme-dark .signin-code-field { background: #2c2c30; }
+  /* 管理台「现场签到码」：输入与保存钮同高，小屏不挤 */
+  .ga-signin-code-row { display: flex; align-items: center; gap: 10px; }
+  .ga-signin-code-field { flex: 1; min-width: 0; background: #f7f8fa; border-radius: 10px; }
+  .van-theme-dark .ga-signin-code-field { background: #2c2c30; }
   .van-theme-dark .ga-title-sub { color:#c8c9cc; }
   .van-theme-dark .ga-title-name { color:#f5f5f5; }
   .van-theme-dark .pay-dialog-title { color:#f5f5f5; }
@@ -1093,9 +1104,17 @@
           <div class="signup-count" v-if="showSignupInfo">已报名 <b>{{ act.current_signup }}</b>/{{ act.max_signup || '不限' }}</div>
           <van-icon name="arrow" color="#c8c9cc" />
         </div>
+        <!-- 现场签到：已报名且活动开启时紧贴志愿按钮上方；已到=绿色实底不可点 -->
+        <div v-if="act.signin_enabled && act.my_signup" style="margin-top:10px;">
+          <van-button v-if="isAttendancePresent(act.my_attendance)" type="primary" size="small" block
+            class="btn-44 signin-done-btn" disabled
+            style="background:#0a8548;color:#fff;height:44px;border-radius:10px;opacity:1;border:none;">已签到</van-button>
+          <van-button v-else type="primary" color="#ff6b81" size="small" block class="btn-44" style="height:44px;"
+            @click.stop="openSelfSignin(act)">📋 现场签到</van-button>
+        </div>
         <!-- 志愿/结果入口：由模式开关控制（「关闭全部」后整块不显示）；志愿随时可改；
              签到未到/未签到时停用并提示 -->
-        <div v-if="act.my_signup && (act.group_flag==='是' || act.onetoone_flag==='是')" style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+        <div v-if="act.my_signup && (act.group_flag==='是' || act.onetoone_flag==='是')" style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
           <van-button type="primary" color="#ff6b81" size="small" block class="btn-44"
             :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
             @click.stop="goGroupSelect(act.record_id)">✏️ 志愿选择</van-button>
@@ -1413,6 +1432,19 @@
         <van-button v-if="gaDetail.mode!=='group'" size="small" plain type="primary" color="#ff6b81" :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('group')">切到分组</van-button>
         <van-button v-if="gaDetail.mode!=='onetoone'" size="small" plain type="primary" color="#ff6b81" :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('onetoone')">切到一对一</van-button>
         <van-button v-if="gaDetail.mode!=='none'" size="small" plain :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('none')">关闭全部</van-button>
+      </div>
+    </div>
+
+    <div class="ga-card">
+      <div class="ga-card-title">现场签到码</div>
+      <div class="ga-row-sub" style="margin-bottom:8px;">现场公布给参与者的 4 位数字；开启签到后用户可自助签到。</div>
+      <div class="ga-signin-code-row">
+        <van-field v-model="gaSigninCode" type="digit" maxlength="4" :border="false"
+          placeholder="4 位数字" class="ga-signin-code-field" :disabled="gaSigninCodeBusy"></van-field>
+        <van-button type="primary" color="#ff6b81" size="small"
+          style="height:44px; min-width:88px; flex-shrink:0;"
+          :disabled="!gaSigninCodeOk || gaSigninCodeBusy" :loading="gaSigninCodeBusy"
+          @click="saveGaSigninCode()">保存</van-button>
       </div>
     </div>
 
@@ -2096,6 +2128,14 @@
         </div>
         <!-- 志愿/结果入口与「活动」页卡片一致（模式开关控制；随时可改、签到未到置灰+提示） -->
         <div class="activity-body" style="padding-top:0;">
+          <!-- 现场签到：已报名且活动开启时紧贴志愿按钮上方；已到=绿色实底不可点 -->
+          <div v-if="act.signin_enabled && act.my_signup" style="margin-bottom:8px;">
+            <van-button v-if="isAttendancePresent(act.my_attendance)" type="primary" size="small" block
+              class="btn-44 signin-done-btn" disabled
+              style="background:#0a8548;color:#fff;height:44px;border-radius:10px;opacity:1;border:none;">已签到</van-button>
+            <van-button v-else type="primary" color="#ff6b81" size="small" block class="btn-44" style="height:44px;"
+              @click.stop="openSelfSignin(act)">📋 现场签到</van-button>
+          </div>
           <div v-if="act.my_signup && (act.group_flag==='是' || act.onetoone_flag==='是')" style="display:flex; flex-direction:column; gap:8px;">
             <van-button type="primary" color="#ff6b81" size="small" block class="btn-44"
               :disabled="act.signin_enabled && !isAttendancePresent(act.my_attendance)"
@@ -2523,6 +2563,21 @@
         <div class="signup-sheet-sub">{{ s.user_id || '-' }}</div>
       </div>
     </div>
+  </div>
+</van-popup>
+<!-- ========== 用户自助现场签到弹层 ========== -->
+<van-popup v-model:show="signinDialogShow" position="bottom" round
+  :close-on-click-overlay="!signinSubmitting" @click-overlay="closeSigninDialog">
+  <div class="signin-dialog-body">
+    <div class="ga-start-head">现场签到
+      <van-icon name="cross" color="#c8c9cc" @click="closeSigninDialog" />
+    </div>
+    <div class="signin-dialog-desc">请输入现场公布的签到码</div>
+    <van-field v-model="signinCode" type="digit" maxlength="4" :border="false"
+      class="signin-code-field" :disabled="signinSubmitting"></van-field>
+    <van-button type="primary" color="#ff6b81" block class="btn-44" style="margin-top:16px;"
+      :disabled="!signinCodeOk || signinSubmitting" :loading="signinSubmitting"
+      @click="submitSelfSignin()">签到</van-button>
   </div>
 </van-popup>
 <!-- ========== 报名缴费弹窗 ========== -->
@@ -3203,7 +3258,7 @@ createApp({
       // 未保存离开拦截（守卫注册表）：dirty → 弹窗；提交中 → 提示并停留
       if(guardLeave(() => { history.back(); })) return;
       // 统一返回：有浮层先关浮层，无则 history.back() 让 popstate 处理页面
-      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showReportDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value || showRedeemPanel.value || showPointsRules.value || showRedemptions.value){
+      if(showPhotoViewer.value || showFilter.value || showLikeDialog.value || showFeedbackDialog.value || showReportDialog.value || showSuggestionDialog.value || showInviteDialog.value || showAdminHelp.value || showSelectPopup.value || showMultiPopup.value || signupSheetShow.value || showRedeemPanel.value || showPointsRules.value || showRedemptions.value || signinDialogShow.value){
         history.back();
         return;
       }
@@ -3261,6 +3316,43 @@ createApp({
       const a = currentActivity.value;
       return !!(a && a.signin_enabled && a.my_signup && !isAttendancePresent(a.my_attendance));
     });
+    // 用户自助现场签到（4 位码，后端校验；已到幂等）
+    const signinDialogShow = ref(false);
+    const signinTargetAct = ref(null);
+    const signinCode = ref('');
+    const signinSubmitting = ref(false);
+    const signinCodeOk = computed(() => /^\d{4}$/.test(signinCode.value) && !signinSubmitting.value);
+    function openSelfSignin(act) {
+      if (!act || signinSubmitting.value) return;
+      if (!act.signin_enabled || !act.my_signup || isAttendancePresent(act.my_attendance)) return;
+      signinTargetAct.value = act;
+      signinCode.value = '';
+      signinDialogShow.value = true;
+    }
+    function closeSigninDialog() {
+      if (signinSubmitting.value) return;
+      signinDialogShow.value = false;
+    }
+    async function submitSelfSignin() {
+      if (!signinCodeOk.value || !signinTargetAct.value) return;
+      const act = signinTargetAct.value;
+      signinSubmitting.value = true;
+      try {
+        const data = await api('/api/activities/' + encodeURIComponent(act.record_id || act.activity_id) + '/self-signin',
+          { method: 'POST', body: JSON.stringify({ code: signinCode.value }) });
+        const attendance = data.attendance || '按时';
+        act.my_attendance = attendance;
+        if (currentActivity.value && currentActivity.value.record_id === act.record_id) {
+          currentActivity.value.my_attendance = attendance;
+        }
+        signinDialogShow.value = false;
+        vant.showToast('签到成功');
+      } catch(e) {
+        vant.showToast(e.message || '签到失败，请重试');
+      } finally {
+        signinSubmitting.value = false;
+      }
+    }
     // 详情页加载态：进入新活动/首次加载时显示 loading；同活动内部刷新保留现有内容
     const activityDetailLoading = computed(() => loadingActivityDetail.value
       && !(currentActivity.value && String(currentActivity.value.record_id) === String(currentActivityId.value)));
@@ -6440,6 +6532,10 @@ createApp({
       if(showActivityPromo.value){ showActivityPromo.value=false; isHandlingPopState=false; return; }
       if(showUpdateNotes.value){ showUpdateNotes.value=false; isHandlingPopState=false; return; }
       if(showAdminHelp.value){ showAdminHelp.value=false; isHandlingPopState=false; return; }
+      if(signinDialogShow.value){
+        if(signinSubmitting.value){ isHandlingPopState=false; pushHistory({overlay:'signinDialog'}); vant.showToast('正在提交，请稍候'); return; }
+        signinDialogShow.value=false; isHandlingPopState=false; return;
+      }
       if(showSelectPopup.value){ showSelectPopup.value=false; isHandlingPopState=false; return; }
       if(showMultiPopup.value){ showMultiPopup.value=false; isHandlingPopState=false; return; }
       if(signupSheetShow.value){ signupSheetShow.value=false; isHandlingPopState=false; return; }
@@ -6546,6 +6642,7 @@ createApp({
     watch(showPointsRules, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'pointsRules'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='pointsRules'){ ignoreNextPop=true; history.back(); } });
     watch(showRedemptions, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'redemptions'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='redemptions'){ ignoreNextPop=true; history.back(); } });
     watch(showAdminHelp, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'adminHelp'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='adminHelp'){ ignoreNextPop=true; history.back(); } });
+    watch(signinDialogShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signinDialog'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signinDialog'){ ignoreNextPop=true; history.back(); } });
     watch(showSelectPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'selectPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='selectPopup'){ ignoreNextPop=true; history.back(); } });
     watch(showMultiPopup, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'multiPopup'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='multiPopup'){ ignoreNextPop=true; history.back(); } });
     watch(signupSheetShow, (v)=>{ if(v && !isHandlingPopState) pushHistory({overlay:'signupSheet'}); else if(!v && !isHandlingPopState && history.state && history.state.overlay==='signupSheet' && !(page.value==='user_detail' && userDetailFromSheet.value)){ ignoreNextPop=true; history.back(); } });
@@ -7000,6 +7097,9 @@ createApp({
     const gaDetailId = ref(''), gaDetail = ref(null);
     const gaDetailLoading = ref(false), gaDetailError = ref(false), gaDetailTab = ref(0);
     const gaModeSwitching = ref(false);
+    // 现场签到码（管理台小卡）：只接受 4 位数字
+    const gaSigninCode = ref(''), gaSigninCodeBusy = ref(false);
+    const gaSigninCodeOk = computed(() => /^\d{4}$/.test(String(gaSigninCode.value || '')));
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
@@ -7233,6 +7333,7 @@ createApp({
         const d = await gaGet('/api/admin/group/status?activity_id=' + encodeURIComponent(gaDetailId.value));
         const prevMode = gaDetail.value && gaDetail.value.mode;
         gaDetail.value = d;
+        gaSigninCode.value = d.signin_code || '';
         if (d.mode !== prevMode) {
           // 模式变了（本端切换/另一端改）：tab 内容整块换掉，缓存不能跨模式复用
           gaDetailTab.value = 0;
@@ -7254,6 +7355,21 @@ createApp({
         restoreGaJob();
       } catch(e) { if (!gaAuthBack(e)) { gaDetailError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
       gaDetailLoading.value = false;
+    }
+    async function saveGaSigninCode() {
+      const code = String(gaSigninCode.value || '');
+      if (!/^\d{4}$/.test(code)) { vant.showToast('签到码须为4位数字'); return; }
+      if (gaSigninCodeBusy.value || !gaDetailId.value) return;
+      gaSigninCodeBusy.value = true;
+      try {
+        await api('/api/admin/activity/signin-code', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, code: code }) });
+        if (gaDetail.value) gaDetail.value.signin_code = code;
+        vant.showToast('签到码已保存');
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '保存失败，再试一次'));
+      }
+      gaSigninCodeBusy.value = false;
     }
     async function switchMode(mode) {
       const d = gaDetail.value;
@@ -7967,6 +8083,8 @@ createApp({
       openPointsAdmin, paOpenUser, paShowLedger, clearPaFilter,
       gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail, openCheckinPage,
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaDetailMode, gaModeText, gaModeSwitching, switchMode, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
+      gaSigninCode, gaSigninCodeBusy, gaSigninCodeOk, saveGaSigninCode,
+      signinDialogShow, signinCode, signinCodeOk, signinSubmitting, openSelfSignin, closeSigninDialog, submitSelfSignin,
       gaCheckinName, gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninLoading, gaSigninError, gaSigninLoaded,
       gaSigninQuery, gaSigninGender, gaSigninStatus, gaSigninShown, gaSigninBusy, gaSigninBatchBusy, gaSigninFiltered, gaSigninVisible,
       gaSigninGenderCounts, gaSigninStatusCounts,

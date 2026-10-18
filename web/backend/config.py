@@ -279,6 +279,7 @@ F_ACTIVITY_GROUP_FLAG = "分组功能开启"
 F_ACTIVITY_ONETOONE_STATUS = "一对一状态"
 F_ACTIVITY_ONETOONE_FLAG = "一对一功能开启"
 F_ACTIVITY_SIGNIN_FLAG = "签到功能开启"  # 单选(是/否)：现场签到准入总闸（默认关，空=否）
+F_ACT_SIGNIN_CODE = "签到码"  # 文本：4 位数字（保留前导 0），用户自助现场签到比对用
 F_ACTIVITY_PUBLISH_TIME = "发布时间"
 F_ACTIVITY_START_TIME = "开始时间"
 F_ACTIVITY_END_TIME = "结束时间"

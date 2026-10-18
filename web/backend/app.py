@@ -1579,7 +1579,7 @@ def format_user_profile(record):
     return data
 
 def format_activity(record):
-    """格式化活动信息"""
+    """格式化活动信息（白名单输出：签到码等敏感字段不得透传给用户端）"""
     fields = record.get("fields", {})
     posters = bitable.get_attachment_tokens(fields, F_ACTIVITY_POSTER)
     poster_url = ("/api/image/" + posters[0] + "?fv11") if posters else ""
@@ -6626,6 +6626,7 @@ def admin_group_status():
                             or lib_grouping.STATUS_NOT_STARTED),
         "onetoone_flag": bitable.get_field_text(f, F_ACTIVITY_ONETOONE_FLAG) or "否",
         "signin_flag": (bitable.get_field_text(f, F_ACTIVITY_SIGNIN_FLAG) or "否"),
+        "signin_code": bitable.get_field_text(f, F_ACT_SIGNIN_CODE),
         "onetoone_submitted_count": len(oto_submitted_oids),
         "onetoone_unsubmitted_count": oto_unsubmitted_count,
         "onetoone_result_count": len(oto_results),
@@ -7683,6 +7684,97 @@ def admin_activity_signin_flag():
     refresh_snapshot_table_async("activities")
     return jsonify({"ok": True, "activity_id": act_id, "name": name,
                     "signin_flag": target})
+
+
+@app.route("/api/admin/activity/signin-code", methods=["POST"])
+def admin_activity_signin_code():
+    """管理端设置/修改现场签到码：恰 4 位数字，文本字段保留前导 0。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "signin_admin")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    raw_code = data.get("code")
+    # int 先转字符串再校验（1234 合法；123 仍只有 3 位 → 不补零）；bool 不是有效数字
+    if isinstance(raw_code, bool) or not isinstance(raw_code, (str, int)):
+        return jsonify({"error": "签到码须为4位数字"}), 400
+    code_text = str(raw_code)
+    if not re.fullmatch(r"\d{4}", code_text):
+        return jsonify({"error": "签到码须为4位数字"}), 400
+
+    act, act_id, miss = _signin_resolve(activity_id.strip())
+    if miss:
+        return miss
+    if not _grouping_client.update_record(ACTIVITY_TABLE_ID, act.get("record_id"),
+                                          {F_ACT_SIGNIN_CODE: code_text}):
+        return jsonify({"error": "签到码保存失败，请稍后重试",
+                        "code": "WRITE_FAILED"}), 500
+    refresh_snapshot_table_async("activities")
+    app.logger.info(f"管理员设置现场签到码: {act_id}")
+    return jsonify({"ok": True})
+
+
+# ========== 用户自助现场签到 ==========
+
+@app.route("/api/activities/<activity_id>/self-signin", methods=["POST"])
+def self_signin(activity_id):
+    """用户输入现场公布的 4 位码自助签到；已到幂等，未到不覆盖。"""
+    rl = _rate_limit(limit=8, window=60, key_prefix="self_signin")
+    if rl:
+        return rl
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+
+    act, act_id, miss = _signin_resolve(activity_id)
+    if miss:
+        return miss
+    records = _signin_signup_records(act_id, open_id)
+    if records is None:
+        return jsonify({"error": "签到信息查询失败，请重试",
+                        "code": "SIGNIN_QUERY_FAILED"}), 500
+    if not records:
+        return jsonify({"error": "你未报名此活动"}), 403
+    if len(records) > 1:
+        return jsonify({"error": "你在本活动有多条报名记录，请联系管理员"}), 400
+
+    af = act.get("fields", {})
+    if not lib_grouping.signin_enabled(af):
+        return jsonify({"error": "本活动未开启现场签到"}), 400
+
+    rec = records[0]
+    state = bitable.get_field_text(rec.get("fields", {}), F_SIGNUP_ATTENDANCE)
+    if state in ("按时", "迟到"):
+        return jsonify({"ok": True, "already": True, "attendance": state})
+    if state:
+        # 「未到」及任何历史异常值都不覆盖（现场由管理员核对处理）
+        return jsonify({"error": "你已被标记为未到，请联系管理员"}), 400
+
+    expected = bitable.get_field_text(af, F_ACT_SIGNIN_CODE)
+    if not expected:
+        return jsonify({"error": "本活动未设置签到码，请联系管理员"}), 400
+    data = request.get_json(silent=True) or {}
+    raw_code = data.get("code")
+    if isinstance(raw_code, bool) or not isinstance(raw_code, (str, int)):
+        submitted = ""
+    else:
+        submitted = str(raw_code)
+    if submitted != expected:
+        return jsonify({"error": "签到码不正确，请向现场工作人员确认"}), 400
+
+    if not _grouping_client.update_record(SIGNUP_TABLE_ID, rec.get("record_id"),
+                                          {F_SIGNUP_ATTENDANCE: "按时"}):
+        return jsonify({"error": "写入失败，请稍后重试",
+                        "code": "WRITE_FAILED"}), 500
+    refresh_snapshot_table_async("signups")
+    app.logger.info(f"用户自助现场签到: {open_id} {act_id} -> 按时")
+    return jsonify({"ok": True, "attendance": "按时"})
 
 
 # ========== 一对一接口 ==========

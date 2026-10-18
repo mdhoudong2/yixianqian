@@ -770,11 +770,12 @@ def _collect_selections(client, activity_id):
 
 
 def collect_participants(activity_id, *, client, find_user_by_openid):
-    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name}]。
+    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name, attendance}]。
 
     逐人查用户表取性别是串行 API 的耗时瓶颈（大活动尤其明显），用线程池并发查，
     显著降低延迟。性别来源由调用端决定（bot 走 queries 版，H5 走快照版）。
     real_name = 用户表「姓名」去空白（现场活动显示名：非空优先于昵称，由渲染层决定）。
+    attendance = 报名记录上的「签到状态」原值（按时/迟到/未到/空）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -788,11 +789,12 @@ def collect_participants(activity_id, *, client, find_user_by_openid):
         sf = s.get("fields", {})
         oid = get_field_text(sf, f["signup_openid"])
         nickname = get_field_text(sf, f["signup_nickname"])
+        attendance = get_field_text(sf, f["signup_attendance"])
         if oid:
-            signup_rows.append((oid, nickname))
+            signup_rows.append((oid, nickname, attendance))
 
     def _fetch(row):
-        oid, nickname = row
+        oid, nickname, attendance = row
         gender = ""
         uid = ""
         real_name = ""
@@ -803,7 +805,7 @@ def collect_participants(activity_id, *, client, find_user_by_openid):
             uid = get_field_text(uf, f["user_id"])
             real_name = get_field_text(uf, f["real_name"]).strip()
         return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid,
-                "real_name": real_name}
+                "real_name": real_name, "attendance": attendance}
 
     users = []
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="signup-gender") as pool:
@@ -854,6 +856,8 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
             "open_id": oid, "user_id": user_id,
             "gender": s["gender"], "nickname": s["nickname"],
             "real_name": s.get("real_name", ""),
+            "attendance": s.get("attendance", ""),
+            "checked_in": is_checked_in(s.get("attendance", "")),
         })
 
     return {
@@ -862,6 +866,7 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
         "total": len(unsubmitted),
         "unsubmitted": unsubmitted,
         "all_submitted": not unsubmitted,
+        "signin_enabled": signin_enabled(activity.get("fields", {})),
     }
 
 

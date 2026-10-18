@@ -1008,3 +1008,31 @@ def test_onetoone_job_conflict_key_is_activity_and_round(api):
     storage.update_json(app.ONETOONE_JOBS_FILE, {}, lambda jobs: {**jobs, "activejob001": active})
     assert app._create_onetoone_job("newjob000001", ACT, 1, ADMIN) == "activejob001"
     assert app._create_onetoone_job("newjob000002", ACT, 2, ADMIN) is None
+
+
+# ---------------------------------------------------------------- 未提交名单签到标记
+
+def test_unsubmitted_carries_attendance_and_site_count(api):
+    """名单两项都带签到状态；回包给出开关与「未提交且已到」人数。"""
+    signups = [_signup("ou_m0", "小北"), _signup("ou_f0", "阿南"),
+               _signup("ou_m1", "阿北"), _signup("ou_f9", "阿东")]
+    states = {"ou_m0": "按时", "ou_f0": "未到", "ou_m1": "迟到", "ou_f9": ""}
+    for s in signups:
+        s["fields"]["签到状态"] = states[s["fields"]["报名人open_id"]]
+    selections = [_oto_sel("ou_m0", "男性", ("ou_f0",)),
+                  _oto_sel("ou_f0", "女性", ("ou_m0",))]
+    api.install(activity=_oto_act(签到功能开启="是"), signups=signups, selections=selections)
+
+    body = api.get("/api/admin/onetoone/unsubmitted?activity_id=" + ACT).get_json()
+    assert body["signin_enabled"] is True
+    assert body["total"] == 2 and body["unsubmitted_checked_in"] == 1
+    un = {x["open_id"]: x for x in body["unsubmitted"]}
+    assert (un["ou_m1"]["attendance"], un["ou_m1"]["checked_in"]) == ("迟到", True)
+    assert (un["ou_f9"]["attendance"], un["ou_f9"]["checked_in"]) == ("", False)
+    sub = {x["open_id"]: x for x in body["submitted"]}
+    assert (sub["ou_m0"]["attendance"], sub["ou_m0"]["checked_in"]) == ("按时", True)
+    assert (sub["ou_f0"]["attendance"], sub["ou_f0"]["checked_in"]) == ("未到", False)
+
+    st = api.get("/api/admin/onetoone/status?activity_id=" + ACT).get_json()
+    assert st["unsubmitted_count"] == 2
+    assert st["onetoone_unsubmitted_on_site_count"] == 1

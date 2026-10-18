@@ -1192,3 +1192,33 @@ def test_set_group_flag_disable_never_touches_onetoone(api):
     api.post("/api/admin/group/flag", {"activity_id": ACT, "enabled": False})
     updates = [c for c in fake.writes() if c[0] == "update"]
     assert len(updates) == 1 and updates[0][3] == {"分组功能开启": "否"}
+
+
+# ---------------------------------------------------------------- 未提交名单签到标记
+
+def test_unsubmitted_endpoint_carries_attendance_and_site_count(api):
+    """名单两项都带签到状态；回包给出开关与「未提交且已到」人数。"""
+    signups = [_signup("ou_m0", "小北"), _signup("ou_f0", "阿南"),
+               _signup("ou_m1", "阿北"), _signup("ou_f1", "小西"),
+               _signup("ou_f9", "阿东")]
+    states = {"ou_m0": "按时", "ou_f0": "未到", "ou_m1": "迟到", "ou_f1": "", "ou_f9": "未到"}
+    for s in signups:
+        s["fields"]["签到状态"] = states[s["fields"]["报名人open_id"]]
+    selections = [_sel("ou_m0", "男性", ("ou_f0",)), _sel("ou_f0", "女性", ("ou_m0",))]
+    api.install(activity=_act(分组功能开启="是", 签到功能开启="是"),
+                signups=signups, selections=selections)
+
+    body = api.get("/api/admin/group/unsubmitted?activity_id=" + ACT).get_json()
+    assert body["signin_enabled"] is True
+    assert body["total"] == 3 and body["unsubmitted_checked_in"] == 1
+    un = {x["open_id"]: x for x in body["unsubmitted"]}
+    assert (un["ou_m1"]["attendance"], un["ou_m1"]["checked_in"]) == ("迟到", True)
+    assert (un["ou_f1"]["attendance"], un["ou_f1"]["checked_in"]) == ("", False)
+    assert (un["ou_f9"]["attendance"], un["ou_f9"]["checked_in"]) == ("未到", False)
+    sub = {x["open_id"]: x for x in body["submitted"]}
+    assert (sub["ou_m0"]["attendance"], sub["ou_m0"]["checked_in"]) == ("按时", True)
+    assert (sub["ou_f0"]["attendance"], sub["ou_f0"]["checked_in"]) == ("未到", False)
+
+    st = api.get("/api/admin/group/status?activity_id=" + ACT).get_json()
+    assert st["unsubmitted_count"] == 3
+    assert st["unsubmitted_on_site_count"] == 1

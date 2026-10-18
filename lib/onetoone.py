@@ -36,6 +36,7 @@ _REQUIRED_FIELDS = (
     "oto_choices", "oto_rank", "oto_user_oid", "oto_user_name", "oto_user_gender",
     "oto_target_oid", "oto_target_name", "oto_round",
     "signup_activity_id", "signup_openid", "signup_nickname", "signup_status",
+    "signup_attendance",
     "gender", "user_id", "real_name",
     "self_hobbies", "self_sports", "self_traits", "education", "mbti", "city", "church",
 )
@@ -389,12 +390,13 @@ def build_profiles(open_ids, *, find_user_by_openid):
 # ---------------------------------------------------------------- 内部读取
 
 def build_participants(activity_id, *, client, find_user_by_openid):
-    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name}]。
+    """取该活动的报名者：[{open_id, nickname, gender, user_id, real_name, attendance}]。
 
     读取失败（raw client 返回 None）按空表处理：这些数据只用于名单展示/候选校验，
     飞书抖一下不该让整条指令失败——与迁移前 bot 经 lib.grouping.collect_participants
     的兜底口径一致。性别/用户ID 走调用方注入的 find_user_by_openid。
     real_name = 用户表「姓名」去空白（现场活动显示名：非空优先于昵称，由渲染层决定）。
+    attendance = 报名记录上的「签到状态」原值（按时/迟到/未到/空）。
     """
     _require_configured()
     f = _cfg["fields"]
@@ -410,11 +412,12 @@ def build_participants(activity_id, *, client, find_user_by_openid):
         sf = s.get("fields", {})
         oid = get_field_text(sf, f["signup_openid"])
         nickname = get_field_text(sf, f["signup_nickname"])
+        attendance = get_field_text(sf, f["signup_attendance"])
         if oid:
-            signup_rows.append((oid, nickname))
+            signup_rows.append((oid, nickname, attendance))
 
     def _fetch(row):
-        oid, nickname = row
+        oid, nickname, attendance = row
         gender = ""
         uid = ""
         real_name = ""
@@ -425,7 +428,7 @@ def build_participants(activity_id, *, client, find_user_by_openid):
             uid = get_field_text(uf, f["user_id"])
             real_name = get_field_text(uf, f["real_name"]).strip()
         return {"open_id": oid, "nickname": nickname, "gender": gender, "user_id": uid,
-                "real_name": real_name}
+                "real_name": real_name, "attendance": attendance}
 
     users = []
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="onetoone-signup") as pool:
@@ -566,6 +569,8 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
             "open_id": oid, "user_id": user_id,
             "gender": s["gender"], "nickname": s["nickname"],
             "real_name": s.get("real_name", ""),
+            "attendance": s.get("attendance", ""),
+            "checked_in": lib_grouping.is_checked_in(s.get("attendance", "")),
         })
 
     return {
@@ -575,6 +580,7 @@ def fetch_unsubmitted(activity_id, *, client, activity, find_user_by_openid):
         "total": len(unsubmitted),
         "unsubmitted": unsubmitted,
         "all_submitted": not unsubmitted,
+        "signin_enabled": lib_grouping.signin_enabled(activity.get("fields", {})),
     }
 
 

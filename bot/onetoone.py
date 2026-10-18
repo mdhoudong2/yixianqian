@@ -62,6 +62,7 @@ def configure_onetoone_lib(lock_dir):
             "signup_openid": FIELD_SIGNUP_OPENID,
             "signup_nickname": FIELD_SIGNUP_NICKNAME,
             "signup_status": FIELD_SIGNUP_STATUS,
+            "signup_attendance": FIELD_SIGNUP_ATTENDANCE,
             "gender": FIELD_GENDER,
             "user_id": FIELD_USER_ID,
             "real_name": FIELD_REAL_NAME,
@@ -509,8 +510,21 @@ def handle_admin_unsubmitted_onetoone(keyword):
                                          find_user_by_openid=find_user_by_openid)
     if not res["unsubmitted"]:
         return f"活动「{res['name']}」所有报名者均已提交志愿。"
-    lines = [f"「{res['name']}」未提交志愿（{res['total']}人）："]
+    signin_on = res.get("signin_enabled")
+    onsite = sum(1 for u in res["unsubmitted"] if u.get("checked_in")) if signin_on else 0
+    header = f"「{res['name']}」未提交志愿（{res['total']}人"
+    if signin_on:
+        header += f"，其中 {onsite} 人到场"
+    lines = [header + "）："]
     for u in res["unsubmitted"]:
         # 名字=真名缺省昵称（现场活动统一口径；uid/性别格式不变）
-        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}")
+        line = f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}"
+        if signin_on:
+            if u.get("checked_in"):
+                line += "（已到）"
+            elif u.get("attendance") == "未到":
+                line += "（未到）"
+            else:
+                line += "（未签到）"
+        lines.append(line)
     return "\n".join(lines)

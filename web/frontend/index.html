@@ -522,6 +522,10 @@
   .ga-row-main { flex: 1; min-width: 0; }
   .ga-row-name { font-size: 15px; color: #323233; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ga-row-sub { font-size: 12px; color: #646566; margin-top: 3px; line-height: 1.5; }
+  .ga-att-tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 16px; }
+  .ga-att-tag.ok { background: #e8f8ee; color: #18a058; }
+  .ga-att-tag.absent { background: #fdecec; color: #d03050; }
+  .ga-att-tag.pending { background: #f2f3f5; color: #909399; }
   .ga-row-id { font-size: 11px; color: #969799; margin-left: 6px; }
   .ga-main-btn { min-height: var(--yxq-tap-min); margin-top: 10px; }
   .ga-actions { display: flex; gap: 10px; margin-top: 16px; } .ga-actions .van-button { flex: 1; min-height: var(--yxq-tap-min); }
@@ -1518,7 +1522,7 @@
             <template v-else>还没设置每组人数 · </template>
             男生 {{ gaDetail.male_count }} · 女生 {{ gaDetail.female_count }}
           </div>
-          <div v-if="gaDetail.group_status!=='已完成' && gaDetail.unsubmitted_count>0" class="ga-tip" @click="openGroupRoster()">⚠ 还有 {{ gaDetail.unsubmitted_count }} 人没填志愿，点这里看名单</div>
+          <div v-if="gaDetail.group_status!=='已完成' && (gaDetail.signin_flag==='是' ? (gaDetail.unsubmitted_on_site_count || 0)>0 : gaDetail.unsubmitted_count>0)" class="ga-tip" @click="openGroupRoster()"><template v-if="gaDetail.signin_flag==='是'">⚠ 现场还有 {{ gaDetail.unsubmitted_on_site_count || 0 }} 人没填志愿，点这里看名单</template><template v-else>⚠ 还有 {{ gaDetail.unsubmitted_count }} 人没填志愿，点这里看名单</template></div>
           <div v-else-if="gaDetail.group_status!=='已完成' && gaDetail.submitted_count>0" class="ga-tip ga-tip-ok">大家都填好啦，可以分组了 🎉</div>
           <div v-if="gaRunTip" class="ga-tip">⏳ {{ gaRunTip }} <span class="ga-link" @click="resumeGaPolling()">继续查看</span></div>
         </div>
@@ -1549,8 +1553,8 @@
             <div class="ga-stat"><div class="ga-stat-num">{{ gaDetail.onetoone_result_count }}</div><div class="ga-stat-label">必聊条数</div></div>
           </div>
           <div class="ga-row-sub" style="margin-top:4px;">状态：{{ gaStatusDisplay(gaDetail.onetoone_status) }} · 已匹配 {{ gaDetail.onetoone_matched_count }} 人 · {{ gaOtoRounds.length }} 轮结果 · 女生坐镇、男生上门均衡匹配</div>
-          <div v-if="gaDetail.onetoone_status!=='已完成' && gaDetail.onetoone_unsubmitted_count>0" class="ga-tip" @click="openGroupRoster()">⚠ 还有 {{ gaDetail.onetoone_unsubmitted_count }} 人没填志愿，点这里看名单</div>
-          <div v-else-if="gaDetail.onetoone_status!=='已完成' && gaDetail.onetoone_submitted_count>0" class="ga-tip ga-tip-ok">大家都填好啦，可以执行匹配了 🎉</div>
+          <div v-if="gaDetail.onetoone_status!=='已完成' && (gaDetail.signin_flag==='是' ? (gaDetail.onetoone_unsubmitted_on_site_count || 0)>0 : gaDetail.onetoone_unsubmitted_count>0)" class="ga-tip" @click="openGroupRoster()"><template v-if="gaDetail.signin_flag==='是'">⚠ 现场还有 {{ gaDetail.onetoone_unsubmitted_on_site_count || 0 }} 人没填志愿，点这里看名单</template><template v-else>⚠ 还有 {{ gaDetail.onetoone_unsubmitted_count }} 人没填志愿，点这里看名单</template></div>
+          <div v-else-if="gaDetail.onetoone_status!=='已完成' && gaDetail.onetoone_submitted_count>0" class="ga-tip ga-tip-ok"><template v-if="gaDetail.signin_flag==='是'">现场的人都填好啦 🎉</template><template v-else>大家都填好啦，可以执行匹配了 🎉</template></div>
           <div v-if="gaRunTip" class="ga-tip">⏳ {{ gaRunTip }} <span class="ga-link" @click="resumeGaPolling()">继续查看</span></div>
         </div>
 
@@ -1582,7 +1586,7 @@
           </div>
           <template v-else>
             <div class="ga-roster-tabs">
-              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0"><template v-if="gaRosterSigninOn">未填写（现场）{{ gaRosterOnSite }}</template><template v-else>未填写 {{ gaRosterTotal }}</template></div>
               <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
             </div>
             <template v-if="gaRosterTab===0">
@@ -1590,13 +1594,13 @@
                 <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
               <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
-              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
+              <van-empty v-else-if="!gaRosterFiltered.length" :description="gaRosterQuery.trim() ? '没有匹配的人' : '现场没有未填写的人 🎉'"></van-empty>
               <div v-else>
                 <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
                     <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}<span v-if="gaRosterSigninOn" class="ga-att-tag" :class="gaAttClass(r)">{{ gaAttText(r) }}</span></div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
                 </div>
@@ -1616,7 +1620,7 @@
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
                     <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}<span v-if="gaRosterSigninOn" class="ga-att-tag" :class="gaAttClass(r)">{{ gaAttText(r) }}</span></div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
                 </div>
@@ -1637,7 +1641,7 @@
           </div>
           <template v-else>
             <div class="ga-roster-tabs">
-              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+              <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0"><template v-if="gaRosterSigninOn">未填写（现场）{{ gaRosterOnSite }}</template><template v-else>未填写 {{ gaRosterTotal }}</template></div>
               <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
             </div>
             <template v-if="gaRosterTab===0">
@@ -1645,13 +1649,13 @@
                 <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
               </div>
               <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
-              <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
+              <van-empty v-else-if="!gaRosterFiltered.length" :description="gaRosterQuery.trim() ? '没有匹配的人' : '现场没有未填写的人 🎉'"></van-empty>
               <div v-else>
                 <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
                     <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}<span v-if="gaRosterSigninOn" class="ga-att-tag" :class="gaAttClass(r)">{{ gaAttText(r) }}</span></div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
                 </div>
@@ -1671,7 +1675,7 @@
                   <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
                   <div class="ga-row-main">
                     <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
-                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+                    <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}<span v-if="gaRosterSigninOn" class="ga-att-tag" :class="gaAttClass(r)">{{ gaAttText(r) }}</span></div>
                   </div>
                   <van-icon name="arrow" color="#c8c9cc"></van-icon>
                 </div>
@@ -1800,7 +1804,7 @@
     </div>
     <template v-else>
       <div class="ga-roster-tabs">
-        <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0">未填写 {{ gaRosterTotal }}</div>
+        <div class="ga-roster-tab" :class="{active: gaRosterTab===0}" @click="gaRosterTab=0"><template v-if="gaRosterSigninOn">未填写（现场）{{ gaRosterOnSite }}</template><template v-else>未填写 {{ gaRosterTotal }}</template></div>
         <div class="ga-roster-tab" :class="{active: gaRosterTab===1}" @click="gaRosterTab=1">已填写 {{ gaRosterSubmitted }}</div>
       </div>
       <template v-if="gaRosterTab===0">
@@ -1808,13 +1812,13 @@
           <input v-model="gaRosterQuery" placeholder="搜昵称/姓名/用户ID" class="candidate-search-input" />
         </div>
         <van-empty v-if="!gaRosterList.length" description="大家都填好啦 🎉"></van-empty>
-        <van-empty v-else-if="!gaRosterFiltered.length" description="没有匹配的人"></van-empty>
+        <van-empty v-else-if="!gaRosterFiltered.length" :description="gaRosterQuery.trim() ? '没有匹配的人' : '现场没有未填写的人 🎉'"></van-empty>
         <div v-else>
           <div v-for="r in gaRosterVisible" :key="r.open_id" class="ga-row" @click="gaOpenUser(r.open_id)">
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
             <div class="ga-row-main">
               <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
-              <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+              <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}<span v-if="gaRosterSigninOn" class="ga-att-tag" :class="gaAttClass(r)">{{ gaAttText(r) }}</span></div>
             </div>
             <van-icon name="arrow" color="#c8c9cc"></van-icon>
           </div>
@@ -1834,7 +1838,7 @@
             <div class="ga-avatar">{{ r.gender==='男性' ? '👨' : (r.gender==='女性' ? '👩' : '👤') }}</div>
             <div class="ga-row-main">
               <div class="ga-row-name">{{ r.real_name || r.nickname || '（没有昵称）' }}</div>
-              <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}</div>
+              <div class="ga-row-sub">{{ r.user_id || '-' }} · {{ r.gender || '-' }}<span v-if="gaRosterSigninOn" class="ga-att-tag" :class="gaAttClass(r)">{{ gaAttText(r) }}</span></div>
             </div>
             <van-icon name="arrow" color="#c8c9cc"></van-icon>
           </div>
@@ -7175,6 +7179,7 @@ createApp({
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
     const gaRosterSubmittedList = ref([]);   // /unsubmitted 的 submitted 数组（已填写 tab）
+    const gaRosterSigninOn = ref(false), gaRosterOnSite = ref(0);   // 名单页签到口径（未填写 tab 的现场数）
     const gaRosterLoading = ref(false), gaRosterError = ref(false), gaRosterShown = ref(30);
 
     // 执行分组弹层（每组男女数入参）；清空分组结果确认层（输入活动编号后调 reset）
@@ -7277,10 +7282,13 @@ createApp({
     });
     const gaRosterFiltered = computed(() => {
       const q = gaRosterQuery.value.trim().toLowerCase();
-      if (!q) return gaRosterList.value;
-      return gaRosterList.value.filter(r => String(r.nickname || '').toLowerCase().includes(q)
-        || String(r.real_name || '').toLowerCase().includes(q)
-        || String(r.user_id || '').toLowerCase().includes(q));
+      return gaRosterList.value.filter(r => {
+        if (gaRosterSigninOn.value && r.checked_in !== true) return false;   // 签到开启：未填写只列已到现场的人
+        if (!q) return true;
+        return String(r.nickname || '').toLowerCase().includes(q)
+          || String(r.real_name || '').toLowerCase().includes(q)
+          || String(r.user_id || '').toLowerCase().includes(q);
+      });
     });
     const gaRosterVisible = computed(() => gaRosterFiltered.value.slice(0, gaRosterShown.value));
     const gaSubmittedFiltered = computed(() => {
@@ -7390,7 +7398,7 @@ createApp({
       gaOtoPeople.value = []; gaOtoOpen.value = {}; gaOtoResultLoading.value = false; gaOtoResultError.value = false;
       gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
       resetChatOverview();
-      gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false;
+      gaRosterTab.value = 0; gaRosterQuery.value = ''; gaRosterList.value = []; gaRosterTotal.value = 0; gaRosterSubmittedList.value = []; gaRosterShown.value = 30; gaRosterError.value = false; gaRosterSigninOn.value = false; gaRosterOnSite.value = 0;
       page.value = 'group_detail';
     }
     function openCheckinPage(a) {
@@ -7420,7 +7428,7 @@ createApp({
           gaOtoPeople.value = []; gaOtoOpen.value = {};
           gaOtoResultRound.value = 0; gaOtoLoadedRound.value = 0; gaOtoResultCount.value = 0;
           resetChatOverview();
-          gaRosterList.value = []; gaRosterSubmittedList.value = []; gaRosterTotal.value = 0;
+          gaRosterList.value = []; gaRosterSubmittedList.value = []; gaRosterTotal.value = 0; gaRosterSigninOn.value = false; gaRosterOnSite.value = 0;
         }
         gaResultRound.value = gaGroupsRound.value || d.latest_round || ((d.rounds && d.rounds.length) ? d.rounds[d.rounds.length - 1] : 0);
         if (gaDetailTab.value === 2 && gaDetailMode.value === 'group'
@@ -7490,9 +7498,18 @@ createApp({
         const data = await gaGet('/api/admin/' + ep + '/unsubmitted?activity_id=' + encodeURIComponent(gaDetailId.value));
         gaRosterList.value = data.unsubmitted || []; gaRosterTotal.value = data.total || 0; gaRosterShown.value = 30;
         gaRosterSubmittedList.value = data.submitted || [];
+        gaRosterSigninOn.value = !!data.signin_enabled; gaRosterOnSite.value = data.unsubmitted_checked_in || 0;
         if (gaRosterTab.value === 0 && !gaRosterList.value.length && gaRosterSubmitted.value > 0) gaRosterTab.value = 1;
       } catch(e) { if (!gaAuthBack(e)) { gaRosterError.value = true; vant.showToast(gaMsg(e, '没连上，检查一下网络再试一次')); } }
       gaRosterLoading.value = false;
+    }
+    function gaAttText(r) {
+      if (r && r.checked_in) return '已到';
+      return (r && r.attendance === '未到') ? '未到' : '未签到';
+    }
+    function gaAttClass(r) {
+      if (r && r.checked_in) return 'ok';
+      return (r && r.attendance === '未到') ? 'absent' : 'pending';
     }
     function openGroupRoster() { page.value = 'group_roster'; gaRosterQuery.value = ''; }
     async function loadGaGroupResult(r) {
@@ -8219,7 +8236,7 @@ createApp({
       gaSigninMarkedCount, loadSigninRoster, markSignin, toggleSignin, onToggleSigninFlag,
       gaClearConfirmShow, gaClearConfirmInput, gaClearConfirmOk, openClearAllSignins, cancelClearAllSignins, doClearAllSignins,
       gaStatusDisplay, refreshGroupDetail,
-      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
+      gaRosterTab, gaRosterQuery, gaRosterList, gaRosterTotal, gaRosterLoading, gaRosterError, gaRosterShown, gaRosterFiltered, gaRosterVisible, gaRosterSubmitted, gaRosterSubmittedList, gaRosterSigninOn, gaRosterOnSite, gaAttText, gaAttClass, gaSubmittedFiltered, gaSubmittedVisible, loadGroupRoster, openGroupRoster, gaOpenUser,
       gaRunPopupShow, gaRunM, gaRunF, gaRunPopupPreview, gaRunExpected, gaRunPopupHasPeople, gaRunPopupExpectedGroups, closeGaRunPopup, requestCloseGaRunPopup, confirmGaRun, openGaResetConfirm, doGaReset, gaConfirmBusy,
       gaConfirmShow, gaConfirmInput, gaConfirmOk, cancelGaConfirm,
       gaOtoResetShow, gaOtoResetOk, gaOtoResetBusy, gaOtoConfirmInput, openOtoResetConfirm, cancelOtoReset, doOtoReset,

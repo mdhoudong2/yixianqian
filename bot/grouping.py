@@ -535,8 +535,21 @@ def handle_admin_unsubmitted(keyword):
 
     if not unsubmitted:
         return f"活动「{act_name}」所有报名者均已提交志愿。"
-    lines = [f"「{act_name}」未提交志愿（{len(unsubmitted)}人）："]
+    signin_on = res.get("signin_enabled")
+    onsite = sum(1 for u in unsubmitted if u.get("checked_in")) if signin_on else 0
+    header = f"「{act_name}」未提交志愿（{len(unsubmitted)}人"
+    if signin_on:
+        header += f"，其中 {onsite} 人到场"
+    lines = [header + "）："]
     for u in unsubmitted:
         # 名字=真名缺省昵称（现场活动统一口径；uid/性别格式不变）
-        lines.append(f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}")
+        line = f"{u['user_id'] or '-'} · {u['gender'] or '-'} · {u.get('real_name') or u['nickname']}"
+        if signin_on:
+            if u.get("checked_in"):
+                line += "（已到）"
+            elif u.get("attendance") == "未到":
+                line += "（未到）"
+            else:
+                line += "（未签到）"
+        lines.append(line)
     return "\n".join(lines)

@@ -7200,6 +7200,187 @@ def admin_onetoone_result():
     })
 
 
+def _msg_time_text(raw):
+    """留言创建时间 → 可读文本：毫秒/秒时间戳转本地时间；已是文本则原样返回。"""
+    if isinstance(raw, list):
+        raw = raw[0] if raw else None
+    if isinstance(raw, dict):
+        raw = raw.get("value") if raw.get("value") is not None else raw.get("text")
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        text = raw.strip()
+        try:
+            raw = float(text)
+        except ValueError:
+            return text
+    try:
+        num = float(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    seconds = num / 1000.0 if num > 1e11 else num
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(seconds))
+    except (ValueError, OSError, OverflowError):
+        return str(raw)
+
+
+@app.route("/api/admin/onetoone/chat-overview", methods=["GET"])
+def admin_onetoone_chat_overview():
+    """一对一聊天情况总览（管理台「聊天」tab）：谁聊了/没聊、各自聊了多少。
+
+    只读端点：结果与留言都 fresh 读（结果来自 bot 写入；留言表一次全表读），
+    不写任何数据。「已聊」口径与用户端 /onetoone/result 一致：本人（留言人
+    open_id）给必聊对象留过言、状态≠已删除，不按留言时间/轮次过滤。
+    """
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+
+    activity_id = (request.args.get("activity_id") or "").strip()
+    if not activity_id:
+        return jsonify({"error": "缺少 activity_id"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id)
+    if miss:
+        return miss
+
+    results = _onetoone_result_rows(snap_onetoone_results(act_id, fresh=True), act_id)
+    rounds = _oto_rounds(results)
+    round_arg = (request.args.get("round") or "").strip()
+    req_round = None
+    if round_arg:
+        try:
+            req_round = int(round_arg)
+        except ValueError:
+            req_round = None
+    if rounds:
+        if req_round not in rounds:
+            req_round = rounds[-1]    # 非法/不存在的轮次一律回落最新
+    else:
+        req_round = None
+    selected = [r for r in results
+                if req_round is not None
+                and lib_onetoone.round_of(r.get("fields", {})) == req_round]
+
+    # users 快照补「真名＋编号」；结果表落库名兜底（快照缺人也不丢行）
+    users_snap = _snap("users")
+    if not users_snap:
+        users_snap = bitable.get_all_users()
+    uid_by_oid, real_by_oid, nick_by_oid = {}, {}, {}
+    for u in users_snap:
+        uf = u.get("fields", {})
+        oid = bitable.get_field_text(uf, F_FEISHU_ID)
+        if oid and oid not in uid_by_oid:
+            uid_by_oid[oid] = bitable.get_field_text(uf, F_USER_ID)
+            real_by_oid[oid] = _display_real_name(uf)
+            nick_by_oid[oid] = bitable.get_field_text(uf, F_NICKNAME)
+
+    # 留言 fresh 全表读一次；口径与 _chatted_targets 一致（只排除已删除）
+    sent = {}
+    for m in _snap_fresh("messages"):
+        mf = m.get("fields", {})
+        if bitable.get_select_value(mf, F_MSG_STATUS) == "已删除":
+            continue
+        author = bitable.get_field_text(mf, F_MSG_AUTHOR_OID)
+        target = bitable.get_field_text(mf, F_MSG_TARGET_OID)
+        if not author or not target:
+            continue
+        item = sent.get((author, target))
+        if item is None:
+            item = {"count": 0, "last_ts": None}
+            sent[(author, target)] = item
+        item["count"] += 1
+        ts = mf.get(F_MSG_CREATED_AT)
+        if isinstance(ts, (int, float)):
+            if item["last_ts"] is None or ts > item["last_ts"]:
+                item["last_ts"] = ts
+
+    # 按结果行分组（人 -> 必聊对象）；同轮重复行按目标去重，避免计数翻倍
+    grouped = {}
+    for r in selected:
+        rf = r.get("fields", {})
+        person_oid = bitable.get_field_text(rf, F_OTO_USER_OID)
+        if not person_oid:
+            continue
+        person = grouped.get(person_oid)
+        if person is None:
+            person = {"row_name": bitable.get_field_text(rf, F_OTO_USER_NAME), "targets": {}}
+            grouped[person_oid] = person
+        target_oid = bitable.get_field_text(rf, F_OTO_TARGET_OID)
+        if not target_oid or target_oid in person["targets"]:
+            continue
+        person["targets"][target_oid] = {
+            "rank": int(bitable.get_field_number(rf, F_OTO_RANK, 0)),
+            "row_name": bitable.get_field_text(rf, F_OTO_TARGET_NAME),
+        }
+
+    def _display_name(oid, fallback):
+        return real_by_oid.get(oid) or nick_by_oid.get(oid) or fallback or oid
+
+    people = []
+    required = set()
+    for person_oid, person in grouped.items():
+        pairs = []
+        for target_oid, meta in person["targets"].items():
+            stat = sent.get((person_oid, target_oid))
+            count = stat["count"] if stat else 0
+            required.add((person_oid, target_oid))
+            pairs.append({
+                "open_id": target_oid,
+                "user_id": uid_by_oid.get(target_oid, ""),
+                "name": _display_name(target_oid, meta["row_name"]),
+                "rank": meta["rank"],
+                "chatted": count > 0,
+                "msg_count": count,
+                "last_at": _msg_time_text(stat["last_ts"]) if stat else "",
+            })
+        pairs.sort(key=lambda x: (x["rank"], x["open_id"]))
+        chatted = sum(1 for p in pairs if p["chatted"])
+        unchatted = [{"open_id": p["open_id"], "user_id": p["user_id"],
+                      "name": p["name"], "rank": p["rank"]}
+                     for p in pairs if not p["chatted"]]
+        people.append({
+            "open_id": person_oid,
+            "user_id": uid_by_oid.get(person_oid, ""),
+            "name": _display_name(person_oid, person["row_name"]),
+            "assigned": len(pairs),
+            "chatted": chatted,
+            "msg_count": sum(p["msg_count"] for p in pairs),
+            "pairs": pairs,
+            "unchatted": unchatted,
+        })
+    # 现场作业面排序：未聊多的排前面；同档按用户编号，再按 open_id 保确定性
+    people.sort(key=lambda p: (-len(p["unchatted"]), p["user_id"] or "~", p["open_id"]))
+
+    pairs_total = sum(p["assigned"] for p in people)
+    chatted_pairs = sum(p["chatted"] for p in people)
+    # 互聊：双向都在本轮必聊关系里，且双方都留过言（按无向对去重）
+    mutual = set()
+    for a, b in required:
+        if a != b and (b, a) in required:
+            if (sent.get((a, b)) or {}).get("count") and (sent.get((b, a)) or {}).get("count"):
+                mutual.add(frozenset((a, b)))
+    return jsonify({
+        "activity_id": act_id,
+        "name": bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_NAME),
+        "round": req_round,
+        "rounds": rounds,
+        "summary": {
+            "people": len(people),
+            "pairs": pairs_total,
+            "chatted_pairs": chatted_pairs,
+            "rate": round(chatted_pairs / pairs_total, 4) if pairs_total else 0.0,
+            "zero_people": sum(1 for p in people if p["chatted"] == 0),
+            "done_people": sum(1 for p in people
+                               if p["assigned"] > 0 and p["chatted"] == p["assigned"]),
+            "mutual_pairs": len(mutual),
+            "messages": sum(p["msg_count"] for p in people),
+        },
+        "people": people,
+    })
+
+
 @app.route("/api/admin/onetoone/preview", methods=["POST"])
 def admin_onetoone_preview():
     """执行影响面预览（红线：零写入）——lib.onetoone.preview 是与 execute 完全

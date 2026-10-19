@@ -26,8 +26,3 @@ ADMIN_OPEN_IDS = ["ou_xxxx"]  # 管理员飞书 open_id 列表
 
 # 照片每日上传上限（默认 10；调整后需重启 H5 服务）
 # PHOTO_DAILY_LIMIT = 10
-
-# 測試環境快速登入（僅測試服；生產勿開）。TEST_LOGIN_KEY 必須非空，uid 必須在允許清單內。
-# TEST_LOGIN_ENABLED = True
-# TEST_LOGIN_KEY = "請填一段隨機長字串"
-# TEST_LOGIN_ALLOW_IDS = ["U-0006"]

@@ -28,16 +28,6 @@ def _lc_list(name, default=None):
     return getattr(_lc, name, default)
 
 
-def _lc_bool(name, default=False):
-    v = os.environ.get(name)
-    if v not in (None, ""):
-        return str(v).strip().lower() in ("1", "true", "yes", "on")
-    v = getattr(_lc, name, default)
-    if isinstance(v, str):
-        return v.strip().lower() in ("1", "true", "yes", "on")
-    return bool(v)
-
-
 FEISHU_APP_ID = _lc_get("FEISHU_APP_ID", getattr(_lc, "FEISHU_APP_ID", ""))
 FEISHU_APP_SECRET = _lc_get("FEISHU_APP_SECRET", getattr(_lc, "FEISHU_APP_SECRET", ""))
 BASE_TOKEN = _lc_get("BASE_TOKEN", getattr(_lc, "BASE_TOKEN", ""))
@@ -365,14 +355,6 @@ SESSION_EXPIRE_DAYS = 30
 
 # H5基础URL（测试服在 local_config.py 覆盖为 https://testapp.nantou.love）
 H5_BASE_URL = _lc_get("H5_BASE_URL", getattr(_lc, "H5_BASE_URL", "https://app.nantou.love"))
-
-# ===== 測試環境快速登入（僅測試服；生產預設關閉）=====
-# 啟用後可用「用戶ID（U-0006）或飛書 open_id（ou_...）」直接建立 session，
-# 僅供測試查看網頁；必須同時設定非空 TEST_LOGIN_KEY，且 uid 在允許清單內。
-TEST_LOGIN_ENABLED = _lc_bool("TEST_LOGIN_ENABLED", getattr(_lc, "TEST_LOGIN_ENABLED", False))
-TEST_LOGIN_KEY = str(_lc_get("TEST_LOGIN_KEY", getattr(_lc, "TEST_LOGIN_KEY", "")) or "")
-TEST_LOGIN_ALLOW_IDS = _lc_list(
-    "TEST_LOGIN_ALLOW_IDS", getattr(_lc, "TEST_LOGIN_ALLOW_IDS", ["U-0006"]))
 
 # 通知存储（机器人与 H5 共享，机器人写入、H5 读取）
 NOTIFICATIONS_FILE = os.path.join(SHARED_DATA_DIR, "yixianqian_notifications.json")

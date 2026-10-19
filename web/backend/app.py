@@ -2,7 +2,6 @@
 import contextlib
 import hashlib
 import hmac as _hmac
-import html as _html
 import io
 import json
 import logging
@@ -23,7 +22,6 @@ from flask import (
     g,
     jsonify,
     make_response,
-    redirect,
     request,
     send_from_directory,
 )
@@ -3110,124 +3108,6 @@ def logout():
     resp = make_response(jsonify({"ok": True}))
     resp.delete_cookie("yxq_session")
     return resp
-
-
-# ==================== 測試環境快速登入（僅測試服；生產預設關閉） ====================
-# 用途：讓測試人員在飛書外（testapp.nantou.love）用「用戶ID / 飛書 open_id」
-# 直接建立 session 查看網頁。生產 local_config 不設 TEST_LOGIN_ENABLED/KEY
-# 即完全關閉。安全：必須帶 TEST_LOGIN_KEY，且目標用戶ID 在允許清單內。
-def _test_login_html(uid_value="", error=""):
-    uid_value = _html.escape(str(uid_value or ""))
-    error_html = f'<div class="err">{_html.escape(error)}</div>' if error else ""
-    return f"""<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>一线牵 · 测试登录</title>
-<style>
-  *{{box-sizing:border-box}}
-  body{{margin:0;background:#f7f8fa;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;color:#323233}}
-  .wrap{{max-width:420px;margin:0 auto;padding:56px 20px}}
-  .card{{background:#fff;border-radius:16px;padding:24px 20px;box-shadow:0 6px 24px rgba(0,0,0,.06)}}
-  h1{{font-size:20px;margin:0 0 6px;color:#cc304e}}
-  .sub{{font-size:13px;color:#969799;line-height:1.6;margin-bottom:20px}}
-  label{{display:block;font-size:13px;color:#646566;margin:14px 0 6px}}
-  input{{width:100%;padding:12px 14px;font-size:16px;border:1px solid #dcdee0;border-radius:10px;outline:none}}
-  input:focus{{border-color:#ff6b81}}
-  button{{width:100%;margin-top:20px;padding:13px;border:0;border-radius:999px;background:#ff6b81;color:#fff;font-size:16px}}
-  button:active{{opacity:.85}}
-  .err{{background:#fff1f3;color:#d6385f;border:1px solid #ffb6c4;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px;line-height:1.5}}
-  .tip{{font-size:12px;color:#969799;line-height:1.7;margin-top:18px}}
-  .badge{{display:inline-block;background:#fff0f3;color:#cc304e;font-size:11px;border-radius:999px;padding:3px 9px;margin-bottom:10px}}
-</style>
-</head>
-<body>
-<div class="wrap"><div class="card">
-  <div class="badge">TEST ONLY</div>
-  <h1>测试环境快速登录</h1>
-  <div class="sub">仅供测试服使用。输入用户ID（如 U-0006）或飞书 open_id（ou_...）即可进入网页版。</div>
-  {error_html}
-  <form method="post" action="/test-login">
-    <input type="hidden" name="key" value="{_html.escape(str(TEST_LOGIN_KEY))}">
-    <label>用户ID / 飞书 open_id</label>
-    <input name="uid" value="{uid_value}" placeholder="U-0006 或 ou_..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-    <button type="submit">进入一线牵</button>
-  </form>
-  <div class="tip">生产环境不会开启此入口。测试完请关闭测试页或清除登录 Cookie。</div>
-</div></div>
-</body>
-</html>"""
-
-
-def _test_login_error_html(msg, status):
-    return make_response(_test_login_html("", msg), status)
-
-
-@app.route("/test-login", methods=["GET"])
-def test_login_page():
-    if not TEST_LOGIN_ENABLED or not TEST_LOGIN_KEY:
-        abort(404)
-    key = request.args.get("key", "")
-    if not _hmac.compare_digest(str(key), str(TEST_LOGIN_KEY)):
-        abort(404)
-    resp = make_response(_test_login_html(request.args.get("uid", "U-0006")))
-    resp.headers["Cache-Control"] = "no-store, max-age=0"
-    return resp
-
-
-@app.route("/test-login", methods=["POST"])
-def test_login_submit():
-    if not TEST_LOGIN_ENABLED or not TEST_LOGIN_KEY:
-        abort(404)
-    key = request.form.get("key", "")
-    if not _hmac.compare_digest(str(key), str(TEST_LOGIN_KEY)):
-        abort(404)
-    raw = str(request.form.get("uid", "") or "").strip()
-    if not raw:
-        return _test_login_error_html("请输入用户ID或飞书 open_id", 400)
-    rl = _rate_limit(20, 60, "testlogin", key=raw.upper())
-    if rl:
-        return rl
-    is_openid = raw.lower().startswith("ou_")
-    lookup = raw.lower() if is_openid else raw.upper()
-    if is_openid:
-        records = bitable.raw_search_records(USER_TABLE_ID, [
-            {"field_name": F_FEISHU_ID, "operator": "is", "value": [lookup]}])
-        if records is None:
-            return _test_login_error_html("查询用户失败，请稍后重试", 502)
-    else:
-        # 用户ID 是自动编号/公式类字段，Bitable 过滤条件对类型敏感；全表拉一次本地匹配，
-        # 避免「过滤报错被当成查询失败」而无法登入（测试服仅千级用户，登录频率极低）。
-        all_users = bitable.raw_search_records(USER_TABLE_ID)
-        if all_users is None:
-            return _test_login_error_html("查询用户失败，请稍后重试", 502)
-        records = [u for u in all_users
-                   if bitable.get_field_text(u.get("fields", {}), F_USER_ID).strip().upper()
-                   == lookup]
-    if not records:
-        return _test_login_error_html("找不到该用户", 404)
-    if len(records) > 1:
-        return _test_login_error_html("找到多笔用户，请改用飞书 open_id", 409)
-    fields = records[0].get("fields", {})
-    open_id = bitable.get_field_text(fields, F_FEISHU_ID).strip()
-    user_id = bitable.get_field_text(fields, F_USER_ID).strip()
-    if not open_id:
-        return _test_login_error_html("该用户尚未绑定飞书身份", 400)
-    allow = {str(x).strip().upper() for x in (TEST_LOGIN_ALLOW_IDS or [])}
-    if user_id.upper() not in allow:
-        return _test_login_error_html("该用户不在测试登录白名单", 403)
-    roles = roles_of(open_id)
-    role = "user" if "user" in roles else ("observer" if "observer" in roles else "user")
-    session_id = create_session(open_id, role)
-    app.logger.warning(
-        f"TEST LOGIN: user_id={user_id} open_id={open_id} role={role} ip={request.remote_addr}")
-    resp = make_response(redirect("/"))
-    resp.set_cookie("yxq_session", session_id, httponly=True, secure=True,
-                    max_age=SESSION_EXPIRE_DAYS * 86400, samesite="Lax")
-    resp.headers["Cache-Control"] = "no-store, max-age=0"
-    return resp
-
 
 # ==================== H5 网页版注册（对齐飞书表单「一线牵-注册（新）」） ====================
 # key=用户表真实字段名；type=飞书字段类型(1文本/2数字/3单选/4多选/5日期/13电话/17附件)；

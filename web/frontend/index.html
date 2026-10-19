@@ -104,12 +104,12 @@
   .card-section:last-child { margin-bottom: 0; }
   .info-grid.simple-line { margin-bottom: 20px; }
   .card-actions { position: absolute; bottom: 18px; right: 18px; left: auto; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 18px; z-index: 12; }
-  .heart-btn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.55); background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,107,129,0.4); transition: transform 0.15s; }
+  .heart-btn { width: 64px; height: 64px; border-radius: 50%; border: none; outline: none; -webkit-tap-highlight-color: transparent; background: linear-gradient(135deg, #ff6b81, #ff8e9b); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,107,129,0.4); transition: transform 0.15s; }
   .heart-btn:active { transform: scale(0.88); }
   .heart-btn.liked { background: #c8c9cc; box-shadow: none; cursor: not-allowed; }
   .feedback-btn { width: 64px; height: 32px; padding: 0; border-radius: 16px; border: 1px solid #dcdee0; background: #fff; color: #6b7280; font-size: 12px; cursor: pointer; }
   /* 点赞：尺寸与 ♥ 一致，色调用橙黄区分——轻动作不抢「喜欢」的主次 */
-  .praise-btn { width: 64px; height: 64px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.55); background: linear-gradient(135deg, #ffb26b, #ffcf8e); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,178,107,0.4); transition: transform 0.15s; }
+  .praise-btn { width: 64px; height: 64px; border-radius: 50%; border: none; outline: none; -webkit-tap-highlight-color: transparent; background: linear-gradient(135deg, #ffb26b, #ffcf8e); color: #fff; font-size: 30px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(255,178,107,0.4); transition: transform 0.15s; }
   .praise-btn:active { transform: scale(0.88); }
   .praise-btn.praised { background: #c8c9cc; box-shadow: none; }
   .praise-btn:disabled { opacity: 0.5; cursor: not-allowed; }

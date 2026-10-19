@@ -5117,6 +5117,7 @@ def list_messages():
         author_oid = bitable.get_field_text(fields, F_MSG_AUTHOR_OID)
         msgs.append({
             "id": it.get("record_id"),
+            "author_openid": author_oid,
             "author_nickname": bitable.get_field_text(fields, F_MSG_AUTHOR_NICKNAME),
             "author_uid": bitable.get_field_text(fields, F_MSG_AUTHOR_UID),
             "author_avatar": avatar_map.get(author_oid, ""),

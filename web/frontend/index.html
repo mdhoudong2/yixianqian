@@ -345,8 +345,9 @@
   .msg-item { padding: 6px 0; }
   .msg-reply { margin-left: 12px; padding-left: 10px; border-left: 2px solid #ffe3e8; }
   .msg-head { display: flex; align-items: center; gap: 8px; }
-  .msg-avatar-sm { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #fff0f3; }
-  .msg-avatar-sm-fallback { display: flex; align-items: center; justify-content: center; color: #ff6b81; font-size: 14px; font-weight: 600; }
+  .msg-avatar-sm { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: #fff0f3; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .msg-avatar-sm img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+  .msg-avatar-sm-fallback { color: #ff6b81; font-size: 14px; font-weight: 600; }
   .msg-avatar-click { cursor: pointer; }
   .msg-author { font-size: 13px; font-weight: 600; color: var(--yxq-brand-ink); }
   .msg-time { font-size: 11px; color: #6b7280; }
@@ -966,8 +967,10 @@
             <div v-for="m in threadedMessages" :key="m.id" class="msg-thread">
               <div class="msg-item" @click="replyTo(m, m)" style="cursor:pointer;">
                 <div class="msg-head">
-                  <img v-if="m.author_avatar" class="msg-avatar-sm msg-avatar-click" :src="m.author_avatar" alt="" @click.stop="openMessageAuthor(m)">
-                  <span v-else class="msg-avatar-sm msg-avatar-sm-fallback msg-avatar-click" @click.stop="openMessageAuthor(m)">{{ (m.author_nickname || '?')[0] }}</span>
+                  <div class="msg-avatar-sm msg-avatar-click" @click.stop="openMessageAuthor(m)" @touchstart.stop @touchend.stop>
+                    <img v-if="m.author_avatar" :src="m.author_avatar" alt="">
+                    <span v-else class="msg-avatar-sm-fallback">{{ (m.author_nickname || '?')[0] }}</span>
+                  </div>
                   <span class="msg-author">{{ m.author_nickname }} · {{ m.author_uid }}</span>
                   <span style="flex:1"></span>
                   <span v-if="m.can_delete" class="msg-del" @click.stop="deleteMessage(m)">删除</span>
@@ -981,8 +984,10 @@
               </div>
               <div v-for="r in m.replies" :key="r.id" class="msg-item msg-reply" @click="replyTo(r, m)" style="cursor:pointer;">
                 <div class="msg-head">
-                  <img v-if="r.author_avatar" class="msg-avatar-sm msg-avatar-click" :src="r.author_avatar" alt="" @click.stop="openMessageAuthor(r)">
-                  <span v-else class="msg-avatar-sm msg-avatar-sm-fallback msg-avatar-click" @click.stop="openMessageAuthor(r)">{{ (r.author_nickname || '?')[0] }}</span>
+                  <div class="msg-avatar-sm msg-avatar-click" @click.stop="openMessageAuthor(r)" @touchstart.stop @touchend.stop>
+                    <img v-if="r.author_avatar" :src="r.author_avatar" alt="">
+                    <span v-else class="msg-avatar-sm-fallback">{{ (r.author_nickname || '?')[0] }}</span>
+                  </div>
                   <span class="msg-author">{{ r.author_nickname }} · {{ r.author_uid }}</span>
                   <span style="flex:1"></span>
                   <span v-if="r.can_delete" class="msg-del" @click.stop="deleteMessage(r)">删除</span>

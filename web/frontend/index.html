@@ -7128,7 +7128,7 @@ createApp({
       }catch(e){}
     }
 
-    // ===== 新版本软提示：可见时只弹浮层，隐藏时才自动刷新 =====
+    // ===== 新版本自动刷新：版本变化即刷新（输入中不打断），带时间戳 query 绕过飞书 TTWebView 缓存 =====
     const VERSION_RELOAD_COOLDOWN = 30 * 60 * 1000;
     function versionChanged(server){
       return !!server && server !== APP_VERSION && server !== '__APP_VERSION__';
@@ -7139,7 +7139,9 @@ createApp({
         sessionStorage.setItem('yxq_last_reload', String(Date.now()));
         sessionStorage.setItem('yxq_reload_reason', reason || 'version');
       }catch(e){}
-      location.reload();
+      // 加时间戳 query 绕过飞书 TTWebView 对 no-store 的忽略，确保 reload 真正拿到新 HTML
+      const sep = (location.search ? '&' : '?');
+      location.replace(location.pathname + location.search + sep + 'yxqv=' + Date.now());
     }
     async function checkVersion(){
       try{
@@ -7152,9 +7154,7 @@ createApp({
         if(ae && /^(INPUT|TEXTAREA)$/.test(ae.tagName)) return;
         const last = Number(sessionStorage.getItem('yxq_last_reload') || 0);
         if(Date.now() - last < VERSION_RELOAD_COOLDOWN) return;
-        if(document.hidden){
-          doVersionReload('version-hidden');
-        }
+        doVersionReload(document.hidden ? 'version-hidden' : 'version-visible');
       }catch(e){}
     }
     setInterval(checkVersion, 45000);

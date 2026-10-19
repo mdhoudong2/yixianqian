@@ -3213,7 +3213,20 @@
 </van-tabbar>
 </template>
 </div>
-<script src="https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.26.js"></script>
+<script>
+/* 只在飞书 WebView 内加载 JSSDK：外部浏览器（网页版/测试登录）不依赖该 CDN，
+   避免 CDN 慢或被拦时阻塞整个 SPA。getFeishuSilentCode 仍会等待 window.tt。 */
+(function () {
+  try {
+    var ua = (navigator.userAgent || '').toLowerCase();
+    if (ua.indexOf('lark') < 0 && ua.indexOf('feishu') < 0) return;
+    var s = document.createElement('script');
+    s.src = 'https://lf1-cdn-tos.bytegoofy.com/goofy/lark/op/h5-js-sdk-1.5.26.js';
+    s.async = true;
+    document.head.appendChild(s);
+  } catch (e) {}
+})();
+</script>
 <script src="lib/vue.global.prod.js"></script>
 <script src="lib/vant.min.js"></script>
 <script src="lib/photoswipe.umd.min.js"></script>
@@ -4553,7 +4566,7 @@ createApp({
         const tryGetCode = () => {
           const tt = window.tt || window.h5sdk;
           if (!tt) {
-            if (waited < 3000) { waited += 200; setTimeout(tryGetCode, 200); return; }
+            if (waited < 4000) { waited += 200; setTimeout(tryGetCode, 200); return; }
             done({code: null, error: 'JSSDK未加载'}); return;
           }
           // 优先用 requestAuthCode（兼容性最好），失败再试 requestAccess
@@ -4620,7 +4633,7 @@ createApp({
       if (claiming.value) return false;
       claiming.value = true;
       try {
-        const silent = await getFeishuSilentCode(6000);
+        const silent = await getFeishuSilentCode(10000);
         if (!silent || !silent.code) { vant.showToast('飞书登录凭证获取失败，请点「重新登录」再试'); return false; }
         const data = await api('/api/auth/claim', {
           method: 'POST',
@@ -4676,7 +4689,7 @@ createApp({
         let loggedInOk = false;
         for (let attempt = 0; attempt < 3; attempt++) {
           loginTip.value = attempt === 0 ? '飞书登录中...' : `网络较慢，正在自动重试（第 ${attempt + 1}/3 次）...`;
-          const silentResult = await getFeishuSilentCode(6000);
+          const silentResult = await getFeishuSilentCode(10000);
           if (silentResult && silentResult.code) {
             const r = await loginWithCode(silentResult.code);
             if (r === 'ok' || r === 'need_register') { loggedInOk = true; break; }

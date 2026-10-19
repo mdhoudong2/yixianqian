@@ -347,6 +347,7 @@
   .msg-head { display: flex; align-items: center; gap: 8px; }
   .msg-avatar-sm { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #fff0f3; }
   .msg-avatar-sm-fallback { display: flex; align-items: center; justify-content: center; color: #ff6b81; font-size: 14px; font-weight: 600; }
+  .msg-avatar-click { cursor: pointer; }
   .msg-author { font-size: 13px; font-weight: 600; color: var(--yxq-brand-ink); }
   .msg-time { font-size: 11px; color: #6b7280; }
   .msg-del { font-size: 12px; color: #969799; cursor: pointer; }
@@ -965,8 +966,8 @@
             <div v-for="m in threadedMessages" :key="m.id" class="msg-thread">
               <div class="msg-item" @click="replyTo(m, m)" style="cursor:pointer;">
                 <div class="msg-head">
-                  <img v-if="m.author_avatar" class="msg-avatar-sm" :src="m.author_avatar" alt="">
-                  <span v-else class="msg-avatar-sm msg-avatar-sm-fallback">{{ (m.author_nickname || '?')[0] }}</span>
+                  <img v-if="m.author_avatar" class="msg-avatar-sm msg-avatar-click" :src="m.author_avatar" alt="" @click.stop="openMessageAuthor(m)">
+                  <span v-else class="msg-avatar-sm msg-avatar-sm-fallback msg-avatar-click" @click.stop="openMessageAuthor(m)">{{ (m.author_nickname || '?')[0] }}</span>
                   <span class="msg-author">{{ m.author_nickname }} · {{ m.author_uid }}</span>
                   <span style="flex:1"></span>
                   <span v-if="m.can_delete" class="msg-del" @click.stop="deleteMessage(m)">删除</span>
@@ -980,8 +981,8 @@
               </div>
               <div v-for="r in m.replies" :key="r.id" class="msg-item msg-reply" @click="replyTo(r, m)" style="cursor:pointer;">
                 <div class="msg-head">
-                  <img v-if="r.author_avatar" class="msg-avatar-sm" :src="r.author_avatar" alt="">
-                  <span v-else class="msg-avatar-sm msg-avatar-sm-fallback">{{ (r.author_nickname || '?')[0] }}</span>
+                  <img v-if="r.author_avatar" class="msg-avatar-sm msg-avatar-click" :src="r.author_avatar" alt="" @click.stop="openMessageAuthor(r)">
+                  <span v-else class="msg-avatar-sm msg-avatar-sm-fallback msg-avatar-click" @click.stop="openMessageAuthor(r)">{{ (r.author_nickname || '?')[0] }}</span>
                   <span class="msg-author">{{ r.author_nickname }} · {{ r.author_uid }}</span>
                   <span style="flex:1"></span>
                   <span v-if="r.can_delete" class="msg-del" @click.stop="deleteMessage(r)">删除</span>
@@ -6808,6 +6809,21 @@ createApp({
       cardTab.value = 'messages';
       await loadMessages();
     }
+    async function openMessageAuthor(m) {
+      // 点留言人头像 → 他人基本信息页；userDetailFrom='cards' 让返回回到原留言页
+      // （cardTab/messages 状态不销毁，回来仍是同一张卡的留言列表）。
+      const oid = m && m.author_openid;
+      if (!oid) { vant.showToast('对方资料暂不可见'); return; }
+      userDetailFromSheet.value = false;
+      userDetailFrom.value = 'cards';
+      page.value = 'user_detail';
+      userDetail.value = null;
+      try {
+        const data = await api('/api/users/' + oid + '/public');
+        if (data && (data.liked || justLiked.has(oid))) { data.liked = true; data.can_like = false; }
+        userDetail.value = data;
+      } catch(e) { vant.showToast(e.message); }
+    }
     async function sendMessage() {
       if (msgSending.value) return false;
       const c = currentCard.value;
@@ -8208,7 +8224,7 @@ createApp({
       cardTab, messages, msgLoading, msgSending, msgText, replyTarget, threadedMessages, currentMsgCount,
       myMessagesList, loadingMyMessages, openMyMessages, deleteMyMessage, refreshMyMessagesCount,
       receivedMessagesList, loadingReceivedMessages, openReceivedMessages, refreshReceivedCount,
-      openMessageTab, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
+      openMessageTab, openMessageAuthor, sendMessage, deleteMessage, replyTo, cancelReply, fmtTimeAgo,
       showPhotoViewer, viewPoster,
       handleBack, showInviteDialog, inviteShareText, copyInviteFull, copyInviteCode,
       pointsBalance, pointsEarned, pointsSpent, pointsPending, pointsPendingCount, pointsEntries,

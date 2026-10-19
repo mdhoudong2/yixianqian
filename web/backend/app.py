@@ -3192,14 +3192,13 @@ def test_login_submit():
     is_openid = raw.lower().startswith("ou_")
     lookup = raw.lower() if is_openid else raw.upper()
     if is_openid:
-        cond = [{"field_name": F_FEISHU_ID, "operator": "is", "value": [lookup]}]
+        records = bitable.raw_search_records(USER_TABLE_ID, [
+            {"field_name": F_FEISHU_ID, "operator": "is", "value": [lookup]}])
+        if records is None:
+            return _test_login_error_html("查询用户失败，请稍后重试", 502)
     else:
-        cond = [{"field_name": F_USER_ID, "operator": "is", "value": [lookup]}]
-    records = bitable.raw_search_records(USER_TABLE_ID, cond)
-    if records is None:
-        return _test_login_error_html("查询用户失败，请稍后重试", 502)
-    if not records and not is_openid:
-        # 过滤条件对文本格式敏感时兜底本地匹配（测试服用户量大，仅在未命中时扫一次）
+        # 用户ID 是自动编号/公式类字段，Bitable 过滤条件对类型敏感；全表拉一次本地匹配，
+        # 避免「过滤报错被当成查询失败」而无法登入（测试服仅千级用户，登录频率极低）。
         all_users = bitable.raw_search_records(USER_TABLE_ID)
         if all_users is None:
             return _test_login_error_html("查询用户失败，请稍后重试", 502)

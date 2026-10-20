@@ -1290,7 +1290,8 @@ def _rate_limit(limit=5, window=60, key_prefix="rl", include_path=True, key=None
 def _csrf_guard():
     if request.method in ("POST", "PUT", "DELETE") and request.path.startswith("/api/"):
         # 白名单：免登与埋点本身不需要 CSRF（埋点已在 nginx 限流）
-        if request.path.startswith("/api/auth/feishu") or request.path.startswith("/api/track") or request.path == "/api/version":
+        if (request.path.startswith("/api/auth/feishu") or request.path.startswith("/api/track")
+                or request.path == "/api/version" or request.path == "/api/client-events"):
             return None
         # 仅对已登录写接口强制
         if not g.get("yxq_open_id"):
@@ -8849,6 +8850,294 @@ def get_notifications():
     items = [n for n in load_notifications() if n.get("recipient") == oid]
     items.sort(key=lambda n: n.get("time", ""), reverse=True)
     return jsonify({"notifications": items})
+
+# ========== 客户端重载/恢复痕迹（诊断埋点） ==========
+# 卡片页偶发整页重载的诊断数据：只记录与聚合，不参与任何业务判断。
+# 落盘用 O_APPEND 单行写，gunicorn 多 worker/多线程并发追加不会互相截断。
+CLIENT_EVENTS_FILE = os.path.join(SHARED_DATA_DIR, "client_events.jsonl")
+CLIENT_EVENTS_MAX_BYTES = 20 * 1024 * 1024      # 单文件上限，超过轮转为 .1
+CLIENT_EVENTS_MAX_SCAN = 50 * 1024 * 1024       # summary 最多回扫的字节数
+CLIENT_EVENTS_MAX_BATCH = 30                    # 单请求最多事件数
+CLIENT_EVENTS_CRASH_WINDOW_MS = 5 * 60 * 1000   # 距上次活动 <5 分钟又 boot = 疑似被杀
+CLIENT_EVENTS_NAV_TYPES = ("navigate", "reload", "back_forward", "unknown")
+CLIENT_EVENTS_REASONS = ("version", "unknown", "")
+
+
+def _client_events_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _client_events_rotate():
+    try:
+        if os.path.getsize(CLIENT_EVENTS_FILE) > CLIENT_EVENTS_MAX_BYTES:
+            os.replace(CLIENT_EVENTS_FILE, CLIENT_EVENTS_FILE + ".1")
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        logging.getLogger(__name__).warning(f"客户端事件轮转失败: {e}")
+
+
+def _client_events_append(lines):
+    """一次请求只 open 一次；O_APPEND 保证并发下行不交错。"""
+    _client_events_rotate()
+    fd = os.open(CLIENT_EVENTS_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        for line in lines:
+            os.write(fd, line)
+    finally:
+        os.close(fd)
+
+
+def _client_events_uid(open_id):
+    """可选字段：从内存快照把 open_id 翻成业务编号，查不到留空。"""
+    try:
+        for u in _snap("users"):
+            f = u.get("fields", {})
+            if bitable.get_field_text(f, F_FEISHU_ID) == open_id:
+                return bitable.get_field_text(f, F_USER_ID) or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _client_events_validate(payload):
+    """校验请求体，返回 (sid, boot, events, 错误信息)；错误信息非空即 400。"""
+    if not isinstance(payload, dict):
+        return None, None, None, "请求体必须是 JSON 对象"
+    sid = payload.get("sid")
+    if not isinstance(sid, str) or not sid or len(sid) > 64:
+        return None, None, None, "sid 非法"
+    boot = payload.get("boot")
+    if not isinstance(boot, dict):
+        return None, None, None, "boot 非法"
+    if boot.get("nav") not in CLIENT_EVENTS_NAV_TYPES:
+        return None, None, None, "boot.nav 非法"
+    if not _client_events_int(boot.get("at")) or boot["at"] < 0:
+        return None, None, None, "boot.at 非法"
+    if boot.get("prev_reason") not in CLIENT_EVENTS_REASONS:
+        return None, None, None, "boot.prev_reason 非法"
+    since = boot.get("since_boot")
+    if since is not None and (not _client_events_int(since) or since < 0):
+        return None, None, None, "boot.since_boot 非法"
+    prev_pos = boot.get("prev_pos")
+    if prev_pos is not None and not _client_events_int(prev_pos):
+        return None, None, None, "boot.prev_pos 非法"
+    if not isinstance(boot.get("clean_exit"), bool):
+        return None, None, None, "boot.clean_exit 非法"
+    events = payload.get("events")
+    if not isinstance(events, list):
+        return None, None, None, "events 非法"
+    if len(events) > CLIENT_EVENTS_MAX_BATCH:
+        return None, None, None, "events 过多"
+    for ev in events:
+        if not isinstance(ev, dict):
+            return None, None, None, "事件非法"
+        if not _client_events_int(ev.get("t")) or ev["t"] < 0:
+            return None, None, None, "事件 t 非法"
+        k = ev.get("k")
+        if not isinstance(k, str) or not k or len(k) > 32:
+            return None, None, None, "事件 k 非法"
+        d = ev.get("d", {})
+        if d is None:
+            d = {}
+        if not isinstance(d, dict):
+            return None, None, None, "事件 d 非法"
+        for dk, dv in d.items():
+            if not isinstance(dk, str) or not dk or len(dk) > 64:
+                return None, None, None, "事件 d 键非法"
+            if isinstance(dv, str):
+                if len(dv) > 200:
+                    return None, None, None, "事件 d 值过长"
+            elif not isinstance(dv, (int, float, bool)) and dv is not None:
+                return None, None, None, "事件 d 值非法"
+    return sid, boot, events, None
+
+
+@app.route("/api/client-events", methods=["POST"])
+def client_events():
+    open_id = require_login()
+    if not open_id:
+        return jsonify({"error": "未登录"}), 401
+    rl = _rate_limit(30, 60, "client_events")
+    if rl:
+        return rl
+    payload = request.get_json(silent=True)
+    sid, boot, events, err = _client_events_validate(payload)
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    now_ms = int(time.time() * 1000)
+    uid = _client_events_uid(open_id)
+    ua = (request.user_agent.string or "")[:200]
+    lines = []
+    for ev in events:
+        rec = {
+            "ts": now_ms,
+            "open_id": open_id,
+            "uid": uid,
+            "ua": ua,
+            "sid": sid,
+            "boot": {
+                "nav": boot["nav"],
+                "at": boot["at"],
+                "prev_reason": boot["prev_reason"],
+                "since_boot": boot["since_boot"],
+                "prev_pos": boot["prev_pos"],
+                "clean_exit": boot["clean_exit"],
+            },
+            "ev": {
+                "t": ev["t"],
+                "k": ev["k"],
+                "d": ev.get("d") or {},
+            },
+        }
+        line = json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n"
+        lines.append(line.encode("utf-8"))
+    try:
+        if lines:
+            _client_events_append(lines)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"客户端事件落盘失败: {e}")
+        return jsonify({"ok": False, "error": "落盘失败"}), 500
+    return jsonify({"ok": True, "written": len(lines)})
+
+
+def _client_events_read_tail(path, max_bytes):
+    """只读文件尾部 max_bytes；截断处的半行丢弃，解析失败的行跳过。"""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            start = max(0, size - max_bytes)
+            f.seek(start)
+            if start:
+                f.readline()
+            raw = f.read()
+    except OSError:
+        return [], 0
+    records = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+    return records, len(raw)
+
+
+def _client_events_load(days):
+    """读当前文件与轮转文件，按 ts 过滤最近 days 天；总扫描量受 MAX_SCAN 限制。"""
+    cutoff = int(time.time() * 1000) - days * 86400 * 1000
+    remaining = CLIENT_EVENTS_MAX_SCAN
+    records = []
+    for path in (CLIENT_EVENTS_FILE, CLIENT_EVENTS_FILE + ".1"):
+        if remaining <= 0:
+            break
+        part, used = _client_events_read_tail(path, remaining)
+        records.extend(part)
+        remaining -= used
+    out = []
+    for rec in records:
+        ts = rec.get("ts")
+        if _client_events_int(ts) and ts >= cutoff:
+            out.append(rec)
+    out.sort(key=lambda r: r.get("ts") or 0)
+    return out
+
+
+def _client_events_boot(rec):
+    boot = rec.get("boot")
+    return boot if isinstance(boot, dict) else {}
+
+
+def _client_events_summary(records):
+    boots = {k: 0 for k in CLIENT_EVENTS_NAV_TYPES}
+    reasons = {}
+    restore = {"ok": 0, "fail": 0, "no_state": 0}
+    by_day = {}
+    seen_boots = set()
+    crash = []
+    for rec in records:
+        ts = rec.get("ts")
+        if _client_events_int(ts):
+            day = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+            by_day[day] = by_day.get(day, 0) + 1
+        boot = _client_events_boot(rec)
+        sid = rec.get("sid")
+        key = (sid, boot.get("at"))
+        if key not in seen_boots:
+            seen_boots.add(key)
+            nav = boot.get("nav") if boot.get("nav") in CLIENT_EVENTS_NAV_TYPES else "unknown"
+            boots[nav] += 1
+            reason = boot.get("prev_reason")
+            if isinstance(reason, str) and reason:
+                reasons[reason] = reasons.get(reason, 0) + 1
+            since = boot.get("since_boot")
+            if (boot.get("clean_exit") is False and _client_events_int(since)
+                    and 0 <= since < CLIENT_EVENTS_CRASH_WINDOW_MS):
+                crash.append({
+                    "sid": sid,
+                    "open_id": rec.get("open_id"),
+                    "at": boot.get("at"),
+                    "prev_pos": boot.get("prev_pos"),
+                })
+        ev = rec.get("ev") if isinstance(rec.get("ev"), dict) else {}
+        if ev.get("k") == "restore":
+            d = ev.get("d") if isinstance(ev.get("d"), dict) else {}
+            if d.get("ok") is True:
+                restore["ok"] += 1
+            elif d.get("reason") == "no_state":
+                restore["no_state"] += 1
+            else:
+                restore["fail"] += 1
+    crash.sort(key=lambda x: x.get("at") or 0, reverse=True)
+    recent = []
+    for rec in reversed(records[-50:]):
+        boot = _client_events_boot(rec)
+        ev = rec.get("ev") if isinstance(rec.get("ev"), dict) else {}
+        recent.append({
+            "ts": rec.get("ts"),
+            "open_id": rec.get("open_id"),
+            "sid": rec.get("sid"),
+            "ua": rec.get("ua"),
+            "nav": boot.get("nav"),
+            "prev_reason": boot.get("prev_reason"),
+            "prev_pos": boot.get("prev_pos"),
+            "since_boot": boot.get("since_boot"),
+            "clean_exit": boot.get("clean_exit"),
+            "k": ev.get("k"),
+            "t": ev.get("t"),
+            "d": ev.get("d") or {},
+        })
+    return {
+        "total_events": len(records),
+        "boots": boots,
+        "reload_reasons": reasons,
+        "restore": restore,
+        "crash_suspects": crash,
+        "by_day": by_day,
+        "recent": recent,
+    }
+
+
+@app.route("/api/admin/client-events/summary", methods=["GET"])
+def admin_client_events_summary():
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    raw_days = request.args.get("days", "3")
+    try:
+        days = int(raw_days)
+    except (TypeError, ValueError):
+        return jsonify({"error": "days 非法"}), 400
+    if days < 1 or days > 90:
+        return jsonify({"error": "days 非法"}), 400
+    data = _client_events_summary(_client_events_load(days))
+    data["days"] = days
+    return jsonify(data)
+
 
 # ========== 引流埋点统计 ==========
 

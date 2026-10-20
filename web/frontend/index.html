@@ -3469,6 +3469,182 @@ createApp({
     const cardsLoadingMore = ref(false);
     const cardsStart = ref(0);        // 已载窗口在全序中的起始偏移（循环翻页窗口游标）
     const cardsPageCache = new Map(); // offset -> {cards,total,version}：翻页回退时避免重复请求
+
+    // ===== 客户端重载/恢复痕迹（只观测，不改变业务行为）=====
+    // boot 必须在页面初始化时先快照：随后 loadHome 会把 cardIndex 归零，再读 localStorage
+    // 就丢掉上次离开时的位置了。诊断信息一律走 localStorage（跨 WebView 重启保留）。
+    const TX_URL = '/api/client-events';
+    const TX_MAX_BATCH = 30;
+    const TX_FLUSH_MS = 15000;
+    const TX_ERR_LIMIT = 10;
+    let txQueue = [];
+    let txBootSent = false;
+    let txDeckTimer = null;
+    let txDeckLast = 0;
+    let txErrTimes = [];
+    function txLocalGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+    function txLocalSet(k, v){ try{ localStorage.setItem(k, String(v)); }catch(e){} }
+    function txNavType(){
+      try{
+        const e = (performance.getEntriesByType && performance.getEntriesByType('navigation')[0]);
+        const t = e && e.type;
+        if(t === 'navigate' || t === 'reload' || t === 'back_forward') return t;
+      }catch(e){}
+      return 'unknown';
+    }
+    function txSidInit(){
+      try{
+        const old = localStorage.getItem('yxq_client_sid');
+        if(old) return old;
+        let sid = '';
+        try{
+          if(typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') sid = crypto.randomUUID();
+        }catch(e){}
+        if(!sid) sid = 'sid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem('yxq_client_sid', sid);
+        return sid;
+      }catch(e){
+        return 'sid-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      }
+    }
+    function txBootBuild(){
+      const now = Date.now();
+      const lastSeen = Number(txLocalGet('yxq_last_seen') || 0);
+      let prevReason = txLocalGet('yxq_reload_reason') || '';
+      try{ localStorage.removeItem('yxq_reload_reason'); }catch(e){}
+      if(prevReason && prevReason !== 'version' && prevReason !== 'unknown'){
+        prevReason = prevReason.indexOf('version') === 0 ? 'version' : 'unknown';
+      }
+      const posRaw = txLocalGet('yxq_deck_pos');
+      const posNum = posRaw === null ? NaN : Number(posRaw);
+      const prevPos = Number.isFinite(posNum) && posNum >= 0 ? Math.trunc(posNum) : null;
+      let cleanExit = false;
+      try{
+        cleanExit = localStorage.getItem('yxq_clean_exit') === 'true';
+        localStorage.setItem('yxq_clean_exit', 'false');
+      }catch(e){}
+      txLocalSet('yxq_last_seen', now);
+      return {
+        nav: txNavType(),
+        at: now,
+        prev_reason: prevReason,
+        since_boot: lastSeen > 0 ? Math.max(0, now - lastSeen) : null,
+        prev_pos: prevPos,
+        clean_exit: cleanExit
+      };
+    }
+    const txSid = txSidInit();
+    const txBoot = txBootBuild();
+    function txCsrf(){
+      try{ return (document.cookie.match(/(?:^|; )yxq_csrf=([^;]*)/) || [])[1] || ''; }catch(e){ return ''; }
+    }
+    function txSend(events){
+      if(!events || !events.length || !user.value) return;
+      let body = '';
+      try{ body = JSON.stringify({sid: txSid, boot: txBoot, events: events}); }catch(e){ return; }
+      try{
+        if(navigator.sendBeacon){
+          try{
+            if(navigator.sendBeacon(TX_URL, new Blob([body], {type: 'application/json'}))) return;
+          }catch(e){}
+        }
+      }catch(e){}
+      try{
+        const headers = {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'};
+        const csrf = txCsrf();
+        if(csrf) headers['X-CSRF-Token'] = csrf;
+        fetch(TX_URL, {method: 'POST', headers, credentials: 'same-origin', body, keepalive: true}).catch(()=>{});
+      }catch(e){}
+    }
+    function txQueueEvent(k, d){
+      try{
+        txQueue.push({t: Date.now(), k, d: d || {}});
+        if(txQueue.length > 100) txQueue = txQueue.slice(-100);
+        if(txQueue.length >= TX_MAX_BATCH) txFlush();
+      }catch(e){}
+    }
+    function txFlush(){
+      try{
+        if(!txQueue.length || !user.value) return;
+        txSend(txQueue.splice(0, TX_MAX_BATCH));
+      }catch(e){}
+    }
+    function txMarkSeen(){
+      try{ txLocalSet('yxq_last_seen', Date.now()); }catch(e){}
+    }
+    function txSendBoot(){
+      try{
+        if(txBootSent || !user.value) return;
+        txBootSent = true;
+        txSend([{t: Date.now(), k: 'boot', d: {nav: txBoot.nav, prev_reason: txBoot.prev_reason || ''}}]);
+        txFlush();
+      }catch(e){}
+    }
+    function txReportError(type, message){
+      try{
+        const now = Date.now();
+        txErrTimes = txErrTimes.filter(ts => now - ts < 60000);
+        if(txErrTimes.length >= TX_ERR_LIMIT) return;
+        txErrTimes.push(now);
+        txQueueEvent('error', {type, message: String(message == null ? '' : message).slice(0, 200)});
+      }catch(e){}
+    }
+    setInterval(txFlush, TX_FLUSH_MS);
+    setInterval(() => { try{ if(document.visibilityState === 'visible') txMarkSeen(); }catch(e){} }, 10000);
+    watch([cardIndex, cardsStart], () => {
+      try{
+        const now = Date.now();
+        const write = () => { try{ txLocalSet('yxq_deck_pos', cardsStart.value + cardIndex.value); }catch(e){} };
+        if(now - txDeckLast >= 500){
+          txDeckLast = now;
+          write();
+        } else if(!txDeckTimer){
+          txDeckTimer = setTimeout(() => {
+            txDeckTimer = null;
+            txDeckLast = Date.now();
+            write();
+          }, 500 - (now - txDeckLast));
+        }
+      }catch(e){}
+    });
+    watch(page, (nv, ov) => {
+      try{
+        if(nv === ov) return;
+        if(nv === 'cards' || ov === 'cards') txQueueEvent('page', {to: nv, from: ov});
+      }catch(e){}
+    });
+    watch(user, (v) => { if(v) txSendBoot(); });
+    window.addEventListener('pagehide', () => {
+      try{
+        txMarkSeen();
+        txLocalSet('yxq_clean_exit', 'true');
+        txSendBoot();
+        txFlush();
+      }catch(e){}
+    });
+    document.addEventListener('visibilitychange', () => {
+      try{
+        if(document.hidden){
+          txMarkSeen();
+          txLocalSet('yxq_clean_exit', 'true');
+          txSendBoot();
+          txFlush();
+        } else {
+          txLocalSet('yxq_clean_exit', 'false');
+          txMarkSeen();
+        }
+      }catch(e){}
+    });
+    window.addEventListener('error', (e) => {
+      try{ txReportError('error', e.message || (e.error && e.error.message) || 'error'); }catch(_){}
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      try{
+        const r = e.reason;
+        txReportError('unhandledrejection', (r && (r.message || r)) || 'rejection');
+      }catch(_){}
+    });
+
     const photoIndex = ref(0);
     const photoSlideDir = ref('');
     const currentCard = computed(() => cards.value[cardIndex.value] || null);
@@ -7108,29 +7284,49 @@ createApp({
     async function restoreDeck(){
       if(deckRestored) return;
       deckRestored = true;
+      let savedPos = null;
+      let restoredPos = null;
+      const finish = (ok, reason) => {
+        txQueueEvent('restore', {
+          ok: !!ok,
+          saved_pos: savedPos,
+          restored_pos: restoredPos,
+          total: cardsTotal.value,
+          reason: reason || ''
+        });
+      };
       try{
         const raw = sessionStorage.getItem('yxq_deck_restore');
-        if(!raw) return;
+        if(!raw){ finish(false, 'no_state'); return; }
         sessionStorage.removeItem('yxq_deck_restore');
         const st = JSON.parse(raw);
-        if(!st || Date.now() - (st.ts || 0) > 10 * 60 * 1000) return;
-        if(typeof st.pos !== 'number' || st.pos < 0) return;
+        if(st && typeof st.pos === 'number') savedPos = st.pos;
+        if(!st || Date.now() - (st.ts || 0) > 10 * 60 * 1000){ finish(false, 'stale'); return; }
+        if(savedPos === null || savedPos < 0){ finish(false, 'invalid'); return; }
         if(st.filters) filter.value = st.filters;
         page.value = 'cards';
         await loadCards(true);
-        const pos = st.pos;
-        if(pos >= cardsTotal.value) return;
+        const pos = savedPos;
+        if(pos >= cardsTotal.value){ finish(false, 'out_of_range'); return; }
         if(pos < cards.value.length){
           cardIndex.value = pos;
+          restoredPos = pos;
         } else {
           const offset = Math.floor(pos / 50) * 50;
           const ok = await loadPageAt(offset);
           if(ok && pos - offset < cards.value.length){
             cardIndex.value = pos - offset;
+            restoredPos = pos;
+          } else {
+            finish(false, 'load_failed');
+            return;
           }
         }
         preloadAround();
-      }catch(e){}
+        finish(true, 'ok');
+      }catch(e){
+        finish(false, 'error');
+      }
     }
 
     // ===== 新版本自动刷新：版本变化即刷新（输入中不打断），带时间戳 query 绕过飞书 TTWebView 缓存 =====
@@ -7144,6 +7340,8 @@ createApp({
         sessionStorage.setItem('yxq_last_reload', String(Date.now()));
         sessionStorage.setItem('yxq_reload_reason', reason || 'version');
       }catch(e){}
+      // boot 从 localStorage 读原因（跨 WebView 重启保留）；sessionStorage 仍留给旧逻辑
+      try{ localStorage.setItem('yxq_reload_reason', reason || 'version'); }catch(e){}
       // 加时间戳 query 绕过飞书 TTWebView 对 no-store 的忽略，确保 reload 真正拿到新 HTML
       const sep = (location.search ? '&' : '?');
       location.replace(location.pathname + location.search + sep + 'yxqv=' + Date.now());

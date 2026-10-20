@@ -1,0 +1,73 @@
+name: Cleanup merged branches
+
+# 每週一 02:00 UTC 自動清理；也可手動觸發（預設 dry-run）。
+# 規則：只刪 fix/ hotfix/ feat/ chore/ release/ 前綴、且已完全併入 develop 或 main 的分支。
+# 永不觸碰 main / develop。
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (true = 只列出，不刪除)"
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for merge-base)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete merged temporary branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # schedule → false（真刪）；workflow_dispatch → 取輸入（預設 true）
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
+
+          PROTECTED='^(main|develop)$'
+          PREFIX='^(fix|hotfix|feat|chore|release)/'
+          deleted=0
+          kept=0
+
+          for b in $(git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin); do
+            [ "$b" = "HEAD" ] && continue
+            if echo "$b" | grep -Eq "$PROTECTED"; then
+              echo "protect: $b"
+              continue
+            fi
+            if ! echo "$b" | grep -Eq "$PREFIX"; then
+              echo "skip(prefix): $b"
+              kept=$((kept+1))
+              continue
+            fi
+            if git merge-base --is-ancestor "origin/$b" origin/develop 2>/dev/null \
+               || git merge-base --is-ancestor "origin/$b" origin/main 2>/dev/null; then
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "DRY-RUN would delete: $b"
+              else
+                if gh api -X DELETE "repos/$REPO/git/refs/heads/$b" >/dev/null 2>&1; then
+                  echo "deleted: $b"
+                  deleted=$((deleted+1))
+                else
+                  echo "FAILED: $b"
+                fi
+              fi
+            else
+              echo "keep(not merged): $b"
+              kept=$((kept+1))
+            fi
+          done
+
+          echo "----"
+          echo "deleted=$deleted kept=$kept dry_run=$DRY_RUN"

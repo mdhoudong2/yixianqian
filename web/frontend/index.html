@@ -634,6 +634,9 @@
   .ga-signin-code-row { display: flex; align-items: center; gap: 10px; }
   .ga-signin-code-field { flex: 1; min-width: 0; background: #f7f8fa; border-radius: 10px; }
   .van-theme-dark .ga-signin-code-field { background: #2c2c30; }
+  /* 管理台「活动状态」：375px 下 3+2 换行，按钮命中区固定 ≥44px */
+  .ga-status-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ga-status-btns .van-button { flex: 1 1 calc(33.333% - 8px); min-width: 92px; min-height: 44px; }
   .van-theme-dark .ga-title-sub { color:#c8c9cc; }
   .van-theme-dark .ga-title-name { color:#f5f5f5; }
   .van-theme-dark .pay-dialog-title { color:#f5f5f5; }
@@ -1435,6 +1438,7 @@
         <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:5px;">
           <div :class="'ga-chip ' + gaModeChipClass(a)"><span class="ga-chip-dot"></span>{{ gaModeChip(a) }}</div>
           <div :class="'ga-chip ' + gaStatusChipClass(a)"><span class="ga-chip-dot"></span>{{ gaStatusChipText(a) }}</div>
+          <div :class="'ga-chip ' + gaActivityStatusChipClass(a.activity_status)"><span class="ga-chip-dot"></span>{{ a.activity_status || '未设置' }}</div>
         </div>
         <div class="ga-row-name">{{ a.name || '(未命名活动)' }}<span class="ga-row-id">{{ a.activity_id }}</span></div>
         <div class="ga-row-sub">{{ gaRowSub(a) }}</div>
@@ -1470,6 +1474,17 @@
         <van-button v-if="gaDetail.mode!=='group'" size="small" plain type="primary" color="#ff6b81" :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('group')">切到分组</van-button>
         <van-button v-if="gaDetail.mode!=='onetoone'" size="small" plain type="primary" color="#ff6b81" :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('onetoone')">切到一对一</van-button>
         <van-button v-if="gaDetail.mode!=='none'" size="small" plain :disabled="!!gaDetail.active_job || gaModeSwitching" @click="switchMode('none')">关闭全部</van-button>
+      </div>
+    </div>
+
+    <div class="ga-card">
+      <div class="ga-card-title">活动状态 <span :class="'ga-chip ' + gaActivityStatusChipClass(gaActivityStatus)" style="margin-left:6px;"><span class="ga-chip-dot"></span>{{ gaActivityStatus || '未设置' }}</span></div>
+      <div class="ga-row-sub" style="margin-bottom:10px;">状态会同步影响用户端报名入口；已结束/已取消后无法继续报名。</div>
+      <div class="ga-status-btns">
+        <van-button v-for="s in gaActivityStatusOptions" :key="s" size="small" type="primary" color="#ff6b81"
+          :plain="gaActivityStatus !== s" :disabled="gaActivityStatusBusy"
+          :loading="gaActivityStatusBusy && gaActivityStatusTarget === s"
+          @click="confirmActivityStatus(s)">{{ s }}</van-button>
       </div>
     </div>
 
@@ -7394,6 +7409,13 @@ createApp({
     // 现场签到码（管理台小卡）：只接受 4 位数字
     const gaSigninCode = ref(''), gaSigninCodeBusy = ref(false);
     const gaSigninCodeOk = computed(() => /^\d{4}$/.test(String(gaSigninCode.value || '')));
+    // 活动状态（管理台小卡）：五值固定顺序；busy 期间所有按钮禁用，防重复提交
+    const GA_ACTIVITY_STATUS_OPTIONS = ['未开始报名', '报名中', '已满员', '已结束', '已取消'];
+    const GA_ACTIVITY_STATUS_CLASS = { '未开始报名': '', '报名中': 'collecting', '已满员': 'running', '已结束': 'done', '已取消': 'danger' };
+    const gaActivityStatusOptions = GA_ACTIVITY_STATUS_OPTIONS;
+    const gaActivityStatus = computed(() => (gaDetail.value && gaDetail.value.activity_status) || '');
+    const gaActivityStatusBusy = ref(false), gaActivityStatusTarget = ref('');
+    function gaActivityStatusChipClass(s) { return GA_ACTIVITY_STATUS_CLASS[s] || ''; }
 
     const gaRosterTab = ref(0);       // 0=未填写（现场重点）1=已填写
     const gaRosterQuery = ref(''), gaRosterList = ref([]), gaRosterTotal = ref(0);
@@ -7681,6 +7703,36 @@ createApp({
         if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '保存失败，再试一次'));
       }
       gaSigninCodeBusy.value = false;
+    }
+    async function confirmActivityStatus(target) {
+      if (!gaDetail.value || gaActivityStatusBusy.value || !gaDetailId.value) return;
+      if (target === gaActivityStatus.value) { vant.showToast('当前已是「' + target + '」'); return; }
+      const msg = target === '已结束'
+        ? '设为已结束后将停止报名，已有报名/志愿/结果数据保留。'
+        : target === '已取消'
+          ? '设为已取消会触发优先名额退穗（机器人收尾），确定？'
+          : target === '报名中'
+            ? '重新开放报名？'
+            : '将活动状态改为「' + target + '」？';
+      try {
+        await vant.showConfirmDialog({ title: '活动状态', message: msg,
+          confirmButtonText: '确认修改', cancelButtonText: '取消', confirmButtonColor: '#ff6b81' });
+      } catch(e) { return; }   // 取消
+      gaActivityStatusTarget.value = target;
+      gaActivityStatusBusy.value = true;
+      try {
+        const data = await api('/api/admin/activity/status', { method: 'POST',
+          body: JSON.stringify({ activity_id: gaDetailId.value, status: target }) });
+        if (gaDetail.value) gaDetail.value.activity_status = data.status;
+        const it = gaList.value.find(x => x.activity_id === gaDetailId.value);
+        if (it) it.activity_status = data.status;
+        vant.showToast('活动状态已更新');
+        refreshGroupDetail();
+      } catch(e) {
+        if (!gaAuthBack(e)) vant.showToast(gaMsg(e, '更新失败，再试一次'));
+      }
+      gaActivityStatusBusy.value = false;
+      gaActivityStatusTarget.value = '';
     }
     async function switchMode(mode) {
       const d = gaDetail.value;
@@ -8452,6 +8504,7 @@ createApp({
       gaAdminBadge, openGroupAdmin, loadGroupAdminList, gaLoading, gaError, gaList, gaQ, gaFilteredList, gaStats, gaChipClass, gaModeChip, gaModeChipClass, gaStatusChipText, gaStatusChipClass, gaRowSub, openGroupDetail, openCheckinPage,
       gaDetailId, gaDetail, gaDetailLoading, gaDetailError, gaDetailTab, gaDetailMode, gaModeText, gaModeSwitching, switchMode, gaStepDefs, gaStepIndex, gaExpectedGroups, gaNextRound,
       gaSigninCode, gaSigninCodeBusy, gaSigninCodeOk, saveGaSigninCode,
+      gaActivityStatusOptions, gaActivityStatus, gaActivityStatusBusy, gaActivityStatusTarget, gaActivityStatusChipClass, confirmActivityStatus,
       signinDialogShow, signinCode, signinCodeOk, signinSubmitting, openSelfSignin, closeSigninDialog, submitSelfSignin,
       gaCheckinName, gaSigninFlagOn, gaSigninFlagBusy, gaSigninList, gaSigninLoading, gaSigninError, gaSigninLoaded,
       gaSigninQuery, gaSigninGender, gaSigninStatus, gaSigninShown, gaSigninBusy, gaSigninBatchBusy, gaSigninFiltered, gaSigninVisible,

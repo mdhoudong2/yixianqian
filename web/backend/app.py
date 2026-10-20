@@ -3768,6 +3768,15 @@ def _refund_priority_on_cancel(open_id, activity_id, act_fields):
 # 「已满员」不算——已经没有名额可给了。
 OPEN_ACTIVITY_STATUSES = ("报名中", "未开始报名")
 
+# 活动状态五值（顺序即管理台按钮顺序）；与 bot/constants.py 的常量同名同值。
+ACTIVITY_STATUS_OPTIONS = (
+    "未开始报名",
+    "报名中",
+    "已满员",
+    "已结束",
+    "已取消",
+)
+
 
 def _points_activity(record, activity_id):
     """多维表格的活动记录 → lib.points_redeem 认的活动事实。
@@ -6651,6 +6660,8 @@ def admin_group_status():
         "mode": mode,
         "conflict": mode == lib_grouping.MODE_CONFLICT,
         "active_job": _active_job_for(act_id),
+        "activity_status": bitable.get_field_text(f, F_ACTIVITY_STATUS),
+        "activity_status_options": list(ACTIVITY_STATUS_OPTIONS),
     })
 
 
@@ -7110,6 +7121,8 @@ def admin_onetoone_status():
         "mode": mode,
         "conflict": mode == lib_grouping.MODE_CONFLICT,
         "active_job": _active_job_for(act_id),
+        "activity_status": bitable.get_field_text(f, F_ACTIVITY_STATUS),
+        "activity_status_options": list(ACTIVITY_STATUS_OPTIONS),
     })
 
 
@@ -7726,6 +7739,40 @@ def admin_activity_mode():
         "onetoone_flag": res["onetoone_flag"],
         "changed": res["changed"],
     })
+
+
+@app.route("/api/admin/activity/status", methods=["POST"])
+def admin_activity_status():
+    """管理端设置活动状态（五值单选）。活动状态由 bot 写入，这里读也 fresh。"""
+    open_id, err, code = _require_admin()
+    if err:
+        return err, code
+    rl = _rate_limit(10, 60, "activity_status")
+    if rl:
+        return rl
+
+    data = request.get_json(silent=True) or {}
+    activity_id = data.get("activity_id")
+    status = data.get("status")
+    if not isinstance(activity_id, str) or not activity_id.strip():
+        return jsonify({"error": "请求体不合法"}), 400
+    if not isinstance(status, str) or status not in ACTIVITY_STATUS_OPTIONS:
+        return jsonify({"error": "状态不合法"}), 400
+
+    act, act_id, miss = _onetoone_or_404(activity_id.strip())
+    if miss:
+        return miss
+    current = bitable.get_field_text(act.get("fields", {}), F_ACTIVITY_STATUS)
+    if current == status:
+        # 同值重复提交幂等成功：不写表、不刷新，回包与首次一致
+        return jsonify({"ok": True, "status": status})
+    if not _grouping_client.update_record(ACTIVITY_TABLE_ID, act.get("record_id"),
+                                          {F_ACTIVITY_STATUS: status}):
+        return jsonify({"error": "活动状态更新失败，请稍后重试",
+                        "code": "WRITE_FAILED"}), 500
+    refresh_snapshot_table_async("activities")
+    app.logger.info(f"管理员设置活动状态: {act_id} {current or '空'} -> {status}")
+    return jsonify({"ok": True, "status": status})
 
 
 # ========== 管理员现场签到（R3） ==========

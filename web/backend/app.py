@@ -3522,6 +3522,43 @@ def user_me():
     attach_quota(brief, open_id)
     return jsonify(brief)
 
+# 活动报名阻塞脱单的状态口径：对应 ACTIVITY_STATUS_OPTIONS 中的有效状态；
+# 终态「已结束/已取消」不拦——这两类活动的取消入口已关闭（cancel_signup 仅允许
+# 「报名中」取消），不能再拿历史报名把用户永久卡在「单身」无法切「已脱单」。
+SIGNUP_ACTIVE_ACTIVITY_STATUSES = ("未开始报名", "报名中", "已满员")
+
+
+def _has_active_activity_signup(open_id):
+    """用户是否还有「活动仍有效」的报名（决定切「已脱单」前是否必须先取消报名）。
+
+    只统计报名状态为「已报名」、且其活动状态属于
+    SIGNUP_ACTIVE_ACTIVITY_STATUSES 的记录；无报名、活动已结束/已取消、
+    活动查不到，均返回 False（历史报名不再阻塞脱单）。
+    活动状态是 bot/管理台写入的判定依据，必须走 _snap_fresh 实时读，
+    不能吃周期快照（见 docs/读取一致性.md 规则一）。
+    """
+    signups = [s for s in snap_signups_by_openid(open_id)
+               if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_STATUS) == "已报名"]
+    if not signups:
+        return False
+    activities = _snap_fresh("activities")
+    if not activities:
+        # 活动表不可用时保持放行（fail-open）：不能让历史报名把用户永久卡住；
+        # 但要留下告警，避免「实时读一直失败」被静默吞掉。
+        app.logger.warning("脱单门禁：活动表不可用，%d 条已报名按历史放行", len(signups))
+        return False
+    active_ids = {
+        bitable.get_field_text(a.get("fields", {}), F_ACTIVITY_ID)
+        for a in activities
+        if bitable.get_field_text(a.get("fields", {}), F_ACTIVITY_STATUS)
+        in SIGNUP_ACTIVE_ACTIVITY_STATUSES
+    }
+    return any(
+        bitable.get_field_text(s.get("fields", {}), F_SIGNUP_ACTIVITY_ID) in active_ids
+        for s in signups
+    )
+
+
 @app.route("/api/account/status", methods=["POST"])
 def toggle_account_status():
     """切换账号状态：单身 <-> 已脱单（秒提交版：状态读快照，同步仅 1 次写入）"""
@@ -3536,10 +3573,9 @@ def toggle_account_status():
         return jsonify({"error": "村情六处账号不可切换账号状态"}), 403
     if cur == "单身":
         new_status = "已脱单"
-        # 已报名活动者不可自行脱单（先取消报名）；读快照（≤15s 窗口，见文档说明）
-        active_signups = [s for s in snap_signups_by_openid(open_id)
-                          if bitable.get_field_text(s.get("fields", {}), F_SIGNUP_STATUS) == "已报名"]
-        if active_signups:
+        # 已报名活动者不可自行脱单（先取消报名）；但只拦活动仍有效的报名——
+        # 已结束/已取消活动的历史报名不能再拦，否则用户永远卡在「单身」。
+        if _has_active_activity_signup(open_id):
             return jsonify({"error": "你已报名活动，请先取消报名再脱单"}), 400
     elif cur == "已脱单":
         new_status = "单身"
